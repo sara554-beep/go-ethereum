@@ -113,7 +113,7 @@ func Execute(code, input []byte, cfg *Config) ([]byte, *state.StateDB, bool, err
 	// set the receiver's (the executing contract) code for execution.
 	cfg.State.SetCode(address, code)
 	// Call the code with the given configuration.
-	ret, _, reverted, err := vmenv.Call(
+	ret, _, failed, err := vmenv.Call(
 		sender,
 		common.StringToAddress("contract"),
 		input,
@@ -121,7 +121,7 @@ func Execute(code, input []byte, cfg *Config) ([]byte, *state.StateDB, bool, err
 		cfg.Value,
 	)
 
-	return ret, cfg.State, reverted, err
+	return ret, cfg.State, failed, err
 }
 
 // Create executes the code using the EVM create method
@@ -162,7 +162,7 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, bo
 
 	sender := cfg.State.GetOrNewStateObject(cfg.Origin)
 	// Call the code with the given configuration.
-	ret, leftOverGas, reverted, err := vmenv.Call(
+	ret, leftOverGas, failed, err := vmenv.Call(
 		sender,
 		address,
 		input,
@@ -170,5 +170,5 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, bo
 		cfg.Value,
 	)
 
-	return ret, leftOverGas, reverted, err
+	return ret, leftOverGas, failed, err
 }
