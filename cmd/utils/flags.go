@@ -217,27 +217,27 @@ var (
 	EthashCachesInMemoryFlag = cli.IntFlag{
 		Name:  "ethash.cachesinmem",
 		Usage: "Number of recent ethash caches to keep in memory (16MB each)",
-		Value: eth.DefaultConfig.EthashCachesInMem,
+		Value: eth.DefaultConfig.Ethash.EthashCachesInMem,
 	}
 	EthashCachesOnDiskFlag = cli.IntFlag{
 		Name:  "ethash.cachesondisk",
 		Usage: "Number of recent ethash caches to keep on disk (16MB each)",
-		Value: eth.DefaultConfig.EthashCachesOnDisk,
+		Value: eth.DefaultConfig.Ethash.EthashCachesOnDisk,
 	}
 	EthashDatasetDirFlag = DirectoryFlag{
 		Name:  "ethash.dagdir",
 		Usage: "Directory to store the ethash mining DAGs (default = inside home folder)",
-		Value: DirectoryString{eth.DefaultConfig.EthashDatasetDir},
+		Value: DirectoryString{eth.DefaultConfig.Ethash.EthashDatasetDir},
 	}
 	EthashDatasetsInMemoryFlag = cli.IntFlag{
 		Name:  "ethash.dagsinmem",
 		Usage: "Number of recent ethash mining DAGs to keep in memory (1+GB each)",
-		Value: eth.DefaultConfig.EthashDatasetsInMem,
+		Value: eth.DefaultConfig.Ethash.EthashDatasetsInMem,
 	}
 	EthashDatasetsOnDiskFlag = cli.IntFlag{
 		Name:  "ethash.dagsondisk",
 		Usage: "Number of recent ethash mining DAGs to keep on disk (1+GB each)",
-		Value: eth.DefaultConfig.EthashDatasetsOnDisk,
+		Value: eth.DefaultConfig.Ethash.EthashDatasetsOnDisk,
 	}
 	// Transaction pool settings
 	TxPoolNoLocalsFlag = cli.BoolFlag{
@@ -908,7 +908,7 @@ func setTxPool(ctx *cli.Context, cfg *core.TxPoolConfig) {
 	}
 }
 
-func setEthash(ctx *cli.Context, cfg *eth.Config) {
+func setEthash(ctx *cli.Context, cfg *ethash.EthashConfig) {
 	if ctx.GlobalIsSet(EthashCacheDirFlag.Name) {
 		cfg.EthashCacheDir = ctx.GlobalString(EthashCacheDirFlag.Name)
 	}
@@ -961,7 +961,7 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	setEtherbase(ctx, ks, cfg)
 	setGPO(ctx, &cfg.GPO)
 	setTxPool(ctx, &cfg.TxPool)
-	setEthash(ctx, cfg)
+	setEthash(ctx, &cfg.Ethash)
 
 	switch {
 	case ctx.GlobalIsSet(SyncModeFlag.Name):
@@ -1159,10 +1159,14 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 	} else {
 		engine = ethash.NewFaker()
 		if !ctx.GlobalBool(FakePoWFlag.Name) {
-			engine = ethash.New(
-				stack.ResolvePath(eth.DefaultConfig.EthashCacheDir), eth.DefaultConfig.EthashCachesInMem, eth.DefaultConfig.EthashCachesOnDisk,
-				stack.ResolvePath(eth.DefaultConfig.EthashDatasetDir), eth.DefaultConfig.EthashDatasetsInMem, eth.DefaultConfig.EthashDatasetsOnDisk,
-			)
+			engine = ethash.New(ethash.EthashConfig{
+				EthashCacheDir:       stack.ResolvePath(eth.DefaultConfig.Ethash.EthashCacheDir),
+				EthashCachesInMem:    eth.DefaultConfig.Ethash.EthashCachesInMem,
+				EthashCachesOnDisk:   eth.DefaultConfig.Ethash.EthashCachesOnDisk,
+				EthashDatasetDir:     stack.ResolvePath(eth.DefaultConfig.Ethash.EthashDatasetDir),
+				EthashDatasetsInMem:  eth.DefaultConfig.Ethash.EthashDatasetsInMem,
+				EthashDatasetsOnDisk: eth.DefaultConfig.Ethash.EthashDatasetsOnDisk,
+			})
 		}
 	}
 	vmcfg := vm.Config{EnablePreimageRecording: ctx.GlobalBool(VMEnableDebugFlag.Name)}

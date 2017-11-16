@@ -45,7 +45,7 @@ var (
 	maxUint256 = new(big.Int).Exp(big.NewInt(2), big.NewInt(256), big.NewInt(0))
 
 	// sharedEthash is a full instance that can be shared between multiple users.
-	sharedEthash = New("", 3, 0, "", 1, 0)
+	sharedEthash = New(EthashConfig{"", 3, 0, "", 1, 0, false, false, false})
 
 	// algorithmRevision is the data structure version used for file naming.
 	algorithmRevision = 23
@@ -53,6 +53,19 @@ var (
 	// dumpMagic is a dataset dump header to sanity check a data dump.
 	dumpMagic = []uint32{0xbaddcafe, 0xfee1dead}
 )
+
+// EthashConfig are the configuration parameters of the ethash.
+type EthashConfig struct {
+	EthashCacheDir       string
+	EthashCachesInMem    int
+	EthashCachesOnDisk   int
+	EthashDatasetDir     string
+	EthashDatasetsInMem  int
+	EthashDatasetsOnDisk int
+	PowFake              bool
+	PowTest              bool
+	PowShared            bool
+}
 
 // isLittleEndian returns whether the local system is running in little or big
 // endian byte order.
@@ -320,7 +333,7 @@ func MakeDataset(block uint64, dir string) {
 	d.release()
 }
 
-// Ethash is a consensus engine based on proot-of-work implementing the ethash
+// Ethash is a consensus engine based on proof-of-work implementing the ethash
 // algorithm.
 type Ethash struct {
 	cachedir     string // Data directory to store the verification caches
@@ -353,24 +366,24 @@ type Ethash struct {
 }
 
 // New creates a full sized ethash PoW scheme.
-func New(cachedir string, cachesinmem, cachesondisk int, dagdir string, dagsinmem, dagsondisk int) *Ethash {
-	if cachesinmem <= 0 {
-		log.Warn("One ethash cache must always be in memory", "requested", cachesinmem)
-		cachesinmem = 1
+func New(config EthashConfig) *Ethash {
+	if config.EthashCachesInMem <= 0 {
+		log.Warn("One ethash cache must always be in memory", "requested", config.EthashCachesInMem)
+		config.EthashCachesInMem = 1
 	}
-	if cachedir != "" && cachesondisk > 0 {
-		log.Info("Disk storage enabled for ethash caches", "dir", cachedir, "count", cachesondisk)
+	if config.EthashCacheDir != "" && config.EthashCachesOnDisk > 0 {
+		log.Info("Disk storage enabled for ethash caches", "dir", config.EthashCacheDir, "count", config.EthashCachesOnDisk)
 	}
-	if dagdir != "" && dagsondisk > 0 {
-		log.Info("Disk storage enabled for ethash DAGs", "dir", dagdir, "count", dagsondisk)
+	if config.EthashDatasetDir != "" && config.EthashDatasetsOnDisk > 0 {
+		log.Info("Disk storage enabled for ethash DAGs", "dir", config.EthashDatasetDir, "count", config.EthashDatasetsOnDisk)
 	}
 	return &Ethash{
-		cachedir:     cachedir,
-		cachesinmem:  cachesinmem,
-		cachesondisk: cachesondisk,
-		dagdir:       dagdir,
-		dagsinmem:    dagsinmem,
-		dagsondisk:   dagsondisk,
+		cachedir:     config.EthashCacheDir,
+		cachesinmem:  config.EthashCachesInMem,
+		cachesondisk: config.EthashCachesOnDisk,
+		dagdir:       config.EthashDatasetDir,
+		dagsinmem:    config.EthashCachesInMem,
+		dagsondisk:   config.EthashDatasetsOnDisk,
 		caches:       make(map[uint64]*cache),
 		datasets:     make(map[uint64]*dataset),
 		update:       make(chan struct{}),
