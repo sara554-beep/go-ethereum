@@ -34,7 +34,7 @@ var errNoActiveJournal = errors.New("no active journal")
 // devNull is a WriteCloser that just discards anything written into it. Its
 // goal is to allow the transaction journal to write into a fake journal when
 // loading transactions on startup without printing warnings due to no file
-// being readt for write.
+// being read for write.
 type devNull struct{}
 
 func (*devNull) Write(p []byte) (n int, err error) { return len(p), nil }
@@ -160,4 +160,10 @@ func (journal *txJournal) close() error {
 		journal.writer = nil
 	}
 	return err
+}
+
+// clean removes the tx journal file.
+// Note: Except testing, this function should not be called during normal usage.
+func (journal *txJournal) clean() error {
+	return os.Remove(journal.path)
 }

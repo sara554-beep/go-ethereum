@@ -446,6 +446,13 @@ func (pool *TxPool) Stop() {
 	log.Info("Transaction pool stopped")
 }
 
+// CleanJournal removes the tx journal file with configured file path.
+func (pool *TxPool) CleanJournal() {
+	if pool.journal != nil {
+		pool.journal.clean()
+	}
+}
+
 // SubscribeTxPreEvent registers a subscription of TxPreEvent and
 // starts sending event to the given channel.
 func (pool *TxPool) SubscribeTxPreEvent(ch chan<- TxPreEvent) event.Subscription {
