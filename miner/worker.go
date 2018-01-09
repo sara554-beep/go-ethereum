@@ -245,12 +245,25 @@ func (self *worker) update() {
 	defer self.chainHeadSub.Unsubscribe()
 	defer self.chainSideSub.Unsubscribe()
 
+	// Regenerate a work for mining each 3 second
+	ticker := time.NewTimer(3 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		// A real event arrived, process interesting content
 		select {
 		// Handle ChainHeadEvent
 		case <-self.chainHeadCh:
 			self.commitNewWork()
+
+		case <-ticker.C:
+			// regenerate new work. In this way, we can always package transaction with highest price
+			// to current mining block.
+
+			// Note currently a single block's execution can cost more than 1 second. So regenerate new
+			// block too frequently is not cheap.
+			self.commitNewWork()
+			ticker.Reset(3 * time.Second)
 
 		// Handle ChainSideEvent
 		case ev := <-self.chainSideCh:
