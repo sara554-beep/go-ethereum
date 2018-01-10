@@ -71,8 +71,8 @@ type Work struct {
 	family    *set.Set       // family set (used for checking uncle invalidity)
 	uncles    *set.Set       // uncle set
 	tcount    int            // tx count in cycle
-
-	Block *types.Block // the new block
+	gasPrice  *big.Int       // average gas price for the transactions included
+	Block     *types.Block   // the new block
 
 	header   *types.Header
 	txs      []*types.Transaction
@@ -156,7 +156,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 
 	go worker.wait()
 	worker.startMining = time.Now().Unix()
-	worker.commitNewWork(worker.startMining)
+	worker.commitNewWork(worker.startMining, false)
 
 	return worker
 }
@@ -251,21 +251,21 @@ func (self *worker) update() {
 	// Regenerate a work for mining each 3 second
 	ticker := time.NewTimer(3 * time.Second)
 	defer ticker.Stop()
-
 	for {
 		// A real event arrived, process interesting content
 		select {
 		// Handle ChainHeadEvent
 		case <-self.chainHeadCh:
 			self.startMining = time.Now().Unix()
-			self.commitNewWork(self.startMining)
+			self.commitNewWork(self.startMining, false)
+
 		case <-ticker.C:
 			// regenerate new work. In this way, we can always package transaction with highest price
 			// to current mining block.
 
 			// Note currently a single block's execution can cost more than 1 second. So regenerate new
 			// block too frequently is not cheap.
-			self.commitNewWork(self.startMining)
+			self.commitNewWork(self.startMining, true)
 			ticker.Reset(3 * time.Second)
 
 		// Handle ChainSideEvent
@@ -288,7 +288,7 @@ func (self *worker) update() {
 			} else {
 				// If we're mining, but nothing is being processed, wake on new transactions
 				if self.config.Clique != nil && self.config.Clique.Period == 0 {
-					self.commitNewWork(time.Now().Unix())
+					self.commitNewWork(time.Now().Unix(), false)
 				}
 			}
 
@@ -352,7 +352,7 @@ func (self *worker) wait() {
 
 			if mustCommitNewWork {
 				self.startMining = time.Now().Unix()
-				self.commitNewWork(self.startMining)
+				self.commitNewWork(self.startMining, false)
 			}
 		}
 	}
@@ -386,6 +386,7 @@ func (self *worker) makeCurrent(parent *types.Block, header *types.Header) error
 		uncles:    set.New(),
 		header:    header,
 		createdAt: time.Now(),
+		gasPrice:  big.NewInt(0),
 	}
 
 	// when 08 is processed ancestors contain 07 (quick block)
@@ -403,7 +404,7 @@ func (self *worker) makeCurrent(parent *types.Block, header *types.Header) error
 	return nil
 }
 
-func (self *worker) commitNewWork(tstamp int64) {
+func (self *worker) commitNewWork(tstamp int64, regenerate bool) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.uncleMu.Lock()
@@ -501,8 +502,15 @@ func (self *worker) commitNewWork(tstamp int64) {
 	}
 	// We only care about logging if we're actually mining.
 	if atomic.LoadInt32(&self.mining) == 1 {
-		log.Info("Commit new mining work", "number", work.Block.Number(), "txs", work.tcount, "uncles", len(uncles), "elapsed", common.PrettyDuration(time.Since(tstart)))
-		self.unconfirmed.Shift(work.Block.NumberU64() - 1)
+		if !regenerate {
+			log.Info("Commit new mining work", "number", work.Block.Number(), "txs", work.tcount,
+				"uncles", len(uncles), "elapsed", common.PrettyDuration(time.Since(tstart)), "gasprice", work.gasPrice)
+			self.unconfirmed.Shift(work.Block.NumberU64() - 1)
+		} else {
+			log.Info("Regenerate new mining work", "number", work.Block.Number(), "txs", work.tcount,
+				"uncles", len(uncles), "elapsed", common.PrettyDuration(time.Since(tstart)), "gasprice", work.gasPrice,
+				"timestamp", tstamp, "difficulty", work.Block.Difficulty())
+		}
 	}
 	self.push(work)
 }
@@ -571,6 +579,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 			coalescedLogs = append(coalescedLogs, logs...)
 			env.tcount++
 			txs.Shift()
+			env.gasPrice.Add(env.gasPrice, tx.GasPrice())
 
 		default:
 			// Strange error, discard the transaction and get the next in line (note, the
@@ -589,6 +598,10 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 			cpy[i] = new(types.Log)
 			*cpy[i] = *l
 		}
+
+		// calculate average gas price for the including transactions
+		env.gasPrice.Div(env.gasPrice, big.NewInt(0).SetInt64(int64(env.tcount)))
+
 		go func(logs []*types.Log, tcount int) {
 			if len(logs) > 0 {
 				mux.Post(core.PendingLogsEvent{Logs: logs})
