@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"time"
 )
 
 // Backend wraps all methods required for mining.
@@ -116,7 +117,8 @@ func (self *Miner) Start(coinbase common.Address) {
 
 	log.Info("Starting mining operation")
 	self.worker.start()
-	self.worker.commitNewWork()
+	self.worker.startMining = time.Now().Unix()
+	self.worker.commitNewWork(self.worker.startMining)
 }
 
 func (self *Miner) Stop() {

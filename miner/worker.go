@@ -122,6 +122,8 @@ type worker struct {
 
 	unconfirmed *unconfirmedBlocks // set of locally mined blocks pending canonicalness confirmations
 
+	startMining int64 // Records timestamp when each round of mining start
+
 	// atomic status counters
 	mining int32
 	atWork int32
@@ -153,7 +155,8 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 	go worker.update()
 
 	go worker.wait()
-	worker.commitNewWork()
+	worker.startMining = time.Now().Unix()
+	worker.commitNewWork(worker.startMining)
 
 	return worker
 }
@@ -254,15 +257,15 @@ func (self *worker) update() {
 		select {
 		// Handle ChainHeadEvent
 		case <-self.chainHeadCh:
-			self.commitNewWork()
-
+			self.startMining = time.Now().Unix()
+			self.commitNewWork(self.startMining)
 		case <-ticker.C:
 			// regenerate new work. In this way, we can always package transaction with highest price
 			// to current mining block.
 
 			// Note currently a single block's execution can cost more than 1 second. So regenerate new
 			// block too frequently is not cheap.
-			self.commitNewWork()
+			self.commitNewWork(self.startMining)
 			ticker.Reset(3 * time.Second)
 
 		// Handle ChainSideEvent
@@ -285,7 +288,7 @@ func (self *worker) update() {
 			} else {
 				// If we're mining, but nothing is being processed, wake on new transactions
 				if self.config.Clique != nil && self.config.Clique.Period == 0 {
-					self.commitNewWork()
+					self.commitNewWork(time.Now().Unix())
 				}
 			}
 
@@ -348,7 +351,8 @@ func (self *worker) wait() {
 			self.unconfirmed.Insert(block.NumberU64(), block.Hash())
 
 			if mustCommitNewWork {
-				self.commitNewWork()
+				self.startMining = time.Now().Unix()
+				self.commitNewWork(self.startMining)
 			}
 		}
 	}
@@ -399,7 +403,7 @@ func (self *worker) makeCurrent(parent *types.Block, header *types.Header) error
 	return nil
 }
 
-func (self *worker) commitNewWork() {
+func (self *worker) commitNewWork(tstamp int64) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.uncleMu.Lock()
@@ -410,7 +414,6 @@ func (self *worker) commitNewWork() {
 	tstart := time.Now()
 	parent := self.chain.CurrentBlock()
 
-	tstamp := tstart.Unix()
 	if parent.Time().Cmp(new(big.Int).SetInt64(tstamp)) >= 0 {
 		tstamp = parent.Time().Int64() + 1
 	}
