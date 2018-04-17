@@ -25,11 +25,19 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// secureKeyPrefix is the database key prefix used to store trie node preimages.
-var secureKeyPrefix = []byte("secure-key-")
+var (
+	// secureKeyPrefix is the database key prefix used to store trie node preimages.
+	secureKeyPrefix = []byte("secure-key-")
+	// nodeKeyPrefix is the database key prefix used to store trie nodes.
+	nodeKeyPrefix = []byte("n")
+)
 
-// secureKeyLength is the length of the above prefix + 32byte hash.
-const secureKeyLength = 11 + 32
+const (
+	// secureKeyLength is the length of the above secure prefix + 32byte hash.
+	secureKeyLength = 11 + common.HashLength
+	// nodeKeyLength is the length of the above node prefix + 32byte hash.
+	nodeKeyLength = 1 + common.HashLength
+)
 
 // DatabaseReader wraps the Get and Has method of a backing store for the trie.
 type DatabaseReader interface {
@@ -46,9 +54,10 @@ type DatabaseReader interface {
 type Database struct {
 	diskdb ethdb.Database // Persistent storage for matured trie nodes
 
-	nodes     map[common.Hash]*cachedNode // Data and references relationships of a node
-	preimages map[common.Hash][]byte      // Preimages of nodes from the secure trie
-	seckeybuf [secureKeyLength]byte       // Ephemeral buffer for calculating preimage keys
+	nodes      map[common.Hash]*cachedNode // Data and references relationships of a node
+	preimages  map[common.Hash][]byte      // Preimages of nodes from the secure trie
+	seckeybuf  [secureKeyLength]byte       // Ephemeral buffer for calculating preimage keys
+	nodekeybuf [nodeKeyLength]byte         // Ephemeral buffer for calculating trie node keys
 
 	gctime  time.Duration      // Time spent on garbage collection since last commit
 	gcnodes uint64             // Nodes garbage collected since last commit
@@ -130,7 +139,7 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 		return node.blob, nil
 	}
 	// Content unavailable in memory, attempt to retrieve from disk
-	return db.diskdb.Get(hash[:])
+	return db.diskdb.Get(db.nodeKey(hash[:]))
 }
 
 // preimage retrieves a cached trie node pre-image from memory. If it cannot be
@@ -153,6 +162,15 @@ func (db *Database) preimage(hash common.Hash) ([]byte, error) {
 // invalid on the next call.
 func (db *Database) secureKey(key []byte) []byte {
 	buf := append(db.seckeybuf[:0], secureKeyPrefix...)
+	buf = append(buf, key...)
+	return buf
+}
+
+// nodeKey returns the database key for the trie node of key, as an ephemeral
+// buffer. The caller must not hold onto the return value because it will become
+// invalid on the next call.
+func (db *Database) nodeKey(key []byte) []byte {
+	buf := append(db.nodekeybuf[:0], nodeKeyPrefix...)
 	buf = append(buf, key...)
 	return buf
 }
@@ -314,7 +332,7 @@ func (db *Database) commit(hash common.Hash, batch ethdb.Batch) error {
 			return err
 		}
 	}
-	if err := batch.Put(hash[:], node.blob); err != nil {
+	if err := batch.Put(db.nodeKey(hash[:]), node.blob); err != nil {
 		return err
 	}
 	// If we've reached an optimal match size, commit and start over

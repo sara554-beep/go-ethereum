@@ -260,6 +260,12 @@ func importChain(ctx *cli.Context) error {
 	}
 	fmt.Println(ioStats)
 
+	delayStats, err := db.LDB().GetProperty("leveldb.writedelay")
+	if err != nil {
+		utils.Fatalf("Failed to read database write delay stats: %v", err)
+	}
+	fmt.Println(delayStats)
+
 	fmt.Printf("Trie cache misses:  %d\n", trie.CacheMisses())
 	fmt.Printf("Trie cache unloads: %d\n\n", trie.CacheUnloads())
 
@@ -295,6 +301,12 @@ func importChain(ctx *cli.Context) error {
 		utils.Fatalf("Failed to read database iostats: %v", err)
 	}
 	fmt.Println(ioStats)
+
+	delayStats, err = db.LDB().GetProperty("leveldb.writedelay")
+	if err != nil {
+		utils.Fatalf("Failed to read database write delay stats: %v", err)
+	}
+	fmt.Println(delayStats)
 
 	return nil
 }
