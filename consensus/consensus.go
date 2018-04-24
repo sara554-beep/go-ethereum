@@ -107,4 +107,7 @@ type PoW interface {
 
 	// Hashrate returns the current mining hashrate of a PoW consensus engine.
 	Hashrate() float64
+
+	// Stale returns a channel for external to fetch all valid but stale solutions.
+	Stale() <-chan *types.Block
 }

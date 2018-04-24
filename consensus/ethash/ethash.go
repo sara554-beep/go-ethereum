@@ -432,6 +432,7 @@ type Ethash struct {
 	// Remote sealer related fields
 	workCh       chan *types.Block // Notification channel to push new work to remote sealer
 	resultCh     chan *types.Block // Channel used by mining threads to return result
+	staleCh      chan *types.Block // Channel used by external module to fetch stale solution.
 	fetchWorkCh  chan *sealWork    // Channel used for remote sealer to fetch mining work
 	submitWorkCh chan *mineResult  // Channel used for remote sealer to submit their mining result
 	fetchRateCh  chan chan uint64  // Channel used to gather submitted hash rate for local or remote sealer.
@@ -467,6 +468,7 @@ func New(config Config) *Ethash {
 		hashrate:     metrics.NewMeter(),
 		workCh:       make(chan *types.Block),
 		resultCh:     make(chan *types.Block),
+		staleCh:      make(chan *types.Block),
 		fetchWorkCh:  make(chan *sealWork),
 		submitWorkCh: make(chan *mineResult),
 		fetchRateCh:  make(chan chan uint64),
@@ -488,6 +490,7 @@ func NewTester() *Ethash {
 		hashrate:     metrics.NewMeter(),
 		workCh:       make(chan *types.Block),
 		resultCh:     make(chan *types.Block),
+		staleCh:      make(chan *types.Block),
 		fetchWorkCh:  make(chan *sealWork),
 		submitWorkCh: make(chan *mineResult),
 		fetchRateCh:  make(chan chan uint64),
@@ -658,6 +661,12 @@ func (ethash *Ethash) Hashrate() float64 {
 	// Gather total submitted hash rate of remote sealers.
 	total := <-resCh
 	return ethash.hashrate.Rate1() + float64(total)
+}
+
+// Stale implements PoW, exposing stale solution channel for external
+// to fetch all stale but valid solutions.
+func (ethash *Ethash) Stale() <-chan *types.Block {
+	return ethash.staleCh
 }
 
 // APIs implements consensus.Engine, returning the user facing RPC APIs.

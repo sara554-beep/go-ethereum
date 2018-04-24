@@ -19,7 +19,9 @@ package miner
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -28,6 +30,7 @@ type CpuAgent struct {
 	mu sync.Mutex
 
 	workCh        chan *Work
+	works         map[common.Hash]*Work
 	stop          chan struct{}
 	quitCurrentOp chan struct{}
 	returnCh      chan<- *Result
@@ -44,6 +47,7 @@ func NewCpuAgent(chain consensus.ChainReader, engine consensus.Engine) *CpuAgent
 		engine: engine,
 		stop:   make(chan struct{}, 1),
 		workCh: make(chan *Work, 1),
+		works:  make(map[common.Hash]*Work),
 	}
 	return miner
 }
@@ -72,9 +76,14 @@ func (self *CpuAgent) Start() {
 		return // agent already started
 	}
 	go self.update()
+
+	if _, ok := self.engine.(consensus.PoW); ok {
+		go self.submitStale()
+	}
 }
 
 func (self *CpuAgent) update() {
+	ticker := time.NewTicker(5 * time.Second)
 out:
 	for {
 		select {
@@ -85,7 +94,20 @@ out:
 			}
 			self.quitCurrentOp = make(chan struct{})
 			go self.mine(work, self.quitCurrentOp)
+			// Track the mining work
+			self.works[work.Block.HashNoNonce()] = work
 			self.mu.Unlock()
+
+		case <-ticker.C:
+			// Clear out stale mining works
+			self.mu.Lock()
+			for hash, work := range self.works {
+				if time.Since(work.createdAt) > 10*(15*time.Second) {
+					delete(self.works, hash)
+				}
+			}
+			self.mu.Unlock()
+
 		case <-self.stop:
 			self.mu.Lock()
 			if self.quitCurrentOp != nil {
@@ -93,6 +115,27 @@ out:
 				self.quitCurrentOp = nil
 			}
 			self.mu.Unlock()
+			break out
+		}
+	}
+}
+
+// submitStale polls on the stale channel provided by PoW consensus engine,
+// submits all valid but stale solution to miner.
+func (self *CpuAgent) submitStale() {
+	pow := self.engine.(consensus.PoW)
+out:
+	for {
+		select {
+		case solution := <-pow.Stale():
+			self.mu.Lock()
+			work := self.works[solution.HashNoNonce()]
+			self.mu.Unlock()
+			if work == nil {
+				continue
+			}
+			self.returnCh <- &Result{work, solution}
+		case <-self.stop:
 			break out
 		}
 	}
