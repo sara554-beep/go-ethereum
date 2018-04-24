@@ -30,6 +30,12 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"gopkg.in/fatih/set.v0"
+)
+
+const (
+	averageBlockTime   = 15 * time.Second // The average time to find a solution for mining block.
+	hashrateExpireTime = 10 * time.Second // The expire time for submitted hash rate.
 )
 
 var (
@@ -165,13 +171,49 @@ search:
 	runtime.KeepAlive(dataset)
 }
 
+// miningWork is an environment for a mining block and holds
+// all of the mining information.
+type miningWork struct {
+	block        *types.Block // Current mining block.
+	powHash      common.Hash  // Mining block's no nonce hash.
+	seedHash     common.Hash  // Relative seed hash calculated by block number.
+	target       common.Hash  // PoW target calculated by block's difficulty.
+	createdAt    time.Time    // Created time, used by evicting old work.
+	knownAnswers *set.Set     // Set of block hashes known as the correct solution.
+}
+
 // remote starts a standalone goroutine to handle remote mining related stuff.
 func (ethash *Ethash) remote() {
 	var (
-		works       = make(map[common.Hash]*types.Block)
-		rates       = make(map[common.Hash]hashrate)
-		currentWork *types.Block
+		works          = make(map[common.Hash]*miningWork)
+		rates          = make(map[common.Hash]hashrate)
+		staleSolutions = make(map[common.Hash]*types.Block)
+		currentBlock   *types.Block
 	)
+
+	// prepareWork generates a mining work for remote miner when receives a new mining block.
+	prepareWork := func(newBlock *types.Block) *miningWork {
+		block := *newBlock
+
+		// Calculate the "target" to be returned to the external sealer.
+		n := big.NewInt(1)
+		n.Lsh(n, 255)
+		n.Div(n, block.Difficulty())
+		n.Lsh(n, 1)
+		target := common.BytesToHash(n.Bytes())
+
+		work := &miningWork{
+			block:        &block,
+			powHash:      block.HashNoNonce(),
+			seedHash:     common.BytesToHash(SeedHash(block.NumberU64())),
+			target:       target,
+			createdAt:    time.Now(),
+			knownAnswers: set.New(),
+		}
+		// Track the mining work prepared for remote miner.
+		works[block.HashNoNonce()] = work
+		return work
+	}
 
 	// getWork returns a work package for external miner.
 	//
@@ -181,21 +223,15 @@ func (ethash *Ethash) remote() {
 	//   result[2], 32 bytes hex encoded boundary condition ("target"), 2^256/difficulty
 	getWork := func() ([3]string, error) {
 		var res [3]string
-		if currentWork == nil {
+		if currentBlock == nil {
 			return res, errNoMiningWork
 		}
-		res[0] = currentWork.HashNoNonce().Hex()
-		res[1] = common.BytesToHash(SeedHash(currentWork.NumberU64())).Hex()
-
-		// Calculate the "target" to be returned to the external sealer.
-		n := big.NewInt(1)
-		n.Lsh(n, 255)
-		n.Div(n, currentWork.Difficulty())
-		n.Lsh(n, 1)
-		res[2] = common.BytesToHash(n.Bytes()).Hex()
-
-		// Trace the seal work fetched by remote sealer.
-		works[currentWork.HashNoNonce()] = currentWork
+		work := works[currentBlock.HashNoNonce()]
+		if work == nil {
+			log.Warn("Missing current block's mining environment, it should never occur")
+			work = prepareWork(currentBlock)
+		}
+		res[0], res[1], res[2] = work.powHash.Hex(), work.seedHash.Hex(), work.target.Hex()
 		return res, nil
 	}
 
@@ -204,16 +240,23 @@ func (ethash *Ethash) remote() {
 	// any other error, like no pending work or stale mining result).
 	submitWork := func(nonce types.BlockNonce, mixDigest common.Hash, hash common.Hash) bool {
 		// Make sure the work submitted is present
-		block := works[hash]
-		if block == nil {
+		work := works[hash]
+		if work == nil {
 			log.Info("Work submitted but none pending", "hash", hash)
 			return false
 		}
 
-		// Verify the correctness of submitted result.
-		header := block.Header()
+		// Check duplication to prevent DoS attack.
+		header := work.block.Header()
 		header.Nonce = nonce
 		header.MixDigest = mixDigest
+		block := work.block.WithSeal(header)
+		if work.knownAnswers.Has(block.Hash()) {
+			log.Info("Work submitted but duplicate", "hash", hash)
+			return false
+		}
+
+		// Verify the correctness of submitted result.
 		if err := ethash.VerifySeal(nil, header); err != nil {
 			log.Warn("Invalid proof-of-work submitted", "hash", hash, "err", err)
 			return false
@@ -226,13 +269,35 @@ func (ethash *Ethash) remote() {
 		}
 
 		// Solutions seems to be valid, return to the miner and notify acceptance.
-		select {
-		case ethash.resultCh <- block.WithSeal(header):
-			delete(works, hash)
-			return true
-		default:
-			log.Info("Work submitted is stale", "hash", hash)
-			return false
+		if hash == currentBlock.HashNoNonce() {
+			select {
+			case ethash.resultCh <- block:
+			default:
+				// CPU miner has already found the solution, save the stale solution temporarily.
+				staleSolutions[block.Hash()] = block
+			}
+		} else {
+			// Save the stale solution temporarily.
+			staleSolutions[block.Hash()] = block
+		}
+		work.knownAnswers.Add(block.Hash())
+		return true
+	}
+
+	// submitStaleSolution passes all valid but stale solutions to the stale channel.
+	submitStaleSolution := func() {
+		var submitted int
+		for hash, solution := range staleSolutions {
+			select {
+			case ethash.staleCh <- solution:
+				submitted += 1
+				delete(staleSolutions, hash)
+			default:
+				break
+			}
+		}
+		if submitted > 0 {
+			log.Info("submitted stale solutions", "count", submitted, "remain", len(staleSolutions))
 		}
 	}
 
@@ -241,15 +306,14 @@ func (ethash *Ethash) remote() {
 
 running:
 	for {
+		submitStaleSolution()
+
 		select {
 		case block := <-ethash.workCh:
-			if currentWork != nil && block.ParentHash() != currentWork.ParentHash() {
-				// Start new round mining, throw out all previous work.
-				works = make(map[common.Hash]*types.Block)
-			}
 			// Update current work with new received block.
 			// Note same work can be past twice, happens when changing CPU threads.
-			currentWork = block
+			prepareWork(block)
+			currentBlock = block
 
 		case work := <-ethash.fetchWorkCh:
 			// Return current mining work to remote miner.
@@ -286,8 +350,17 @@ running:
 		case <-ticker.C:
 			// Clear stale submitted hash rate.
 			for id, rate := range rates {
-				if time.Since(rate.ping) > 10*time.Second {
+				if time.Since(rate.ping) > hashrateExpireTime {
 					delete(rates, id)
+				}
+			}
+			// Clear stale mining works.
+			for hash, work := range works {
+				if work.block.HashNoNonce() == currentBlock.HashNoNonce() {
+					continue
+				}
+				if time.Since(work.createdAt) > 7*averageBlockTime {
+					delete(works, hash)
 				}
 			}
 
