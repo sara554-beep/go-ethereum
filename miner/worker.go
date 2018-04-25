@@ -65,11 +65,12 @@ type Work struct {
 	config *params.ChainConfig
 	signer types.Signer
 
-	state     *state.StateDB // apply state changes here
-	ancestors *set.Set       // ancestor set (used for checking uncle parent validity)
-	family    *set.Set       // family set (used for checking uncle invalidity)
-	uncles    *set.Set       // uncle set
-	tcount    int            // tx count in cycle
+	state         *state.StateDB // apply state changes here
+	stateSnapshot *state.StateDB // snapshot for state before runs any post-transaction state modifications
+	ancestors     *set.Set       // ancestor set (used for checking uncle parent validity)
+	family        *set.Set       // family set (used for checking uncle invalidity)
+	uncles        *set.Set       // uncle set
+	tcount        int            // tx count in cycle
 
 	Block *types.Block // the new block
 
@@ -157,7 +158,6 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 
 	go worker.wait()
 	worker.commitNewWork()
-
 	return worker
 }
 
@@ -256,6 +256,20 @@ func (self *worker) update() {
 			self.uncleMu.Lock()
 			self.possibleUncles[ev.Block.Hash()] = ev.Block
 			self.uncleMu.Unlock()
+
+			// If our mining block contains less than 2 uncle blocks,
+			// add the new uncle block if valid and regenerate a mining block.
+			self.currentMu.Lock()
+			if self.current.uncles.Size() < 2 {
+				if err := self.commitUncle(self.current, ev.Block.Header()); err == nil {
+					self.current.state = self.current.stateSnapshot.Copy()
+					if err = self.finalize(); err != nil {
+						log.Warn("Failed to include new uncle block",
+							"number", ev.Block.NumberU64(), "hash", ev.Block.Hash(), "err", err)
+					}
+				}
+			}
+			self.currentMu.Unlock()
 
 		// Handle TxPreEvent
 		case ev := <-self.txCh:
@@ -495,19 +509,50 @@ func (self *worker) commitNewWork() {
 	txs := types.NewTransactionsByPriceAndNonce(self.current.signer, pending)
 	work.commitTransactions(self.mux, txs, self.chain, self.coinbase)
 
-	// Create the full block to seal with the consensus engine
-	if work.Block, err = self.engine.Finalize(self.chain, header, work.state, work.txs, uncles, work.receipts); err != nil {
-		log.Error("Failed to finalize block for sealing", "err", err)
+	// Create a state snapshot before runs any post-transaction state modifications.
+	// So that we can apply suitable transactions or add new uncle blocks
+	// based on the snapshot easily.
+	work.stateSnapshot = work.state.Copy()
+	err = self.finalize()
+	if err != nil {
+		log.Error("Failed to finalize the mining block", "err", err)
 		return
 	}
+
 	// We only care about logging if we're actually mining.
 	if atomic.LoadInt32(&self.mining) == 1 {
 		log.Info("Commit new full mining work", "number", work.Block.Number(), "txs", work.tcount, "uncles", len(uncles), "elapsed", common.PrettyDuration(time.Since(tstart)))
 		self.unconfirmed.Shift(work.Block.NumberU64() - 1)
 	}
+}
+
+// finalize runs post-transaction state modifications to generate mining block,
+// pushes it to sealer and update pending state snapshot.
+//
+// Note this function assumes the currentMu lock is already held.
+func (self *worker) finalize() error {
+	var (
+		err    error
+		work   = self.current
+		uncles []*types.Header
+	)
+
+	work.uncles.Each(func(item interface{}) bool {
+		if uncle, ok := item.(*types.Header); ok {
+			uncles = append(uncles, uncle)
+			return true
+		}
+		return false
+	})
+	// Create the full block to seal with the consensus engine
+	if work.Block, err = self.engine.Finalize(self.chain, work.header, work.state, work.txs, uncles, work.receipts); err != nil {
+		log.Error("Failed to finalize block for sealing", "err", err)
+		return err
+	}
 	// Push full work to sealer, which will replace the empty work sent before automatically.
 	self.push(work)
 	self.updateSnapshot()
+	return nil
 }
 
 func (self *worker) commitUncle(work *Work, uncle *types.Header) error {
