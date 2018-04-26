@@ -128,6 +128,7 @@ type worker struct {
 	// atomic status counters
 	running int32
 	atWork  int32
+	abort   int32 // Used to notify worker to abort the execution of transactions
 }
 
 func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase common.Address, eth Backend, mux *event.TypeMux) *worker {
@@ -260,6 +261,8 @@ func (self *worker) update() {
 		select {
 		// Handle ChainHeadEvent
 		case <-self.chainHeadCh:
+			// Abort the execution of transactions
+			atomic.StoreInt32(&self.abort, 1)
 			self.commitNewWork()
 
 		// Handle ChainSideEvent
@@ -277,7 +280,7 @@ func (self *worker) update() {
 				txs := map[common.Address]types.Transactions{acc: {ev.Tx}}
 				txset := types.NewTransactionsByPriceAndNonce(self.current.signer, txs)
 
-				self.current.commitTransactions(self.mux, txset, self.chain, self.coinbase)
+				self.current.commitTransactions(self.mux, txset, self.chain, self.coinbase, nil)
 				self.updateSnapshot()
 				self.currentMu.Unlock()
 			} else {
@@ -512,7 +515,10 @@ func (self *worker) commitNewWork() {
 		return
 	}
 	txs := types.NewTransactionsByPriceAndNonce(self.current.signer, pending)
-	work.commitTransactions(self.mux, txs, self.chain, self.coinbase)
+	if aborted := work.commitTransactions(self.mux, txs, self.chain, self.coinbase, self.abortExecution); aborted {
+		log.Info("Receive new head, abort transactions execution")
+		return
+	}
 
 	// Create the full block to seal with the consensus engine
 	if work.Block, err = self.engine.Finalize(self.chain, header, work.state, work.txs, uncles, work.receipts); err != nil {
@@ -557,12 +563,27 @@ func (self *worker) updateSnapshot() {
 	self.snapshotState = self.current.state.Copy()
 }
 
-func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsByPriceAndNonce, bc *core.BlockChain, coinbase common.Address) {
+// abortExecution checks whether we should abort transaction execution or not.
+func (self *worker) abortExecution() bool {
+	// We only care to abort execution when we are mining.
+	if self.isRunning() && atomic.LoadInt32(&self.abort) == 1 {
+		atomic.StoreInt32(&self.abort, 0)
+		return true
+	}
+	return false
+}
+
+func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsByPriceAndNonce, bc *core.BlockChain, coinbase common.Address, interrupt func() bool) (aborted bool) {
 	gp := new(core.GasPool).AddGas(env.header.GasLimit)
 
 	var coalescedLogs []*types.Log
 
 	for {
+		// Abort the transaction execution due to new head arriving.
+		if interrupt != nil && interrupt() {
+			aborted = true
+			return
+		}
 		// If we don't have enough gas for any further transactions then we're done
 		if gp.Gas() < params.TxGas {
 			log.Trace("Not enough gas for further transactions", "gp", gp)
@@ -638,6 +659,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 			}
 		}(cpy, env.tcount)
 	}
+	return
 }
 
 func (env *Work) commitTransaction(tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log) {
