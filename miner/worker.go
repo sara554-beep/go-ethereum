@@ -128,6 +128,7 @@ type worker struct {
 	// atomic status counters
 	mining int32
 	atWork int32
+	abort  int32 // Used to notify worker to abort the execution of transactions
 }
 
 func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase common.Address, eth Backend, mux *event.TypeMux) *worker {
@@ -156,7 +157,7 @@ func newWorker(config *params.ChainConfig, engine consensus.Engine, coinbase com
 	go worker.update()
 
 	go worker.wait()
-	worker.commitNewWork()
+	worker.commitNewWork(nil)
 
 	return worker
 }
@@ -249,7 +250,11 @@ func (self *worker) update() {
 		select {
 		// Handle ChainHeadEvent
 		case <-self.chainHeadCh:
-			self.commitNewWork()
+			// Abort the execution of transactions
+			atomic.StoreInt32(&self.abort, 1)
+			self.commitNewWork(func() {
+				atomic.StoreInt32(&self.abort, 0)
+			})
 
 		// Handle ChainSideEvent
 		case ev := <-self.chainSideCh:
@@ -266,13 +271,13 @@ func (self *worker) update() {
 				txs := map[common.Address]types.Transactions{acc: {ev.Tx}}
 				txset := types.NewTransactionsByPriceAndNonce(self.current.signer, txs)
 
-				self.current.commitTransactions(self.mux, txset, self.chain, self.coinbase)
+				self.current.commitTransactions(self.mux, txset, self.chain, self.coinbase, nil)
 				self.updateSnapshot()
 				self.currentMu.Unlock()
 			} else {
 				// If we're mining, but nothing is being processed, wake on new transactions
 				if self.config.Clique != nil && self.config.Clique.Period == 0 {
-					self.commitNewWork()
+					self.commitNewWork(nil)
 				}
 			}
 
@@ -335,7 +340,7 @@ func (self *worker) wait() {
 			self.unconfirmed.Insert(block.NumberU64(), block.Hash())
 
 			if mustCommitNewWork {
-				self.commitNewWork()
+				self.commitNewWork(nil)
 			}
 		}
 	}
@@ -386,13 +391,19 @@ func (self *worker) makeCurrent(parent *types.Block, header *types.Header) error
 	return nil
 }
 
-func (self *worker) commitNewWork() {
+func (self *worker) commitNewWork(resume func()) {
 	self.mu.Lock()
 	defer self.mu.Unlock()
 	self.uncleMu.Lock()
 	defer self.uncleMu.Unlock()
 	self.currentMu.Lock()
 	defer self.currentMu.Unlock()
+
+	// If we abort the transaction execution because of new chain head event,
+	// resume it now.
+	if resume != nil {
+		resume()
+	}
 
 	tstart := time.Now()
 	parent := self.chain.CurrentBlock()
@@ -493,7 +504,10 @@ func (self *worker) commitNewWork() {
 		return
 	}
 	txs := types.NewTransactionsByPriceAndNonce(self.current.signer, pending)
-	work.commitTransactions(self.mux, txs, self.chain, self.coinbase)
+	if aborted := work.commitTransactions(self.mux, txs, self.chain, self.coinbase, self.shouldAbort); aborted {
+		log.Info("Receive new head, abort transactions execution")
+		return
+	}
 
 	// Create the full block to seal with the consensus engine
 	if work.Block, err = self.engine.Finalize(self.chain, header, work.state, work.txs, uncles, work.receipts); err != nil {
@@ -538,12 +552,26 @@ func (self *worker) updateSnapshot() {
 	self.snapshotState = self.current.state.Copy()
 }
 
-func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsByPriceAndNonce, bc *core.BlockChain, coinbase common.Address) {
+// shouldAbort checks whether we should abort transaction execution or not.
+func (self *worker) shouldAbort() bool {
+	// We only care to abort execution when we are mining.
+	if atomic.LoadInt32(&self.mining) == 1 && atomic.LoadInt32(&self.abort) == 1 {
+		return true
+	}
+	return false
+}
+
+func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsByPriceAndNonce, bc *core.BlockChain, coinbase common.Address, interrupt func() bool) (aborted bool) {
 	gp := new(core.GasPool).AddGas(env.header.GasLimit)
 
 	var coalescedLogs []*types.Log
 
 	for {
+		// Abort the transaction execution due to new head arriving.
+		if interrupt != nil && interrupt() {
+			aborted = true
+			return
+		}
 		// If we don't have enough gas for any further transactions then we're done
 		if gp.Gas() < params.TxGas {
 			log.Trace("Not enough gas for further transactions", "gp", gp)
@@ -619,6 +647,7 @@ func (env *Work) commitTransactions(mux *event.TypeMux, txs *types.TransactionsB
 			}
 		}(cpy, env.tcount)
 	}
+	return
 }
 
 func (env *Work) commitTransaction(tx *types.Transaction, bc *core.BlockChain, coinbase common.Address, gp *core.GasPool) (error, []*types.Log) {
