@@ -24,8 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto/sha3"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/log"
-	"time"
 )
 
 // calculator is a utility used by the hasher to calculate the hash value of the tree node.
@@ -73,7 +71,7 @@ func (h *hasher) returnCalculator(calculator *calculator) {
 
 // hash collapses a node down into a hash node, also returning a copy of the
 // original node initialized with the computed hash to replace the original one.
-func (h *hasher) hash(n node, db *Database, force bool) (node, node, error) {
+func (h *hasher) hash(n node, calculator *calculator, db *Database, force bool) (node, node, error) {
 	// If we're not storing the node, just hashing, use available cached data
 	if hash, dirty := n.cache(); hash != nil {
 		if db == nil {
@@ -90,11 +88,11 @@ func (h *hasher) hash(n node, db *Database, force bool) (node, node, error) {
 		}
 	}
 	// Trie not processed yet or needs storage, walk the children
-	collapsed, cached, err := h.hashChildren(n, db)
+	collapsed, cached, err := h.hashChildren(n, calculator, db)
 	if err != nil {
 		return hashNode{}, n, err
 	}
-	hashed, err := h.store(collapsed, db, force)
+	hashed, err := h.store(collapsed, calculator, db, force)
 	if err != nil {
 		return hashNode{}, n, err
 	}
@@ -120,7 +118,7 @@ func (h *hasher) hash(n node, db *Database, force bool) (node, node, error) {
 // hashChildren replaces the children of a node with their hashes if the encoded
 // size of the child is larger than a hash, returning the collapsed node as well
 // as a replacement for the original node with the child hashes cached in.
-func (h *hasher) hashChildren(original node, db *Database) (node, node, error) {
+func (h *hasher) hashChildren(original node, calculator *calculator, db *Database) (node, node, error) {
 	var err error
 
 	switch n := original.(type) {
@@ -131,7 +129,7 @@ func (h *hasher) hashChildren(original node, db *Database) (node, node, error) {
 		cached.Key = common.CopyBytes(n.Key)
 
 		if _, ok := n.Val.(valueNode); !ok {
-			collapsed.Val, cached.Val, err = h.hash(n.Val, db, false)
+			collapsed.Val, cached.Val, err = h.hash(n.Val, calculator, db, false)
 			if err != nil {
 				return original, original, err
 			}
@@ -144,7 +142,6 @@ func (h *hasher) hashChildren(original node, db *Database) (node, node, error) {
 	case *fullNode:
 		// Hash the full node's children, caching the newly hashed subtrees
 		collapsed, cached := n.copy(), n.copy()
-		var discard int
 
 		// hashChild is a helper to hash a single child, which is called either on the
 		// same thread as the caller or in a goroutine for the toplevel branching.
@@ -155,16 +152,13 @@ func (h *hasher) hashChildren(original node, db *Database) (node, node, error) {
 			// Ensure that nil children are encoded as empty strings.
 			if collapsed.Children[index] == nil {
 				collapsed.Children[index] = valueNode(nil)
-				discard += 1
 				return
 			}
-			start := time.Now()
-			defer func() {
-				log.Info("hash child done", "index", index, "elapsed", time.Since(start))
-			}()
+			calculator := h.newCalculator()
+			defer h.returnCalculator(calculator)
 			// Hash all other children properly
 			var herr error
-			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], db, false)
+			collapsed.Children[index], cached.Children[index], herr = h.hash(n.Children[index], calculator, db, false)
 			if herr != nil {
 				err = herr
 			}
@@ -181,8 +175,6 @@ func (h *hasher) hashChildren(original node, db *Database) (node, node, error) {
 				go hashChild(i, &wg)
 			}
 			wg.Wait()
-
-			log.Warn("hash node finish", "thread", 16-discard)
 
 			// Reenable threading for subsequent hash calls
 			h.threaded = false
@@ -208,14 +200,19 @@ func (h *hasher) hashChildren(original node, db *Database) (node, node, error) {
 // store hashes the node n and if we have a storage layer specified, it writes
 // the key/value pair to it and tracks any node->child references as well as any
 // node->external trie references.
-func (h *hasher) store(n node, db *Database, force bool) (node, error) {
+func (h *hasher) store(n node, calculator *calculator, db *Database, force bool) (node, error) {
 	// Don't store hashes or empty nodes.
 	if _, isHash := n.(hashNode); n == nil || isHash {
 		return n, nil
 	}
 	// Generate the RLP encoding of the node
-	calculator := h.newCalculator()
-	defer h.returnCalculator(calculator)
+	if calculator == nil {
+		calculator = h.newCalculator()
+		defer h.returnCalculator(calculator)
+	} else {
+		calculator.buffer.Reset()
+		calculator.sha.Reset()
+	}
 	if err := rlp.Encode(calculator.buffer, n); err != nil {
 		panic("encode error: " + err.Error())
 	}
