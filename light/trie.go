@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie"
+	"time"
 )
 
 func NewState(ctx context.Context, head *types.Header, odr OdrBackend) *state.StateDB {
@@ -87,6 +88,13 @@ func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, er
 
 func (db *odrDatabase) TrieDB() *trie.Database {
 	return nil
+}
+
+func (db *odrDatabase) HashDuration() time.Duration {
+	return 0
+}
+
+func (db *odrDatabase) CleanDuration() {
 }
 
 type odrTrie struct {

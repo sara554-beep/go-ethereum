@@ -21,6 +21,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
+	"time"
 )
 
 // SecureTrie wraps a trie with key hashing. In a secure trie, all
@@ -38,6 +39,7 @@ type SecureTrie struct {
 	hashKeyBuf       [common.HashLength]byte
 	secKeyCache      map[string][]byte
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key cache on mismatch
+	hashDuration     time.Duration
 }
 
 // NewSecure creates a trie with an existing root node from a backing database
@@ -152,6 +154,10 @@ func (t *SecureTrie) Commit(onleaf LeafCallback) (root common.Hash, err error) {
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database
+	start := time.Now()
+	defer func() {
+		t.hashDuration += time.Since(start)
+	}()
 	return t.trie.Commit(onleaf)
 }
 
@@ -165,6 +171,7 @@ func (t *SecureTrie) Root() []byte {
 
 func (t *SecureTrie) Copy() *SecureTrie {
 	cpy := *t
+	t.hashDuration = 0
 	return &cpy
 }
 
@@ -172,6 +179,10 @@ func (t *SecureTrie) Copy() *SecureTrie {
 // starts at the key after the given start key.
 func (t *SecureTrie) NodeIterator(start []byte) NodeIterator {
 	return t.trie.NodeIterator(start)
+}
+
+func (t *SecureTrie) Duration() time.Duration {
+	return t.hashDuration
 }
 
 // hashKey returns the hash of key as an ephemeral buffer.

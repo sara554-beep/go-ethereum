@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
+	"time"
 )
 
 // Trie cache generation limit after which to evict trie nodes from memory.
@@ -57,6 +58,10 @@ type Database interface {
 
 	// TrieDB retrieves the low level trie database used for data storage.
 	TrieDB() *trie.Database
+
+	HashDuration() time.Duration
+
+	CleanDuration()
 }
 
 // Trie is a Ethereum Merkle Trie.
@@ -88,6 +93,7 @@ type cachingDB struct {
 	mu            sync.Mutex
 	pastTries     []*trie.SecureTrie
 	codeSizeCache *lru.Cache
+	hashDuration  time.Duration
 }
 
 // OpenTrie opens the main account trie.
@@ -117,6 +123,7 @@ func (db *cachingDB) pushTrie(t *trie.SecureTrie) {
 	} else {
 		db.pastTries = append(db.pastTries, t)
 	}
+	db.hashDuration += t.Duration()
 }
 
 // OpenStorageTrie opens the storage trie of an account.
@@ -157,6 +164,15 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 // TrieDB retrieves any intermediate trie-node caching layer.
 func (db *cachingDB) TrieDB() *trie.Database {
 	return db.db
+}
+
+// TrieDB retrieves any intermediate trie-node caching layer.
+func (db *cachingDB) HashDuration() time.Duration {
+	return db.hashDuration
+}
+
+func (db *cachingDB) CleanDuration() {
+	db.hashDuration = 0
 }
 
 // cachedTrie inserts its trie into a cachingDB on commit.

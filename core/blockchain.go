@@ -1184,7 +1184,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 		}
 		stats.processed++
 		stats.usedGas += usedGas
-		stats.report(chain, i, bc.stateCache.TrieDB().Size())
+		stats.report(chain, i, bc.stateCache.TrieDB().Size(), bc)
 	}
 	// Append a single chain head event if we've progressed the chain
 	if lastCanon != nil && bc.CurrentBlock().Hash() == lastCanon.Hash() {
@@ -1207,7 +1207,7 @@ const statsReportLimit = 8 * time.Second
 
 // report prints statistics if some number of blocks have been processed
 // or more than a few seconds have passed since the last message.
-func (st *insertStats) report(chain []*types.Block, index int, cache common.StorageSize) {
+func (st *insertStats) report(chain []*types.Block, index int, cache common.StorageSize, bc *BlockChain) {
 	// Fetch the timings for the batch
 	var (
 		now     = mclock.Now()
@@ -1222,7 +1222,7 @@ func (st *insertStats) report(chain []*types.Block, index int, cache common.Stor
 		context := []interface{}{
 			"blocks", st.processed, "txs", txs, "mgas", float64(st.usedGas) / 1000000,
 			"elapsed", common.PrettyDuration(elapsed), "mgasps", float64(st.usedGas) * 1000 / float64(elapsed),
-			"number", end.Number(), "hash", end.Hash(), "cache", cache,
+			"number", end.Number(), "hash", end.Hash(), "cache", cache, "hash duration", bc.stateCache.HashDuration(),
 		}
 		if st.queued > 0 {
 			context = append(context, []interface{}{"queued", st.queued}...)
@@ -1233,6 +1233,7 @@ func (st *insertStats) report(chain []*types.Block, index int, cache common.Stor
 		log.Info("Imported new chain segment", context...)
 
 		*st = insertStats{startTime: now, lastIndex: index + 1}
+		bc.stateCache.CleanDuration()
 	}
 }
 
