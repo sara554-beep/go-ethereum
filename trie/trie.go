@@ -473,5 +473,5 @@ func (t *Trie) hashRoot(db *Database, onleaf LeafCallback) (node, node, error) {
 		return hashNode(emptyRoot.Bytes()), nil, nil
 	}
 	h := newHasher(t.cachegen, t.cachelimit, onleaf)
-	return h.hash(t.root, db, true)
+	return h.hash(t.root, nil, db, true)
 }
