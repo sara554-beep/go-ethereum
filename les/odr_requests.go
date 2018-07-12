@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -352,9 +353,9 @@ type ChtRequest light.ChtRequest
 func (r *ChtRequest) GetCost(peer *peer) uint64 {
 	switch peer.version {
 	case lpv1:
-		return peer.GetRequestCost(GetHeaderProofsMsg, 1)
+		return peer.GetRequestCost(GetHeaderProofsMsg, len(r.BlockNum))
 	case lpv2:
-		return peer.GetRequestCost(GetHelperTrieProofsMsg, 1)
+		return peer.GetRequestCost(GetHelperTrieProofsMsg, len(r.BlockNum))
 	default:
 		panic(nil)
 	}
@@ -365,21 +366,27 @@ func (r *ChtRequest) CanSend(peer *peer) bool {
 	peer.lock.RLock()
 	defer peer.lock.RUnlock()
 
+	// TODO(rjl493456442) Support untrust header request for checkpoint syncing
 	return peer.headInfo.Number >= light.HelperTrieConfirmations && r.ChtNum <= (peer.headInfo.Number-light.HelperTrieConfirmations)/light.CHTFrequencyClient
 }
 
 // Request sends an ODR request to the LES network (implementation of LesOdrRequest)
 func (r *ChtRequest) Request(reqID uint64, peer *peer) error {
+	var (
+		encNum [8]byte
+		req    []HelperTrieReq
+	)
 	peer.Log().Debug("Requesting CHT", "cht", r.ChtNum, "block", r.BlockNum)
-	var encNum [8]byte
-	binary.BigEndian.PutUint64(encNum[:], r.BlockNum)
-	req := HelperTrieReq{
-		Type:    htCanonical,
-		TrieIdx: r.ChtNum,
-		Key:     encNum[:],
-		AuxReq:  auxHeader,
+	for _, num := range r.BlockNum {
+		binary.BigEndian.PutUint64(encNum[:], num)
+		req = append(req, HelperTrieReq{
+			Type:    htCanonical,
+			TrieIdx: r.ChtNum,
+			Key:     encNum[:],
+			AuxReq:  auxHeader,
+		})
 	}
-	return peer.RequestHelperTrieProofs(reqID, r.GetCost(peer), []HelperTrieReq{req})
+	return peer.RequestHelperTrieProofs(reqID, r.GetCost(peer), req)
 }
 
 // Valid processes an ODR request reply message from the LES network
@@ -390,73 +397,88 @@ func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
 
 	switch msg.MsgType {
 	case MsgHeaderProofs: // LES/1 backwards compatibility
-		proofs := msg.Obj.([]ChtResp)
-		if len(proofs) != 1 {
+		resps := msg.Obj.([]ChtResp)
+		if len(resps) != len(r.BlockNum) {
 			return errInvalidEntryCount
 		}
-		proof := proofs[0]
+		var (
+			headers   []*types.Header
+			tds       []*big.Int
+			encNumber [8]byte
+			node      light.ChtNode
+			nodeset   = light.NewNodeSet()
+		)
+		for i, num := range r.BlockNum {
+			resp := resps[i]
+			// Verify the CHT
+			binary.BigEndian.PutUint64(encNumber[:], num)
+			value, _, err := trie.VerifyProof(r.ChtRoot, encNumber[:], light.NodeList(resp.Proof).NodeSet())
+			if err != nil {
+				return err
+			}
+			if err := rlp.DecodeBytes(value, &node); err != nil {
+				return err
+			}
+			if node.Hash != resp.Header.Hash() {
+				return errCHTHashMismatch
+			}
+			if num != resp.Header.Number.Uint64() {
+				return errCHTNumberMismatch
+			}
+			// Verifications passed, store temporarily
+			headers = append(headers, resp.Header)
+			tds = append(tds, node.Td)
+			light.NodeList(resp.Proof).Store(nodeset)
+		}
+		r.Header = headers
+		r.Td = tds
+		r.Proof = nodeset
 
-		// Verify the CHT
-		var encNumber [8]byte
-		binary.BigEndian.PutUint64(encNumber[:], r.BlockNum)
-
-		value, _, err := trie.VerifyProof(r.ChtRoot, encNumber[:], light.NodeList(proof.Proof).NodeSet())
-		if err != nil {
-			return err
-		}
-		var node light.ChtNode
-		if err := rlp.DecodeBytes(value, &node); err != nil {
-			return err
-		}
-		if node.Hash != proof.Header.Hash() {
-			return errCHTHashMismatch
-		}
-		// Verifications passed, store and return
-		r.Header = proof.Header
-		r.Proof = light.NodeList(proof.Proof).NodeSet()
-		r.Td = node.Td
 	case MsgHelperTrieProofs:
+		// Check if the number of items in the response is the same as we requested.
 		resp := msg.Obj.(HelperTrieResps)
-		if len(resp.AuxData) != 1 {
+		if len(resp.AuxData) != len(r.BlockNum) {
 			return errInvalidEntryCount
 		}
-		nodeSet := resp.Proofs.NodeSet()
-		headerEnc := resp.AuxData[0]
-		if len(headerEnc) == 0 {
-			return errHeaderUnavailable
+		var (
+			headers   []*types.Header
+			tds       []*big.Int
+			encNumber [8]byte
+			node      light.ChtNode
+			nodeSet   = resp.Proofs.NodeSet()
+		)
+		for i, num := range r.BlockNum {
+			enc := resp.AuxData[i]
+			if len(enc) == 0 {
+				return errHeaderUnavailable
+			}
+			header := new(types.Header)
+			if err := rlp.DecodeBytes(enc, header); err != nil {
+				return errHeaderUnavailable
+			}
+			// Verify the CHT
+			binary.BigEndian.PutUint64(encNumber[:], num)
+			value, _, err := trie.VerifyProof(r.ChtRoot, encNumber[:], nodeSet)
+			if err != nil {
+				return fmt.Errorf("merkle proof verification failed: %v", err)
+			}
+			if err := rlp.DecodeBytes(value, &node); err != nil {
+				return err
+			}
+			if node.Hash != header.Hash() {
+				return errCHTHashMismatch
+			}
+			if num != header.Number.Uint64() {
+				return errCHTNumberMismatch
+			}
+			// Verifications passed, store temporarily
+			headers = append(headers, header)
+			tds = append(tds, node.Td)
 		}
-		header := new(types.Header)
-		if err := rlp.DecodeBytes(headerEnc, header); err != nil {
-			return errHeaderUnavailable
-		}
-
-		// Verify the CHT
-		var encNumber [8]byte
-		binary.BigEndian.PutUint64(encNumber[:], r.BlockNum)
-
-		reads := &readTraceDB{db: nodeSet}
-		value, _, err := trie.VerifyProof(r.ChtRoot, encNumber[:], reads)
-		if err != nil {
-			return fmt.Errorf("merkle proof verification failed: %v", err)
-		}
-		if len(reads.reads) != nodeSet.KeyCount() {
-			return errUselessNodes
-		}
-
-		var node light.ChtNode
-		if err := rlp.DecodeBytes(value, &node); err != nil {
-			return err
-		}
-		if node.Hash != header.Hash() {
-			return errCHTHashMismatch
-		}
-		if r.BlockNum != header.Number.Uint64() {
-			return errCHTNumberMismatch
-		}
-		// Verifications passed, store and return
-		r.Header = header
+		r.Header = headers
+		r.Td = tds
 		r.Proof = nodeSet
-		r.Td = node.Td
+
 	default:
 		return errInvalidMessageType
 	}
