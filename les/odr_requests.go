@@ -353,9 +353,9 @@ type ChtRequest light.ChtRequest
 func (r *ChtRequest) GetCost(peer *peer) uint64 {
 	switch peer.version {
 	case lpv1:
-		return peer.GetRequestCost(GetHeaderProofsMsg, len(r.BlockNum))
+		return peer.GetRequestCost(GetHeaderProofsMsg, len(r.Numbers))
 	case lpv2:
-		return peer.GetRequestCost(GetHelperTrieProofsMsg, len(r.BlockNum))
+		return peer.GetRequestCost(GetHelperTrieProofsMsg, len(r.Numbers))
 	default:
 		panic(nil)
 	}
@@ -372,12 +372,10 @@ func (r *ChtRequest) CanSend(peer *peer) bool {
 
 // Request sends an ODR request to the LES network (implementation of LesOdrRequest)
 func (r *ChtRequest) Request(reqID uint64, peer *peer) error {
-	var (
-		encNum [8]byte
-		req    []HelperTrieReq
-	)
-	peer.Log().Debug("Requesting CHT", "cht", r.ChtNum, "block", r.BlockNum)
-	for _, num := range r.BlockNum {
+	req := make([]HelperTrieReq, len(r.Numbers))
+	peer.Log().Debug("Requesting CHT", "cht", r.ChtNum, "block", r.Numbers)
+	for _, num := range r.Numbers {
+		var encNum [8]byte
 		binary.BigEndian.PutUint64(encNum[:], num)
 		req = append(req, HelperTrieReq{
 			Type:    htCanonical,
@@ -393,22 +391,21 @@ func (r *ChtRequest) Request(reqID uint64, peer *peer) error {
 // returns true and stores results in memory if the message was a valid reply
 // to the request (implementation of LesOdrRequest)
 func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
-	log.Debug("Validating CHT", "cht", r.ChtNum, "block", r.BlockNum)
+	log.Debug("Validating CHT", "cht", r.ChtNum, "block", r.Numbers)
 
 	switch msg.MsgType {
 	case MsgHeaderProofs: // LES/1 backwards compatibility
 		resps := msg.Obj.([]ChtResp)
-		if len(resps) != len(r.BlockNum) {
+		if len(resps) != len(r.Numbers) {
 			return errInvalidEntryCount
 		}
 		var (
 			headers   []*types.Header
 			tds       []*big.Int
 			encNumber [8]byte
-			node      light.ChtNode
 			nodeset   = light.NewNodeSet()
 		)
-		for i, num := range r.BlockNum {
+		for i, num := range r.Numbers {
 			resp := resps[i]
 			// Verify the CHT
 			binary.BigEndian.PutUint64(encNumber[:], num)
@@ -416,6 +413,7 @@ func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
 			if err != nil {
 				return err
 			}
+			var node light.ChtNode
 			if err := rlp.DecodeBytes(value, &node); err != nil {
 				return err
 			}
@@ -430,24 +428,23 @@ func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
 			tds = append(tds, node.Td)
 			light.NodeList(resp.Proof).Store(nodeset)
 		}
-		r.Header = headers
-		r.Td = tds
+		r.Headers = headers
+		r.Tds = tds
 		r.Proof = nodeset
 
 	case MsgHelperTrieProofs:
 		// Check if the number of items in the response is the same as we requested.
 		resp := msg.Obj.(HelperTrieResps)
-		if len(resp.AuxData) != len(r.BlockNum) {
+		if len(resp.AuxData) != len(r.Numbers) {
 			return errInvalidEntryCount
 		}
 		var (
 			headers   []*types.Header
 			tds       []*big.Int
 			encNumber [8]byte
-			node      light.ChtNode
 			nodeSet   = resp.Proofs.NodeSet()
 		)
-		for i, num := range r.BlockNum {
+		for i, num := range r.Numbers {
 			enc := resp.AuxData[i]
 			if len(enc) == 0 {
 				return errHeaderUnavailable
@@ -462,6 +459,7 @@ func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
 			if err != nil {
 				return fmt.Errorf("merkle proof verification failed: %v", err)
 			}
+			var node light.ChtNode
 			if err := rlp.DecodeBytes(value, &node); err != nil {
 				return err
 			}
@@ -475,8 +473,8 @@ func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
 			headers = append(headers, header)
 			tds = append(tds, node.Td)
 		}
-		r.Header = headers
-		r.Td = tds
+		r.Headers = headers
+		r.Tds = tds
 		r.Proof = nodeSet
 
 	default:
