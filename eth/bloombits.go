@@ -19,6 +19,7 @@ package eth
 import (
 	"time"
 
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/bitutil"
 	"github.com/ethereum/go-ethereum/core"
@@ -26,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
@@ -61,9 +61,9 @@ func (eth *Ethereum) startBloomHandlers() {
 					task := <-request
 					task.Bitsets = make([][]byte, len(task.Sections))
 					for i, section := range task.Sections {
-						head := rawdb.ReadCanonicalHash(eth.chainDb, (section+1)*params.BloomBitsBlocks-1)
+						head := rawdb.ReadCanonicalHash(eth.chainDb, (section+1)*BloomBitsBlocks-1)
 						if compVector, err := rawdb.ReadBloomBits(eth.chainDb, task.Bit, section, head); err == nil {
-							if blob, err := bitutil.DecompressBytes(compVector, int(params.BloomBitsBlocks)/8); err == nil {
+							if blob, err := bitutil.DecompressBytes(compVector, int(BloomBitsBlocks)/8); err == nil {
 								task.Bitsets[i] = blob
 							} else {
 								task.Error = err
@@ -80,9 +80,13 @@ func (eth *Ethereum) startBloomHandlers() {
 }
 
 const (
-	// bloomConfirms is the number of confirmation blocks before a bloom section is
+	// BloomBitsBlocks is the number of blocks a single bloom bit section vector
+	// contains.
+	BloomBitsBlocks uint64 = 4096
+
+	// BloomConfirms is the number of confirmation blocks before a bloom section is
 	// considered probably final and its rotated bits are calculated.
-	bloomConfirms = 256
+	BloomConfirms = 256
 
 	// bloomThrottling is the time to wait between processing two consecutive index
 	// sections. It's useful during chain upgrades to prevent disk overload.
@@ -103,14 +107,14 @@ type BloomIndexer struct {
 
 // NewBloomIndexer returns a chain indexer that generates bloom bits data for the
 // canonical chain for fast logs filtering.
-func NewBloomIndexer(db ethdb.Database, size uint64) *core.ChainIndexer {
+func NewBloomIndexer(db ethdb.Database, size uint64, confirm uint64) *core.ChainIndexer {
 	backend := &BloomIndexer{
 		db:   db,
 		size: size,
 	}
 	table := ethdb.NewTable(db, string(rawdb.BloomBitsIndexPrefix))
 
-	return core.NewChainIndexer(db, table, backend, size, bloomConfirms, bloomThrottling, "bloombits")
+	return core.NewChainIndexer(db, table, backend, size, confirm, bloomThrottling, "bloombits")
 }
 
 // Reset implements core.ChainIndexerBackend, starting a new bloombits index
@@ -126,6 +130,7 @@ func (b *BloomIndexer) Reset(section uint64, lastSectionHead common.Hash) error 
 func (b *BloomIndexer) Process(header *types.Header) {
 	b.gen.AddBloom(uint(header.Number.Uint64()-b.section*b.size), header.Bloom)
 	b.head = header.Hash()
+	fmt.Println("bloom indexer process", header.Hash().Hex(), header.Number)
 }
 
 // Commit implements core.ChainIndexerBackend, finalizing the bloom section and
@@ -140,5 +145,6 @@ func (b *BloomIndexer) Commit() error {
 		}
 		rawdb.WriteBloomBits(batch, uint(i), b.section, b.head, bitutil.CompressBytes(bits))
 	}
+	fmt.Printf("write bloom bits %d head %s db %p\n", b.section, b.head.Hex(), b.db)
 	return batch.Write()
 }

@@ -63,12 +63,13 @@ func NewLesServer(eth *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 	}
 
 	srv := &LesServer{
-		config:           config,
-		protocolManager:  pm,
-		quitSync:         quitSync,
-		lesTopics:        lesTopics,
-		chtIndexer:       light.NewChtIndexer(eth.ChainDb(), false),
-		bloomTrieIndexer: light.NewBloomTrieIndexer(eth.ChainDb(), false),
+		config:          config,
+		protocolManager: pm,
+		quitSync:        quitSync,
+		lesTopics:       lesTopics,
+		chtIndexer:      light.NewChtIndexer(eth.ChainDb(), light.CHTFrequencyServer, light.HelperTrieProcessConfirmations),
+		bloomTrieIndexer: light.NewBloomTrieIndexer(eth.ChainDb(), light.EthBloomBitsSection, light.EthBloomBitsConfirmations,
+			light.BloomTrieFrequency, light.HelperTrieProcessConfirmations),
 	}
 	logger := log.New()
 

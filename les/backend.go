@@ -95,20 +95,21 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 	quitSync := make(chan struct{})
 
 	leth := &LightEthereum{
-		config:           config,
-		chainConfig:      chainConfig,
-		chainDb:          chainDb,
-		eventMux:         ctx.EventMux,
-		peers:            peers,
-		reqDist:          newRequestDistributor(peers, quitSync),
-		accountManager:   ctx.AccountManager,
-		engine:           eth.CreateConsensusEngine(ctx, &config.Ethash, chainConfig, chainDb),
-		shutdownChan:     make(chan bool),
-		networkId:        config.NetworkId,
-		bloomRequests:    make(chan chan *bloombits.Retrieval),
-		bloomIndexer:     eth.NewBloomIndexer(chainDb, light.BloomTrieFrequency),
-		chtIndexer:       light.NewChtIndexer(chainDb, true),
-		bloomTrieIndexer: light.NewBloomTrieIndexer(chainDb, true),
+		config:         config,
+		chainConfig:    chainConfig,
+		chainDb:        chainDb,
+		eventMux:       ctx.EventMux,
+		peers:          peers,
+		reqDist:        newRequestDistributor(peers, quitSync),
+		accountManager: ctx.AccountManager,
+		engine:         eth.CreateConsensusEngine(ctx, &config.Ethash, chainConfig, chainDb),
+		shutdownChan:   make(chan bool),
+		networkId:      config.NetworkId,
+		bloomRequests:  make(chan chan *bloombits.Retrieval),
+		bloomIndexer:   eth.NewBloomIndexer(chainDb, light.BloomTrieFrequency, eth.BloomConfirms),
+		chtIndexer:     light.NewChtIndexer(chainDb, light.CHTFrequencyClient, light.HelperTrieConfirmations),
+		bloomTrieIndexer: light.NewBloomTrieIndexer(chainDb, light.BloomTrieFrequency, light.EthBloomBitsConfirmations,
+			light.BloomTrieFrequency, light.HelperTrieConfirmations),
 	}
 
 	leth.relay = NewLesTxRelay(peers, leth.reqDist)

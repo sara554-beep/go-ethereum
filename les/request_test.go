@@ -83,7 +83,7 @@ func tfCodeAccess(db ethdb.Database, bhash common.Hash, num uint64) light.OdrReq
 
 func testAccess(t *testing.T, protocol int, fn accessTestFn) {
 	// Assemble the test environment
-	server, client := newClientServerEnv(t, 4, protocol)
+	server, client := newClientServerEnv(t, &clientServerConfig{protocol: protocol, blocks: 4})
 	client.pm.synchronise(client.remotePeer)
 
 	test := func(expFail uint64) {

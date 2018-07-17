@@ -300,9 +300,10 @@ func (c *ChainIndexer) updateLoop() {
 					c.log.Error("Section processing failed", "error", err)
 				}
 				c.lock.Lock()
-
+				fmt.Println("process section", section, "err", err)
 				// If processing succeeded and no reorgs occcurred, mark the section completed
 				if err == nil && oldHead == c.SectionHead(section-1) {
+					fmt.Println("Store section head", section)
 					c.setSectionHead(section, newHead)
 					c.setValidSections(section + 1)
 					if c.storedSections == c.knownSections && updating {
@@ -313,6 +314,7 @@ func (c *ChainIndexer) updateLoop() {
 					c.cascadedHead = c.storedSections*c.sectionSize - 1
 					for _, child := range c.children {
 						c.log.Trace("Cascading chain index update", "head", c.cascadedHead)
+						fmt.Println("update child head")
 						child.newHead(c.cascadedHead, false)
 					}
 				} else {
@@ -343,12 +345,12 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 	c.log.Trace("Processing new chain section", "section", section)
 
 	// Reset and partial processing
-
 	if err := c.backend.Reset(section, lastHead); err != nil {
 		c.setValidSections(0)
 		return common.Hash{}, err
 	}
 
+	fmt.Println("process section", section, "begin", "size", c.sectionSize)
 	for number := section * c.sectionSize; number < (section+1)*c.sectionSize; number++ {
 		hash := rawdb.ReadCanonicalHash(c.chainDb, number)
 		if hash == (common.Hash{}) {
@@ -363,6 +365,7 @@ func (c *ChainIndexer) processSection(section uint64, lastHead common.Hash) (com
 		c.backend.Process(header)
 		lastHead = header.Hash()
 	}
+	fmt.Println("process section", section, "finish")
 	if err := c.backend.Commit(); err != nil {
 		c.log.Error("Section commit failed", "error", err)
 		return common.Hash{}, err

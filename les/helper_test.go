@@ -319,31 +319,76 @@ func (p *testPeer) close() {
 	p.app.Close()
 }
 
-// TestEntity represents a network entity for testing with necessary auxiliary fields.
-type TestEntity struct {
+// testEntity represents a network entity for testing with necessary auxiliary fields.
+type testEntity struct {
 	db         ethdb.Database
 	remotePeer *peer
 	peers      *peerSet
 	pm         *ProtocolManager
 }
 
+// indexerConfig defines a set of chain indexer configs.
+type indexerConfig struct {
+	chtSize          uint64
+	chtConfirm       uint64
+	bloomSize        uint64
+	bloomConfirm     uint64
+	bloomTrieSize    uint64
+	bloomTrieConfirm uint64
+}
+
+// clientServerConf defines a set of configs for c/s arch test environment.
+type clientServerConfig struct {
+	protocol      int
+	blocks        int
+	connect       bool
+	serverIndexer *indexerConfig
+	clientIndexer *indexerConfig
+}
+
+var (
+	defaultServerIndexerConfig = &indexerConfig{
+		chtSize:          light.CHTFrequencyServer,
+		chtConfirm:       light.HelperTrieProcessConfirmations,
+		bloomSize:        eth.BloomBitsBlocks,
+		bloomConfirm:     eth.BloomConfirms,
+		bloomTrieSize:    light.BloomTrieFrequency,
+		bloomTrieConfirm: light.HelperTrieProcessConfirmations,
+	}
+
+	defaultClientIndexerConfig = &indexerConfig{
+		chtSize:          light.CHTFrequencyClient,
+		chtConfirm:       light.HelperTrieConfirmations,
+		bloomSize:        light.BloomTrieFrequency,
+		bloomConfirm:     eth.BloomConfirms,
+		bloomTrieSize:    light.BloomTrieFrequency,
+		bloomTrieConfirm: light.HelperTrieConfirmations,
+	}
+)
+
 // newClientServerEnv setups a client/server arch environment with a connected les server and light client pair
 // for testing purpose.
-func newClientServerEnv(t *testing.T, blocks int, protocol int) (*TestEntity, *TestEntity) {
+func newClientServerEnv(t *testing.T, config *clientServerConfig) (*testEntity, *testEntity) {
 	db, ldb := ethdb.NewMemDatabase(), ethdb.NewMemDatabase()
 	peers, lPeers := newPeerSet(), newPeerSet()
 
+	// Don't panic for lazy user
+	if config.serverIndexer == nil {
+		config.serverIndexer = defaultServerIndexerConfig
+	}
+	if config.clientIndexer == nil {
+		config.clientIndexer = defaultClientIndexerConfig
+	}
+
 	createOdr := func(clientMode bool, peers *peerSet) *LesOdr {
-		db := db
-		bsize := params.BloomBitsBlocks
+		db, iconfig := db, config.serverIndexer
 		if clientMode {
-			db = ldb
-			bsize = light.BloomTrieFrequency
+			db, iconfig = ldb, config.clientIndexer
 		}
-		// Create indexers
-		chtIndexer := light.NewChtIndexer(db, clientMode)
-		bloomIndexer := eth.NewBloomIndexer(db, bsize)
-		bloomTrieIndexer := light.NewBloomTrieIndexer(db, clientMode)
+		chtIndexer := light.NewChtIndexer(db, iconfig.chtSize, iconfig.chtConfirm)
+		bloomIndexer := eth.NewBloomIndexer(db, iconfig.bloomSize, iconfig.bloomConfirm)
+		bloomTrieIndexer := light.NewBloomTrieIndexer(db, iconfig.bloomSize, iconfig.bloomConfirm,
+			iconfig.bloomTrieSize, iconfig.bloomTrieConfirm)
 		bloomIndexer.AddChildIndexer(bloomTrieIndexer)
 
 		dist := newRequestDistributor(peers, make(chan struct{}))
@@ -361,26 +406,33 @@ func newClientServerEnv(t *testing.T, blocks int, protocol int) (*TestEntity, *T
 		}
 	}
 
-	pm := newTestProtocolManagerMust(t, false, blocks, testChainGen, createOdr(false, peers), peers, db)
+	pm := newTestProtocolManagerMust(t, false, config.blocks, testChainGen, createOdr(false, peers), peers, db)
 	lpm := newTestProtocolManagerMust(t, true, 0, nil, createOdr(true, lPeers), lPeers, ldb)
 	startIndexers(false, pm)
 	startIndexers(true, lpm)
 
-	peer, err1, lPeer, err2 := newTestPeerPair("peer", protocol, pm, lpm)
-	select {
-	case <-time.After(time.Millisecond * 100):
-	case err := <-err1:
-		t.Fatalf("peer 1 handshake error: %v", err)
-	case err := <-err2:
-		t.Fatalf("peer 2 handshake error: %v", err)
+	var (
+		peer, lPeer *peer
+		err1, err2  <-chan error
+	)
+
+	if config.connect {
+		peer, err1, lPeer, err2 = newTestPeerPair("peer", config.protocol, pm, lpm)
+		select {
+		case <-time.After(time.Millisecond * 100):
+		case err := <-err1:
+			t.Fatalf("peer 1 handshake error: %v", err)
+		case err := <-err2:
+			t.Fatalf("peer 2 handshake error: %v", err)
+		}
 	}
 
-	return &TestEntity{
+	return &testEntity{
 			db:         db,
 			pm:         pm,
 			remotePeer: peer,
 			peers:      peers,
-		}, &TestEntity{
+		}, &testEntity{
 			db:         ldb,
 			pm:         lpm,
 			remotePeer: lPeer,

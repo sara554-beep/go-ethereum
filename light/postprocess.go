@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"time"
 
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/bitutil"
 	"github.com/ethereum/go-ethereum/core"
@@ -127,22 +128,14 @@ type ChtIndexerBackend struct {
 }
 
 // NewBloomTrieIndexer creates a BloomTrie chain indexer
-func NewChtIndexer(db ethdb.Database, clientMode bool) *core.ChainIndexer {
-	var sectionSize, confirmReq uint64
-	if clientMode {
-		sectionSize = CHTFrequencyClient
-		confirmReq = HelperTrieConfirmations
-	} else {
-		sectionSize = CHTFrequencyServer
-		confirmReq = HelperTrieProcessConfirmations
-	}
+func NewChtIndexer(db ethdb.Database, size, confirmReq uint64) *core.ChainIndexer {
 	idb := ethdb.NewTable(db, "chtIndex-")
 	backend := &ChtIndexerBackend{
 		diskdb:      db,
 		triedb:      trie.NewDatabase(ethdb.NewTable(db, ChtTablePrefix)),
-		sectionSize: sectionSize,
+		sectionSize: size,
 	}
-	return core.NewChainIndexer(db, idb, backend, sectionSize, confirmReq, time.Millisecond*100, "cht")
+	return core.NewChainIndexer(db, idb, backend, size, confirmReq, time.Millisecond*100, "cht")
 }
 
 // Reset implements core.ChainIndexerBackend
@@ -189,8 +182,8 @@ func (c *ChtIndexerBackend) Commit() error {
 
 const (
 	BloomTrieFrequency        = 32768
-	ethBloomBitsSection       = 4096
-	ethBloomBitsConfirmations = 256
+	EthBloomBitsSection       = 4096
+	EthBloomBitsConfirmations = 256
 )
 
 var (
@@ -215,32 +208,29 @@ func StoreBloomTrieRoot(db ethdb.Database, sectionIdx uint64, sectionHead, root 
 
 // BloomTrieIndexerBackend implements core.ChainIndexerBackend
 type BloomTrieIndexerBackend struct {
-	diskdb                                     ethdb.Database
-	triedb                                     *trie.Database
-	section, parentSectionSize, bloomTrieRatio uint64
-	trie                                       *trie.Trie
-	sectionHeads                               []common.Hash
+	diskdb            ethdb.Database
+	triedb            *trie.Database
+	section           uint64
+	size              uint64
+	parentSectionSize uint64
+	bloomTrieRatio    uint64
+	trie              *trie.Trie
+	sectionHeads      []common.Hash
 }
 
 // NewBloomTrieIndexer creates a BloomTrie chain indexer
-func NewBloomTrieIndexer(db ethdb.Database, clientMode bool) *core.ChainIndexer {
+func NewBloomTrieIndexer(db ethdb.Database, parentSize, parentConfirm, size, confirmReq uint64) *core.ChainIndexer {
 	backend := &BloomTrieIndexerBackend{
-		diskdb: db,
-		triedb: trie.NewDatabase(ethdb.NewTable(db, BloomTrieTablePrefix)),
+		diskdb:            db,
+		triedb:            trie.NewDatabase(ethdb.NewTable(db, BloomTrieTablePrefix)),
+		size:              size,
+		parentSectionSize: parentSize,
 	}
 	idb := ethdb.NewTable(db, "bltIndex-")
 
-	var confirmReq uint64
-	if clientMode {
-		backend.parentSectionSize = BloomTrieFrequency
-		confirmReq = HelperTrieConfirmations
-	} else {
-		backend.parentSectionSize = ethBloomBitsSection
-		confirmReq = HelperTrieProcessConfirmations
-	}
-	backend.bloomTrieRatio = BloomTrieFrequency / backend.parentSectionSize
+	backend.bloomTrieRatio = size / backend.parentSectionSize
 	backend.sectionHeads = make([]common.Hash, backend.bloomTrieRatio)
-	return core.NewChainIndexer(db, idb, backend, BloomTrieFrequency, confirmReq-ethBloomBitsConfirmations, time.Millisecond*100, "bloomtrie")
+	return core.NewChainIndexer(db, idb, backend, size, confirmReq-parentConfirm, time.Millisecond*100, "bloomtrie")
 }
 
 // Reset implements core.ChainIndexerBackend
@@ -257,14 +247,16 @@ func (b *BloomTrieIndexerBackend) Reset(section uint64, lastSectionHead common.H
 
 // Process implements core.ChainIndexerBackend
 func (b *BloomTrieIndexerBackend) Process(header *types.Header) {
-	num := header.Number.Uint64() - b.section*BloomTrieFrequency
+	num := header.Number.Uint64() - b.section*b.size
 	if (num+1)%b.parentSectionSize == 0 {
 		b.sectionHeads[num/b.parentSectionSize] = header.Hash()
 	}
+	fmt.Println("bloom trie indexer process", header.Hash().Hex(), header.Number)
 }
 
 // Commit implements core.ChainIndexerBackend
 func (b *BloomTrieIndexerBackend) Commit() error {
+	fmt.Println("try to commit")
 	var compSize, decompSize uint64
 
 	for i := uint(0); i < types.BloomBitLength; i++ {
@@ -273,8 +265,10 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 		binary.BigEndian.PutUint64(encKey[2:10], b.section)
 		var decomp []byte
 		for j := uint64(0); j < b.bloomTrieRatio; j++ {
+			fmt.Printf("read bloom bits %d head %s db %p\n", b.section*b.bloomTrieRatio+j, b.sectionHeads[j].Hex(), b.diskdb)
 			data, err := rawdb.ReadBloomBits(b.diskdb, i, b.section*b.bloomTrieRatio+j, b.sectionHeads[j])
 			if err != nil {
+				fmt.Println("DEBUG")
 				return err
 			}
 			decompData, err2 := bitutil.DecompressBytes(data, int(b.parentSectionSize/8))
@@ -302,6 +296,7 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 	sectionHead := b.sectionHeads[b.bloomTrieRatio-1]
 	log.Info("Storing bloom trie", "section", b.section, "head", sectionHead, "root", root, "compression", float64(compSize)/float64(decompSize))
 	StoreBloomTrieRoot(b.diskdb, b.section, sectionHead, root)
+	fmt.Println("bloom trie indexer commit")
 
 	return nil
 }

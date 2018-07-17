@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
@@ -177,12 +178,43 @@ func odrContractCall(ctx context.Context, db ethdb.Database, config *params.Chai
 }
 
 func testChtOdr(t *testing.T, protocol int, fn odrTestFn) {
+	config := &clientServerConfig{
+		protocol: protocol,
+		blocks:   2048 + 128,
+		connect:  false,
+		serverIndexer: &indexerConfig{
+			chtSize:          256,
+			chtConfirm:       16,
+			bloomSize:        256,
+			bloomConfirm:     16,
+			bloomTrieSize:    2048,
+			bloomTrieConfirm: 16,
+		},
+		clientIndexer: &indexerConfig{
+			chtSize:          2048,
+			chtConfirm:       128,
+			bloomSize:        2048,
+			bloomConfirm:     16,
+			bloomTrieSize:    2048,
+			bloomTrieConfirm: 128,
+		},
+	}
+	server, _ := newClientServerEnv(t, config)
+	time.Sleep(3 * time.Second)
+	count, _, head := server.pm.odr.chtIndexer.Sections()
+	fmt.Println(light.GetChtRoot(server.db, count-1, head).Hex())
+	count, _, head = server.pm.odr.bloomIndexer.Sections()
+	fmt.Println(count, head.Hex())
+	count, _, head = server.pm.odr.bloomTrieIndexer.Sections()
+	fmt.Println(count, head.Hex())
+	fmt.Println(light.GetBloomTrieRoot(server.db, count-1, head).Hex())
+	fmt.Println(rawdb.ReadBloomBits(server.db, 0, 0, common.HexToHash("0x2d5fb74e68543f5a2808bedb533e32f2a8abb55a8f9c4d7efa60179b88d5d6ad")))
 }
 
 // testOdr tests odr requests whose validation guaranteed by block headers.
 func testOdr(t *testing.T, protocol int, expFail uint64, fn odrTestFn) {
 	// Assemble the test environment
-	server, client := newClientServerEnv(t, 4, protocol)
+	server, client := newClientServerEnv(t, &clientServerConfig{protocol: protocol, blocks: 4})
 	client.pm.synchronise(client.remotePeer)
 	test := func(expFail uint64) {
 		for i := uint64(0); i <= server.pm.blockchain.CurrentHeader().Number.Uint64(); i++ {
