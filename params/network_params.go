@@ -51,4 +51,13 @@ const (
 	// HelperTrieProcessConfirmations is the number of confirmations before a HelperTrie
 	// is generated
 	HelperTrieProcessConfirmations = 256
+
+	// CheckpointFrequency is the block frequency for creating checkpoint
+	CheckpointFrequency = 32768
+
+	// CheckpointProcessConfirmations is the number before a checkpoint is generated
+	CheckpointProcessConfirmations = 256
+
+	// CheckpointConfirmations is the number of confirmations before a checkpoint is stable
+	CheckpointConfirmations = 8192
 )

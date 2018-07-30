@@ -27,17 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-const (
-	// CheckpointFrequency is the block frequency for creating checkpoint
-	CheckpointFrequency = 32768
-
-	// CheckpointProcessConfirmations is the number before a checkpoint is generated
-	CheckpointProcessConfirmations = 256
-
-	// CheckpointConfirmations is the number of confirmations before a checkpoint is stable
-	CheckpointConfirmations = 8192
-)
-
 // checkpointKey tracks the latest stable checkpoint.
 var checkpointKey = []byte("Checkpoint")
 

@@ -275,20 +275,20 @@ func (s *LesServer) checkpointLoop(checkpoint *light.TrustedCheckpoint) (err err
 			}
 		case head := <-headCh:
 			number := head.Block.NumberU64()
-			if number < light.CheckpointConfirmations+light.CheckpointFrequency {
+			if number < params.CheckpointConfirmations+params.CheckpointFrequency {
 				continue
 			}
 			if checkpoint == nil {
 				checkpoint = s.recoverCheckpoint()
 			}
-			idx := (number-light.CheckpointConfirmations)/light.CheckpointFrequency - 1
+			idx := (number-params.CheckpointConfirmations)/params.CheckpointFrequency - 1
 			if checkpoint == nil || idx > checkpoint.SectionIdx {
 				hash, ok := announcement[idx]
 				if !ok {
 					continue
 				}
 				sectionHead := s.bloomTrieIndexer.SectionHead(idx)
-				idxV1 := (idx+1)*params.CHTFrequencyServer/params.CHTFrequencyClient-1
+				idxV1 := (idx+1)*params.CHTFrequencyClient/params.CHTFrequencyServer - 1
 				c := &light.TrustedCheckpoint{
 					SectionIdx:    idx,
 					SectionHead:   sectionHead,
@@ -330,12 +330,12 @@ func (s *LesServer) recoverCheckpoint() *light.TrustedCheckpoint {
 	}
 	unstableIdx := sectionCnt - 1
 	for stable == nil || stable.SectionIdx < unstableIdx {
-		if (unstableIdx+1)*light.CheckpointFrequency+light.CheckpointConfirmations <= *headNumber {
-			iter, err := s.registrar.FilterNewCheckpointEvent(*headNumber, unstableIdx, light.CheckpointFrequency, light.CheckpointProcessConfirmations)
+		if (unstableIdx+1)*params.CheckpointFrequency+params.CheckpointConfirmations <= *headNumber {
+			iter, err := s.registrar.FilterNewCheckpointEvent(*headNumber, unstableIdx, params.CheckpointFrequency, params.CheckpointProcessConfirmations)
 			if err != nil {
 				continue
 			}
-			idxV1 := (unstableIdx+1)*params.CHTFrequencyServer/params.CHTFrequencyClient-1
+			idxV1 := (unstableIdx+1)*params.CHTFrequencyClient/params.CHTFrequencyServer - 1
 			for iter.Next() {
 				sectionHead := s.bloomTrieIndexer.SectionHead(unstableIdx)
 				checkpoint := &light.TrustedCheckpoint{
