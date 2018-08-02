@@ -190,7 +190,7 @@ func newTestProtocolManager(lightSync bool, blocks int, generator func(int, *cor
 		return nil, err
 	}
 	if !lightSync {
-		srv := &LesServer{protocolManager: pm}
+		srv := &LesServer{protocolManager: pm, chaindb: db}
 		pm.server = srv
 
 		srv.defParams = &flowcontrol.ServerParams{

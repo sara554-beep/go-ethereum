@@ -29,10 +29,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/params"
 )
+
 var (
 	ErrNoTrustedCht       = errors.New("No trusted canonical hash trie")
 	ErrNoTrustedBloomTrie = errors.New("No trusted bloom trie")
@@ -64,48 +65,62 @@ type IndexerConfig struct {
 
 	// The number of confirmations needed to generate/accept a bloom trie.
 	BloomTrieConfirm uint64
+
+	// The block frequency for creating checkpoint.
+	CheckpointSize uint64
+
+	// The number of confirmations needed before a unstable checkpoint becomes stable.
+	CheckpointConfirm uint64
 }
 
 var (
 	// DefaultServerIndexerConfig wraps a set of configs as a default indexer config for server side.
 	DefaultServerIndexerConfig = &IndexerConfig{
-		ChtSize:          params.CHTFrequencyServer,
-		PairChtSize:      params.CHTFrequencyClient,
-		ChtConfirm:       params.HelperTrieProcessConfirmations,
-		BloomSize:        params.BloomBitsBlocks,
-		BloomConfirm:     params.BloomConfirms,
-		BloomTrieSize:    params.BloomTrieFrequency,
-		BloomTrieConfirm: params.HelperTrieProcessConfirmations,
+		ChtSize:           params.CHTFrequencyServer,
+		PairChtSize:       params.CHTFrequencyClient,
+		ChtConfirm:        params.HelperTrieProcessConfirmations,
+		BloomSize:         params.BloomBitsBlocks,
+		BloomConfirm:      params.BloomConfirms,
+		BloomTrieSize:     params.BloomTrieFrequency,
+		BloomTrieConfirm:  params.HelperTrieProcessConfirmations,
+		CheckpointSize:    params.CheckpointFrequency,
+		CheckpointConfirm: params.CheckpointConfirmations,
 	}
 	// DefaultClientIndexerConfig wraps a set of configs as a default indexer config for client side.
 	DefaultClientIndexerConfig = &IndexerConfig{
-		ChtSize:          params.CHTFrequencyClient,
-		PairChtSize:      params.CHTFrequencyServer,
-		ChtConfirm:       params.HelperTrieConfirmations,
-		BloomSize:        params.BloomBitsBlocksClient,
-		BloomConfirm:     params.HelperTrieConfirmations,
-		BloomTrieSize:    params.BloomTrieFrequency,
-		BloomTrieConfirm: params.HelperTrieConfirmations,
+		ChtSize:           params.CHTFrequencyClient,
+		PairChtSize:       params.CHTFrequencyServer,
+		ChtConfirm:        params.HelperTrieConfirmations,
+		BloomSize:         params.BloomBitsBlocksClient,
+		BloomConfirm:      params.HelperTrieConfirmations,
+		BloomTrieSize:     params.BloomTrieFrequency,
+		BloomTrieConfirm:  params.HelperTrieConfirmations,
+		CheckpointSize:    params.CheckpointFrequency,
+		CheckpointConfirm: params.CheckpointConfirmations,
 	}
 	// TestServerIndexerConfig wraps a set of configs as a test indexer config for server side.
 	TestServerIndexerConfig = &IndexerConfig{
-		ChtSize:          256,
-		PairChtSize:      2048,
-		ChtConfirm:       16,
-		BloomSize:        256,
-		BloomConfirm:     16,
-		BloomTrieSize:    2048,
-		BloomTrieConfirm: 16,
+		ChtSize:           256,
+		PairChtSize:       2048,
+		ChtConfirm:        16,
+		BloomSize:         256,
+		BloomConfirm:      16,
+		BloomTrieSize:     2048,
+		BloomTrieConfirm:  16,
+		CheckpointSize:    2048,
+		CheckpointConfirm: 512,
 	}
 	// TestClientIndexerConfig wraps a set of configs as a test indexer config for client side.
 	TestClientIndexerConfig = &IndexerConfig{
-		ChtSize:          2048,
-		PairChtSize:      256,
-		ChtConfirm:       128,
-		BloomSize:        2048,
-		BloomConfirm:     128,
-		BloomTrieSize:    2048,
-		BloomTrieConfirm: 128,
+		ChtSize:           2048,
+		PairChtSize:       256,
+		ChtConfirm:        128,
+		BloomSize:         2048,
+		BloomConfirm:      128,
+		BloomTrieSize:     2048,
+		BloomTrieConfirm:  128,
+		CheckpointSize:    2048,
+		CheckpointConfirm: 512,
 	}
 )
 

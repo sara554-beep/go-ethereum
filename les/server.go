@@ -45,6 +45,10 @@ import (
 // chainHeadChanSize is the size of channel listening to ChainHeadEvent.
 const SubscribeChainHeadEvent = 10
 
+type fetchCheckpoint struct {
+	resCh chan light.TrustedCheckpoint
+}
+
 type LesServer struct {
 	config          *eth.Config
 	backend         *eth.EthAPIBackend
@@ -60,7 +64,8 @@ type LesServer struct {
 	// Checkpoint contract relative fields
 	genesis   common.Hash          // Genesis block hash for contract address detection
 	registrar *registrar.Registrar // Handler for checkpoint contract, initialized after server is started.
-	watching  int32                // Indicator whether the checkpoint contract is being watched
+	ckpCh     chan *fetchCheckpoint
+	watching  int32 // Indicator whether the checkpoint contract is being watched
 
 	// Indexers
 	chtIndexer       *core.ChainIndexer // Indexers for creating cht root for each block section
@@ -87,6 +92,7 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 		quitSync:        quitSync,
 		chaindb:         e.ChainDb(),
 		lesTopics:       lesTopics,
+		ckpCh:           make(chan *fetchCheckpoint),
 		chtIndexer:      light.NewChtIndexer(e.ChainDb(), params.CHTFrequencyServer, params.HelperTrieProcessConfirmations),
 		bloomTrieIndexer: light.NewBloomTrieIndexer(e.ChainDb(), params.BloomBitsBlocks, params.BloomConfirms,
 			params.BloomTrieFrequency, params.HelperTrieProcessConfirmations),
@@ -234,6 +240,20 @@ func (s *LesServer) getCheckpoint(index uint64) (common.Hash, common.Hash, commo
 	return sectionHead, chtRoot, bloomTrieRoot
 }
 
+func (s *LesServer) stableCheckpoint() light.TrustedCheckpoint {
+	if atomic.LoadInt32(&s.watching) == 0 {
+		// Return persisted trusted checkpoint if the checkpoint registrar contract doesn't been watching.
+		ckp := light.ReadTrustedCheckpoint(s.chaindb)
+		if ckp != nil {
+			return *ckp
+		}
+		return light.TrustedCheckpoints[s.genesis]
+	}
+	resCh := make(chan light.TrustedCheckpoint, 1)
+	s.ckpCh <- &fetchCheckpoint{resCh: resCh}
+	return <-resCh
+}
+
 // checkpointLoop starts a standalone goroutine to watch new checkpoint events and updates local's stable checkpoint.
 func (s *LesServer) checkpointLoop(checkpoint *light.TrustedCheckpoint) (err error) {
 	var (
@@ -302,6 +322,8 @@ func (s *LesServer) checkpointLoop(checkpoint *light.TrustedCheckpoint) (err err
 					log.Info("Update stable checkpoint", "section", checkpoint.SectionIdx, "hash", checkpoint.Hash().Hex())
 				}
 			}
+		case req := <-s.ckpCh:
+			req.resCh <- *checkpoint
 		case <-ticker.C:
 			// Evict useless announcement every 5 minutes.
 			for idx := range announcement {

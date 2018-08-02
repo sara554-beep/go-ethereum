@@ -71,7 +71,7 @@ func chtGetHeaders(ctx context.Context, bc *core.BlockChain, lc *light.LightChai
 			headers = append(headers, bc.GetHeaderByNumber(number))
 		}
 	} else {
-		headers, _ = lc.GetHeadersByNumberOdr(ctx, numbers)
+		headers, _, _ = lc.GetHeadersByNumberOdr(ctx, numbers)
 	}
 	if headers == nil {
 		return nil

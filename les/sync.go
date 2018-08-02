@@ -18,12 +18,18 @@ package les
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/light"
+	"github.com/ethereum/go-ethereum/log"
+	"math/big"
 )
+
+const EpochLength = 300
 
 // syncer is responsible for periodically synchronising with the network, both
 // downloading hashes and blocks as well as handling the announcement handler.
@@ -66,14 +72,54 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	if peer == nil {
 		return
 	}
-
 	// Make sure the peer's TD is higher than our own.
 	if !pm.needToSync(peer.headBlockInfo()) {
 		return
 	}
-
+	// Never try to sync with a peer that doesn't advertise stable checkpoint.
+	checkpoint := peer.advertisedCheckpoint
+	if checkpoint == (light.TrustedCheckpoint{}) {
+		return
+	}
+	// Fetch the last block headers of each epoch which covered by peer's advertised checkpoint.
+	checkpointHeight := (checkpoint.SectionIdx+1)*pm.indexerConfig.CheckpointSize - 1
+	log.Info("Start synchronization", "target peer", peer.ID(), "checkpoint height", checkpointHeight)
+	var numbers []uint64
+	var i = uint64(1)
+	for i*EpochLength-1 <= checkpointHeight {
+		numbers = append(numbers, i*EpochLength-1)
+		i += 1
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
-	pm.blockchain.(*light.LightChain).SyncCht(ctx)
-	pm.downloader.Synchronise(peer.id, peer.Head(), peer.Td(), downloader.LightSync)
+	headers, tds, err := light.UntrustedGetHeadersByNumber(ctx, pm.odr, checkpoint.ChtRoot, checkpoint.SectionIdx, numbers)
+	if err != nil {
+		log.Info("Synchronise failed", "err", err)
+	}
+	fmt.Println(headers, tds)
+
+	var startHeader *types.Header
+	var threshold = big.NewInt(0).Div(peer.headInfo.Td, big.NewInt(100))
+	for i := len(headers) - 1; i >= 0; i-- {
+		if big.NewInt(0).Sub(peer.headInfo.Td, tds[i]).Cmp(threshold) > 0 {
+			startHeader = headers[i]
+			break
+		}
+
+	}
+	if startHeader == nil {
+		log.Info("Invalid peer")
+		return
+	}
+	pm.blockchain.(*light.LightChain).SetHeader(startHeader)
+	// Sync start from the start point
+	err = pm.downloader.Synchronise(peer.id, peer.Head(), peer.Td(), downloader.LightSync)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println("sync from", startHeader.Number, "done")
+	fmt.Println("current head", pm.blockchain.CurrentHeader().Number)
+
+	// Total difficulty checking
+
 }

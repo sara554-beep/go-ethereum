@@ -19,6 +19,7 @@ package light
 import (
 	"bytes"
 	"context"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
@@ -70,61 +71,80 @@ func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*typ
 	return r.Headers[0], nil
 }
 
-func GetHeadersByNumber(ctx context.Context, odr OdrBackend, numbers []uint64) ([]*types.Header, error) {
+// getHeadersByNumber fetches a batch of block headers and guarantees the correctness by specified cht information.
+func getHeadersByNumber(ctx context.Context, odr OdrBackend, chtRoot common.Hash, chtIndex uint64, numbers []uint64) ([]*types.Header, []*big.Int, error) {
 	var (
 		db      = odr.Database()
 		headers = make([]*types.Header, len(numbers))
+		tds     = make([]*big.Int, len(numbers))
 		missing []int
 	)
 
 	for i, number := range numbers {
 		hash := rawdb.ReadCanonicalHash(db, number)
 		if (hash != common.Hash{}) {
+			// if there is a canonical hash, there is a total difficulty too
+			td := rawdb.ReadTd(db, hash, number)
+			if td == nil {
+				panic("Canonical hash present but total difficulty not found")
+			}
 			// if there is a canonical hash, there is a header too
 			header := rawdb.ReadHeader(db, hash, number)
 			if header == nil {
 				panic("Canonical hash present but header not found")
 			}
 			headers[i] = header
+			tds[i] = td
 		} else {
 			missing = append(missing, i)
 		}
 	}
 
+	reqs := make([]uint64, len(missing))
+	for i, index := range missing {
+		if numbers[index] >= (chtIndex+1)*odr.IndexerConfig().ChtSize {
+			return nil, nil, ErrNoTrustedCht
+		}
+		reqs[i] = numbers[index]
+	}
+	r := &ChtRequest{ChtRoot: chtRoot, ChtNum: chtIndex, Numbers: reqs}
+	if err := odr.Retrieve(ctx, r); err != nil {
+		return nil, nil, err
+	}
+	// Assemble the final result
+	for i, index := range missing {
+		headers[index] = r.Headers[i]
+		tds[index] = r.Tds[i]
+	}
+	return headers, tds, nil
+}
+
+// GetHeadersByNumber fetches a batch of block headers and guarantees the correctness via local CHT indexer.
+func GetHeadersByNumber(ctx context.Context, odr OdrBackend, numbers []uint64) ([]*types.Header, []*big.Int, error) {
 	var (
 		chtCount, sectionHeadNum uint64
 		sectionHead              common.Hash
 	)
 	if odr.ChtIndexer() != nil {
 		chtCount, sectionHeadNum, sectionHead = odr.ChtIndexer().Sections()
-		canonicalHash := rawdb.ReadCanonicalHash(db, sectionHeadNum)
+		canonicalHash := rawdb.ReadCanonicalHash(odr.Database(), sectionHeadNum)
 		// if the CHT was injected as a trusted checkpoint, we have no canonical hash yet so we accept zero hash too
 		for chtCount > 0 && canonicalHash != sectionHead && canonicalHash != (common.Hash{}) {
 			chtCount--
 			if chtCount > 0 {
 				sectionHeadNum = chtCount*odr.IndexerConfig().ChtSize - 1
 				sectionHead = odr.ChtIndexer().SectionHead(chtCount - 1)
-				canonicalHash = rawdb.ReadCanonicalHash(db, sectionHeadNum)
+				canonicalHash = rawdb.ReadCanonicalHash(odr.Database(), sectionHeadNum)
 			}
 		}
 	}
+	return getHeadersByNumber(ctx, odr, GetChtRoot(odr.Database(), chtCount-1, sectionHead), chtCount-1, numbers)
+}
 
-	reqs := make([]uint64, 0, len(missing))
-	for _, index := range missing {
-		if numbers[index] >= chtCount*odr.IndexerConfig().ChtSize {
-			return nil, ErrNoTrustedCht
-		}
-		reqs = append(reqs, numbers[index])
-	}
-	r := &ChtRequest{ChtRoot: GetChtRoot(db, chtCount-1, sectionHead), ChtNum: chtCount - 1, Numbers: reqs}
-	if err := odr.Retrieve(ctx, r); err != nil {
-		return nil, err
-	}
-	// Assemble the final result
-	for i, index := range missing {
-		headers[index] = r.Headers[i]
-	}
-	return headers, nil
+// UntrustedGetHeadersByNumber fetches a batch of block headers and guarantees the correctness via provided cht root.
+// Note this function should only used in light client checkpoint syncing.
+func UntrustedGetHeadersByNumber(ctx context.Context, odr OdrBackend, chtRoot common.Hash, chtIndex uint64, numbers []uint64) ([]*types.Header, []*big.Int, error) {
+	return getHeadersByNumber(ctx, odr, chtRoot, chtIndex, numbers)
 }
 
 func GetCanonicalHash(ctx context.Context, odr OdrBackend, number uint64) (common.Hash, error) {

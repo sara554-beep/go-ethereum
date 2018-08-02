@@ -464,7 +464,7 @@ func (self *LightChain) GetHeaderByNumberOdr(ctx context.Context, number uint64)
 
 // GetHeadersByNumberOdr retrieves a batch of block headers from the database or network
 // by number, caching it (associated with its hash) if found.
-func (self *LightChain) GetHeadersByNumberOdr(ctx context.Context, numbers []uint64) ([]*types.Header, error) {
+func (self *LightChain) GetHeadersByNumberOdr(ctx context.Context, numbers []uint64) ([]*types.Header, []*big.Int, error) {
 	// TODO(rjl4935456442) Caching the read block headers.
 	return GetHeadersByNumber(ctx, self.odr, numbers)
 }
@@ -491,6 +491,10 @@ func (self *LightChain) SyncCht(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+func (self *LightChain) SetHeader(header *types.Header) {
+	self.hc.SetCurrentHeader(header)
 }
 
 // LockChain locks the chain mutex for reading so that multiple canonical hashes can be

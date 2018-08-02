@@ -81,6 +81,14 @@ func (c *TrustedCheckpoint) Hash() common.Hash {
 	return crypto.Keccak256Hash(c.SectionHead.Bytes(), c.ChtRoot.Bytes(), c.BloomTrieRoot.Bytes())
 }
 
+// Copy returns a copy of checkpoint itself.
+func (c *TrustedCheckpoint) Copy() *TrustedCheckpoint {
+	ckp := new(TrustedCheckpoint)
+	ckp.SectionIdx = c.SectionIdx
+	ckp.SectionHead, ckp.ChtRoot, ckp.BloomTrieRoot = c.SectionHead, c.ChtRoot, c.BloomTrieRoot
+	return ckp
+}
+
 var (
 	// Hardcode checkpoint for mainnet and testnet(ropsten). Will be deleted eventually once checkpoint contract
 	// works.
