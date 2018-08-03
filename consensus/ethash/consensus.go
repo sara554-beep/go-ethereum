@@ -554,22 +554,3 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 	}
 	state.AddBalance(header.Coinbase, reward)
 }
-
-// Start implements consensus.Engine, starting the ethash engine.
-func (ethash *Ethash) Start() {
-	if atomic.CompareAndSwapInt32(&ethash.running, 0, 1) {
-		log.Info("Start ethash consensus engine")
-	}
-}
-
-// Stop implements consensus.Engine, stopping the ethash engine.
-func (ethash *Ethash) Stop() {
-	if atomic.CompareAndSwapInt32(&ethash.running, 1, 0) {
-		log.Info("Stop ethash consensus engine")
-	}
-}
-
-// IsRunning implements consensus.Engine, returning an indication if the ethash engine is currently mining.
-func (ethash *Ethash) IsRunning() bool {
-	return atomic.LoadInt32(&ethash.running) > 0
-}

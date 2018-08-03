@@ -680,20 +680,6 @@ func (ethash *Ethash) APIs(chain consensus.ChainReader) []rpc.API {
 	}
 }
 
-// StartMining starts the ethash engine with the given number of threads.
-// If threads is nil the number of workers started is equal to the number of logical CPUs
-// that are usable by this process. If threads is 0, than local/cpu mining will be disabled.
-// If mining is already running, this method adjust the number of threads allowed to use.
-func (ethash *Ethash) StartMining(threads *int) {
-	if threads == nil {
-		threads = new(int)
-	} else if *threads == 0 {
-		*threads = -1 // Disable local/cpu mining.
-	}
-	ethash.Start()
-	ethash.SetThreads(*threads)
-}
-
 // SeedHash is the seed to use for generating a verification cache and the mining
 // dataset.
 func SeedHash(block uint64) []byte {
