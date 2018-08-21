@@ -48,6 +48,7 @@ var (
 // interface. It only does header validation during chain insertion.
 type LightChain struct {
 	hc            *core.HeaderChain
+	indexerConfig *IndexerConfig
 	chainDb       ethdb.Database
 	odr           OdrBackend
 	chainFeed     event.Feed
@@ -81,13 +82,14 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 	blockCache, _ := lru.New(blockCacheLimit)
 
 	bc := &LightChain{
-		chainDb:      odr.Database(),
-		odr:          odr,
-		quit:         make(chan struct{}),
-		bodyCache:    bodyCache,
-		bodyRLPCache: bodyRLPCache,
-		blockCache:   blockCache,
-		engine:       engine,
+		chainDb:       odr.Database(),
+		indexerConfig: odr.IndexerConfig(),
+		odr:           odr,
+		quit:          make(chan struct{}),
+		bodyCache:     bodyCache,
+		bodyRLPCache:  bodyRLPCache,
+		blockCache:    blockCache,
+		engine:        engine,
 	}
 	var err error
 	bc.hc, err = core.NewHeaderChain(odr.Database(), config, bc.engine, bc.getProcInterrupt)
@@ -128,7 +130,7 @@ func (self *LightChain) addTrustedCheckpoint(cp TrustedCheckpoint) {
 	if self.odr.BloomIndexer() != nil {
 		self.odr.BloomIndexer().AddKnownSectionHead(cp.SectionIdx, cp.SectionHead)
 	}
-	log.Info("Added trusted checkpoint", "chain", cp.name, "block", (cp.SectionIdx+1)*CHTFrequencyClient-1, "hash", cp.SectionHead)
+	log.Info("Added trusted checkpoint", "chain", cp.name, "block", (cp.SectionIdx+1)*self.indexerConfig.ChtSize-1, "hash", cp.SectionHead)
 }
 
 func (self *LightChain) getProcInterrupt() bool {
@@ -469,8 +471,8 @@ func (self *LightChain) SyncCht(ctx context.Context) bool {
 	}
 	headNum := self.CurrentHeader().Number.Uint64()
 	chtCount, _, _ := self.odr.ChtIndexer().Sections()
-	if headNum+1 < chtCount*CHTFrequencyClient {
-		num := chtCount*CHTFrequencyClient - 1
+	if headNum+1 < chtCount*self.indexerConfig.ChtSize {
+		num := chtCount*self.indexerConfig.ChtSize - 1
 		header, err := GetHeaderByNumber(ctx, self.odr, num)
 		if header != nil && err == nil {
 			self.mu.Lock()
