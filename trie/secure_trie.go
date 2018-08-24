@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
@@ -36,7 +37,7 @@ import (
 type SecureTrie struct {
 	trie             Trie
 	hashKeyBuf       [common.HashLength]byte
-	secKeyCache      map[string][]byte
+	secKeyCache      *sync.Map
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key cache on mismatch
 }
 
@@ -60,7 +61,7 @@ func NewSecure(root common.Hash, db *Database, cachelimit uint16) (*SecureTrie, 
 		return nil, err
 	}
 	trie.SetCacheLimit(cachelimit)
-	return &SecureTrie{trie: *trie}, nil
+	return &SecureTrie{trie: *trie, secKeyCache: new(sync.Map)}, nil
 }
 
 // Get returns the value for key stored in the trie.
@@ -106,7 +107,7 @@ func (t *SecureTrie) TryUpdate(key, value []byte) error {
 	if err != nil {
 		return err
 	}
-	t.getSecKeyCache()[string(hk)] = common.CopyBytes(key)
+	t.getSecKeyCache().Store(string(hk), common.CopyBytes(key))
 	return nil
 }
 
@@ -121,15 +122,15 @@ func (t *SecureTrie) Delete(key []byte) {
 // If a node was not found in the database, a MissingNodeError is returned.
 func (t *SecureTrie) TryDelete(key []byte) error {
 	hk := t.hashKey(key)
-	delete(t.getSecKeyCache(), string(hk))
+	t.getSecKeyCache().Delete(string(hk))
 	return t.trie.TryDelete(hk)
 }
 
 // GetKey returns the sha3 preimage of a hashed key that was
 // previously used to store a value.
 func (t *SecureTrie) GetKey(shaKey []byte) []byte {
-	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
-		return key
+	if item, ok := t.getSecKeyCache().Load(string(shaKey)); ok {
+		return item.([]byte)
 	}
 	key, _ := t.trie.db.preimage(common.BytesToHash(shaKey))
 	return key
@@ -142,15 +143,15 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 // from the database.
 func (t *SecureTrie) Commit(onleaf LeafCallback) (root common.Hash, err error) {
 	// Write all the pre-images to the actual disk database
-	if len(t.getSecKeyCache()) > 0 {
-		t.trie.db.lock.Lock()
-		for hk, key := range t.secKeyCache {
-			t.trie.db.insertPreimage(common.BytesToHash([]byte(hk)), key)
-		}
-		t.trie.db.lock.Unlock()
+	t.trie.db.lock.Lock()
+	t.getSecKeyCache().Range(func(k, v interface{}) bool {
+		hk, key := k.(string), v.([]byte)
+		t.trie.db.insertPreimage(common.BytesToHash([]byte(hk)), key)
+		t.getSecKeyCache().Delete(k)
+		return true
+	})
+	t.trie.db.lock.Unlock()
 
-		t.secKeyCache = make(map[string][]byte)
-	}
 	// Commit the trie to its intermediate node database
 	return t.trie.Commit(onleaf)
 }
@@ -194,10 +195,15 @@ func (t *SecureTrie) hashKey(key []byte) []byte {
 // getSecKeyCache returns the current secure key cache, creating a new one if
 // ownership changed (i.e. the current secure trie is a copy of another owning
 // the actual cache).
-func (t *SecureTrie) getSecKeyCache() map[string][]byte {
+func (t *SecureTrie) getSecKeyCache() *sync.Map {
 	if t != t.secKeyCacheOwner {
 		t.secKeyCacheOwner = t
-		t.secKeyCache = make(map[string][]byte)
+		cpy := new(sync.Map)
+		t.secKeyCache.Range(func(key, value interface{}) bool {
+			cpy.Store(key, value)
+			return true
+		})
+		t.secKeyCache = cpy
 	}
 	return t.secKeyCache
 }

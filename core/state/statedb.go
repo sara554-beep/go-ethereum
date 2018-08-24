@@ -495,7 +495,7 @@ func (self *StateDB) Copy() *StateDB {
 		copy(state.logs[hash], logs)
 	}
 	for hash, preimage := range self.preimages {
-		state.preimages[hash] = preimage
+		state.preimages[hash] = common.CopyBytes(preimage)
 	}
 	return state
 }
