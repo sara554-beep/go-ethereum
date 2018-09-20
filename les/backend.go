@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -42,14 +43,13 @@ import (
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/discv5"
 	"github.com/ethereum/go-ethereum/params"
-	rpc "github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 type LightEthereum struct {
 	lesCommons
 
 	odr         *LesOdr
-	relay       *LesTxRelay
 	chainConfig *params.ChainConfig
 	// Channel for shutting down the service
 	shutdownChan chan bool
@@ -113,7 +113,6 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 	if leth.config.ULC != nil {
 		trustedNodes = leth.config.ULC.TrustedServers
 	}
-	leth.relay = NewLesTxRelay(peers, leth.reqDist)
 	leth.serverPool = newServerPool(chainDb, quitSync, &leth.wg, trustedNodes)
 	leth.retriever = newRetrieveManager(peers, leth.reqDist, leth.serverPool)
 
@@ -139,32 +138,11 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 		rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
 
-	leth.txPool = light.NewTxPool(leth.chainConfig, leth.blockchain, leth.relay)
-
-	if leth.protocolManager, err = NewProtocolManager(
-		leth.chainConfig,
-		light.DefaultClientIndexerConfig,
-		true,
-		config.NetworkId,
-		leth.eventMux,
-		leth.engine,
-		leth.peers,
-		leth.blockchain,
-		nil,
-		chainDb,
-		leth.odr,
-		leth.relay,
-		leth.serverPool,
-		quitSync,
-		&leth.wg,
-		config.ULC); err != nil {
-		return nil, err
-	}
-
 	if leth.protocolManager.isULCEnabled() {
 		log.Warn("Ultra light client is enabled", "trustedNodes", len(leth.protocolManager.ulc.trustedKeys), "minTrustedFraction", leth.protocolManager.ulc.minTrustedFraction)
 		leth.blockchain.DisableCheckFreq()
 	}
+	leth.txPool = light.NewTxPool(leth.chainConfig, leth.blockchain, newLesTxRelay(peers, leth.reqDist))
 	leth.ApiBackend = &LesApiBackend{leth, nil}
 
 	gpoParams := config.GPO
@@ -172,6 +150,10 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 		gpoParams.Default = config.MinerGasPrice
 	}
 	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, gpoParams)
+	registrar := newCheckpointRegistrar(leth.chainDb, leth.ApiBackend, defaultConfig, light.DefaultClientIndexerConfig, leth.chtIndexer, leth.bloomTrieIndexer, genesisHash, true, quitSync)
+	if leth.protocolManager, err = NewProtocolManager(leth.chainConfig, light.DefaultClientIndexerConfig, config.ULC, true, config.NetworkId, leth.eventMux, leth.peers, leth.blockchain, nil, chainDb, leth.odr, leth.serverPool, registrar, quitSync, &leth.wg); err != nil {
+		return nil, err
+	}
 	return leth, nil
 }
 
@@ -286,4 +268,13 @@ func (s *LightEthereum) Stop() error {
 	close(s.shutdownChan)
 
 	return nil
+}
+
+// SetClient sets the rpc client and binds the registrar contract.
+func (s *LightEthereum) SetContractBackend(backend bind.ContractBackend) {
+	// Short circuit if registrar is nil
+	if s.protocolManager.reg == nil {
+		return
+	}
+	s.protocolManager.reg.start(backend)
 }
