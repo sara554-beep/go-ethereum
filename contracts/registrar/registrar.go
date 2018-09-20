@@ -1,0 +1,124 @@
+// Copyright 2018 The go-ethereum Authors
+// This file is part of the go-ethereum library.
+//
+// The go-ethereum library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-ethereum library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+
+package registrar
+
+//go:generate abigen --sol contract/registrar.sol --pkg contract --out contract/registrar.go
+
+import (
+	"crypto/ecdsa"
+	"errors"
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/contracts/registrar/contract"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/params"
+)
+
+var (
+	// registrar contract address for mainnet and testnet.
+	RegistrarAddr = map[common.Hash]common.Address{
+		// params.MainnetGenesisHash: common.HexToAddress(""),
+		// params.TestnetGenesisHash: common.HexToAddress(""),
+		params.RinkebyGenesisHash: common.HexToAddress("0x47479ba0ff1075f7c4832a8ad566ebe4bb350b44"),
+	}
+	// CheckpointSigners associates each trusted checkpoint signers with the genesis hash of the chain it belongs to
+	CheckpointSigners = map[common.Hash][]common.Address{
+		// params.MainnetGenesisHash: nil,
+		// params.TestnetGenesisHash: nil,
+		params.RinkebyGenesisHash: {
+			common.HexToAddress("0x5c434e7505a2a2f0954bfa53c0c1aafd36a03276"),
+			common.HexToAddress("0xad01b0340caa52abb25fd21d648fa27317d83cbf"),
+			common.HexToAddress("0x4d062cfef132b31bb44bcecafcef71c502b6b33b"),
+		},
+	}
+)
+
+var errEventNotFound = errors.New("contract event not found")
+
+type Registrar struct {
+	contract *contract.Contract
+}
+
+// NewRegistrar binds checkpoint contract and returns a registrar instance.
+func NewRegistrar(contractAddr common.Address, backend bind.ContractBackend) (*Registrar, error) {
+	c, err := contract.NewContract(contractAddr, backend)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Registrar{
+		contract: c,
+	}, nil
+}
+
+// Contract returns the underlying contract instance.
+func (registrar *Registrar) Contract() *contract.Contract {
+	return registrar.contract
+}
+
+// WatchNewCheckpointEvent watches new fired NewCheckpointEvent and delivers all matching events by result channel.
+func (registrar *Registrar) WatchNewCheckpointEvent(sink chan<- *contract.ContractNewCheckpointEvent) (event.Subscription, error) {
+	return registrar.contract.WatchNewCheckpointEvent(nil, sink, nil)
+}
+
+// FilterNewCheckpointEvent filters out NewCheckpointEvent for specific section number.
+func (registrar *Registrar) FilterNewCheckpointEvent(head, section, sectionSize, processConfirm uint64) (*contract.ContractNewCheckpointEventIterator, error) {
+	start := (section+1)*sectionSize + processConfirm
+	if head < start {
+		return nil, errEventNotFound
+	}
+	opt := &bind.FilterOpts{
+		Start: start,
+		End:   &head,
+	}
+	return registrar.contract.FilterNewCheckpointEvent(opt, []*big.Int{big.NewInt(int64(section))})
+}
+
+// LookupCheckpointEvent searches checkpoint event for specific section in the given log batches.
+func (registrar *Registrar) LookupCheckpointEvent(blockLogs [][]*types.Log, section uint64, hash common.Hash) []*contract.ContractNewCheckpointEvent {
+	var result []*contract.ContractNewCheckpointEvent
+
+	for _, logs := range blockLogs {
+		for _, log := range logs {
+			event, err := registrar.contract.ParseNewCheckpointEvent(*log)
+			if err != nil {
+				continue
+			}
+			if event.Index.Uint64() == section && common.Hash(event.CheckpointHash) == hash {
+				result = append(result, event)
+			}
+		}
+	}
+	return result
+}
+
+// SetCheckpoint creates a signature for given checkpoint with specified private key and registers into contract.
+//
+// Note it should only be used in testing.
+func (registrar *Registrar) SetCheckpoint(key *ecdsa.PrivateKey, sectionIndex *big.Int, hash []byte) (*types.Transaction, error) {
+	sig, err := crypto.Sign(hash, key)
+	if err != nil {
+		return nil, err
+	}
+	var h [32]byte
+	copy(h[:], hash)
+	return registrar.contract.SetCheckpoint(bind.NewKeyedTransactor(key), sectionIndex, h, sig)
+}
