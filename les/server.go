@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"sync"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/core"
@@ -56,51 +57,28 @@ type LesServer struct {
 	priorityClientPool *priorityClientPool
 }
 
-func NewLesServer(eth *eth.Ethereum, config *eth.Config) (*LesServer, error) {
+func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 	quitSync := make(chan struct{})
-	pm, err := NewProtocolManager(
-		eth.BlockChain().Config(),
-		light.DefaultServerIndexerConfig,
-		false,
-		config.NetworkId,
-		eth.EventMux(),
-		eth.Engine(),
-		newPeerSet(),
-		eth.BlockChain(),
-		eth.TxPool(),
-		eth.ChainDb(),
-		nil,
-		nil,
-		nil,
-		quitSync,
-		new(sync.WaitGroup),
-		config.ULC)
-	if err != nil {
-		return nil, err
-	}
-
 	lesTopics := make([]discv5.Topic, len(AdvertiseProtocolVersions))
 	for i, pv := range AdvertiseProtocolVersions {
-		lesTopics[i] = lesTopic(eth.BlockChain().Genesis().Hash(), pv)
+		lesTopics[i] = lesTopic(e.BlockChain().Genesis().Hash(), pv)
 	}
 
 	srv := &LesServer{
 		lesCommons: lesCommons{
 			config:           config,
-			chainDb:          eth.ChainDb(),
 			iConfig:          light.DefaultServerIndexerConfig,
-			chtIndexer:       light.NewChtIndexer(eth.ChainDb(), nil, params.CHTFrequencyServer, params.HelperTrieProcessConfirmations),
-			bloomTrieIndexer: light.NewBloomTrieIndexer(eth.ChainDb(), nil, params.BloomBitsBlocks, params.BloomTrieFrequency),
-			protocolManager:  pm,
+			chainDb:          e.ChainDb(),
+			chtIndexer:       light.NewChtIndexer(e.ChainDb(), nil, params.CHTFrequencyServer, params.HelperTrieProcessConfirmations),
+			bloomTrieIndexer: light.NewBloomTrieIndexer(e.ChainDb(), nil, params.BloomBitsBlocks, params.BloomTrieFrequency),
 		},
-		costTracker:  newCostTracker(eth.ChainDb(), config),
+		costTracker:  newCostTracker(e.ChainDb(), config),
 		quitSync:     quitSync,
 		lesTopics:    lesTopics,
 		onlyAnnounce: config.OnlyAnnounce,
 	}
 
 	logger := log.New()
-	pm.server = srv
 	srv.thcNormal = config.LightServ * 4 / 100
 	if srv.thcNormal < 4 {
 		srv.thcNormal = 4
@@ -116,18 +94,37 @@ func NewLesServer(eth *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 		// convert last LES/2 section index back to LES/1 index for chtIndexer.SectionHead
 		chtLastSectionV1 := (chtLastSection+1)*(params.CHTFrequencyClient/params.CHTFrequencyServer) - 1
 		chtSectionHead := srv.chtIndexer.SectionHead(chtLastSectionV1)
-		chtRoot := light.GetChtRoot(pm.chainDb, chtLastSectionV1, chtSectionHead)
+		chtRoot := light.GetChtRoot(e.ChainDb(), chtLastSectionV1, chtSectionHead)
 		logger.Info("Loaded CHT", "section", chtLastSection, "head", chtSectionHead, "root", chtRoot)
 	}
 	bloomTrieSectionCount, _, _ := srv.bloomTrieIndexer.Sections()
 	if bloomTrieSectionCount != 0 {
 		bloomTrieLastSection := bloomTrieSectionCount - 1
 		bloomTrieSectionHead := srv.bloomTrieIndexer.SectionHead(bloomTrieLastSection)
-		bloomTrieRoot := light.GetBloomTrieRoot(pm.chainDb, bloomTrieLastSection, bloomTrieSectionHead)
+		bloomTrieRoot := light.GetBloomTrieRoot(e.ChainDb(), bloomTrieLastSection, bloomTrieSectionHead)
 		logger.Info("Loaded bloom trie", "section", bloomTrieLastSection, "head", bloomTrieSectionHead, "root", bloomTrieRoot)
 	}
 
-	srv.chtIndexer.Start(eth.BlockChain())
+	srv.chtIndexer.Start(e.BlockChain())
+
+	chainConfig, _, genesisErr := core.SetupGenesisBlockWithOverride(e.ChainDb(), config.Genesis, config.ConstantinopleOverride)
+	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
+		return nil, genesisErr
+	}
+
+	rconfig := &RegistrarConfig{
+		ContractConfig:  chainConfig.CheckpointContract,
+		CheckpointSize:  params.CheckpointFrequency,
+		ProcessConfirms: params.CheckpointProcessConfirmations,
+	}
+	registrar := newCheckpointRegistrar(e.ChainDb(), rconfig, light.DefaultServerIndexerConfig, srv.chtIndexer, srv.bloomTrieIndexer)
+	pm, err := NewProtocolManager(e.BlockChain().Config(), light.DefaultServerIndexerConfig, config.ULC, false, config.NetworkId, e.EventMux(), newPeerSet(), e.BlockChain(), e.TxPool(), e.ChainDb(), nil, nil, registrar, quitSync, new(sync.WaitGroup))
+	if err != nil {
+		return nil, err
+	}
+	srv.protocolManager = pm
+	pm.server = srv
+
 	return srv, nil
 }
 
@@ -235,6 +232,13 @@ func (s *LesServer) SetBloomBitsIndexer(bloomIndexer *core.ChainIndexer) {
 	bloomIndexer.AddChildIndexer(s.bloomTrieIndexer)
 }
 
+// SetClient sets the rpc client and starts running checkpoint contract if it is not yet watched.
+func (s *LesServer) SetContractBackend(backend bind.ContractBackend) {
+	if s.protocolManager.reg != nil {
+		s.protocolManager.reg.start(backend)
+	}
+}
+
 // Stop stops the LES service
 func (s *LesServer) Stop() {
 	s.chtIndexer.Close()
@@ -245,6 +249,45 @@ func (s *LesServer) Stop() {
 	s.freeClientPool.stop()
 	s.costTracker.stop()
 	s.protocolManager.Stop()
+}
+
+// latestLocalCheckpoint finds the common stored section index and returns a set of
+// post-processed trie roots (CHT and BloomTrie) associated with
+// the appropriate section index and head hash as a local checkpoint package.
+//
+// Note for cht, the section size in LES1 is 4K, so indexer still uses LES/1
+// 4k section size for backwards server compatibility. For bloomTrie, the size
+// of the section used for indexer is 32K.
+func (s *LesServer) latestLocalCheckpoint() light.TrustedCheckpoint {
+	chtCount, _, _ := s.chtIndexer.Sections()
+	bloomTrieCount, _, _ := s.bloomTrieIndexer.Sections()
+	count := chtCount / (s.iConfig.PairChtSize / s.iConfig.ChtSize)
+	// Cap the section index if the two sections are not consistent.
+	if count > bloomTrieCount {
+		count = bloomTrieCount
+	}
+	if count == 0 {
+		// No checkpoint information can be provided.
+		return *light.EmptyCheckpoint
+	}
+	return s.getLocalCheckpoint(count - 1)
+}
+
+// getLocalCheckpoint returns a set of post-processed trie roots (CHT and BloomTrie)
+// associated with the appropriate head hash by specific section index.
+//
+// The returned checkpoint is only the checkpoint generated by the local indexers,
+// not the stable checkpoint registered in the registrar contract.
+func (s *LesServer) getLocalCheckpoint(index uint64) light.TrustedCheckpoint {
+	// convert last LES/2 section index back to LES/1 index for chtIndexer.SectionHead
+	latest := (index+1)*(s.iConfig.PairChtSize/s.iConfig.ChtSize) - 1
+	sectionHead := s.chtIndexer.SectionHead(latest)
+	return light.TrustedCheckpoint{
+		SectionIndex: index,
+		SectionHead:  sectionHead,
+		CHTRoot:      light.GetChtRoot(s.chainDb, latest, sectionHead),
+		BloomRoot:    light.GetBloomTrieRoot(s.chainDb, index, sectionHead),
+	}
 }
 
 func (pm *ProtocolManager) blockLoop() {

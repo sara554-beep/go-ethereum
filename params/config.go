@@ -98,6 +98,17 @@ var (
 			Period: 15,
 			Epoch:  30000,
 		},
+		CheckpointContract: &CheckpointContractConfig{
+			Name:         "rinkeby",
+			ContractAddr: common.HexToAddress("0xb708d2ca0ead46f7f254a13a10c4fc7b86ea34e"),
+			Signers: []common.Address{
+				common.HexToAddress("0x779ca2fc4a31a48dc338bc71959c1f1942a9098b"),
+				common.HexToAddress("0xacf370223f3ff062a997b3d138dddf1ad4d02a54"),
+				common.HexToAddress("0x937e8a232121eed45ce654f895e662b913526cfe"),
+				common.HexToAddress("0xdab27fd1a2ec8a899f87a5fa05f2c82870c036c7"),
+			},
+			Threshold: 2,
+		},
 	}
 
 	// RinkebyTrustedCheckpoint contains the light client trusted checkpoint for the Rinkeby test network.
@@ -141,16 +152,16 @@ var (
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllEthashProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, new(EthashConfig), nil}
+	AllEthashProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, new(EthashConfig), nil, nil}
 
 	// AllCliqueProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Clique consensus.
 	//
 	// This configuration is intentionally not using keyed fields to force anyone
 	// adding flags to the config to also have to set these fields.
-	AllCliqueProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, &CliqueConfig{Period: 0, Epoch: 30000}}
+	AllCliqueProtocolChanges = &ChainConfig{big.NewInt(1337), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, nil, &CliqueConfig{Period: 0, Epoch: 30000}, nil}
 
-	TestChainConfig = &ChainConfig{big.NewInt(1), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, new(EthashConfig), nil}
+	TestChainConfig = &ChainConfig{big.NewInt(1), big.NewInt(0), nil, false, big.NewInt(0), common.Hash{}, big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), big.NewInt(0), nil, new(EthashConfig), nil, nil}
 	TestRules       = TestChainConfig.Rules(new(big.Int))
 )
 
@@ -164,6 +175,15 @@ type TrustedCheckpoint struct {
 	SectionHead  common.Hash `json:"sectionHead"`
 	CHTRoot      common.Hash `json:"chtRoot"`
 	BloomRoot    common.Hash `json:"bloomRoot"`
+}
+
+// CheckpointContractConfig represents a set of checkpoint contract config
+// which used for light client checkpoint syncing.
+type CheckpointContractConfig struct {
+	Name         string           `json:"-"`
+	ContractAddr common.Address   `json:"contractAddr"`
+	Signers      []common.Address `json:"signers"`
+	Threshold    uint64           `json:"threshold"`
 }
 
 // ChainConfig is the core config which determines the blockchain settings.
@@ -194,6 +214,9 @@ type ChainConfig struct {
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty"`
 	Clique *CliqueConfig `json:"clique,omitempty"`
+
+	// Checkpoint contract configs
+	CheckpointContract *CheckpointContractConfig `json:"checkpointContract,omitempty"`
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
