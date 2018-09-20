@@ -99,8 +99,8 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 	if bc.genesisBlock == nil {
 		return nil, core.ErrNoGenesis
 	}
-	if cp, ok := trustedCheckpoints[bc.genesisBlock.Hash()]; ok {
-		bc.addTrustedCheckpoint(cp)
+	if cp, ok := TrustedCheckpoints[bc.genesisBlock.Hash()]; ok {
+		bc.AddTrustedCheckpoint(cp)
 	}
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
@@ -116,8 +116,8 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 	return bc, nil
 }
 
-// addTrustedCheckpoint adds a trusted checkpoint to the blockchain
-func (self *LightChain) addTrustedCheckpoint(cp *params.TrustedCheckpoint) {
+// AddTrustedCheckpoint adds a trusted checkpoint to the blockchain
+func (self *LightChain) AddTrustedCheckpoint(cp *params.TrustedCheckpoint) {
 	if self.odr.ChtIndexer() != nil {
 		StoreChtRoot(self.chainDb, cp.SectionIndex, cp.SectionHead, cp.CHTRoot)
 		self.odr.ChtIndexer().AddCheckpoint(cp.SectionIndex, cp.SectionHead)
@@ -461,21 +461,21 @@ func (self *LightChain) GetHeaderByNumberOdr(ctx context.Context, number uint64)
 // Config retrieves the header chain's chain configuration.
 func (self *LightChain) Config() *params.ChainConfig { return self.hc.Config() }
 
-func (self *LightChain) SyncCht(ctx context.Context) bool {
-	// If we don't have a CHT indexer, abort
-	if self.odr.ChtIndexer() == nil {
-		return false
-	}
-	// Ensure the remote CHT head is ahead of us
+// SyncCheckpoint fetches the checkpoint point block header according to
+// the checkpoint provided by the remote peer.
+//
+// Note if we are running the clique, fetches the last epoch snapshot header
+// which covered by checkpoint.
+func (self *LightChain) SyncCheckpoint(ctx context.Context, checkpoint TrustedCheckpoint) bool {
+	// Ensure the remote checkpoint head is ahead of us
 	head := self.CurrentHeader().Number.Uint64()
-	sections, _, _ := self.odr.ChtIndexer().Sections()
 
-	latest := sections*self.indexerConfig.ChtSize - 1
+	latest := (checkpoint.SectionIndex+1)*self.indexerConfig.ChtSize - 1
 	if clique := self.hc.Config().Clique; clique != nil {
 		latest -= latest % clique.Epoch // epoch snapshot for clique
 	}
 	if head >= latest {
-		return false
+		return true
 	}
 	// Retrieve the latest useful header and update to it
 	if header, err := GetHeaderByNumber(ctx, self.odr, latest); header != nil && err == nil {
