@@ -60,6 +60,8 @@ type peer struct {
 
 	announceType, requestAnnounceType uint64
 
+	advertisedCheckpoint light.TrustedCheckpoint
+
 	id string
 
 	headInfo *announceData
@@ -414,6 +416,9 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 		list := server.fcCostStats.getCurrentList()
 		send = send.add("flowControl/MRC", list)
 		p.fcCosts = list.decode()
+		if server.protocolManager.reg != nil {
+			send = send.add("checkpoint", server.protocolManager.reg.stableCheckpoint())
+		}
 	} else {
 		p.requestAnnounceType = announceTypeSimple // set to default until "very light" client mode is implemented
 		send = send.add("announceType", p.requestAnnounceType)
@@ -489,6 +494,12 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 		p.fcServerParams = params
 		p.fcServer = flowcontrol.NewServerNode(params)
 		p.fcCosts = MRC.decode()
+
+		hardcoded := light.TrustedCheckpoints[genesis]
+		if err := recv.get("checkpoint", &p.advertisedCheckpoint); err != nil ||
+			p.advertisedCheckpoint.Empty() || p.advertisedCheckpoint.SectionIdx < hardcoded.SectionIdx {
+			p.advertisedCheckpoint = hardcoded
+		}
 	}
 
 	p.headInfo = &announceData{Td: rTd, Hash: rHash, Number: rNum}
