@@ -19,11 +19,13 @@ package utils
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +45,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethstats"
 	"github.com/ethereum/go-ethereum/les"
@@ -1303,6 +1306,22 @@ func RegisterEthService(stack *node.Node, cfg *eth.Config) {
 		err = stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
 			return les.New(ctx, cfg)
 		})
+		if err == nil {
+			err = stack.RegisterCallback(reflect.TypeOf(&les.LightEthereum{}), func(service node.Service) error {
+				if e, ok := service.(*les.LightEthereum); ok {
+					// The node lock will be held during the whole node setup procedure, so no extra
+					// lock operation is needed.
+					rpcClient, err := stack.AttachLocked()
+					if err != nil {
+						return err
+					}
+					e.SetContractBackend(ethclient.NewClient(rpcClient))
+					return nil
+				} else {
+					return errors.New("the service given is not the required type")
+				}
+			})
+		}
 	} else {
 		err = stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
 			fullNode, err := eth.New(ctx, cfg)
@@ -1312,6 +1331,22 @@ func RegisterEthService(stack *node.Node, cfg *eth.Config) {
 			}
 			return fullNode, err
 		})
+		if err == nil {
+			err = stack.RegisterCallback(reflect.TypeOf(&eth.Ethereum{}), func(service node.Service) error {
+				if e, ok := service.(*eth.Ethereum); ok {
+					// The node lock will be held during the whole node setup procedure, so no extra
+					// lock operation is needed.
+					rpcClient, err := stack.AttachLocked()
+					if err != nil {
+						return err
+					}
+					e.SetContractBackend(ethclient.NewClient(rpcClient))
+					return nil
+				} else {
+					return errors.New("the service given is not the required type")
+				}
+			})
+		}
 	}
 	if err != nil {
 		Fatalf("Failed to register the Ethereum service: %v", err)
