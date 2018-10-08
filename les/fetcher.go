@@ -52,8 +52,10 @@ type lightFetcher struct {
 	syncing         bool
 	syncDone        chan *peer
 
-	reqMu      sync.RWMutex // reqMu protects access to sent header fetch requests
-	requested  map[uint64]fetchRequest
+	reqMu     sync.RWMutex // reqMu used to protect sent requests map and fetching map.
+	requested map[uint64]fetchRequest
+	fetching  map[common.Hash]struct{}
+
 	deliverChn chan fetchResponse
 	timeoutChn chan uint64
 	requestChn chan bool // true if initiated from outside
@@ -112,6 +114,7 @@ func newLightFetcher(pm *ProtocolManager) *lightFetcher {
 		chain:          pm.blockchain.(*light.LightChain),
 		odr:            pm.odr,
 		peers:          make(map[*peer]*fetcherPeerInfo),
+		fetching:       make(map[common.Hash]struct{}),
 		deliverChn:     make(chan fetchResponse, 100),
 		requested:      make(map[uint64]fetchRequest),
 		timeoutChn:     make(chan uint64),
@@ -177,6 +180,7 @@ func (f *lightFetcher) syncLoop() {
 			req, ok := f.requested[reqID]
 			if ok {
 				delete(f.requested, reqID)
+				delete(f.fetching, req.hash)
 			}
 			f.reqMu.Unlock()
 			if ok {
@@ -192,6 +196,7 @@ func (f *lightFetcher) syncLoop() {
 			}
 			if ok {
 				delete(f.requested, resp.reqID)
+				delete(f.fetching, req.hash)
 			}
 			f.reqMu.Unlock()
 			if ok {
@@ -413,9 +418,14 @@ func (f *lightFetcher) nextRequest() (*distReq, uint64) {
 	bestTd := f.maxConfirmedTd
 	bestSyncing := false
 
+	f.reqMu.RLock()
 	for p, fp := range f.peers {
 		// Ensure the latest announcement hasn't been retrieved
 		if fp.lastAnnounced == nil || f.checkKnownNode(p, fp.lastAnnounced) || fp.lastAnnounced.requested {
+			continue
+		}
+		// Ignore duplicate fetching
+		if _, exist := f.fetching[fp.lastAnnounced.hash]; exist {
 			continue
 		}
 		if bestTd == nil || fp.lastAnnounced.td.Cmp(bestTd) >= 0 {
@@ -428,6 +438,7 @@ func (f *lightFetcher) nextRequest() (*distReq, uint64) {
 			}
 		}
 	}
+	f.reqMu.RUnlock()
 	if bestTd == f.maxConfirmedTd {
 		return nil, 0
 	}
@@ -493,6 +504,7 @@ func (f *lightFetcher) nextRequest() (*distReq, uint64) {
 				p.fcServer.QueueRequest(reqID, cost)
 				f.reqMu.Lock()
 				f.requested[reqID] = fetchRequest{hash: bestHash, amount: bestAmount, peer: p, sent: mclock.Now()}
+				f.fetching[bestHash] = struct{}{}
 				f.reqMu.Unlock()
 				go func() {
 					time.Sleep(hardRequestTimeout)
