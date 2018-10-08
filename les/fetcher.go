@@ -414,15 +414,17 @@ func (f *lightFetcher) nextRequest() (*distReq, uint64) {
 	bestSyncing := false
 
 	for p, fp := range f.peers {
-		for hash, n := range fp.nodeByHash {
-			if !f.checkKnownNode(p, n) && !n.requested && (bestTd == nil || n.td.Cmp(bestTd) >= 0) {
-				amount := f.requestAmount(p, n)
-				if bestTd == nil || n.td.Cmp(bestTd) > 0 || amount < bestAmount {
-					bestHash = hash
-					bestAmount = amount
-					bestTd = n.td
-					bestSyncing = fp.bestConfirmed == nil || fp.root == nil || !f.checkKnownNode(p, fp.root)
-				}
+		// Ensure the latest announcement hasn't been retrieved
+		if fp.lastAnnounced == nil || f.checkKnownNode(p, fp.lastAnnounced) || fp.lastAnnounced.requested {
+			continue
+		}
+		if bestTd == nil || fp.lastAnnounced.td.Cmp(bestTd) >= 0 {
+			amount := f.requestAmount(p, fp.lastAnnounced)
+			if bestTd == nil || fp.lastAnnounced.td.Cmp(bestTd) > 0 || amount < bestAmount {
+				bestHash = fp.lastAnnounced.hash
+				bestAmount = amount
+				bestTd = fp.lastAnnounced.td
+				bestSyncing = fp.bestConfirmed == nil || fp.root == nil || !f.checkKnownNode(p, fp.root)
 			}
 		}
 	}
