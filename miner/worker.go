@@ -85,6 +85,7 @@ type environment struct {
 	ancestors mapset.Set     // ancestor set (used for checking uncle parent validity)
 	family    mapset.Set     // family set (used for checking uncle invalidity)
 	uncles    mapset.Set     // uncle set
+	localTxs  int            // local tx count in cycle
 	tcount    int            // tx count in cycle
 	gasPool   *core.GasPool  // available gas used to pack transactions
 
@@ -153,6 +154,10 @@ type worker struct {
 	localUncles  map[common.Hash]*types.Block // A set of side blocks generated locally as the possible uncle blocks.
 	remoteUncles map[common.Hash]*types.Block // A set of side blocks as the possible uncle blocks.
 	unconfirmed  *unconfirmedBlocks           // A set of locally mined blocks pending canonicalness confirmations.
+
+	lastLocalTxs int        // The number of local transactions included in the last sealing block
+	lastUncles   int        // The number of uncle blocks included in the last sealing block
+	lastReward   *big.Float // The total reward of last sealing block
 
 	mu       sync.RWMutex // The lock used to protect the coinbase and extra fields
 	coinbase common.Address
@@ -408,6 +413,11 @@ func (w *worker) mainLoop() {
 	for {
 		select {
 		case req := <-w.newWorkCh:
+			// Clean statistic data of last round if new head arrives.
+			if !req.noempty {
+				w.lastLocalTxs, w.lastUncles, w.lastReward = 0, 0, big.NewFloat(0)
+			}
+
 			w.commitNewWork(req.interrupt, req.noempty, req.timestamp)
 
 		case ev := <-w.chainSideCh:
@@ -445,7 +455,7 @@ func (w *worker) mainLoop() {
 						uncles = append(uncles, uncle.Header())
 						return false
 					})
-					w.commit(uncles, nil, true, start)
+					w.commit(uncles, nil, false, start)
 				}
 			}
 
@@ -906,7 +916,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	if !noempty {
 		// Create an empty block based on temporary copied state for sealing in advance without waiting block
 		// execution finished.
-		w.commit(uncles, nil, false, tstart)
+		w.commit(uncles, nil, true, tstart)
 	}
 
 	// Fill the block with all available pending transactions.
@@ -933,6 +943,7 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 		if w.commitTransactions(txs, w.coinbase, interrupt) {
 			return
 		}
+		w.current.localTxs = w.current.tcount
 	}
 	if len(remoteTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(w.current.signer, remoteTxs)
@@ -940,12 +951,12 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 			return
 		}
 	}
-	w.commit(uncles, w.fullTaskHook, true, tstart)
+	w.commit(uncles, w.fullTaskHook, false, tstart)
 }
 
 // commit runs any post-transaction state modifications, assembles the final block
 // and commits new work if consensus engine is running.
-func (w *worker) commit(uncles []*types.Header, interval func(), update bool, start time.Time) error {
+func (w *worker) commit(uncles []*types.Header, interval func(), empty bool, start time.Time) error {
 	// Deep copy receipts here to avoid interaction between different tasks.
 	receipts := make([]*types.Receipt, len(w.current.receipts))
 	for i, l := range w.current.receipts {
@@ -961,24 +972,29 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 		if interval != nil {
 			interval()
 		}
-		select {
-		case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
-			w.unconfirmed.Shift(block.NumberU64() - 1)
+		// Calculate accumulate transaction fees
+		feesWei := new(big.Int)
+		for i, tx := range block.Transactions() {
+			feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), tx.GasPrice()))
+		}
+		feesEth := new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
+		// Ensure there is some improvement compared with last mining work
+		if empty || feesEth.Cmp(w.lastReward) > 0 || len(uncles) > w.lastUncles || w.current.localTxs > w.lastLocalTxs {
+			select {
+			case w.taskCh <- &task{receipts: receipts, state: s, block: block, createdAt: time.Now()}:
+				w.unconfirmed.Shift(block.NumberU64() - 1)
+				log.Info("Commit new mining work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
+					"uncles", len(uncles), "txs", w.current.tcount, "gas", block.GasUsed(), "fees", feesEth, "elapsed", common.PrettyDuration(time.Since(start)))
 
-			feesWei := new(big.Int)
-			for i, tx := range block.Transactions() {
-				feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), tx.GasPrice()))
+			case <-w.exitCh:
+				log.Info("Worker has exited")
 			}
-			feesEth := new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
-
-			log.Info("Commit new mining work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
-				"uncles", len(uncles), "txs", w.current.tcount, "gas", block.GasUsed(), "fees", feesEth, "elapsed", common.PrettyDuration(time.Since(start)))
-
-		case <-w.exitCh:
-			log.Info("Worker has exited")
+			w.lastLocalTxs, w.lastUncles, w.lastReward = w.current.localTxs, len(uncles), feesEth
+		} else {
+			log.Info("😱 new mining work doesn't improve too much")
 		}
 	}
-	if update {
+	if !empty {
 		w.updateSnapshot()
 	}
 	return nil
