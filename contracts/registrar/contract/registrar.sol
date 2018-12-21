@@ -1,11 +1,29 @@
-pragma solidity ^0.4.24;
+pragma solidity ^0.5.2;
 
 /**
  * @title Registrar
- * @author Gary Rong<garyrong0905@gmail.com>
+ * @author Gary Rong<garyrong@ethereum.com>
  * @dev Implementation of the blockchain checkpoint registrar.
  */
 contract Registrar {
+    /* 
+       Definitions
+    */
+
+    // Vote represents a checkpoint announcement from a trusted signer.
+    struct Vote {
+        address addr;
+        bytes   sig;
+    }
+
+    // PendingProposal represents a tally for current pending new checkpoint
+    // proposal.
+    struct PendingProposal {
+        uint index;
+        uint count;
+        mapping(address => bytes32) usermap;
+        mapping(bytes32 => Vote[]) votemap;
+    }
     /*
         Modifiers
     */
@@ -22,21 +40,21 @@ contract Registrar {
         Events
     */
 
-    // NewCheckpointEvent is emitted when new checkpoint is registered or modified.
+    // NewCheckpointEvent is emitted when a new checkpoint proposal receive enough approvals.
     // We use checkpoint hash instead of the full checkpoint to make the transaction cheaper.
     event NewCheckpointEvent(uint indexed index, bytes32 checkpointHash, bytes signature);
 
     /*
         Public Functions
     */
-    constructor(address[] _adminlist, uint _sectionSize, uint _processConfirms, uint _freezeThreshold) public {
+    constructor(address[] memory _adminlist, uint _sectionSize, uint _processConfirms, uint _sigThreshold) public {
         for (uint i = 0; i < _adminlist.length; i++) {
             admins[_adminlist[i]] = 1;
             adminList.push(_adminlist[i]);
         }
         sectionSize = _sectionSize;
         processConfirms = _processConfirms;
-        freezeThreshold = _freezeThreshold;
+        sigThreshold = _sigThreshold;
     }
 
     /**
@@ -86,31 +104,76 @@ contract Registrar {
     function SetCheckpoint(
         uint _sectionIndex,
         bytes32 _hash,
-        bytes _sig
+        bytes memory _sig
     )
     OnlyAuthorized
     public
     returns(bool)
     {
-        // Ensure the checkpoint information provided is strictly continuous with previous one.
-        // But the latest checkpoint modification is allowed.
-        if (_sectionIndex != latest && _sectionIndex != latest + 1 && latest != 0) {
+        // Checkpoint register/modification time window: [(secIndex+1)*size + confirms, (secIndex+2)*size)
+        if (block.number < (_sectionIndex+1)*sectionSize+processConfirms || block.number >= (_sectionIndex+2)*sectionSize) {
             return false;
         }
-        // Ensure the checkpoint is stable enough to be registered.
-        if (block.number < (_sectionIndex+1)*sectionSize+processConfirms) {
+        // Filter out stale announcement
+        if (_sectionIndex == latest && (latest != 0 || register_height[0] != 0)) {
             return false;
         }
-        // Ensure the modification for registered checkpoint within the allowed time range
-        if (latest != 0 && _sectionIndex == latest && block.number >= (_sectionIndex+1)*sectionSize+freezeThreshold) {
-            return false; 
+        // Filter out invalid announcement
+        if (_hash == "") {
+            return false;
         }
+        // Delete stale pending proposal silently
+        if (pending_proposal.index != _sectionIndex) {
+            deletePending();
+        }
+        bytes32 old = pending_proposal.usermap[msg.sender];
+        // Filter out duplicate announcement
+        if (old == _hash) {
+            return false;
+        }
+        bool isNew = (old == "");
+        pending_proposal.usermap[msg.sender] = _hash;
 
-        checkpoints[_sectionIndex] = _hash;
-        register_height[_sectionIndex] = block.number;
-        latest = _sectionIndex;
+        if (!isNew) {
+            // Checkpoint modification
+            Vote[] storage votes = pending_proposal.votemap[old];
+            for (uint i = 0; i < votes.length; i++) {
+                if (votes[i].addr == msg.sender) {
+                    for (uint j = i; j < votes.length - 1; j++) {
+                        votes[j] = votes[j+1];
+                    }
+                    delete votes[votes.length-1];
+                    votes.length -= 1;
+                }
+            }
+            pending_proposal.votemap[_hash].push(Vote({
+                addr: msg.sender,
+                sig:  _sig
+            }));
+        } else {
+            // New checkpoint announcement
+            pending_proposal.count += 1;
+            pending_proposal.index = _sectionIndex;
+            Vote[] storage new_votes = pending_proposal.votemap[_hash];
+            new_votes.push(Vote({
+                addr: msg.sender,
+                sig:  _sig
+            }));
+            if (new_votes.length < sigThreshold) {
+               return true;
+            }
+            checkpoints[_sectionIndex] = _hash;
+            register_height[_sectionIndex] = block.number;
+            latest = _sectionIndex;
 
-        emit NewCheckpointEvent(_sectionIndex, _hash, _sig);
+            bytes memory sigs;
+            for (uint idx = 0; idx < sigThreshold; idx++) {
+                sigs = abi.encodePacked(sigs, new_votes[idx].sig);
+            }
+            emit NewCheckpointEvent(_sectionIndex, _hash, sigs);
+            deletePending();
+        }
+        return true;
     }
 
     /**
@@ -120,7 +183,7 @@ contract Registrar {
     function GetAllAdmin()
     public
     view
-    returns(address[])
+    returns(address[] memory)
     {
         address[] memory ret = new address[](adminList.length);
         for (uint i = 0; i < adminList.length; i++) {
@@ -129,9 +192,51 @@ contract Registrar {
         return ret;
     }
 
+    /**
+     * @dev Get the detail of pending proposal
+     * @return checkpoint index
+     * @return checkpoint approvals
+     */
+    function GetPending()
+    public
+    view
+    returns(uint, address[] memory, bytes32[] memory)
+    {
+        uint idx = 0;
+        address[] memory addr = new address[](pending_proposal.count);
+        bytes32[] memory hashes = new bytes32[](pending_proposal.count);
+        for (uint i = 0; i < adminList.length; i++) {
+            bytes32 h = pending_proposal.usermap[adminList[i]];
+            if (h != "") {
+                addr[idx] = adminList[i];
+                hashes[idx] = h;
+                idx += 1;
+            }
+        }
+        return (pending_proposal.index, addr, hashes);
+    }
+
+    /**
+     * @dev Clear pending proposal
+     */
+    function deletePending()
+    private
+    {
+        for (uint i = 0; i < adminList.length; i++) {
+            bytes32 h = pending_proposal.usermap[adminList[i]];
+            if (h != "") {
+                delete pending_proposal.votemap[h];
+                delete pending_proposal.usermap[adminList[i]];
+            }
+        }
+        delete pending_proposal;
+    }
+
     /*
         Fields
     */
+    // Inflight new stable checkpoint proposal.
+    PendingProposal pending_proposal;
 
     // A map of admin users who have the permission to update CHT and bloom Trie root
     mapping(address => uint) admins;
@@ -162,11 +267,7 @@ contract Registrar {
     // in the ethereum.
     uint processConfirms;
     
-    // The maximum time range in which a registered checkpoint is allowed to be modified.
-    //
-    // The default value should be the same as the checkpoint accept confirmation(8192) 
-    // in the ethereum after which a local generated checkpoint can finally be converted 
-    // to a stable one in the server side.
-    uint freezeThreshold;
+    // The required signatures to finalize a stable checkpoint.
+    uint sigThreshold;
 }
 

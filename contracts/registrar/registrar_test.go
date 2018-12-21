@@ -18,8 +18,8 @@ package registrar
 
 import (
 	"crypto/ecdsa"
-	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/big"
 	"reflect"
 	"testing"
@@ -34,9 +34,15 @@ import (
 	"github.com/ethereum/go-ethereum/light"
 )
 
+const signatureLen = 65
+
 var (
 	key, _    = crypto.GenerateKey()
 	addr      = crypto.PubkeyToAddress(key.PublicKey)
+	key2, _   = crypto.GenerateKey()
+	addr2     = crypto.PubkeyToAddress(key2.PublicKey)
+	key3, _   = crypto.GenerateKey()
+	addr3     = crypto.PubkeyToAddress(key3.PublicKey)
 	emptyHash = [32]byte{}
 
 	checkpoint0 = light.TrustedCheckpoint{
@@ -51,17 +57,20 @@ var (
 		CHTRoot:      common.HexToHash("0x7d428008ece3b4c4ef5439f071930aad0bb75108d381308df73beadcd01ded95"),
 		BloomRoot:    common.HexToHash("0x652571f7736de17e7bbb427ac881474da684c6988a88bf51b10cca9a2ee148f4"),
 	}
+	checkpoint2 = light.TrustedCheckpoint{
+		SectionIndex: 2,
+		SectionHead:  common.HexToHash("0x61c0de578c0115b1dff8ef39aa600588c7c6ecb8a2f102003d7cf4c4146e9291"),
+		CHTRoot:      common.HexToHash("0x407a08a407a2bc3838b74ca3eb206903c9c8a186ccf5ef14af07794efff1970b"),
+		BloomRoot:    common.HexToHash("0x058b4161f558ce295a92925efc57f34f9210d5a30088d7475c183e0d3e58f5ac"),
+	}
 )
 
 var (
 	// The block frequency for creating checkpoint(only used in test)
-	sectionSize = big.NewInt(2048)
+	sectionSize = big.NewInt(512)
 
 	// The number of confirmations needed to generate a checkpoint(only used in test).
-	processConfirms = big.NewInt(16)
-
-	// The maximum time range in which a registered checkpoint is allowed to be modified(only used in test).
-	freezeThreshold = big.NewInt(512)
+	processConfirms = big.NewInt(4)
 )
 
 // validateOperation executes the operation, watches and delivers all events fired by the backend and ensures the
@@ -118,31 +127,42 @@ func validateEvents(target int, sink interface{}) (bool, []reflect.Value) {
 	return chose == 1, recv
 }
 
-func signCheckpoint(privateKey *ecdsa.PrivateKey, index uint64, hash common.Hash) []byte {
-	buf := make([]byte, 8+common.HashLength)
-	binary.BigEndian.PutUint64(buf, index)
-	copy(buf[8:], hash.Bytes())
+func signCheckpoint(privateKey *ecdsa.PrivateKey, hash common.Hash) []byte {
 	sig, _ := crypto.Sign(hash.Bytes(), privateKey)
 	return sig
 }
 
-func recoverSigner(hash [32]byte, sig []byte, expectSigner common.Address) bool {
-	pubkey, err := crypto.Ecrecover(hash[:], sig)
-	if err != nil {
+// assertSignature verifies whether the recovered signers are equal with expected.
+func assertSignature(hash [32]byte, sigs []byte, expectSigners []common.Address) bool {
+	if len(sigs) != signatureLen*len(expectSigners) {
 		return false
 	}
-	var signer common.Address
-	copy(signer[:], crypto.Keccak256(pubkey[1:])[12:])
 
-	return signer == expectSigner
+	signerMap := make(map[common.Address]struct{})
+	for i := 0; i < len(expectSigners); i += 1 {
+		pubkey, err := crypto.Ecrecover(hash[:], sigs[i*signatureLen:(i+1)*signatureLen])
+		if err != nil {
+			return false
+		}
+		var signer common.Address
+		copy(signer[:], crypto.Keccak256(pubkey[1:])[12:])
+		signerMap[signer] = struct{}{}
+	}
+	for i := 0; i < len(expectSigners); i += 1 {
+		if _, exist := signerMap[expectSigners[i]]; !exist {
+			return false
+		}
+	}
+	return true
 }
 
 // Tests checkpoint managements.
 func TestCheckpointRegister(t *testing.T) {
 	// Deploy registrar contract
 	transactOpts := bind.NewKeyedTransactor(key)
-	contractBackend := backends.NewSimulatedBackend(nil, core.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}}, 10000000)
-	_, _, c, err := contract.DeployContract(transactOpts, contractBackend, []common.Address{addr}, sectionSize, processConfirms, freezeThreshold)
+	contractBackend := backends.NewSimulatedBackend(nil, core.GenesisAlloc{addr: {Balance: big.NewInt(1000000000)}, addr2: {Balance: big.NewInt(1000000000)}, addr3: {Balance: big.NewInt(1000000000)}}, 10000000)
+	// 3 trusted signers, threshold 2
+	_, _, c, err := contract.DeployContract(transactOpts, contractBackend, []common.Address{addr, addr2, addr3}, sectionSize, processConfirms, big.NewInt(2))
 	if err != nil {
 		t.Error("deploy registrar contract failed", err)
 	}
@@ -150,14 +170,14 @@ func TestCheckpointRegister(t *testing.T) {
 
 	// Register unstable checkpoint
 	validateOperation(t, c, contractBackend, func() {
-		c.SetCheckpoint(transactOpts, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key, 0, checkpoint0.Hash()))
+		c.SetCheckpoint(transactOpts, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key, checkpoint0.Hash()))
 	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
 		hash, _, err := c.GetCheckpoint(nil, big.NewInt(0))
 		if err != nil {
 			return errors.New("get checkpoint failed")
 		}
 		if hash != emptyHash {
-			return errors.New("unstable checkpoint should be banned")
+			return errors.New("unstable checkpoint should be rejected")
 		}
 		return nil
 	}, "register unstable checkpoint")
@@ -166,113 +186,150 @@ func TestCheckpointRegister(t *testing.T) {
 
 	// Register by unauthorized user
 	validateOperation(t, c, contractBackend, func() {
-		user2, _ := crypto.GenerateKey()
-		unauthorized := bind.NewKeyedTransactor(user2)
-		c.SetCheckpoint(unauthorized, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(user2, 0, checkpoint0.Hash()))
+		u, _ := crypto.GenerateKey()
+		unauthorized := bind.NewKeyedTransactor(u)
+		c.SetCheckpoint(unauthorized, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(u, checkpoint0.Hash()))
 	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
 		hash, _, err := c.GetCheckpoint(nil, big.NewInt(0))
 		if err != nil {
 			return errors.New("get checkpoint failed")
 		}
 		if hash != emptyHash {
-			return errors.New("checkpoint from unauthorized user should be banned")
+			return errors.New("checkpoint from unauthorized user should be rejected")
 		}
 		return nil
 	}, "register by unauthorized user")
 
-	// Register a stable checkpoint
+	// Submit a new checkpoint announcement
 	validateOperation(t, c, contractBackend, func() {
-		c.SetCheckpoint(transactOpts, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key, 0, checkpoint0.Hash()))
+		c.SetCheckpoint(transactOpts, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key, checkpoint0.Hash()))
 	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
-		hash, _, err := c.GetCheckpoint(nil, big.NewInt(0))
-		if err != nil {
-			return errors.New("get checkpoint failed")
-		}
-		if hash != checkpoint0.Hash() {
-			return errors.New("register stable checkpoint failed")
-		}
+		return assert(c, 0, []common.Address{addr}, []common.Hash{checkpoint0.Hash()})
+	}, "single checkpoint announcement")
+
+	// Submit a duplicate checkpoint announcement
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(transactOpts, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key, checkpoint0.Hash()))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		return assert(c, 0, []common.Address{addr}, []common.Hash{checkpoint0.Hash()})
+	}, "duplicate checkpoint announcement")
+
+	// Modification
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(transactOpts, big.NewInt(0), common.HexToHash("deadbeef"), signCheckpoint(key, common.HexToHash("deadbeef")))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		return assert(c, 0, []common.Address{addr}, []common.Hash{common.HexToHash("deadbeef")})
+	}, "checkpoint modification")
+
+	// Modification
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(transactOpts, big.NewInt(0), common.HexToHash("deadbeef2"), signCheckpoint(key, common.HexToHash("deadbeef2")))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		return assert(c, 0, []common.Address{addr}, []common.Hash{common.HexToHash("deadbeef2")})
+	}, "checkpoint modification")
+
+	// Another correct checkpoint announcement
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(bind.NewKeyedTransactor(key2), big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key2, checkpoint0.Hash()))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		return assert(c, 0, []common.Address{addr, addr2}, []common.Hash{common.HexToHash("deadbeef2"), checkpoint0.Hash()})
+	}, "another checkpoint announcement")
+
+	// enough checkpoint announcement
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(bind.NewKeyedTransactor(key3), big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key3, checkpoint0.Hash()))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
 		if valid, recv := validateEvents(1, events); !valid {
 			return errors.New("receive incorrect number of events")
 		} else {
 			event := recv[0].Interface().(*contract.ContractNewCheckpointEvent)
-			if !recoverSigner(event.CheckpointHash, event.Signature, addr) {
+			if !assertSignature(event.CheckpointHash, event.Signature, []common.Address{addr2, addr3}) {
 				return errors.New("recover signer failed")
 			}
 		}
-		return nil
-	}, "register stable checkpoint")
+		index, hash, height, err := c.GetLatestCheckpoint(nil)
+		if err != nil || index.Uint64() != 0 || hash != checkpoint0.Hash() ||
+			height.Uint64() != contractBackend.Blockchain().CurrentHeader().Number.Uint64() {
+			return errors.New("stable checkpoint mismatch")
+		}
+		return assert(c, 0, nil, nil)
+	}, "enough checkpoint announcement")
 
-	// Modify the latest checkpoint
-	newCheckpoint := light.TrustedCheckpoint{
-		SectionIndex: 0,
-		SectionHead:  common.HexToHash("0x7fa3c32f996c2bfb41a1a65b3d8ea3e0a33a1674cde43678ad6f4235e764d17d"),
-		CHTRoot:      common.HexToHash("0x98fc5d3de23a0fecebad236f6655533c157d26a1aedcd0852a514dc1169e6350"),
-		BloomRoot:    common.HexToHash("0xdeadbeef"),
+	// submit a stale checkpoint announcement
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(transactOpts, big.NewInt(0), checkpoint0.Hash(), signCheckpoint(key, checkpoint0.Hash()))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		return assert(c, 0, nil, nil)
+	}, "submit stale checkpoint announcement")
+
+	// submit a future checkpoint announcement
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(transactOpts, big.NewInt(1), checkpoint1.Hash(), signCheckpoint(key, checkpoint1.Hash()))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		return assert(c, 0, nil, nil)
+	}, "submit future checkpoint announcement")
+
+	// submit uncontinuous checkpoint announcement
+	distance := 3*sectionSize.Uint64() + processConfirms.Uint64() - contractBackend.Blockchain().CurrentHeader().Number.Uint64()
+	contractBackend.ShiftBlocks(int(distance))
+	validateOperation(t, c, contractBackend, func() {
+		c.SetCheckpoint(transactOpts, big.NewInt(2), checkpoint2.Hash(), signCheckpoint(key, checkpoint2.Hash()))
+		c.SetCheckpoint(bind.NewKeyedTransactor(key2), big.NewInt(2), checkpoint2.Hash(), signCheckpoint(key2, checkpoint2.Hash()))
+	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
+		if valid, recv := validateEvents(1, events); !valid {
+			return errors.New("receive incorrect number of events")
+		} else {
+			event := recv[0].Interface().(*contract.ContractNewCheckpointEvent)
+			if !assertSignature(event.CheckpointHash, event.Signature, []common.Address{addr, addr2}) {
+				return errors.New("recover signer failed")
+			}
+		}
+		index, hash, height, err := c.GetLatestCheckpoint(nil)
+		if err != nil || index.Uint64() != 2 || hash != checkpoint2.Hash() ||
+			height.Uint64() != contractBackend.Blockchain().CurrentHeader().Number.Uint64() {
+			return errors.New("stable checkpoint mismatch")
+		}
+		return assert(c, 0, nil, nil)
+	}, "uncontinuous checkpoint announcement")
+}
+
+func assert(c *contract.Contract, index uint64, signers []common.Address, hashes []common.Hash) error {
+	pi, pSigners, pHashes, err := c.GetPending(nil)
+	if err != nil {
+		return errors.New("get pending proposal failed")
 	}
-	validateOperation(t, c, contractBackend, func() {
-		c.SetCheckpoint(transactOpts, big.NewInt(0), newCheckpoint.Hash(), signCheckpoint(key, 0, newCheckpoint.Hash()))
-	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
-		hash, _, err := c.GetCheckpoint(nil, big.NewInt(0))
-		if err != nil {
-			return errors.New("get checkpoint failed")
-		}
-		if hash != newCheckpoint.Hash() {
-			return errors.New("register stable checkpoint failed")
-		}
-		if valid, recv := validateEvents(1, events); !valid {
-			return errors.New("receive incorrect number of events")
-		} else {
-			event := recv[0].Interface().(*contract.ContractNewCheckpointEvent)
-			if !recoverSigner(event.CheckpointHash, event.Signature, addr) {
-				return errors.New("recover signer failed")
-			}
-		}
-		return nil
-	}, "modify latest checkpoint")
-
-	// Register checkpoint 1
-	contractBackend.ShiftBlocks(int(sectionSize.Uint64()))
-
-	validateOperation(t, c, contractBackend, func() {
-		c.SetCheckpoint(transactOpts, big.NewInt(1), checkpoint1.Hash(), signCheckpoint(key, 1, checkpoint1.Hash()))
-	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
-		hash, _, err := c.GetCheckpoint(nil, big.NewInt(1))
-		if err != nil {
-			return errors.New("get checkpoint failed")
-		}
-		if hash != checkpoint1.Hash() {
-			return errors.New("register stable checkpoint failed")
-		}
-		if valid, recv := validateEvents(1, events); !valid {
-			return errors.New("receive incorrect number of events")
-		} else {
-			event := recv[0].Interface().(*contract.ContractNewCheckpointEvent)
-			if !recoverSigner(event.CheckpointHash, event.Signature, addr) {
-				return errors.New("recover signer failed")
-			}
-		}
-		return nil
-	}, "register stable checkpoint 1")
-
-	// Modify the registered checkpoint after a very long time
-	contractBackend.ShiftBlocks(int(freezeThreshold.Uint64()))
-
-	newCheckpoint1 := light.TrustedCheckpoint{
-		SectionIndex: 1,
-		SectionHead:  common.HexToHash("0x2d4dee68102125e59b0cc61b176bd89f0d12b3b91cfaf52ef8c2c82fb920c2d2"),
-		CHTRoot:      common.HexToHash("0x7d428008ece3b4c4ef5439f071930aad0bb75108d381308df73beadcd01ded95"),
-		BloomRoot:    common.HexToHash("0xdeadbeef"),
+	if pi.Uint64() != index {
+		return fmt.Errorf("pending checkpoint index mismatch, want=%d, got=%d", index, pi.Uint64())
 	}
-	validateOperation(t, c, contractBackend, func() {
-		c.SetCheckpoint(transactOpts, big.NewInt(1), newCheckpoint1.Hash(), signCheckpoint(key, 1, newCheckpoint1.Hash()))
-	}, func(events <-chan *contract.ContractNewCheckpointEvent) error {
-		hash, _, err := c.GetCheckpoint(nil, big.NewInt(1))
-		if err != nil {
-			return errors.New("get checkpoint failed")
+	// Assert signers
+	if len(pSigners) != len(signers) {
+		return fmt.Errorf("pending checkpoint signers number mismatch, want=%d, got=%d", len(signers), len(pSigners))
+	}
+	for _, a := range signers {
+		found := false
+		for _, b := range pSigners {
+			if a == b {
+				found = true
+			}
 		}
-		if hash != checkpoint1.Hash() {
-			return errors.New("checkpoint modified out of allowed time range")
+		if !found {
+			return fmt.Errorf("signer %s not found", a.Hex())
 		}
-		return nil
-	}, "modify checkpoint out of allowed time range")
+	}
+	// Assert hashes
+	if len(hashes) != len(pHashes) {
+		return fmt.Errorf("pending checkpoint hash number mismatch, want=%d, got=%d", len(hashes), len(pHashes))
+	}
+	for _, a := range hashes {
+		found := false
+		for _, b := range pHashes {
+			if a == b {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("hash %s not found", a.Hex())
+		}
+	}
+	return nil
 }

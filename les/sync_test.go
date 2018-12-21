@@ -38,18 +38,18 @@ func testCheckpointSyncing(t *testing.T, protocol int) {
 			cs, _, _ := cIndexer.Sections()
 			bs, _, _ := bIndexer.Sections()
 			bts, _, _ := btIndexer.Sections()
-			if cs >= (config.PairChtSize+freezeThreshold.Uint64())/config.ChtSize && bs >= config.PairChtSize/config.BloomSize &&
+			if cs >= (config.PairChtSize)/config.ChtSize && bs >= config.PairChtSize/config.BloomSize &&
 				bts >= config.PairChtSize/config.BloomTrieSize {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	// Generate 512+128+4 blocks (totally 10 CHT sections)
-	server, client, tearDown := newClientServerEnv(t, int(config.PairChtSize+freezeThreshold.Uint64()+config.ChtConfirms), protocol, waitIndexers, false)
+	// Generate 512+4 blocks (totally 8 CHT sections)
+	server, client, tearDown := newClientServerEnv(t, int(config.PairChtSize+config.ChtConfirms), protocol, waitIndexers, false)
 	defer tearDown()
 
-	// Register checkpoint 0 into the contract at block (512+128+4)+1
+	// Register checkpoint 0 into the contract at block (512+4)+1
 	bts, _, head := server.bloomTrieIndexer.Sections()
 	chtRoot := light.GetChtRoot(server.db, 7, head)
 	btRoot := light.GetBloomTrieRoot(server.db, bts-1, head)
@@ -89,7 +89,7 @@ func testCheckpointSyncing(t *testing.T, protocol int) {
 	done := make(chan error)
 	client.pm.reg.SyncDoneHook = func() {
 		header := client.pm.blockchain.CurrentHeader()
-		if header.Number.Uint64() == config.PairChtSize+freezeThreshold.Uint64()+config.ChtConfirms+2 {
+		if header.Number.Uint64() == config.PairChtSize+config.ChtConfirms+2 {
 			done <- nil
 		} else {
 			fmt.Println(header.Number.Uint64())

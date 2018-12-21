@@ -112,13 +112,14 @@ var (
 	// RinkebyCheckpointRegistrar contains the checkpoint registrar config for the Rinkeby test network.
 	RinkebyCheckpointRegistrar = &CheckpointRegistrar{
 		Name:         "rinkeby",
-		ContractAddr: common.HexToAddress("0x87d3650ac59550d268c7ba542eef7160f66b96eb"),
+		ContractAddr: common.HexToAddress("0x05d6f1901a99555203a9b03afb6d197ef4ba8387"),
 		Signers: []common.Address{
 			common.HexToAddress("0x3ee27fee0f67e013a277fb17d62a0c4f94dd7511"),
 			common.HexToAddress("0xda9b50bd9951e1b1c939c1981ce23395f81a9bd9"),
 			common.HexToAddress("0xdea8ff339cc03a8b63d6435ae67a257e952808da"),
 			common.HexToAddress("0x3f424b8edd788cd8158d1e83fa6bb0abffd22155"),
 		},
+		Threshold: 2,
 	}
 
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
@@ -157,6 +158,7 @@ type CheckpointRegistrar struct {
 	Name         string           `json:"-"`
 	ContractAddr common.Address   `json:"contractAddr"`
 	Signers      []common.Address `json:"signers"`
+	Threshold    int              `json:"threshold"`
 }
 
 // ChainConfig is the core config which determines the blockchain settings.

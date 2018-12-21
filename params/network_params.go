@@ -57,8 +57,4 @@ const (
 
 	// CheckpointProcessConfirmations is the number before a checkpoint is generated
 	CheckpointProcessConfirmations = 256
-
-	// FreezeThreshold is the number of confirmations before a checkpoint is regarded
-	// as stable.
-	FreezeThreshold = 8192
 )
