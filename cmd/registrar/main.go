@@ -51,12 +51,14 @@ func init() {
 	app.Commands = []cli.Command{
 		commandQueryAdmin,
 		commandQueryCheckpoint,
+		commandPendingProposal,
 		commandDeployContract,
 		commandRegisterCheckpoint,
 	}
 	app.Flags = []cli.Flag{
 		contractAddrFlag,
 		checkpointIndexFlag,
+		sigThresholdFlag,
 		keyFileFlag,
 		clientURLFlag,
 		trustedSignerFlag,
@@ -76,6 +78,10 @@ var (
 	checkpointIndexFlag = cli.Int64Flag{
 		Name:  "index",
 		Usage: "The index of checkpoint",
+	}
+	sigThresholdFlag = cli.Int64Flag{
+		Name:  "threshold",
+		Usage: "The minimal signature required to approve a checkpoint",
 	}
 	keyFileFlag = cli.StringFlag{
 		Name:  "keyfile",

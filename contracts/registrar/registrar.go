@@ -20,7 +20,6 @@ package registrar
 
 import (
 	"crypto/ecdsa"
-	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -37,8 +36,6 @@ var (
 		params.RinkebyGenesisHash: params.RinkebyCheckpointRegistrar,
 	}
 )
-
-var errEventNotFound = errors.New("contract event not found")
 
 type Registrar struct {
 	contract *contract.Contract

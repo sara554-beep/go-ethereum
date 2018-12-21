@@ -76,9 +76,6 @@ var (
 
 	// The number of confirmations needed to generate a checkpoint(only used in test).
 	processConfirms = big.NewInt(4)
-
-	// The maximum time range in which a registered checkpoint is allowed to be modified(only used in test).
-	freezeThreshold = big.NewInt(128)
 )
 
 /*
@@ -108,7 +105,7 @@ func prepareTestchain(n int, backend *backends.SimulatedBackend, genesis common.
 		switch i {
 		case 0:
 			// deploy checkpoint contract
-			contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, freezeThreshold)
+			contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, big.NewInt(1))
 			registrarOnce.Do(func() {
 				registrar.Registrars[genesis] = &params.CheckpointRegistrar{
 					Name:         "test",
@@ -220,7 +217,6 @@ func newTestProtocolManager(lightSync bool, blocks int, odr *LesOdr, indexers []
 	config := &RegistrarConfig{
 		CheckpointSize:  sectionSize.Uint64(),
 		ProcessConfirms: processConfirms.Uint64(),
-		FreezeThreshold: freezeThreshold.Uint64(),
 	}
 	var reg *checkpointRegistrar
 	if indexers != nil {

@@ -17,6 +17,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 
@@ -57,6 +58,23 @@ Fetch the registered checkpoint with the specified index.
 	Action: utils.MigrateFlags(queryCheckpoint),
 }
 
+var commandPendingProposal = cli.Command{
+	Name:  "queryproposal",
+	Usage: "Fetch the detail of the inflight new checkpoint proposal",
+	Description: `
+Get detailed data of the new checkpoint proposal currently in progress, 
+including the trusted signer address who has been approved and the corresponding 
+checkpoint hash
+`,
+	Flags: []cli.Flag{
+		contractAddrFlag,
+		clientURLFlag,
+		utils.TestnetFlag,
+		utils.RinkebyFlag,
+	},
+	Action: utils.MigrateFlags(queryProposal),
+}
+
 // queryAdmin fetches the admin list of specified registrar contract.
 func queryAdmin(ctx *cli.Context) error {
 	contract := setupContract(ctx, setupClient(ctx))
@@ -88,6 +106,24 @@ func queryCheckpoint(ctx *cli.Context) error {
 			return err
 		}
 		fmt.Printf("Latest checkpoint(registered at height #%d) %d => %s\n", height, index, common.Hash(checkpoint).Hex())
+	}
+	return nil
+}
+
+// queryProposal fetches the detail of inflight new checkpoint proposal
+// with specified contract address.
+func queryProposal(ctx *cli.Context) error {
+	contract := setupContract(ctx, setupClient(ctx))
+	index, addr, hashes, err := contract.Contract().GetPending(nil)
+	if err != nil {
+		return err
+	}
+	if len(addr) != len(hashes) {
+		return errors.New("trusted signer number is not match with corresponding hash")
+	}
+	fmt.Printf("Pending checkpoint proposal(index #%d)\n", index)
+	for i, a := range addr {
+		fmt.Printf("Signer(%s) => checkpoint hash(%s)\n", a.Hex(), common.Hash(hashes[i]).Hex())
 	}
 	return nil
 }

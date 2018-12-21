@@ -106,9 +106,9 @@ func (pm *ProtocolManager) validateCheckpoint(peer *peer) error {
 	}
 	events := pm.reg.contract.LookupCheckpointEvent(logs, cp.SectionIndex, cp.Hash())
 	for _, event := range events {
-		valid, signer := pm.reg.verifySigner(event.CheckpointHash, event.Signature)
+		valid, signers := pm.reg.verifySigner(event.CheckpointHash, event.Signature)
 		if valid {
-			log.Debug("Verify advertised checkpoint successfully", "peer", peer.id, "signer", signer)
+			log.Debug("Verify advertised checkpoint successfully", "peer", peer.id, "signernum", len(signers))
 			return nil
 		}
 	}
