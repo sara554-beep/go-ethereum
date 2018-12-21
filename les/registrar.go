@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/contracts/registrar/contract"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -268,13 +269,30 @@ func (reg *checkpointRegistrar) recoverCheckpoint() *light.TrustedCheckpoint {
 	index := sectionCnt - 1
 	for stable == nil || stable.SectionIndex < index {
 		if (index+1)*reg.config.CheckpointSize+reg.config.FreezeThreshold <= *headNumber {
-			hash, _, err := reg.contract.Contract().GetCheckpoint(nil, big.NewInt(int64(index)))
+			hash, height, err := reg.contract.Contract().GetCheckpoint(nil, big.NewInt(int64(index)))
 			if err != nil {
 				log.Warn("Get checkpoint from registrar contract failed", "err", err)
 				goto next
 			}
 			// Checkpoint hasn't been registered
 			if hash == [32]byte{} {
+				goto next
+			}
+			// Verify whether there is a corresponding valid signature from trusted signer.
+			var logs [][]*types.Log
+			receipts := rawdb.ReadReceipts(reg.chaindb, rawdb.ReadCanonicalHash(reg.chaindb, height.Uint64()), height.Uint64())
+			for _, receipt := range receipts {
+				logs = append(logs, receipt.Logs)
+			}
+			res := reg.contract.LookupCheckpointEvent(logs, index, hash)
+			var valid bool
+			for _, log := range res {
+				if v, _ := reg.verifySigner(hash, log.Signature); v {
+					valid = true
+					break
+				}
+			}
+			if !valid {
 				goto next
 			}
 			checkpoint := reg.getLocalCheckpoint(index)
