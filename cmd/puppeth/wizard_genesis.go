@@ -27,10 +27,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/contracts/registrar/contract"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/vm/runtime"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -131,6 +138,55 @@ func (w *wizard) makeGenesis() {
 	fmt.Println()
 	fmt.Println("Specify your chain/network ID if you want an explicit one (default = random)")
 	genesis.Config.ChainID = new(big.Int).SetUint64(uint64(w.readDefaultInt(rand.Intn(65536))))
+
+	// Query the user for registrar contract details
+	fmt.Println()
+	fmt.Println("Should registrar checkpoint contract be deployed (default = no)")
+	if w.readDefaultYesNo(false) {
+		// Read the address of the trusted signers
+		fmt.Println("Which accounts should be the trusted signer? (advisable at least one)")
+		var (
+			signers   []common.Address
+			threshold *big.Int
+		)
+		// Get trusted signer addresses
+		for {
+			if address := w.readAddress(); address != nil {
+				signers = append(signers, *address)
+				continue
+			}
+			break
+		}
+		// Get stable checkpoint signature threshold
+		for {
+			fmt.Printf("What is the minimum new stable checkpoint signature threshold? (advisable at most %d)\n", len(signers))
+			threshold = w.readDefaultBigInt(big.NewInt(0))
+			if threshold.Int64() <= 0 || threshold.Int64() > int64(len(signers)) {
+				fmt.Printf("Invalid checkpoint signature threshold, please enter in range [1, %d]\n", len(signers))
+			}
+			break
+		}
+		parsed, err := abi.JSON(strings.NewReader(contract.ContractABI))
+		if err != nil {
+			log.Crit("Parse contract ABI failed", "err", err)
+		}
+		input, err := parsed.Pack("", signers, big.NewInt(params.CheckpointFrequency), big.NewInt(params.CheckpointProcessConfirmations), threshold)
+		if err != nil {
+			log.Crit("Pack contract constructor arguments failed", "err", err)
+		}
+		config := &runtime.Config{GasLimit: math.MaxInt64}
+		config.State, _ = state.New(common.Hash{}, state.NewDatabase(ethdb.NewMemDatabase()))
+		code, address, _, err := runtime.Create(append(common.FromHex(contract.ContractBin), input...), config)
+		if err != nil {
+			log.Crit("Execute contract constructor failed", "err", err)
+		}
+		config.State.Commit(true)
+		genesis.Alloc[address] = core.GenesisAccount{Code: code, Storage: make(map[common.Hash]common.Hash)}
+		config.State.ForEachStorage(address, func(key, value common.Hash) bool {
+			genesis.Alloc[address].Storage[key] = value
+			return true
+		})
+	}
 
 	// All done, store the genesis and flush to disk
 	log.Info("Configured new genesis block")
