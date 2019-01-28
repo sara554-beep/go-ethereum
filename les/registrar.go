@@ -45,6 +45,9 @@ type Backend interface {
 
 // RegistrarConfig is the configuration parameters of registrar.
 type RegistrarConfig struct {
+	// ContractConfig is a set of checkpoint contract setting.
+	ContractConfig *params.CheckpointContractConfig
+
 	// CheckpointSize is the block frequency for creating a checkpoint.
 	CheckpointSize uint64
 
@@ -52,10 +55,11 @@ type RegistrarConfig struct {
 	ProcessConfirms uint64
 }
 
-// defaultConfig contains default settings for use on the Ethereum main net or test net.
-var defaultConfig = &RegistrarConfig{
-	CheckpointSize:  params.CheckpointFrequency,
-	ProcessConfirms: params.CheckpointProcessConfirmations,
+func newEmptyConfig() *RegistrarConfig {
+	return &RegistrarConfig{
+		CheckpointSize:  params.CheckpointFrequency,
+		ProcessConfirms: params.CheckpointProcessConfirmations,
+	}
 }
 
 const signatureLen = 65
@@ -75,10 +79,6 @@ type checkpointRegistrar struct {
 	backend   Backend
 	exitCh    chan struct{}
 
-	contractAddr common.Address   // address of checkpoint contract.
-	signers      []common.Address // a set of trusted checkpoint signers.
-	threshold    int              // the minimal required trusted signature for checkpoint approval
-
 	// Indexers
 	bloomTrieIndexer *core.ChainIndexer
 	chtIndexer       *core.ChainIndexer
@@ -92,13 +92,16 @@ type checkpointRegistrar struct {
 
 // newCheckpointRegistrar returns a checkpoint registrar handler.
 func newCheckpointRegistrar(chaindb ethdb.Database, backend Backend, config *RegistrarConfig, indexerConfig *light.IndexerConfig, chtIndexer *core.ChainIndexer, bloomTrieIndexer *core.ChainIndexer, genesis common.Hash, lightMode bool, exitCh chan struct{}) *checkpointRegistrar {
-	// Load default contract address and relative signers according to genesis hash
-	r, ok := registrar.Registrars[genesis]
-	if !ok {
+	// Load hardcoded contract address and relative signers.
+	if r, ok := registrar.Registrars[genesis]; ok {
+		config.ContractConfig = r
+	}
+	if config.ContractConfig == nil {
 		log.Info("Checkpoint registrar is not enabled")
 		return nil
 	}
-	log.Info("Setup registrar", "contract", r.ContractAddr, "numsigner", len(r.Signers))
+	log.Info("Setup registrar", "contract", config.ContractConfig.ContractAddr, "numsigner", len(config.ContractConfig.Signers),
+		"threshold", config.ContractConfig.Threshold)
 	reg := &checkpointRegistrar{
 		config:           config,
 		indexerConfig:    indexerConfig,
@@ -107,9 +110,6 @@ func newCheckpointRegistrar(chaindb ethdb.Database, backend Backend, config *Reg
 		bloomTrieIndexer: bloomTrieIndexer,
 		chtIndexer:       chtIndexer,
 		lightMode:        lightMode,
-		contractAddr:     r.ContractAddr,
-		signers:          r.Signers,
-		threshold:        r.Threshold,
 		chaindb:          chaindb,
 		exitCh:           exitCh,
 	}
@@ -119,7 +119,7 @@ func newCheckpointRegistrar(chaindb ethdb.Database, backend Backend, config *Reg
 // start binds the registrar contract and start listening to the
 // newCheckpointEvent for the server side.
 func (reg *checkpointRegistrar) start(backend bind.ContractBackend) {
-	contract, err := registrar.NewRegistrar(reg.contractAddr, backend)
+	contract, err := registrar.NewRegistrar(reg.config.ContractConfig.ContractAddr, backend)
 	if err != nil {
 		log.Info("Bind registrar contract failed", "err", err)
 		return
@@ -401,15 +401,16 @@ func (reg *checkpointRegistrar) verifySigner(checkpointHash [32]byte, signature 
 		if _, exist := signerMap[signer]; exist {
 			continue
 		}
-		for _, s := range reg.signers {
+		for _, s := range reg.config.ContractConfig.Signers {
 			if s == signer {
 				signers = append(signers, signer)
 				signerMap[signer] = struct{}{}
 			}
 		}
 	}
-	if len(signers) < reg.threshold {
-		log.Warn("Approval signature is not enough", "given", len(signers), "want", reg.threshold)
+	threshold := reg.config.ContractConfig.Threshold
+	if uint64(len(signers)) < threshold {
+		log.Warn("Approval signature is not enough", "given", len(signers), "want", threshold)
 		return false, nil
 	}
 

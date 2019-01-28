@@ -42,12 +42,12 @@ const SubscribeChainHeadEvent = 10
 type LesServer struct {
 	lesCommons
 
-	fcManager   *flowcontrol.ClientManager // nil if our node is client only
-	fcCostStats *requestCostStats
-	defParams   *flowcontrol.ServerParams
-	lesTopics   []discv5.Topic
-	privateKey  *ecdsa.PrivateKey
-	quitSync    chan struct{}
+	fcManager    *flowcontrol.ClientManager // nil if our node is client only
+	fcCostStats  *requestCostStats
+	defParams    *flowcontrol.ServerParams
+	lesTopics    []discv5.Topic
+	privateKey   *ecdsa.PrivateKey
+	quitSync     chan struct{}
 	onlyAnnounce bool
 
 	// Checkpoint contract relative fields
@@ -70,11 +70,11 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 			chtIndexer:       light.NewChtIndexer(e.ChainDb(), nil, params.CHTFrequencyServer, params.HelperTrieProcessConfirmations),
 			bloomTrieIndexer: light.NewBloomTrieIndexer(e.ChainDb(), nil, params.BloomBitsBlocks, params.BloomTrieFrequency),
 		},
-		genesis:   e.BlockChain().Genesis().Hash(),
-		quitSync:  quitSync,
-		lesTopics: lesTopics,
+		genesis:      e.BlockChain().Genesis().Hash(),
+		quitSync:     quitSync,
+		lesTopics:    lesTopics,
 		onlyAnnounce: config.OnlyAnnounce,
-		backend:   e.APIBackend,
+		backend:      e.APIBackend,
 	}
 
 	logger := log.New()
@@ -100,7 +100,10 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 
 	srv.chtIndexer.Start(e.BlockChain())
 
-	registrar := newCheckpointRegistrar(e.ChainDb(), e.APIBackend, defaultConfig, light.DefaultServerIndexerConfig, srv.chtIndexer, srv.bloomTrieIndexer, srv.genesis, false, quitSync)
+	rconfig := newEmptyConfig()
+	rconfig.ContractConfig = config.Genesis.Config.CheckpointContract
+
+	registrar := newCheckpointRegistrar(e.ChainDb(), e.APIBackend, rconfig, light.DefaultServerIndexerConfig, srv.chtIndexer, srv.bloomTrieIndexer, srv.genesis, false, quitSync)
 	pm, err := NewProtocolManager(e.BlockChain().Config(), light.DefaultServerIndexerConfig, config.ULC, false, config.NetworkId, e.EventMux(), newPeerSet(), e.BlockChain(), e.TxPool(), e.ChainDb(), nil, nil, registrar, quitSync, new(sync.WaitGroup))
 	if err != nil {
 		return nil, err
