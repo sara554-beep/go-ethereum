@@ -107,7 +107,7 @@ func prepareTestchain(n int, backend *backends.SimulatedBackend, genesis common.
 			// deploy checkpoint contract
 			contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, big.NewInt(1))
 			registrarOnce.Do(func() {
-				registrar.Registrars[genesis] = &params.CheckpointRegistrar{
+				registrar.Registrars[genesis] = &params.CheckpointContractConfig{
 					Name:         "test",
 					ContractAddr: crypto.CreateAddress(bankAddr, 0),
 					Signers:      []common.Address{signerAddr},

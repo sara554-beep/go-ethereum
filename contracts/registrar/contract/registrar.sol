@@ -19,11 +19,12 @@ contract Registrar {
     // PendingProposal represents a tally for current pending new checkpoint
     // proposal.
     struct PendingProposal {
-        uint index;
-        uint count;
+        uint index; // Checkpoint section index
+        uint count; // Number of signers who have submitted checkpoint announcement
         mapping(address => bytes32) usermap;
         mapping(bytes32 => Vote[]) votemap;
     }
+
     /*
         Modifiers
     */
@@ -32,7 +33,7 @@ contract Registrar {
      * @dev Check whether the message sender is authorized.
      */
     modifier OnlyAuthorized() {
-        require(admins[msg.sender] > 0);
+        require(admins[msg.sender] == true);
         _;
     }
 
@@ -47,14 +48,14 @@ contract Registrar {
     /*
         Public Functions
     */
-    constructor(address[] memory _adminlist, uint _sectionSize, uint _processConfirms, uint _sigThreshold) public {
+    constructor(address[] memory _adminlist, uint _sectionSize, uint _processConfirms, uint _threshold) public {
         for (uint i = 0; i < _adminlist.length; i++) {
-            admins[_adminlist[i]] = 1;
+            admins[_adminlist[i]] = true;
             adminList.push(_adminlist[i]);
         }
         sectionSize = _sectionSize;
         processConfirms = _processConfirms;
-        sigThreshold = _sigThreshold;
+        threshold = _threshold;
     }
 
     /**
@@ -98,7 +99,9 @@ contract Registrar {
      * need a trust less version for future.
      * @param _sectionIndex section index
      * @param _hash checkpoint hash calculated in the client side
-     * @param _sig admin's signature for checkpoint hash and index
+     * @param _sig admin's signature for checkpoint hash
+     *         `checkpoint_hash = Hash(index, sectionHead, chtRoot, bloomRoot)`
+     *         `_sig = Sign(privateKey, checkpoint_hash)`
      * @return indicator whether set checkpoint successfully
      */
     function SetCheckpoint(
@@ -137,15 +140,14 @@ contract Registrar {
         if (!isNew) {
             // Checkpoint modification
             Vote[] storage votes = pending_proposal.votemap[old];
-            for (uint i = 0; i < votes.length; i++) {
+            for (uint i = 0; i < votes.length - 1; i++) {
                 if (votes[i].addr == msg.sender) {
-                    for (uint j = i; j < votes.length - 1; j++) {
-                        votes[j] = votes[j+1];
-                    }
-                    delete votes[votes.length-1];
-                    votes.length -= 1;
+                    votes[i] = votes[votes.length - 1];
+                    break;
                 }
             }
+            delete votes[votes.length-1];
+            votes.length -= 1;
             pending_proposal.votemap[_hash].push(Vote({
                 addr: msg.sender,
                 sig:  _sig
@@ -154,25 +156,24 @@ contract Registrar {
             // New checkpoint announcement
             pending_proposal.count += 1;
             pending_proposal.index = _sectionIndex;
-            Vote[] storage new_votes = pending_proposal.votemap[_hash];
-            new_votes.push(Vote({
+            pending_proposal.votemap[_hash].push(Vote({
                 addr: msg.sender,
                 sig:  _sig
             }));
-            if (new_votes.length < sigThreshold) {
-               return true;
-            }
-            checkpoints[_sectionIndex] = _hash;
-            register_height[_sectionIndex] = block.number;
-            latest = _sectionIndex;
-
-            bytes memory sigs;
-            for (uint idx = 0; idx < sigThreshold; idx++) {
-                sigs = abi.encodePacked(sigs, new_votes[idx].sig);
-            }
-            emit NewCheckpointEvent(_sectionIndex, _hash, sigs);
-            deletePending();
         }
+        if (pending_proposal.votemap[_hash].length < threshold) {
+           return true;
+        }
+        checkpoints[_sectionIndex] = _hash;
+        register_height[_sectionIndex] = block.number;
+        latest = _sectionIndex;
+
+        bytes memory sigs;
+        for (uint idx = 0; idx < threshold; idx++) {
+            sigs = abi.encodePacked(sigs, pending_proposal.votemap[_hash][idx].sig);
+        }
+        emit NewCheckpointEvent(_sectionIndex, _hash, sigs);
+        deletePending();
         return true;
     }
 
@@ -195,7 +196,8 @@ contract Registrar {
     /**
      * @dev Get the detail of pending proposal
      * @return checkpoint index
-     * @return checkpoint approvals
+     * @return signers who have submitted checkpoint announcement
+     * @return hashes corresponding checkpoint hash
      */
     function GetPending()
     public
@@ -239,7 +241,7 @@ contract Registrar {
     PendingProposal pending_proposal;
 
     // A map of admin users who have the permission to update CHT and bloom Trie root
-    mapping(address => uint) admins;
+    mapping(address => bool) admins;
 
     // A list of admin users so that we can obtain all admin users.
     address[] adminList;
@@ -268,6 +270,6 @@ contract Registrar {
     uint processConfirms;
     
     // The required signatures to finalize a stable checkpoint.
-    uint sigThreshold;
+    uint threshold;
 }
 
