@@ -107,7 +107,7 @@ func prepareTestchain(n int, backend *backends.SimulatedBackend, genesis common.
 			// deploy checkpoint contract
 			contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, big.NewInt(1))
 			registrarOnce.Do(func() {
-				registrar.Registrars[genesis] = &params.CheckpointRegistrar{
+				registrar.Registrars[genesis] = &params.CheckpointContractConfig{
 					Name:         "test",
 					ContractAddr: crypto.CreateAddress(bankAddr, 0),
 					Signers:      []common.Address{signerAddr},
@@ -183,7 +183,7 @@ func testRCL() RequestCostList {
 // newTestProtocolManager creates a new protocol manager for testing purposes,
 // with the given number of blocks already known, potential notification
 // channels for different events and relative chain indexers array.
-func newTestProtocolManager(lightSync bool, blocks int, odr *LesOdr, indexers []*core.ChainIndexer, peers *peerSet, db ethdb.Database,  ulcConfig *eth.ULCConfig) (*ProtocolManager, *backends.SimulatedBackend, error) {
+func newTestProtocolManager(lightSync bool, blocks int, odr *LesOdr, indexers []*core.ChainIndexer, peers *peerSet, db ethdb.Database, ulcConfig *eth.ULCConfig) (*ProtocolManager, *backends.SimulatedBackend, error) {
 	var (
 		evmux  = new(event.TypeMux)
 		engine = ethash.NewFaker()

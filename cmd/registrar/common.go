@@ -64,7 +64,7 @@ func setupDialContext(ctx *cli.Context) *rpc.Client {
 // contract address or the default contracts for mainnet or testnet.
 func setupContract(ctx *cli.Context, client *ethclient.Client) *registrar.Registrar {
 	var (
-		r            *params.CheckpointRegistrar
+		r            *params.CheckpointContractConfig
 		contractAddr common.Address
 	)
 

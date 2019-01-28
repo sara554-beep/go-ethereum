@@ -50,12 +50,8 @@ func NewPrivateLesServerAPI(server *LesServer) *PrivateLesServerAPI {
 //   result[2], 32 bytes hex encoded latest section canonical hash trie root hash
 //   result[3], 32 bytes hex encoded latest section bloom trie root hash
 func (api *PrivateLesServerAPI) LatestCheckpoint() ([4]string, error) {
-	// Short circuit if registrar instance is nil
-	if api.reg == nil {
-		return [4]string{}, errNotActivated
-	}
 	var res [4]string
-	cp := api.reg.latestLocalCheckpoint()
+	cp := api.server.latestLocalCheckpoint()
 	if cp.Empty() {
 		return res, errNoCheckpoint
 	}
@@ -71,15 +67,19 @@ func (api *PrivateLesServerAPI) LatestCheckpoint() ([4]string, error) {
 //   result[1], 32 bytes hex encoded latest section canonical hash trie root hash
 //   result[2], 32 bytes hex encoded latest section bloom trie root hash
 func (api *PrivateLesServerAPI) GetCheckpoint(index uint64) ([3]string, error) {
-	// Short circuit if registrar instance is nil
-	if api.reg == nil {
-		return [3]string{}, errNotActivated
-	}
 	var res [3]string
-	cp := api.reg.getLocalCheckpoint(index)
+	cp := api.server.getLocalCheckpoint(index)
 	if cp.Empty() {
 		return res, errNoCheckpoint
 	}
 	res[0], res[1], res[2] = cp.SectionHead.Hex(), cp.CHTRoot.Hex(), cp.BloomRoot.Hex()
 	return res, nil
+}
+
+// GetCheckpointContractAddress returns the contract contract address in hex format.
+func (api *PrivateLesServerAPI) GetCheckpointContractAddress() (string, error) {
+	if api.reg == nil {
+		return "", errNotActivated
+	}
+	return api.reg.config.ContractConfig.ContractAddr.Hex(), nil
 }

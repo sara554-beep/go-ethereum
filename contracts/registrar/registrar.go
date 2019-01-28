@@ -32,8 +32,8 @@ import (
 )
 
 var (
-	Registrars = map[common.Hash]*params.CheckpointRegistrar{
-		params.RinkebyGenesisHash: params.RinkebyCheckpointRegistrar,
+	Registrars = map[common.Hash]*params.CheckpointContractConfig{
+		params.RinkebyGenesisHash: params.RinkebyCheckpointContract,
 	}
 )
 
@@ -82,8 +82,6 @@ func (registrar *Registrar) LookupCheckpointEvent(blockLogs [][]*types.Log, sect
 }
 
 // SetCheckpoint creates a signature for given checkpoint with specified private key and registers into contract.
-//
-// Note it should only be used in testing.
 func (registrar *Registrar) SetCheckpoint(key *ecdsa.PrivateKey, sectionIndex *big.Int, hash []byte) (*types.Transaction, error) {
 	sig, err := crypto.Sign(hash, key)
 	if err != nil {

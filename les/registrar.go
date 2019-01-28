@@ -45,6 +45,9 @@ type Backend interface {
 
 // RegistrarConfig is the configuration parameters of registrar.
 type RegistrarConfig struct {
+	// ContractConfig is a set of checkpoint contract setting.
+	ContractConfig *params.CheckpointContractConfig
+
 	// CheckpointSize is the block frequency for creating a checkpoint.
 	CheckpointSize uint64
 
@@ -52,10 +55,11 @@ type RegistrarConfig struct {
 	ProcessConfirms uint64
 }
 
-// defaultConfig contains default settings for use on the Ethereum main net or test net.
-var defaultConfig = &RegistrarConfig{
-	CheckpointSize:  params.CheckpointFrequency,
-	ProcessConfirms: params.CheckpointProcessConfirmations,
+func newEmptyConfig() *RegistrarConfig {
+	return &RegistrarConfig{
+		CheckpointSize:  params.CheckpointFrequency,
+		ProcessConfirms: params.CheckpointProcessConfirmations,
+	}
 }
 
 const signatureLen = 65
@@ -75,10 +79,6 @@ type checkpointRegistrar struct {
 	backend   Backend
 	exitCh    chan struct{}
 
-	contractAddr common.Address   // address of checkpoint contract.
-	signers      []common.Address // a set of trusted checkpoint signers.
-	threshold    int              // the minimal required trusted signature for checkpoint approval
-
 	// Indexers
 	bloomTrieIndexer *core.ChainIndexer
 	chtIndexer       *core.ChainIndexer
@@ -92,13 +92,16 @@ type checkpointRegistrar struct {
 
 // newCheckpointRegistrar returns a checkpoint registrar handler.
 func newCheckpointRegistrar(chaindb ethdb.Database, backend Backend, config *RegistrarConfig, indexerConfig *light.IndexerConfig, chtIndexer *core.ChainIndexer, bloomTrieIndexer *core.ChainIndexer, genesis common.Hash, lightMode bool, exitCh chan struct{}) *checkpointRegistrar {
-	// Load default contract address and relative signers according to genesis hash
-	r, ok := registrar.Registrars[genesis]
-	if !ok {
+	// Load hardcoded contract address and relative signers.
+	if r, ok := registrar.Registrars[genesis]; ok {
+		config.ContractConfig = r
+	}
+	if config.ContractConfig == nil {
 		log.Info("Checkpoint registrar is not enabled")
 		return nil
 	}
-	log.Info("Setup registrar", "contract", r.ContractAddr, "numsigner", len(r.Signers))
+	log.Info("Setup registrar", "contract", config.ContractConfig.ContractAddr, "numsigner", len(config.ContractConfig.Signers),
+		"threshold", config.ContractConfig.Threshold)
 	reg := &checkpointRegistrar{
 		config:           config,
 		indexerConfig:    indexerConfig,
@@ -107,9 +110,6 @@ func newCheckpointRegistrar(chaindb ethdb.Database, backend Backend, config *Reg
 		bloomTrieIndexer: bloomTrieIndexer,
 		chtIndexer:       chtIndexer,
 		lightMode:        lightMode,
-		contractAddr:     r.ContractAddr,
-		signers:          r.Signers,
-		threshold:        r.Threshold,
 		chaindb:          chaindb,
 		exitCh:           exitCh,
 	}
@@ -119,7 +119,7 @@ func newCheckpointRegistrar(chaindb ethdb.Database, backend Backend, config *Reg
 // start binds the registrar contract and start listening to the
 // newCheckpointEvent for the server side.
 func (reg *checkpointRegistrar) start(backend bind.ContractBackend) {
-	contract, err := registrar.NewRegistrar(reg.contractAddr, backend)
+	contract, err := registrar.NewRegistrar(reg.config.ContractConfig.ContractAddr, backend)
 	if err != nil {
 		log.Info("Bind registrar contract failed", "err", err)
 		return
@@ -175,13 +175,7 @@ func (reg *checkpointRegistrar) checkpointLoop(checkpoint *light.TrustedCheckpoi
 				log.Warn("Ignore empty checkpoint event")
 				continue
 			}
-			// Note several events have same index may be received because of
-			// (1) chain reorg and (2) the modification of the latest checkpoint.
-			//
-			// It's worth noting that there are a lot of reorg in the blockchain,
-			// the log events received here could be a normal event or a logRemovedEvent.
-			// In theory, all state-related data should be stored in association with
-			// the block hash.
+			// Note several events have same index may be received because of chain reorg
 			//
 			// However, in order to simplify the situation, the system will ignore reorg
 			// here, as long as the correct announcement is received, the status change
@@ -191,13 +185,10 @@ func (reg *checkpointRegistrar) checkpointLoop(checkpoint *light.TrustedCheckpoi
 			// server side provides a stable checkpoint to the light client, it will
 			// first query the contract to ensure that the checkpoint is indeed registered
 			// on the main chain.
-			//
-			// If the checkpoint is not registered in the contract because of reorg,
-			// the les server will choose older one instead of until it finds a checkpoint
-			// that has already been registered.
 			if !event.Raw.Removed && (checkpoint == nil || event.Index.Uint64() >= checkpoint.SectionIndex) {
 				valid, signers := reg.verifySigner(event.CheckpointHash, event.Signature)
 				if !valid {
+					log.Debug("Ignore invalid checkpoint event", "section", event.Index)
 					continue
 				}
 				logFn := log.Debug
@@ -269,12 +260,7 @@ func (reg *checkpointRegistrar) recoverCheckpoint() *light.TrustedCheckpoint {
 	for stable == nil || stable.SectionIndex < index {
 		if (index+1)*reg.config.CheckpointSize+reg.config.ProcessConfirms <= *headNumber {
 			hash, height, err := reg.contract.Contract().GetCheckpoint(nil, big.NewInt(int64(index)))
-			if err != nil {
-				log.Warn("Get checkpoint from registrar contract failed", "err", err)
-				goto next
-			}
-			// Checkpoint hasn't been registered
-			if hash == [32]byte{} {
+			if err != nil || hash == [32]byte{} {
 				goto next
 			}
 			// Verify whether there is a corresponding valid signature from trusted signer.
@@ -315,28 +301,6 @@ func (reg *checkpointRegistrar) recoverCheckpoint() *light.TrustedCheckpoint {
 		log.Info("Recover stable checkpoint", "index", stable.SectionIndex, "hash", stable.Hash().Hex(), "elapsed", common.PrettyDuration(time.Since(start)))
 	}
 	return stable
-}
-
-// latestLocalCheckpoint finds the common stored section index and returns a set of
-// post-processed trie roots (CHT and BloomTrie) associated with
-// the appropriate section index and head hash as a local checkpoint package.
-//
-// Note for cht, the section size in LES1 is 4K, so indexer still uses LES/1
-// 4k section size for backwards server compatibility. For bloomTrie, the size
-// of the section used for indexer is 32K.
-func (reg *checkpointRegistrar) latestLocalCheckpoint() light.TrustedCheckpoint {
-	chtCount, _, _ := reg.chtIndexer.Sections()
-	bloomTrieCount, _, _ := reg.bloomTrieIndexer.Sections()
-	count := chtCount / (reg.indexerConfig.PairChtSize / reg.indexerConfig.ChtSize)
-	// Cap the section index if the two sections are not consistent.
-	if count > bloomTrieCount {
-		count = bloomTrieCount
-	}
-	if count == 0 {
-		// No checkpoint information can be provided.
-		return *light.EmptyCheckpoint
-	}
-	return reg.getLocalCheckpoint(count - 1)
 }
 
 // getLocalCheckpoint returns a set of post-processed trie roots (CHT and BloomTrie)
@@ -401,15 +365,16 @@ func (reg *checkpointRegistrar) verifySigner(checkpointHash [32]byte, signature 
 		if _, exist := signerMap[signer]; exist {
 			continue
 		}
-		for _, s := range reg.signers {
+		for _, s := range reg.config.ContractConfig.Signers {
 			if s == signer {
 				signers = append(signers, signer)
 				signerMap[signer] = struct{}{}
 			}
 		}
 	}
-	if len(signers) < reg.threshold {
-		log.Warn("Approval signature is not enough", "given", len(signers), "want", reg.threshold)
+	threshold := reg.config.ContractConfig.Threshold
+	if uint64(len(signers)) < threshold {
+		log.Warn("Approval signature is not enough", "given", len(signers), "want", threshold)
 		return false, nil
 	}
 

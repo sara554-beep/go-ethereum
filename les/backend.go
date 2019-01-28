@@ -150,7 +150,10 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 		gpoParams.Default = config.MinerGasPrice
 	}
 	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, gpoParams)
-	registrar := newCheckpointRegistrar(leth.chainDb, leth.ApiBackend, defaultConfig, light.DefaultClientIndexerConfig, leth.chtIndexer, leth.bloomTrieIndexer, genesisHash, true, quitSync)
+
+	rconfig := newEmptyConfig()
+	rconfig.ContractConfig = chainConfig.CheckpointContract
+	registrar := newCheckpointRegistrar(leth.chainDb, leth.ApiBackend, rconfig, light.DefaultClientIndexerConfig, leth.chtIndexer, leth.bloomTrieIndexer, genesisHash, true, quitSync)
 	if leth.protocolManager, err = NewProtocolManager(leth.chainConfig, light.DefaultClientIndexerConfig, config.ULC, true, config.NetworkId, leth.eventMux, leth.peers, leth.blockchain, nil, chainDb, leth.odr, leth.serverPool, registrar, quitSync, &leth.wg); err != nil {
 		return nil, err
 	}

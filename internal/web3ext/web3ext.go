@@ -768,6 +768,10 @@ web3._extend({
 			name: 'latestCheckpoint',
 			getter: 'les_latestCheckpoint'
 		}),
+		new web3._extend.Property({
+			name: 'checkpointContractAddress',
+			getter: 'les_getCheckpointContractAddress'
+		}),
 	]
 });
 `

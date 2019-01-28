@@ -139,9 +139,9 @@ func (w *wizard) makeGenesis() {
 	fmt.Println("Specify your chain/network ID if you want an explicit one (default = random)")
 	genesis.Config.ChainID = new(big.Int).SetUint64(uint64(w.readDefaultInt(rand.Intn(65536))))
 
-	// Query the user for registrar contract details
+	// Query the user for checkpoint contract config
 	fmt.Println()
-	fmt.Println("Should registrar checkpoint contract be deployed (default = no)")
+	fmt.Println("Should checkpoint contract be deployed (default = no)")
 	if w.readDefaultYesNo(false) {
 		// Read the address of the trusted signers
 		fmt.Println("Which accounts should be the trusted signer? (advisable at least one)")
@@ -157,12 +157,12 @@ func (w *wizard) makeGenesis() {
 			}
 			break
 		}
-		// Get stable checkpoint signature threshold
+		// Get stable checkpoint signature minFraction
 		for {
-			fmt.Printf("What is the minimum new stable checkpoint signature threshold? (advisable at most %d)\n", len(signers))
+			fmt.Printf("What is the minimal approval threshold? (advisable at most %d)\n", len(signers))
 			threshold = w.readDefaultBigInt(big.NewInt(0))
 			if threshold.Int64() <= 0 || threshold.Int64() > int64(len(signers)) {
-				fmt.Printf("Invalid checkpoint signature threshold, please enter in range [1, %d]\n", len(signers))
+				fmt.Printf("Invalid minimal approval threshold, please enter in range [1, %d]\n", len(signers))
 			}
 			break
 		}
@@ -181,11 +181,17 @@ func (w *wizard) makeGenesis() {
 			log.Crit("Execute contract constructor failed", "err", err)
 		}
 		config.State.Commit(true)
-		genesis.Alloc[address] = core.GenesisAccount{Code: code, Storage: make(map[common.Hash]common.Hash)}
+		genesis.Alloc[address] = core.GenesisAccount{Code: code, Storage: make(map[common.Hash]common.Hash), Balance: big.NewInt(1)}
 		config.State.ForEachStorage(address, func(key, value common.Hash) bool {
 			genesis.Alloc[address].Storage[key] = value
 			return true
 		})
+		config.ChainConfig.CheckpointContract = &params.CheckpointContractConfig{
+			Name:         w.network,
+			ContractAddr: address,
+			Signers:      signers,
+			Threshold:    threshold.Uint64(),
+		}
 	}
 
 	// All done, store the genesis and flush to disk
