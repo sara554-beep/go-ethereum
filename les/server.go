@@ -100,10 +100,17 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 
 	srv.chtIndexer.Start(e.BlockChain())
 
-	rconfig := newEmptyConfig()
-	rconfig.ContractConfig = config.Genesis.Config.CheckpointContract
+	chainConfig, _, genesisErr := core.SetupGenesisBlockWithOverride(e.ChainDb(), config.Genesis, config.ConstantinopleOverride)
+	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
+		return nil, genesisErr
+	}
 
-	registrar := newCheckpointRegistrar(e.ChainDb(), e.APIBackend, rconfig, light.DefaultServerIndexerConfig, srv.chtIndexer, srv.bloomTrieIndexer, srv.genesis, false, quitSync)
+	rconfig := &RegistrarConfig{
+		ContractConfig:  chainConfig.CheckpointContract,
+		CheckpointSize:  params.CheckpointFrequency,
+		ProcessConfirms: params.CheckpointProcessConfirmations,
+	}
+	registrar := newCheckpointRegistrar(e.ChainDb(), rconfig, light.DefaultServerIndexerConfig, srv.chtIndexer, srv.bloomTrieIndexer)
 	pm, err := NewProtocolManager(e.BlockChain().Config(), light.DefaultServerIndexerConfig, config.ULC, false, config.NetworkId, e.EventMux(), newPeerSet(), e.BlockChain(), e.TxPool(), e.ChainDb(), nil, nil, registrar, quitSync, new(sync.WaitGroup))
 	if err != nil {
 		return nil, err

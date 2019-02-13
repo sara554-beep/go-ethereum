@@ -64,6 +64,7 @@ func init() {
 		trustedSignerFlag,
 		utils.TestnetFlag,
 		utils.RinkebyFlag,
+		utils.GoerliFlag,
 		utils.PasswordFileFlag,
 	}
 	cli.CommandHelpTemplate = commandHelperTemplate
@@ -73,11 +74,11 @@ func init() {
 var (
 	contractAddrFlag = cli.StringFlag{
 		Name:  "address",
-		Usage: "The address of checkpoint registrar contract(use --rinkeby for rinkeby, --testnet for ropsten)",
+		Usage: "The address of checkpoint registrar contract(use --rinkeby for rinkeby, --testnet for ropsten, --goerli for goerli)",
 	}
 	checkpointIndexFlag = cli.Int64Flag{
 		Name:  "index",
-		Usage: "The index of checkpoint",
+		Usage: "The index of checkpoint, use the latest index if not specified",
 	}
 	sigThresholdFlag = cli.Int64Flag{
 		Name:  "threshold",

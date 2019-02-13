@@ -21,8 +21,8 @@ contract Registrar {
     struct PendingProposal {
         uint index; // Checkpoint section index
         uint count; // Number of signers who have submitted checkpoint announcement
-        mapping(address => bytes32) usermap;
-        mapping(bytes32 => Vote[]) votemap;
+        mapping(address => bytes32) usermap; // map between signer address and advertised checkpoint hash
+        mapping(bytes32 => Vote[]) votemap; // map between checkpoint hash and relative signer announcements.
     }
 
     /*
@@ -33,7 +33,7 @@ contract Registrar {
      * @dev Check whether the message sender is authorized.
      */
     modifier OnlyAuthorized() {
-        require(admins[msg.sender] == true);
+        require(admins[msg.sender]);
         _;
     }
 
@@ -87,16 +87,13 @@ contract Registrar {
     }
 
     /**
-     * @dev Set stable checkpoint information.
+     * @dev Submit a new checkpoint announcement
      * Checkpoint represents a set of post-processed trie roots (CHT and BloomTrie)
      * associated with the appropriate section head hash.
      *
-     * It is used to start light syncing from this checkpoint
-     * and avoid downloading the entire header chain while still being able to securely
-     * access old headers/logs.
+     * It is used to start light syncing from this checkpoint and avoid downloading
+     * the entire header chain while still being able to securely access old headers/logs.
      *
-     * Note we trust the given information here provided by foundation,
-     * need a trust less version for future.
      * @param _sectionIndex section index
      * @param _hash checkpoint hash calculated in the client side
      * @param _sig admin's signature for checkpoint hash
@@ -122,7 +119,7 @@ contract Registrar {
             return false;
         }
         // Filter out invalid announcement
-        if (_hash == "") {
+        if (_hash == "" || _sig.length == 0) {
             return false;
         }
         // Delete stale pending proposal silently

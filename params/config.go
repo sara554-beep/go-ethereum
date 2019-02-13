@@ -98,6 +98,17 @@ var (
 			Period: 15,
 			Epoch:  30000,
 		},
+		CheckpointContract: &CheckpointContractConfig{
+			Name:         "rinkeby",
+			ContractAddr: common.HexToAddress("0xb708d2ca0ead46f7f254a13a10c4fc7b86ea34e"),
+			Signers: []common.Address{
+				common.HexToAddress("0x779ca2fc4a31a48dc338bc71959c1f1942a9098b"),
+				common.HexToAddress("0xacf370223f3ff062a997b3d138dddf1ad4d02a54"),
+				common.HexToAddress("0x937e8a232121eed45ce654f895e662b913526cfe"),
+				common.HexToAddress("0xdab27fd1a2ec8a899f87a5fa05f2c82870c036c7"),
+			},
+			Threshold: 2,
+		},
 	}
 
 	// RinkebyTrustedCheckpoint contains the light client trusted checkpoint for the Rinkeby test network.
@@ -134,19 +145,6 @@ var (
 		SectionHead:  common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
 		CHTRoot:      common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
 		BloomRoot:    common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000000"),
-	}
-
-	// RinkebyCheckpointContract contains the checkpoint registrar config for the Rinkeby test network.
-	RinkebyCheckpointContract = &CheckpointContractConfig{
-		Name:         "rinkeby",
-		ContractAddr: common.HexToAddress("0x05d6f1901a99555203a9b03afb6d197ef4ba8387"),
-		Signers: []common.Address{
-			common.HexToAddress("0x3ee27fee0f67e013a277fb17d62a0c4f94dd7511"),
-			common.HexToAddress("0xda9b50bd9951e1b1c939c1981ce23395f81a9bd9"),
-			common.HexToAddress("0xdea8ff339cc03a8b63d6435ae67a257e952808da"),
-			common.HexToAddress("0x3f424b8edd788cd8158d1e83fa6bb0abffd22155"),
-		},
-		Threshold: 2,
 	}
 
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced

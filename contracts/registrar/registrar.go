@@ -27,14 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/contracts/registrar/contract"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/params"
-)
-
-var (
-	Registrars = map[common.Hash]*params.CheckpointContractConfig{
-		params.RinkebyGenesisHash: params.RinkebyCheckpointContract,
-	}
 )
 
 type Registrar struct {
@@ -47,20 +39,12 @@ func NewRegistrar(contractAddr common.Address, backend bind.ContractBackend) (*R
 	if err != nil {
 		return nil, err
 	}
-
-	return &Registrar{
-		contract: c,
-	}, nil
+	return &Registrar{contract: c}, nil
 }
 
 // Contract returns the underlying contract instance.
 func (registrar *Registrar) Contract() *contract.Contract {
 	return registrar.contract
-}
-
-// WatchNewCheckpointEvent watches new fired NewCheckpointEvent and delivers all matching events by result channel.
-func (registrar *Registrar) WatchNewCheckpointEvent(sink chan<- *contract.ContractNewCheckpointEvent) (event.Subscription, error) {
-	return registrar.contract.WatchNewCheckpointEvent(nil, sink, nil)
 }
 
 // LookupCheckpointEvent searches checkpoint event for specific section in the given log batches.

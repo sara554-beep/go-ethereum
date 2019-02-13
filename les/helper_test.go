@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
-	"github.com/ethereum/go-ethereum/contracts/registrar"
 	"github.com/ethereum/go-ethereum/contracts/registrar/contract"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -93,8 +92,6 @@ contract test {
 }
 */
 
-var registrarOnce sync.Once
-
 // prepareTestchain pre-commits specified number customized blocks into chain.
 func prepareTestchain(n int, backend *backends.SimulatedBackend, genesis common.Hash) {
 	var (
@@ -106,14 +103,6 @@ func prepareTestchain(n int, backend *backends.SimulatedBackend, genesis common.
 		case 0:
 			// deploy checkpoint contract
 			contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, big.NewInt(1))
-			registrarOnce.Do(func() {
-				registrar.Registrars[genesis] = &params.CheckpointContractConfig{
-					Name:         "test",
-					ContractAddr: crypto.CreateAddress(bankAddr, 0),
-					Signers:      []common.Address{signerAddr},
-				}
-			})
-
 			// bankUser transfers some ether to user1
 			nonce, _ := backend.PendingNonceAt(ctx, bankAddr)
 			tx, _ := types.SignTx(types.NewTransaction(nonce, userAddr1, big.NewInt(10000), params.TxGas, nil, nil), signer, bankKey)
@@ -215,12 +204,17 @@ func newTestProtocolManager(lightSync bool, blocks int, odr *LesOdr, indexers []
 		indexConfig = light.TestClientIndexerConfig
 	}
 	config := &RegistrarConfig{
+		ContractConfig: &params.CheckpointContractConfig{
+			Name:         "test",
+			ContractAddr: crypto.CreateAddress(bankAddr, 0),
+			Signers:      []common.Address{signerAddr},
+		},
 		CheckpointSize:  sectionSize.Uint64(),
 		ProcessConfirms: processConfirms.Uint64(),
 	}
 	var reg *checkpointRegistrar
 	if indexers != nil {
-		reg = newCheckpointRegistrar(db, chain, config, indexConfig, indexers[0], indexers[2], genesis.Hash(), lightSync, exitCh)
+		reg = newCheckpointRegistrar(db, config, indexConfig, indexers[0], indexers[2])
 	}
 	pm, err := NewProtocolManager(gspec.Config, indexConfig, ulcConfig, lightSync, NetworkId, evmux, peers, chain, nil, db, odr, nil, reg, exitCh, new(sync.WaitGroup))
 	if err != nil {

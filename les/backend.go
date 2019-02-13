@@ -138,10 +138,6 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 		rawdb.WriteChainConfig(chainDb, genesisHash, chainConfig)
 	}
 
-	if leth.protocolManager.isULCEnabled() {
-		log.Warn("Ultra light client is enabled", "trustedNodes", len(leth.protocolManager.ulc.trustedKeys), "minTrustedFraction", leth.protocolManager.ulc.minTrustedFraction)
-		leth.blockchain.DisableCheckFreq()
-	}
 	leth.txPool = light.NewTxPool(leth.chainConfig, leth.blockchain, newLesTxRelay(peers, leth.reqDist))
 	leth.ApiBackend = &LesApiBackend{leth, nil}
 
@@ -151,11 +147,18 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 	}
 	leth.ApiBackend.gpo = gasprice.NewOracle(leth.ApiBackend, gpoParams)
 
-	rconfig := newEmptyConfig()
-	rconfig.ContractConfig = chainConfig.CheckpointContract
-	registrar := newCheckpointRegistrar(leth.chainDb, leth.ApiBackend, rconfig, light.DefaultClientIndexerConfig, leth.chtIndexer, leth.bloomTrieIndexer, genesisHash, true, quitSync)
+	rconfig := &RegistrarConfig{
+		ContractConfig:  chainConfig.CheckpointContract,
+		CheckpointSize:  params.CheckpointFrequency,
+		ProcessConfirms: params.CheckpointProcessConfirmations,
+	}
+	registrar := newCheckpointRegistrar(leth.chainDb, rconfig, light.DefaultClientIndexerConfig, leth.chtIndexer, leth.bloomTrieIndexer)
 	if leth.protocolManager, err = NewProtocolManager(leth.chainConfig, light.DefaultClientIndexerConfig, config.ULC, true, config.NetworkId, leth.eventMux, leth.peers, leth.blockchain, nil, chainDb, leth.odr, leth.serverPool, registrar, quitSync, &leth.wg); err != nil {
 		return nil, err
+	}
+	if leth.protocolManager.isULCEnabled() {
+		log.Warn("Ultra light client is enabled", "trustedNodes", len(leth.protocolManager.ulc.trustedKeys), "minTrustedFraction", leth.protocolManager.ulc.minTrustedFraction)
+		leth.blockchain.DisableCheckFreq()
 	}
 	return leth, nil
 }

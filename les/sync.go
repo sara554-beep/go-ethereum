@@ -82,15 +82,8 @@ func (pm *ProtocolManager) syncer() {
 // several legacy hardcoded checkpoints in our codebase. These checkpoints are
 // also considered as valid.
 func (pm *ProtocolManager) validateCheckpoint(peer *peer) error {
-	// Short circuit for trusted hard-coded checkpoint
-	// This is a special case that simple checkpoint syncing is enabled
-	// but the provided checkpoint is the hardcoded one.
-	cp := peer.advertisedCheckpoint
-	hardcoded := (*light.TrustedCheckpoint)(light.TrustedCheckpoints[pm.blockchain.Genesis().Hash()])
-	if hardcoded != nil && cp.HashEqual(hardcoded.Hash()) {
-		return nil
-	}
 	// Fetch the block header corresponding to the checkpoint registration.
+	cp := peer.advertisedCheckpoint
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 	header, err := light.GetUntrustedHeaderByNumber(ctx, pm.odr, peer.registeredHeight)
@@ -129,11 +122,12 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	}
 	// Determine whether we should run checkpoint syncing or normal light syncing.
 	//
-	// Here has three situations that we will disable the checkpoint syncing:
-	// 1. For some customized chain there is no registrar checkpoint contract
-	// deployed and no hard-code checkpoint provided.
-	// 2. For some networks with checkpoint syncing disabled.
-	// 3. The latest head block of the local chain is above the checkpoint.
+	// Here has four situations that we will disable the checkpoint syncing:
+	//
+	// 1. The checkpoint is empty
+	// 2. The latest head block of the local chain is above the checkpoint.
+	// 3. The checkpoint is hardcoded(recap with local hardcoded checkpoint)
+	// 4. For some networks the checkpoint syncing is not activated.
 	cp := peer.advertisedCheckpoint
 	mode := checkpointSync
 	switch {
@@ -143,6 +137,9 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	case latest.Number.Uint64() >= (cp.SectionIndex+1)*pm.iConfig.ChtSize-1:
 		mode = lightSync
 		log.Debug("Disable checkpoint syncing", "reason", "local chain beyonds the checkpoint")
+	case peer.isHardcode:
+		mode = legacyCheckpointSync
+		log.Debug("Disable checkpoint syncing", "reason", "checkpoint is hardcoded")
 	case pm.reg == nil || !pm.reg.isRunning():
 		mode = legacyCheckpointSync
 		log.Debug("Disable checkpoint syncing", "reason", "checkpoint syncing is not activated")
@@ -155,20 +152,19 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 	}()
 	start := time.Now()
 	if mode == checkpointSync || mode == legacyCheckpointSync {
-		var checkpoint light.TrustedCheckpoint
 		// Validate the advertised checkpoint
 		if mode == legacyCheckpointSync {
-			checkpoint = light.TrustedCheckpoint(*light.TrustedCheckpoints[pm.blockchain.Genesis().Hash()])
-		} else {
+			cp = light.TrustedCheckpoint(*light.TrustedCheckpoints[pm.blockchain.Genesis().Hash()])
+		} else if mode == checkpointSync {
 			if err := pm.validateCheckpoint(peer); err != nil {
-				log.Debug("Validate checkpoint failed", "reason", err)
+				log.Debug("Failed to validate checkpoint", "reason", err)
 				pm.removePeer(peer.id)
 				return
 			}
 			pm.blockchain.(*light.LightChain).AddTrustedCheckpoint((*params.TrustedCheckpoint)(&cp))
-			checkpoint = cp
 		}
-		log.Debug("Checkpoint syncing start", "peer", peer.id, "checkpoint", checkpoint.SectionIndex)
+		log.Debug("Checkpoint syncing start", "peer", peer.id, "checkpoint", cp.SectionIndex)
+
 		// Fetch the start point block header.
 		//
 		// For the ethash consensus engine, the start header is the block header
@@ -178,13 +174,13 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 		// of the latest epoch covered by checkpoint.
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
-		if !pm.blockchain.(*light.LightChain).SyncCheckpoint(ctx, checkpoint) {
+		if !cp.Empty() && !pm.blockchain.(*light.LightChain).SyncCheckpoint(ctx, cp) {
 			log.Debug("Sync checkpoint failed")
 			pm.removePeer(peer.id)
 			return
 		}
 	}
-	// Fetch the remaining block headers based on the checkpoint header.
+	// Fetch the remaining block headers based on the current chain header.
 	if err := pm.downloader.Synchronise(peer.id, peer.Head(), peer.Td(), downloader.LightSync); err != nil {
 		log.Debug("Synchronise failed", "reason", err)
 		return

@@ -71,17 +71,19 @@ func setupContract(ctx *cli.Context, client *ethclient.Client) *registrar.Regist
 	if ctx.GlobalString(contractAddrFlag.Name) == "" {
 		switch {
 		case ctx.GlobalIsSet(utils.TestnetFlag.Name):
-			r = registrar.Registrars[params.TestnetGenesisHash]
+			r = params.TestnetChainConfig.CheckpointContract
 		case ctx.GlobalIsSet(utils.RinkebyFlag.Name):
-			r = registrar.Registrars[params.RinkebyGenesisHash]
+			r = params.RinkebyChainConfig.CheckpointContract
+		case ctx.GlobalIsSet(utils.GoerliFlag.Name):
+			r = params.GoerliChainConfig.CheckpointContract
 		default:
-			r = registrar.Registrars[params.MainnetGenesisHash]
+			r = params.MainnetChainConfig.CheckpointContract
 		}
 		if r != nil {
 			contractAddr = r.ContractAddr
 		}
 	} else {
-		contractAddr = common.HexToAddress(contractAddrFlag.Name)
+		contractAddr = common.HexToAddress(ctx.GlobalString(contractAddrFlag.Name))
 	}
 
 	if contractAddr == (common.Address{}) {
@@ -136,7 +138,6 @@ func getPassphrase(ctx *cli.Context) string {
 
 // getPrivateKey retrieves the user key through specified key file.
 func getPrivateKey(ctx *cli.Context) *keystore.Key {
-	// TODO multi-sig
 	// Read key from file.
 	keyFile := ctx.GlobalString(keyFileFlag.Name)
 	keyJson, err := ioutil.ReadFile(keyFile)

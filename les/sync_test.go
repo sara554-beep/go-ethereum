@@ -18,7 +18,6 @@ package les
 
 import (
 	"errors"
-	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -66,24 +65,14 @@ func testCheckpointSyncing(t *testing.T, protocol int) {
 	server.backend.Commit()
 	server.backend.ShiftBlocks(1)
 
-	errc := make(chan error)
-	go func() {
-		for {
-			stableCp := light.ReadTrustedCheckpoint(server.db, 0)
-			if stableCp == nil {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			if stableCp.HashEqual(cp.Hash()) {
-				errc <- nil
-			} else {
-				errc <- fmt.Errorf("checkpoint mismatch, want %s, have %s", cp.Hash().Hex(), stableCp.Hash().Hex())
-			}
+	// Wait for the checkpoint registration
+	for {
+		hash, _, err := server.pm.reg.contract.Contract().GetCheckpoint(nil, big.NewInt(0))
+		if err != nil || hash == [32]byte{} {
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
-	}()
-
-	if err := <-errc; err != nil {
-		t.Error("register checkpoint failed", "reason", err)
+		break
 	}
 
 	done := make(chan error)
@@ -92,7 +81,6 @@ func testCheckpointSyncing(t *testing.T, protocol int) {
 		if header.Number.Uint64() == config.PairChtSize+config.ChtConfirms+2 {
 			done <- nil
 		} else {
-			fmt.Println(header.Number.Uint64())
 			done <- errors.New("blockchain mismatch")
 		}
 	}

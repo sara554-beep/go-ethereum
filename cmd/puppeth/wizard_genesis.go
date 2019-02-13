@@ -186,7 +186,7 @@ func (w *wizard) makeGenesis() {
 			genesis.Alloc[address].Storage[key] = value
 			return true
 		})
-		config.ChainConfig.CheckpointContract = &params.CheckpointContractConfig{
+		genesis.Config.CheckpointContract = &params.CheckpointContractConfig{
 			Name:         w.network,
 			ContractAddr: address,
 			Signers:      signers,

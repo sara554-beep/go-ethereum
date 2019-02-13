@@ -58,8 +58,10 @@ type peer struct {
 
 	announceType uint64
 
+	// Checkpoint relative fields
 	advertisedCheckpoint light.TrustedCheckpoint
 	registeredHeight     uint64
+	isHardcode           bool // Indicator whether the checkpoint is hardcoded
 
 	id string
 
@@ -517,6 +519,8 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 		p.fcServer = flowcontrol.NewServerNode(params)
 		p.fcCosts = MRC.decode()
 
+		// Recap the checkpoint.
+		//
 		// The light client may be connected to several different versions of the server.
 		// (1) Old version server which can not provide stable checkpoint in the handshake packet.
 		//     => Use hardcoded checkpoint or empty checkpoint
@@ -530,6 +534,7 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 		if err := recv.get("checkpoint/value", &p.advertisedCheckpoint); hardcoded != nil &&
 			(err != nil || p.advertisedCheckpoint.SectionIndex < hardcoded.SectionIndex) {
 			p.advertisedCheckpoint = light.TrustedCheckpoint(*hardcoded)
+			p.isHardcode = true
 		}
 		recv.get("checkpoint/registerHeight", &p.registeredHeight)
 	}
