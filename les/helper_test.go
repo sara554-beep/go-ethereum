@@ -220,7 +220,7 @@ func newTestProtocolManager(lightSync bool, blocks int, odr *LesOdr, indexers []
 	}
 	var reg *checkpointRegistrar
 	if indexers != nil {
-		reg = newCheckpointRegistrar(db, chain, config, indexConfig, indexers[0], indexers[2], genesis.Hash(), lightSync, exitCh)
+		reg = newCheckpointRegistrar(db, chain, config, indexConfig, indexers[0], indexers[2], genesis.Hash(), exitCh)
 	}
 	pm, err := NewProtocolManager(gspec.Config, indexConfig, ulcConfig, lightSync, NetworkId, evmux, peers, chain, nil, db, odr, nil, reg, exitCh, new(sync.WaitGroup))
 	if err != nil {

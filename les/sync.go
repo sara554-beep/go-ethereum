@@ -169,6 +169,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 			checkpoint = cp
 		}
 		log.Debug("Checkpoint syncing start", "peer", peer.id, "checkpoint", checkpoint.SectionIndex)
+
 		// Fetch the start point block header.
 		//
 		// For the ethash consensus engine, the start header is the block header
@@ -178,7 +179,7 @@ func (pm *ProtocolManager) synchronise(peer *peer) {
 		// of the latest epoch covered by checkpoint.
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 		defer cancel()
-		if !pm.blockchain.(*light.LightChain).SyncCheckpoint(ctx, checkpoint) {
+		if !checkpoint.Empty() && !pm.blockchain.(*light.LightChain).SyncCheckpoint(ctx, checkpoint) {
 			log.Debug("Sync checkpoint failed")
 			pm.removePeer(peer.id)
 			return

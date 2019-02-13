@@ -21,8 +21,8 @@ contract Registrar {
     struct PendingProposal {
         uint index; // Checkpoint section index
         uint count; // Number of signers who have submitted checkpoint announcement
-        mapping(address => bytes32) usermap;
-        mapping(bytes32 => Vote[]) votemap;
+        mapping(address => bytes32) usermap; // map between signer address and advertised checkpoint hash
+        mapping(bytes32 => Vote[]) votemap; // map between checkpoint hash and relative signer announcements.
     }
 
     /*
@@ -122,7 +122,7 @@ contract Registrar {
             return false;
         }
         // Filter out invalid announcement
-        if (_hash == "") {
+        if (_hash == "" || _sig.length == 0) {
             return false;
         }
         // Delete stale pending proposal silently
