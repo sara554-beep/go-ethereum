@@ -34,10 +34,7 @@ Fetch the admin list of the specified registrar contract which are regarded
 as trusted signers to register checkpoint.
 `,
 	Flags: []cli.Flag{
-		contractAddrFlag,
 		clientURLFlag,
-		utils.TestnetFlag,
-		utils.RinkebyFlag,
 	},
 	Action: utils.MigrateFlags(queryAdmin),
 }
@@ -49,11 +46,8 @@ var commandQueryCheckpoint = cli.Command{
 Fetch the registered checkpoint with the specified index.
 `,
 	Flags: []cli.Flag{
-		contractAddrFlag,
 		checkpointIndexFlag,
 		clientURLFlag,
-		utils.TestnetFlag,
-		utils.RinkebyFlag,
 	},
 	Action: utils.MigrateFlags(queryCheckpoint),
 }
@@ -67,17 +61,14 @@ including the trusted signer address who has been approved and the corresponding
 checkpoint hash
 `,
 	Flags: []cli.Flag{
-		contractAddrFlag,
 		clientURLFlag,
-		utils.TestnetFlag,
-		utils.RinkebyFlag,
 	},
 	Action: utils.MigrateFlags(queryProposal),
 }
 
 // queryAdmin fetches the admin list of specified registrar contract.
 func queryAdmin(ctx *cli.Context) error {
-	contract := setupContract(ctx, setupClient(ctx))
+	contract := setupContract(setupDialContext(ctx))
 	adminList, err := contract.Contract().GetAllAdmin(nil)
 	if err != nil {
 		return err
@@ -92,7 +83,7 @@ func queryAdmin(ctx *cli.Context) error {
 // queryCheckpoint fetches the checkpoint hash with specified index from
 // registrar contract.
 func queryCheckpoint(ctx *cli.Context) error {
-	contract := setupContract(ctx, setupClient(ctx))
+	contract := setupContract(setupDialContext(ctx))
 	if ctx.GlobalIsSet(checkpointIndexFlag.Name) {
 		index := ctx.GlobalInt64(checkpointIndexFlag.Name)
 		checkpoint, height, err := contract.Contract().GetCheckpoint(nil, big.NewInt(index))
@@ -113,7 +104,7 @@ func queryCheckpoint(ctx *cli.Context) error {
 // queryProposal fetches the detail of inflight new checkpoint proposal
 // with specified contract address.
 func queryProposal(ctx *cli.Context) error {
-	contract := setupContract(ctx, setupClient(ctx))
+	contract := setupContract(setupDialContext(ctx))
 	index, addr, hashes, err := contract.Contract().GetPending(nil)
 	if err != nil {
 		return err

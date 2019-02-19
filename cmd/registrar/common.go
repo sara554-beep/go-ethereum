@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/contracts/registrar"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"gopkg.in/urfave/cli.v1"
 )
@@ -62,34 +61,17 @@ func setupDialContext(ctx *cli.Context) *rpc.Client {
 
 // setupContract creates a registrar contract instance with specified
 // contract address or the default contracts for mainnet or testnet.
-func setupContract(ctx *cli.Context, client *ethclient.Client) *registrar.Registrar {
-	var (
-		r            *params.CheckpointContractConfig
-		contractAddr common.Address
-	)
-
-	if ctx.GlobalString(contractAddrFlag.Name) == "" {
-		switch {
-		case ctx.GlobalIsSet(utils.TestnetFlag.Name):
-			r = params.TestnetChainConfig.CheckpointContract
-		case ctx.GlobalIsSet(utils.RinkebyFlag.Name):
-			r = params.RinkebyChainConfig.CheckpointContract
-		case ctx.GlobalIsSet(utils.GoerliFlag.Name):
-			r = params.GoerliChainConfig.CheckpointContract
-		default:
-			r = params.MainnetChainConfig.CheckpointContract
-		}
-		if r != nil {
-			contractAddr = r.ContractAddr
-		}
-	} else {
-		contractAddr = common.HexToAddress(ctx.GlobalString(contractAddrFlag.Name))
+func setupContract(client *rpc.Client) *registrar.Registrar {
+	var addr string
+	err := client.Call(&addr, "les_getCheckpointContractAddress")
+	if err != nil {
+		utils.Fatalf("Failed to fetch checkpoint contract address, err %v", err)
 	}
-
+	contractAddr := common.HexToAddress(addr)
 	if contractAddr == (common.Address{}) {
 		utils.Fatalf("No specified registrar contract address")
 	}
-	contract, err := registrar.NewRegistrar(contractAddr, client)
+	contract, err := registrar.NewRegistrar(contractAddr, ethclient.NewClient(client))
 	if err != nil {
 		utils.Fatalf("Failed to setup registrar contract %s: %v", contractAddr, err)
 	}

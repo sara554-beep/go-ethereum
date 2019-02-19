@@ -18,7 +18,6 @@ package les
 
 import (
 	"errors"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
@@ -55,7 +54,7 @@ func (api *PrivateLesServerAPI) LatestCheckpoint() ([4]string, error) {
 	if cp.Empty() {
 		return res, errNoCheckpoint
 	}
-	res[0] = hexutil.Encode(big.NewInt(int64(cp.SectionIndex)).Bytes())
+	res[0] = hexutil.EncodeUint64(cp.SectionIndex)
 	res[1], res[2], res[3] = cp.SectionHead.Hex(), cp.CHTRoot.Hex(), cp.BloomRoot.Hex()
 	return res, nil
 }

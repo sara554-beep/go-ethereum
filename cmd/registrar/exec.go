@@ -56,12 +56,9 @@ authorised private key. It can help to fasten the light client checkpoint
 syncing.
 `,
 	Flags: []cli.Flag{
-		contractAddrFlag,
 		clientURLFlag,
 		checkpointIndexFlag,
 		keyFileFlag,
-		utils.TestnetFlag,
-		utils.RinkebyFlag,
 		utils.PasswordFileFlag,
 	},
 	Action: utils.MigrateFlags(registerCheckpoint),
@@ -135,7 +132,7 @@ func registerCheckpoint(ctx *cli.Context) error {
 		log.Info("Retrieve local checkpoint", "index", checkpoint.SectionIndex, "sectionhead", checkpoint.SectionHead,
 			"chtroot", checkpoint.CHTRoot, "bloomroot", checkpoint.BloomRoot, "hash", checkpoint.Hash())
 	}
-	contract := setupContract(ctx, ethclient.NewClient(rpcClient))
+	contract := setupContract(rpcClient)
 	// Filter out stale checkpoint announcement
 	latest, _, h, err := contract.Contract().GetLatestCheckpoint(nil)
 	if err != nil {
