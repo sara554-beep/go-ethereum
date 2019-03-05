@@ -19,6 +19,7 @@ package les
 import (
 	"crypto/ecdsa"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -27,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/les/csvlogger"
 	"github.com/ethereum/go-ethereum/les/flowcontrol"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/log"
@@ -38,32 +40,51 @@ import (
 
 const bufLimitRatio = 6000 // fixed bufLimit/MRR ratio
 
+const (
+	logFileName          = ""    // csv log file name (disabled if empty)
+	logClientPoolMetrics = true  // log client pool metrics
+	logClientPoolEvents  = false // detailed client pool event logging
+	logRequestServing    = true  // log request serving metrics and events
+	logBlockProcEvents   = true  // log block processing events
+	logProtocolHandler   = true  // log protocol handler events
+)
+
 type LesServer struct {
 	lesCommons
 
 	fcManager    *flowcontrol.ClientManager // nil if our node is client only
 	costTracker  *costTracker
+	testCost     uint64
 	defParams    flowcontrol.ServerParams
 	lesTopics    []discv5.Topic
 	privateKey   *ecdsa.PrivateKey
 	quitSync     chan struct{}
 	onlyAnnounce bool
+	csvLogger    *csvlogger.Logger
+	logTotalCap  *csvlogger.Channel
 
 	thcNormal, thcBlockProcessing int // serving thread count for normal operation and block processing mode
 
-	maxPeers           int
-	freeClientCap      uint64
-	freeClientPool     *freeClientPool
-	priorityClientPool *priorityClientPool
+	maxPeers                   int
+	minCapacity, freeClientCap uint64
+	freeClientPool             *freeClientPool
+	priorityClientPool         *priorityClientPool
 }
 
 func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 	quitSync := make(chan struct{})
+	var csvLogger *csvlogger.Logger
+	if logFileName != "" {
+		csvLogger = csvlogger.NewLogger(logFileName, time.Second*10, "event, peerId")
+	}
 	lesTopics := make([]discv5.Topic, len(AdvertiseProtocolVersions))
 	for i, pv := range AdvertiseProtocolVersions {
 		lesTopics[i] = lesTopic(e.BlockChain().Genesis().Hash(), pv)
 	}
-
+	requestLogger := csvLogger
+	if !logRequestServing {
+		requestLogger = nil
+	}
 	srv := &LesServer{
 		lesCommons: lesCommons{
 			config:           config,
@@ -72,11 +93,13 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 			chtIndexer:       light.NewChtIndexer(e.ChainDb(), nil, params.CHTFrequency, params.HelperTrieProcessConfirmations),
 			bloomTrieIndexer: light.NewBloomTrieIndexer(e.ChainDb(), nil, params.BloomBitsBlocks, params.BloomTrieFrequency),
 		},
-		costTracker:  newCostTracker(e.ChainDb(), config),
 		quitSync:     quitSync,
 		lesTopics:    lesTopics,
 		onlyAnnounce: config.OnlyAnnounce,
+		csvLogger:    csvLogger,
+		logTotalCap:  requestLogger.NewChannel("totalCapacity", 0.01),
 	}
+	srv.costTracker, srv.minCapacity = newCostTracker(e.ChainDb(), config, requestLogger)
 
 	logger := log.New()
 	srv.thcNormal = config.LightServ * 4 / 100
@@ -105,6 +128,10 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 		return nil, err
 	}
 	srv.protocolManager = pm
+	if logProtocolHandler {
+		pm.logger = csvLogger
+	}
+	pm.servingQueue = newServingQueue(int64(time.Millisecond*10), float64(config.LightServ)/100, requestLogger)
 	pm.server = srv
 
 	return srv, nil
@@ -133,7 +160,11 @@ func (s *LesServer) APIs() []rpc.API {
 func (s *LesServer) startEventLoop() {
 	s.protocolManager.wg.Add(1)
 
-	var processing bool
+	blockProcLogger := s.csvLogger
+	if !logBlockProcEvents {
+		blockProcLogger = nil
+	}
+	var processing, procLast bool
 	blockProcFeed := make(chan bool, 100)
 	s.protocolManager.blockchain.(*core.BlockChain).SubscribeBlockProcessingEvent(blockProcFeed)
 	totalRechargeCh := make(chan uint64, 100)
@@ -141,17 +172,25 @@ func (s *LesServer) startEventLoop() {
 	totalCapacityCh := make(chan uint64, 100)
 	updateRecharge := func() {
 		if processing {
+			if !procLast {
+				blockProcLogger.Event("block processing started")
+			}
 			s.protocolManager.servingQueue.setThreads(s.thcBlockProcessing)
 			s.fcManager.SetRechargeCurve(flowcontrol.PieceWiseLinear{{0, 0}, {totalRecharge, totalRecharge}})
 		} else {
+			if procLast {
+				blockProcLogger.Event("block processing finished")
+			}
 			s.protocolManager.servingQueue.setThreads(s.thcNormal)
-			s.fcManager.SetRechargeCurve(flowcontrol.PieceWiseLinear{{0, 0}, {totalRecharge / 10, totalRecharge}, {totalRecharge, totalRecharge}})
+			s.fcManager.SetRechargeCurve(flowcontrol.PieceWiseLinear{{0, 0}, {totalRecharge / 16, totalRecharge / 2}, {totalRecharge / 2, totalRecharge / 2}, {totalRecharge, totalRecharge}})
 		}
+		procLast = processing
 	}
 	updateRecharge()
 	totalCapacity := s.fcManager.SubscribeTotalCapacity(totalCapacityCh)
 	s.priorityClientPool.setLimits(s.maxPeers, totalCapacity)
 
+	var maxFreePeers uint64
 	go func() {
 		for {
 			select {
@@ -160,6 +199,12 @@ func (s *LesServer) startEventLoop() {
 			case totalRecharge = <-totalRechargeCh:
 				updateRecharge()
 			case totalCapacity = <-totalCapacityCh:
+				s.logTotalCap.Update(float64(totalCapacity))
+				newFreePeers := totalCapacity / s.freeClientCap
+				if newFreePeers < maxFreePeers && newFreePeers < uint64(s.maxPeers) {
+					log.Warn("Reduced total capacity", "maxFreePeers", newFreePeers)
+				}
+				maxFreePeers = newFreePeers
 				s.priorityClientPool.setLimits(s.maxPeers, totalCapacity)
 			case <-s.protocolManager.quitSync:
 				s.protocolManager.wg.Done()
@@ -178,9 +223,9 @@ func (s *LesServer) Start(srvr *p2p.Server) {
 	s.maxPeers = s.config.LightPeers
 	totalRecharge := s.costTracker.totalRecharge()
 	if s.maxPeers > 0 {
-		s.freeClientCap = minCapacity //totalRecharge / uint64(s.maxPeers)
-		if s.freeClientCap < minCapacity {
-			s.freeClientCap = minCapacity
+		s.freeClientCap = s.minCapacity //totalRecharge / uint64(s.maxPeers)
+		if s.freeClientCap < s.minCapacity {
+			s.freeClientCap = s.minCapacity
 		}
 		if s.freeClientCap > 0 {
 			s.defParams = flowcontrol.ServerParams{
@@ -189,15 +234,25 @@ func (s *LesServer) Start(srvr *p2p.Server) {
 			}
 		}
 	}
-	freePeers := int(totalRecharge / s.freeClientCap)
-	if freePeers < s.maxPeers {
-		log.Warn("Light peer count limited", "specified", s.maxPeers, "allowed", freePeers)
-	}
 
-	s.freeClientPool = newFreeClientPool(s.chainDb, s.freeClientCap, 10000, mclock.System{}, func(id string) { go s.protocolManager.removePeer(id) })
-	s.priorityClientPool = newPriorityClientPool(s.freeClientCap, s.protocolManager.peers, s.freeClientPool)
+	maxCapacity := s.freeClientCap * uint64(s.maxPeers)
+	if totalRecharge > maxCapacity {
+		maxCapacity = totalRecharge
+	}
+	s.fcManager.SetCapacityLimits(s.freeClientCap, maxCapacity, s.freeClientCap*2)
+	poolMetricsLogger := s.csvLogger
+	if !logClientPoolMetrics {
+		poolMetricsLogger = nil
+	}
+	poolEventLogger := s.csvLogger
+	if !logClientPoolEvents {
+		poolEventLogger = nil
+	}
+	s.freeClientPool = newFreeClientPool(s.chainDb, s.freeClientCap, 10000, mclock.System{}, func(id string) { go s.protocolManager.removePeer(id) }, poolMetricsLogger, poolEventLogger)
+	s.priorityClientPool = newPriorityClientPool(s.freeClientCap, s.protocolManager.peers, s.freeClientPool, poolMetricsLogger, poolEventLogger)
 
 	s.protocolManager.peers.notify(s.priorityClientPool)
+	s.csvLogger.Start()
 	s.startEventLoop()
 	s.protocolManager.Start(s.config.LightPeers)
 	if srvr.DiscV5 != nil {
@@ -237,6 +292,7 @@ func (s *LesServer) Stop() {
 	s.freeClientPool.stop()
 	s.costTracker.stop()
 	s.protocolManager.Stop()
+	s.csvLogger.Stop()
 }
 
 // todo(rjl493456442) separate client and server implementation.

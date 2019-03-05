@@ -18,6 +18,7 @@ package les
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -26,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/les/csvlogger"
 	"github.com/ethereum/go-ethereum/les/flowcontrol"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -52,7 +54,7 @@ var (
 		GetCodeMsg:             {0, 80},
 		GetProofsV2Msg:         {0, 80},
 		GetHelperTrieProofsMsg: {0, 20},
-		SendTxV2Msg:            {0, 66000},
+		SendTxV2Msg:            {0, 16500},
 		GetTxStatusMsg:         {0, 50},
 	}
 	// maximum outgoing message size estimates
@@ -66,17 +68,27 @@ var (
 		SendTxV2Msg:            {0, 100},
 		GetTxStatusMsg:         {0, 100},
 	}
-	minBufLimit = uint64(50000000 * maxCostFactor)  // minimum buffer limit allowed for a client
-	minCapacity = (minBufLimit-1)/bufLimitRatio + 1 // minimum capacity allowed for a client
+	// request amounts that have to fit into the minimum buffer size minBufferMultiplier times
+	minBufferReqAmount = map[uint64]uint64{
+		GetBlockHeadersMsg:     192,
+		GetBlockBodiesMsg:      1,
+		GetReceiptsMsg:         1,
+		GetCodeMsg:             1,
+		GetProofsV2Msg:         1,
+		GetHelperTrieProofsMsg: 16,
+		SendTxV2Msg:            8,
+		GetTxStatusMsg:         64,
+	}
+	minBufferMultiplier = 3
 )
 
 const (
 	maxCostFactor    = 2 // ratio of maximum and average cost estimates
 	gfInitWeight     = time.Second * 10
-	gfMaxWeight      = time.Hour
+	gfMaxWeight      = time.Second * 1000
 	gfUsageThreshold = 0.5
 	gfUsageTC        = time.Second
-	gfDbKey          = "_globalCostFactor"
+	gfDbKey          = "_globalCostFactorV2"
 )
 
 // costTracker is responsible for calculating costs and cost estimates on the
@@ -94,21 +106,29 @@ type costTracker struct {
 
 	inSizeFactor, outSizeFactor float64
 	gf, utilTarget              float64
+	minBufLimit                 uint64
 
 	gfUpdateCh      chan gfUpdate
 	gfLock          sync.RWMutex
 	totalRechargeCh chan uint64
 
-	stats map[uint64][]uint64
+	stats                                        map[uint64][]uint64
+	logger                                       *csvlogger.Logger
+	logRecentUsage, logTotalRecharge, logRelCost *csvlogger.Channel
 }
 
-// newCostTracker creates a cost tracker and loads the cost factor statistics from the database
-func newCostTracker(db ethdb.Database, config *eth.Config) *costTracker {
+// newCostTracker creates a cost tracker and loads the cost factor statistics from the database.
+// It also returns the minimum capacity that can be assigned to any peer.
+func newCostTracker(db ethdb.Database, config *eth.Config, logger *csvlogger.Logger) (*costTracker, uint64) {
 	utilTarget := float64(config.LightServ) * flowcontrol.FixedPointMultiplier / 100
 	ct := &costTracker{
-		db:         db,
-		stopCh:     make(chan chan struct{}),
-		utilTarget: utilTarget,
+		db:               db,
+		stopCh:           make(chan chan struct{}),
+		utilTarget:       utilTarget,
+		logger:           logger,
+		logRelCost:       logger.NewMinMaxChannel("relativeCost", true),
+		logRecentUsage:   logger.NewMinMaxChannel("recentUsage", true),
+		logTotalRecharge: logger.NewChannel("totalRecharge", 0.01),
 	}
 	if config.LightBandwidthIn > 0 {
 		ct.inSizeFactor = utilTarget / float64(config.LightBandwidthIn)
@@ -123,7 +143,16 @@ func newCostTracker(db ethdb.Database, config *eth.Config) *costTracker {
 		}
 	}
 	ct.gfLoop()
-	return ct
+	costList := ct.makeCostList(ct.globalFactor() * 1.25)
+	for _, c := range costList {
+		amount := minBufferReqAmount[c.MsgCode]
+		cost := c.BaseCost + amount*c.ReqCost
+		if cost > ct.minBufLimit {
+			ct.minBufLimit = cost
+		}
+	}
+	ct.minBufLimit *= uint64(minBufferMultiplier)
+	return ct, (ct.minBufLimit-1)/bufLimitRatio + 1
 }
 
 // stop stops the cost tracker and saves the cost factor statistics to the database
@@ -138,16 +167,14 @@ func (ct *costTracker) stop() {
 
 // makeCostList returns upper cost estimates based on the hardcoded cost estimate
 // tables and the optionally specified incoming/outgoing bandwidth limits
-func (ct *costTracker) makeCostList() RequestCostList {
+func (ct *costTracker) makeCostList(globalFactor float64) RequestCostList {
 	maxCost := func(avgTime, inSize, outSize uint64) uint64 {
-		globalFactor := ct.globalFactor()
-
 		cost := avgTime * maxCostFactor
-		inSizeCost := uint64(float64(inSize) * ct.inSizeFactor * globalFactor * maxCostFactor)
+		inSizeCost := uint64(float64(inSize) * ct.inSizeFactor * globalFactor)
 		if inSizeCost > cost {
 			cost = inSizeCost
 		}
-		outSizeCost := uint64(float64(outSize) * ct.outSizeFactor * globalFactor * maxCostFactor)
+		outSizeCost := uint64(float64(outSize) * ct.outSizeFactor * globalFactor)
 		if outSizeCost > cost {
 			cost = outSizeCost
 		}
@@ -155,10 +182,22 @@ func (ct *costTracker) makeCostList() RequestCostList {
 	}
 	var list RequestCostList
 	for code, data := range reqAvgTimeCost {
+		baseCost := maxCost(data.baseCost, reqMaxInSize[code].baseCost, reqMaxOutSize[code].baseCost)
+		reqCost := maxCost(data.reqCost, reqMaxInSize[code].reqCost, reqMaxOutSize[code].reqCost)
+		if ct.minBufLimit != 0 {
+			// if minBufLimit is set then always enforce maximum request cost <= minBufLimit
+			maxCost := baseCost + reqCost*minBufferReqAmount[code]
+			if maxCost > ct.minBufLimit {
+				mul := 0.999 * float64(ct.minBufLimit) / float64(maxCost)
+				baseCost = uint64(float64(baseCost) * mul)
+				reqCost = uint64(float64(reqCost) * mul)
+			}
+		}
+
 		list = append(list, requestCostListItem{
 			MsgCode:  code,
-			BaseCost: maxCost(data.baseCost, reqMaxInSize[code].baseCost, reqMaxOutSize[code].baseCost),
-			ReqCost:  maxCost(data.reqCost, reqMaxInSize[code].reqCost, reqMaxOutSize[code].reqCost),
+			BaseCost: baseCost,
+			ReqCost:  reqCost,
 		})
 	}
 	return list
@@ -193,14 +232,34 @@ func (ct *costTracker) gfLoop() {
 	}
 	gf := gfSum / gfWeight
 	ct.gf = gf
+	totalRecharge := ct.utilTarget * gf
 	ct.gfUpdateCh = make(chan gfUpdate, 100)
 
 	go func() {
+		saveCostFactor := func() {
+			var data [16]byte
+			binary.BigEndian.PutUint64(data[0:8], math.Float64bits(gfSum))
+			binary.BigEndian.PutUint64(data[8:16], math.Float64bits(gfWeight))
+			ct.db.Put([]byte(gfDbKey), data[:])
+			log.Debug("global cost factor saved", "sum", time.Duration(gfSum), "weight", time.Duration(gfWeight))
+		}
+		saveTicker := time.NewTicker(time.Minute * 10)
+
 		for {
 			select {
 			case r := <-ct.gfUpdateCh:
 				now := mclock.Now()
 				max := r.servingTime * gf
+				if ct.logRelCost != nil && r.avgTime > 1e-20 {
+					ct.logRelCost.Update(max / r.avgTime)
+				}
+				if r.servingTime > 1000000000 {
+					ct.logger.Event(fmt.Sprintf("Very long servingTime = %f  avgTime = %f  costFactor = %f", r.servingTime, r.avgTime, gf))
+				}
+				if max > r.avgTime*maxCostFactor {
+					max = r.avgTime * maxCostFactor
+					r.servingTime = max / gf
+				}
 				if r.avgTime > max {
 					max = r.avgTime
 				}
@@ -208,11 +267,12 @@ func (ct *costTracker) gfLoop() {
 				expUpdate = now
 				gfUsage = gfUsage*math.Exp(-dt/float64(gfUsageTC)) + max*1000000/float64(gfUsageTC)
 
-				if gfUsage >= gfUsageThreshold*ct.utilTarget*gf {
+				if gfUsage >= gfUsageThreshold*totalRecharge {
 					gfSum += r.avgTime
 					gfWeight += r.servingTime
 					if time.Duration(now-lastUpdate) > time.Second {
 						gf = gfSum / gfWeight
+						totalRecharge = ct.utilTarget * gf
 						if gfWeight >= float64(gfMaxWeight) {
 							gfSum = gf * float64(gfMaxWeight)
 							gfWeight = float64(gfMaxWeight)
@@ -224,19 +284,21 @@ func (ct *costTracker) gfLoop() {
 						ct.gfLock.Unlock()
 						if ch != nil {
 							select {
-							case ct.totalRechargeCh <- uint64(ct.utilTarget * gf):
+							case ct.totalRechargeCh <- uint64(totalRecharge):
 							default:
 							}
 						}
 						log.Debug("global cost factor updated", "gf", gf, "weight", time.Duration(gfWeight))
 					}
 				}
+				ct.logRecentUsage.Update(gfUsage)
+				ct.logTotalRecharge.Update(totalRecharge)
+
+			case <-saveTicker.C:
+				saveCostFactor()
+
 			case stopCh := <-ct.stopCh:
-				var data [16]byte
-				binary.BigEndian.PutUint64(data[0:8], math.Float64bits(gfSum))
-				binary.BigEndian.PutUint64(data[8:16], math.Float64bits(gfWeight))
-				ct.db.Put([]byte(gfDbKey), data[:])
-				log.Debug("global cost factor saved", "sum", time.Duration(gfSum), "weight", time.Duration(gfWeight))
+				saveCostFactor()
 				close(stopCh)
 				return
 			}
@@ -339,8 +401,8 @@ type (
 	}
 )
 
-// getCost calculates the estimated cost for a given request type and amount
-func (table requestCostTable) getCost(code, amount uint64) uint64 {
+// getMaxCost calculates the estimated cost for a given request type and amount
+func (table requestCostTable) getMaxCost(code, amount uint64) uint64 {
 	costs := table[code]
 	return costs.baseCost + amount*costs.reqCost
 }
@@ -360,7 +422,7 @@ func (list RequestCostList) decode(protocolLength uint64) requestCostTable {
 }
 
 // testCostList returns a dummy request cost list used by tests
-func testCostList() RequestCostList {
+func testCostList(testCost uint64) RequestCostList {
 	cl := make(RequestCostList, len(reqAvgTimeCost))
 	var max uint64
 	for code := range reqAvgTimeCost {
@@ -372,7 +434,7 @@ func testCostList() RequestCostList {
 	for code := uint64(0); code <= max; code++ {
 		if _, ok := reqAvgTimeCost[code]; ok {
 			cl[i].MsgCode = code
-			cl[i].BaseCost = 0
+			cl[i].BaseCost = testCost
 			cl[i].ReqCost = 0
 			i++
 		}
