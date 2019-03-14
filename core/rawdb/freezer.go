@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sync/atomic"
 	"time"
-	"path/filepath"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -123,7 +123,9 @@ func (f *freezer) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	errs = append(errs, f.instanceLock.Release())
+	if f.instanceLock != nil {
+		errs = append(errs, f.instanceLock.Release())
+	}
 	if errs != nil {
 		return fmt.Errorf("%v", errs)
 	}
