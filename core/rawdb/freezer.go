@@ -22,11 +22,13 @@ import (
 	"math"
 	"sync/atomic"
 	"time"
+	"path/filepath"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
+	"github.com/prometheus/prometheus/util/flock"
 )
 
 // errUnknownTable is returned if the user attempts to read from a table that is
@@ -57,8 +59,9 @@ const (
 //   reserving it for go-ethereum. This would also reduce the memory requirements
 //   of Geth, and thus also GC overhead.
 type freezer struct {
-	tables map[string]*freezerTable // Data tables for storing everything
-	frozen uint64                   // Number of blocks already frozen
+	tables       map[string]*freezerTable // Data tables for storing everything
+	frozen       uint64                   // Number of blocks already frozen
+	instanceLock flock.Releaser
 }
 
 // newFreezer creates a chain freezer that moves ancient chain data into
@@ -69,12 +72,23 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 		readMeter  = metrics.NewRegisteredMeter(namespace+"ancient/read", nil)
 		writeMeter = metrics.NewRegisteredMeter(namespace+"ancient/write", nil)
 	)
+	lock, _, err := flock.New(filepath.Join(datadir, "FLOCK"))
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			lock.Release()
+		}
+	}()
 	// Open all the supported data tables
 	freezer := &freezer{
-		tables: make(map[string]*freezerTable),
+		tables:       make(map[string]*freezerTable),
+		instanceLock: lock,
 	}
 	for _, name := range []string{"hashes", "headers", "bodies", "receipts", "diffs"} {
-		table, err := newTable(datadir, name, readMeter, writeMeter)
+		var table *freezerTable
+		table, err = newTable(datadir, name, readMeter, writeMeter)
 		if err != nil {
 			for _, table := range freezer.tables {
 				table.Close()
@@ -91,7 +105,7 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 		}
 	}
 	for _, table := range freezer.tables {
-		if err := table.truncate(freezer.frozen); err != nil {
+		if err = table.truncate(freezer.frozen); err != nil {
 			for _, table := range freezer.tables {
 				table.Close()
 			}
@@ -109,6 +123,7 @@ func (f *freezer) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	errs = append(errs, f.instanceLock.Release())
 	if errs != nil {
 		return fmt.Errorf("%v", errs)
 	}
