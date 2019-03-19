@@ -191,12 +191,15 @@ func initGenesis(ctx *cli.Context) error {
 	stack := makeFullNode(ctx)
 	defer stack.Close()
 
-	for _, name := range []string{"chaindata", "lightchaindata"} {
+	for i, name := range []string{"chaindata", "lightchaindata"} {
 		chaindb, err := stack.OpenDatabase(name, 0, 0, "")
 		if err != nil {
 			utils.Fatalf("Failed to open database: %v", err)
 		}
 		_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
+		if i == 0 {
+			core.InitFreezerWithGenesis(chaindb)
+		}
 		if err != nil {
 			utils.Fatalf("Failed to write genesis block: %v", err)
 		}

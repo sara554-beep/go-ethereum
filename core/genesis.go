@@ -211,6 +211,21 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, constant
 	return newcfg, stored, nil
 }
 
+func InitFreezerWithGenesis(db ethdb.Database) {
+	if items, err := db.Items(); err != nil || items > 0 {
+		return
+	}
+	genesisHash := rawdb.ReadCanonicalHash(db, 0)
+	genesisBlock := rawdb.ReadBlock(db, genesisHash, 0)
+
+	// Initialize freezer with genesis block too.
+	rawdb.WriteAncientTd(db, 0, genesisBlock.Difficulty())
+	rawdb.WriteAncientHeader(db, genesisBlock.Header())
+	rawdb.WriteAncientBody(db, 0, genesisBlock.Body())
+	rawdb.WriteAncientReceipts(db, 0, nil)
+	rawdb.WriteAncientCanonicalHash(db, genesisBlock.Hash(), 0)
+}
+
 func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 	switch {
 	case g != nil:

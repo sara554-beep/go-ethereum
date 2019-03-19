@@ -29,8 +29,8 @@ import (
 )
 
 // ReadCanonicalHash retrieves the hash assigned to a canonical block number.
-func ReadCanonicalHash(db ethdb.AncientReader, number uint64) common.Hash {
-	data, _ := db.Ancient("hashes", number)
+func ReadCanonicalHash(db ethdb.DatabaseReader, number uint64) common.Hash {
+	data, _ := db.Ancient(FreezerHashTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(headerHashKey(number))
 	}
@@ -44,6 +44,14 @@ func ReadCanonicalHash(db ethdb.AncientReader, number uint64) common.Hash {
 func WriteCanonicalHash(db ethdb.Writer, hash common.Hash, number uint64) {
 	if err := db.Put(headerHashKey(number), hash.Bytes()); err != nil {
 		log.Crit("Failed to store number to hash mapping", "err", err)
+	}
+}
+
+// WriteAncientCanonicalHash stores the hash assigned to a canonical block number
+// into the ancient store.
+func WriteAncientCanonicalHash(db ethdb.AncientWriter, hash common.Hash, number uint64) {
+	if err := db.Append(FreezerHashTable, number, hash.Bytes()); err != nil {
+		log.Crit("Failed to store number to hash mapping to ancient store", "err", err)
 	}
 }
 
@@ -69,6 +77,7 @@ func readAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 			hashes = append(hashes, common.BytesToHash(key[len(key)-32:]))
 		}
 	}
+	it.Release()
 	return hashes
 }
 
@@ -149,8 +158,8 @@ func WriteFastTrieProgress(db ethdb.Writer, count uint64) {
 }
 
 // ReadHeaderRLP retrieves a block header in its raw RLP database encoding.
-func ReadHeaderRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rlp.RawValue {
-	data, _ := db.Ancient("headers", number)
+func ReadHeaderRLP(db ethdb.DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
+	data, _ := db.Ancient(FreezerHeaderTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(headerKey(number, hash))
 	}
@@ -158,8 +167,8 @@ func ReadHeaderRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rlp.
 }
 
 // HasHeader verifies the existence of a block header corresponding to the hash.
-func HasHeader(db ethdb.AncientReader, hash common.Hash, number uint64) bool {
-	if has, err := db.Ancient("hashes", number); err == nil && common.BytesToHash(has) == hash {
+func HasHeader(db ethdb.DatabaseReader, hash common.Hash, number uint64) bool {
+	if has, err := db.Ancient(FreezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
 		return true
 	}
 	if has, err := db.Has(headerKey(number, hash)); !has || err != nil {
@@ -169,7 +178,7 @@ func HasHeader(db ethdb.AncientReader, hash common.Hash, number uint64) bool {
 }
 
 // ReadHeader retrieves the block header corresponding to the hash.
-func ReadHeader(db ethdb.AncientReader, hash common.Hash, number uint64) *types.Header {
+func ReadHeader(db ethdb.DatabaseReader, hash common.Hash, number uint64) *types.Header {
 	data := ReadHeaderRLP(db, hash, number)
 	if len(data) == 0 {
 		return nil
@@ -206,9 +215,40 @@ func WriteHeader(db ethdb.Writer, header *types.Header) {
 	}
 }
 
+// WriteAncientHeader stores an ancient block header into the ancient store and also
+// stores the hash-to-number mapping to key-value store.
+func WriteAncientHeader(db ethdb.DatabaseWriter, header *types.Header) {
+	// Write the hash -> number mapping
+	var (
+		hash    = header.Hash()
+		number  = header.Number.Uint64()
+		encoded = encodeBlockNumber(number)
+	)
+	key := headerNumberKey(hash)
+	if err := db.Put(key, encoded); err != nil {
+		log.Crit("Failed to store hash to number mapping", "err", err)
+	}
+	// Write the encoded header into ancient store.
+	data, err := rlp.EncodeToBytes(header)
+	if err != nil {
+		log.Crit("Failed to RLP encode header", "err", err)
+	}
+	err = db.Append(FreezerHeaderTable, number, data)
+	if err != nil {
+		log.Crit("Failed to store header into ancient store", "err", err)
+	}
+}
+
 // DeleteHeader removes all block header data associated with a hash.
 func DeleteHeader(db ethdb.Deleter, hash common.Hash, number uint64) {
 	deleteHeaderWithoutNumber(db, hash, number)
+	if err := db.Delete(headerNumberKey(hash)); err != nil {
+		log.Crit("Failed to delete hash to number mapping", "err", err)
+	}
+}
+
+// DeleteHeaderNumber removes hash to number mapping.
+func DeleteHeaderNumber(db ethdb.Deleter, hash common.Hash) {
 	if err := db.Delete(headerNumberKey(hash)); err != nil {
 		log.Crit("Failed to delete hash to number mapping", "err", err)
 	}
@@ -223,8 +263,8 @@ func deleteHeaderWithoutNumber(db ethdb.Deleter, hash common.Hash, number uint64
 }
 
 // ReadBodyRLP retrieves the block body (transactions and uncles) in RLP encoding.
-func ReadBodyRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rlp.RawValue {
-	data, _ := db.Ancient("bodies", number)
+func ReadBodyRLP(db ethdb.DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
+	data, _ := db.Ancient(FreezerBodiesTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(blockBodyKey(number, hash))
 	}
@@ -239,9 +279,11 @@ func WriteBodyRLP(db ethdb.Writer, hash common.Hash, number uint64, rlp rlp.RawV
 }
 
 // HasBody verifies the existence of a block body corresponding to the hash.
-func HasBody(db ethdb.AncientReader, hash common.Hash, number uint64) bool {
-	if has, err := db.Ancient("hashes", number); err == nil && common.BytesToHash(has) == hash {
-		return true
+func HasBody(db ethdb.DatabaseReader, hash common.Hash, number uint64) bool {
+	if has, err := db.Ancient(FreezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
+		if blob, err := db.Ancient(FreezerBodiesTable, number); err == nil && len(blob) > 0 {
+			return true
+		}
 	}
 	if has, err := db.Has(blockBodyKey(number, hash)); !has || err != nil {
 		return false
@@ -250,7 +292,7 @@ func HasBody(db ethdb.AncientReader, hash common.Hash, number uint64) bool {
 }
 
 // ReadBody retrieves the block body corresponding to the hash.
-func ReadBody(db ethdb.AncientReader, hash common.Hash, number uint64) *types.Body {
+func ReadBody(db ethdb.DatabaseReader, hash common.Hash, number uint64) *types.Body {
 	data := ReadBodyRLP(db, hash, number)
 	if len(data) == 0 {
 		return nil
@@ -263,13 +305,24 @@ func ReadBody(db ethdb.AncientReader, hash common.Hash, number uint64) *types.Bo
 	return body
 }
 
-// WriteBody storea a block body into the database.
+// WriteBody stores a block body into the database.
 func WriteBody(db ethdb.Writer, hash common.Hash, number uint64, body *types.Body) {
 	data, err := rlp.EncodeToBytes(body)
 	if err != nil {
 		log.Crit("Failed to RLP encode body", "err", err)
 	}
 	WriteBodyRLP(db, hash, number, data)
+}
+
+// WriteAncientBody stores a block body into the ancient store.
+func WriteAncientBody(db ethdb.AncientWriter, number uint64, body *types.Body) {
+	data, err := rlp.EncodeToBytes(body)
+	if err != nil {
+		log.Crit("Failed to RLP encode body", "err", err)
+	}
+	if err := db.Append(FreezerBodiesTable, number, data); err != nil {
+		log.Crit("Failed to store block body to ancient store", "err", err)
+	}
 }
 
 // DeleteBody removes all block body data associated with a hash.
@@ -280,8 +333,8 @@ func DeleteBody(db ethdb.Deleter, hash common.Hash, number uint64) {
 }
 
 // ReadTdRLP retrieves a block's total difficulty corresponding to the hash in RLP encoding.
-func ReadTdRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rlp.RawValue {
-	data, _ := db.Ancient("diffs", number)
+func ReadTdRLP(db ethdb.DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
+	data, _ := db.Ancient(FreezerDifficultyTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(headerTDKey(number, hash))
 	}
@@ -289,7 +342,7 @@ func ReadTdRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rlp.RawV
 }
 
 // ReadTd retrieves a block's total difficulty corresponding to the hash.
-func ReadTd(db ethdb.AncientReader, hash common.Hash, number uint64) *big.Int {
+func ReadTd(db ethdb.DatabaseReader, hash common.Hash, number uint64) *big.Int {
 	data := ReadTdRLP(db, hash, number)
 	if len(data) == 0 {
 		return nil
@@ -313,6 +366,17 @@ func WriteTd(db ethdb.Writer, hash common.Hash, number uint64, td *big.Int) {
 	}
 }
 
+// WriteAncientTd stores the total difficulty of a block into the ancient store
+func WriteAncientTd(db ethdb.AncientWriter, number uint64, td *big.Int) {
+	data, err := rlp.EncodeToBytes(td)
+	if err != nil {
+		log.Crit("Failed to RLP encode block total difficulty", "err", err)
+	}
+	if err := db.Append(FreezerDifficultyTable, number, data); err != nil {
+		log.Crit("Failed to store block total difficulty to ancient store", "err", err)
+	}
+}
+
 // DeleteTd removes all block total difficulty data associated with a hash.
 func DeleteTd(db ethdb.Deleter, hash common.Hash, number uint64) {
 	if err := db.Delete(headerTDKey(number, hash)); err != nil {
@@ -322,9 +386,11 @@ func DeleteTd(db ethdb.Deleter, hash common.Hash, number uint64) {
 
 // HasReceipts verifies the existence of all the transaction receipts belonging
 // to a block.
-func HasReceipts(db ethdb.AncientReader, hash common.Hash, number uint64) bool {
-	if has, err := db.Ancient("hashes", number); err == nil && common.BytesToHash(has) == hash {
-		return true
+func HasReceipts(db ethdb.DatabaseReader, hash common.Hash, number uint64) bool {
+	if has, err := db.Ancient(FreezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
+		if blob, err := db.Ancient(FreezerReceiptTable, number); err == nil && len(blob) > 0 {
+			return true
+		}
 	}
 	if has, err := db.Has(blockReceiptsKey(number, hash)); !has || err != nil {
 		return false
@@ -333,8 +399,8 @@ func HasReceipts(db ethdb.AncientReader, hash common.Hash, number uint64) bool {
 }
 
 // ReadReceiptsRLP retrieves all the transaction receipts belonging to a block in RLP encoding.
-func ReadReceiptsRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rlp.RawValue {
-	data, _ := db.Ancient("receipts", number)
+func ReadReceiptsRLP(db ethdb.DatabaseReader, hash common.Hash, number uint64) rlp.RawValue {
+	data, _ := db.Ancient(FreezerReceiptTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(blockReceiptsKey(number, hash))
 	}
@@ -342,7 +408,7 @@ func ReadReceiptsRLP(db ethdb.AncientReader, hash common.Hash, number uint64) rl
 }
 
 // ReadReceipts retrieves all the transaction receipts belonging to a block.
-func ReadReceipts(db ethdb.AncientReader, hash common.Hash, number uint64) types.Receipts {
+func ReadReceipts(db ethdb.DatabaseReader, hash common.Hash, number uint64) types.Receipts {
 	// Retrieve the flattened receipt slice
 	data := ReadReceiptsRLP(db, hash, number)
 	if len(data) == 0 {
@@ -388,6 +454,24 @@ func WriteReceipts(db ethdb.Writer, hash common.Hash, number uint64, receipts ty
 	}
 }
 
+// WriteAncientReceipts stores all the transaction receipts belonging to a block
+// into the ancient store.
+func WriteAncientReceipts(db ethdb.AncientWriter, number uint64, receipts types.Receipts) {
+	// Convert the receipts into their storage form and serialize them
+	storageReceipts := make([]*types.ReceiptForStorage, len(receipts))
+	for i, receipt := range receipts {
+		storageReceipts[i] = (*types.ReceiptForStorage)(receipt)
+	}
+	bytes, err := rlp.EncodeToBytes(storageReceipts)
+	if err != nil {
+		log.Crit("Failed to encode block receipts", "err", err)
+	}
+	// Store the flattened receipt slice
+	if err := db.Append(FreezerReceiptTable, number, bytes); err != nil {
+		log.Crit("Failed to store block receipts to ancient store", "err", err)
+	}
+}
+
 // DeleteReceipts removes all receipt data associated with a block hash.
 func DeleteReceipts(db ethdb.Deleter, hash common.Hash, number uint64) {
 	if err := db.Delete(blockReceiptsKey(number, hash)); err != nil {
@@ -401,7 +485,7 @@ func DeleteReceipts(db ethdb.Deleter, hash common.Hash, number uint64) {
 //
 // Note, due to concurrent download of header and block body the header and thus
 // canonical hash can be stored in the database but the body data not (yet).
-func ReadBlock(db ethdb.AncientReader, hash common.Hash, number uint64) *types.Block {
+func ReadBlock(db ethdb.DatabaseReader, hash common.Hash, number uint64) *types.Block {
 	header := ReadHeader(db, hash, number)
 	if header == nil {
 		return nil
@@ -437,7 +521,7 @@ func deleteBlockWithoutNumber(db ethdb.Deleter, hash common.Hash, number uint64)
 }
 
 // FindCommonAncestor returns the last common ancestor of two block headers
-func FindCommonAncestor(db ethdb.AncientReader, a, b *types.Header) *types.Header {
+func FindCommonAncestor(db ethdb.DatabaseReader, a, b *types.Header) *types.Header {
 	for bn := b.Number.Uint64(); a.Number.Uint64() > bn; {
 		a = ReadHeader(db, a.ParentHash, a.Number.Uint64()-1)
 		if a == nil {

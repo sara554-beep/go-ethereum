@@ -587,7 +587,7 @@ func (f *lightFetcher) processResponse(req fetchRequest, resp fetchResponse) boo
 		headers[int(req.amount)-1-i] = header
 	}
 
-	if _, err := f.chain.InsertHeaderChain(headers, 1); err != nil {
+	if _, err := f.chain.InsertHeaderChain(headers, 1, false); err != nil {
 		if err == consensus.ErrFutureBlock {
 			return true
 		}

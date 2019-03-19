@@ -60,7 +60,7 @@ func DeleteTxLookupEntry(db ethdb.Deleter, hash common.Hash) {
 
 // ReadTransaction retrieves a specific transaction from the database, along with
 // its added positional metadata.
-func ReadTransaction(db ethdb.AncientReader, hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+func ReadTransaction(db ethdb.DatabaseReader, hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
 	blockHash := ReadTxLookupEntry(db, hash)
 	if blockHash == (common.Hash{}) {
 		return nil, common.Hash{}, 0, 0
@@ -85,7 +85,7 @@ func ReadTransaction(db ethdb.AncientReader, hash common.Hash) (*types.Transacti
 
 // ReadReceipt retrieves a specific transaction receipt from the database, along with
 // its added positional metadata.
-func ReadReceipt(db ethdb.AncientReader, hash common.Hash) (*types.Receipt, common.Hash, uint64, uint64) {
+func ReadReceipt(db ethdb.DatabaseReader, hash common.Hash) (*types.Receipt, common.Hash, uint64, uint64) {
 	blockHash := ReadTxLookupEntry(db, hash)
 	if blockHash == (common.Hash{}) {
 		return nil, common.Hash{}, 0, 0

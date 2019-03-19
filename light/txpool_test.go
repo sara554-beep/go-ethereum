@@ -119,7 +119,7 @@ func TestTxPool(t *testing.T) {
 			}
 		}
 
-		if _, err := lightchain.InsertHeaderChain([]*types.Header{block.Header()}, 1); err != nil {
+		if _, err := lightchain.InsertHeaderChain([]*types.Header{block.Header()}, 1, false); err != nil {
 			panic(err)
 		}
 

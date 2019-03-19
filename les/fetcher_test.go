@@ -139,7 +139,7 @@ func (l *lightChainStub) GetTd(hash common.Hash, number uint64) *big.Int {
 	return nil
 }
 
-func (l *lightChainStub) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
+func (l *lightChainStub) InsertHeaderChain(chain []*types.Header, checkFreq int, ancient bool) (int, error) {
 	return l.insertHeaderChainAssertFunc(chain, checkFreq)
 }
 

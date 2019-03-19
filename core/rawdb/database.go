@@ -24,7 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
-// freezerdb is a databse wrapper that enabled freezer data retrievals.
+// freezerdb is a database wrapper that enabled freezer data retrievals.
 type freezerdb struct {
 	ethdb.KeyValueStore
 	ethdb.AncientStore
@@ -53,9 +53,24 @@ type nofreezedb struct {
 	ethdb.KeyValueStore
 }
 
-// Frozen returns nil as we don't have a backing chain freezer.
+// Ancient returns an error as we don't have a backing chain freezer.
 func (db *nofreezedb) Ancient(kind string, number uint64) ([]byte, error) {
-	return nil, errOutOfBounds
+	return nil, errNotSupported
+}
+
+// Append returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) Append(kind string, number uint64, blob []byte) error {
+	return errNotSupported
+}
+
+// Truncate returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) Truncate(items uint64) error {
+	return errNotSupported
+}
+
+// Items returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) Items() (uint64, error) {
+	return 0, errNotSupported
 }
 
 // NewDatabase creates a high level database on top of a given key-value data

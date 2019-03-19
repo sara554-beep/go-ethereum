@@ -202,7 +202,7 @@ func (dl *downloadTester) GetTd(hash common.Hash, number uint64) *big.Int {
 }
 
 // InsertHeaderChain injects a new batch of headers into the simulated chain.
-func (dl *downloadTester) InsertHeaderChain(headers []*types.Header, checkFreq int) (i int, err error) {
+func (dl *downloadTester) InsertHeaderChain(headers []*types.Header, checkFreq int, ancient bool) (i int, err error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
@@ -254,7 +254,7 @@ func (dl *downloadTester) InsertChain(blocks types.Blocks) (i int, err error) {
 }
 
 // InsertReceiptChain injects a new batch of receipts into the simulated chain.
-func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts) (i int, err error) {
+func (dl *downloadTester) InsertReceiptChain(blocks types.Blocks, receipts []types.Receipts, ancient bool) (i int, err error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
@@ -285,6 +285,13 @@ func (dl *downloadTester) Rollback(hashes []common.Hash) {
 		delete(dl.ownReceipts, hashes[i])
 		delete(dl.ownBlocks, hashes[i])
 	}
+}
+
+func (dl *downloadTester) SetHead(uint64) error {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	return nil
 }
 
 // newPeer registers a new block download source into the downloader.

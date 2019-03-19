@@ -56,6 +56,24 @@ func (t *table) Ancient(kind string, number uint64) ([]byte, error) {
 	return t.db.Ancient(kind, number)
 }
 
+// Ancient is a noop passthrough that just forwards the request to the underlying
+// database.
+func (t *table) Append(kind string, number uint64, blob []byte) error {
+	return t.db.Append(kind, number, blob)
+}
+
+// Ancient is a noop passthrough that just forwards the request to the underlying
+// database.
+func (t *table) Truncate(items uint64) error {
+	return t.db.Truncate(items)
+}
+
+// Ancient is a noop passthrough that just forwards the request to the underlying
+// database.
+func (t *table) Items() (uint64, error) {
+	return t.db.Items()
+}
+
 // Put inserts the given value into the database at a prefixed version of the
 // provided key.
 func (t *table) Put(key []byte, value []byte) error {

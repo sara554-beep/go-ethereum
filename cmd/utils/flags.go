@@ -1585,6 +1585,9 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 	if err != nil {
 		Fatalf("%v", err)
 	}
+	if ctx.GlobalString(SyncModeFlag.Name) != "light" {
+		core.InitFreezerWithGenesis(chainDb)
+	}
 	var engine consensus.Engine
 	if config.Clique != nil {
 		engine = clique.New(config.Clique, chainDb)

@@ -63,6 +63,23 @@ var (
 	preimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
 )
 
+const (
+	// FreezerHeaderTable indicates the name of the freezer header table.
+	FreezerHeaderTable = "headers"
+
+	// FreezerHashTable indicates the name of the freezer canonical hash table.
+	FreezerHashTable = "hashes"
+
+	// FreezerBodiesTable indicates the name of the freezer block body table.
+	FreezerBodiesTable = "bodies"
+
+	// FreezerReceiptTable indicates the name of the freezer receipts table.
+	FreezerReceiptTable = "receipts"
+
+	// FreezerDifficultyTable indicates the name of the freezer total difficulty table.
+	FreezerDifficultyTable = "diffs"
+)
+
 // LegacyTxLookupEntry is the legacy TxLookupEntry definition with some unnecessary
 // fields.
 type LegacyTxLookupEntry struct {

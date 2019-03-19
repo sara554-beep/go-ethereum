@@ -38,6 +38,9 @@ var (
 	// errOutOfBounds is returned if the item requested is not contained within the
 	// freezer table.
 	errOutOfBounds = errors.New("out of bounds")
+
+	// errNotSupported is returned if the database doesn't support the required operation.
+	errNotSupported = errors.New("this operation is not supported")
 )
 
 // freezerTable represents a single chained data table within the freezer (e.g. blocks).
@@ -161,9 +164,9 @@ func (t *freezerTable) repair() error {
 	return nil
 }
 
-// truncate discards any recent data above the provided threashold number.
+// truncate discards any recent data above the provided threshold number.
 func (t *freezerTable) truncate(items uint64) error {
-	// If out item count is corrent, don't do anything
+	// If out item count is correct, don't do anything
 	if t.items <= items {
 		return nil
 	}

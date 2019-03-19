@@ -71,32 +71,62 @@ type KeyValueStore interface {
 	io.Closer
 }
 
-// Ancienter wraps the Ancient method for a backing immutable chain data store.
-type Ancienter interface {
+// AncientReader contains the methods required to read from immutable ancient data.
+type AncientReader interface {
 	// Ancient retrieves an ancient binary blob from the append-only immutable files.
 	Ancient(kind string, number uint64) ([]byte, error)
 }
 
-// AncientReader contains the methods required to access both key-value as well as
+// AncientWriter contains the methods required to write to immutable ancient data.
+type AncientWriter interface {
+	// Append injects a binary blob at the end of the append-only immutable table files.
+	Append(kind string, number uint64, blob []byte) error
+}
+
+type AncientDeleter interface {
+	Truncate(items uint64) error
+}
+
+type AncientLengther interface {
+	Items() (uint64, error)
+}
+
+// DatabaseReader contains the methods required to read data from both key-value as well as
 // immutable ancient data.
-type AncientReader interface {
+type DatabaseReader interface {
 	Reader
-	Ancienter
+	AncientReader
+}
+
+// DatabaseWriter contains the methods required to write data to both key-value as well as
+// immutable ancient data.
+type DatabaseWriter interface {
+	Writer
+	AncientWriter
+}
+
+type DatabaseDeleter interface {
+	Deleter
+	AncientDeleter
 }
 
 // KeyValueStore contains all the methods required to allow handling different
 // ancient data stores backing immutable chain data store
 type AncientStore interface {
-	Ancienter
+	AncientReader
+	AncientWriter
+	AncientDeleter
+	AncientLengther
 	io.Closer
 }
 
 // Database contains all the methods required by the high level database to not
 // only access the key-value data store but also the chain freezer.
 type Database interface {
-	AncientReader
-	Writer
-	Deleter
+	DatabaseReader
+	DatabaseWriter
+	DatabaseDeleter
+	AncientLengther
 	Batcher
 	Iteratee
 	Stater

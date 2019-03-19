@@ -165,12 +165,12 @@ func (lc *LightChain) loadLastState() error {
 
 // SetHead rewinds the local chain to a new head. Everything above the new
 // head will be deleted and the new one set.
-func (lc *LightChain) SetHead(head uint64) {
+func (lc *LightChain) SetHead(head uint64) error {
 	lc.chainmu.Lock()
 	defer lc.chainmu.Unlock()
 
 	lc.hc.SetHead(head, nil)
-	lc.loadLastState()
+	return lc.loadLastState()
 }
 
 // GasLimit returns the gas limit of the current HEAD block.
@@ -355,7 +355,7 @@ func (lc *LightChain) postChainEvents(events []interface{}) {
 //
 // In the case of a light chain, InsertHeaderChain also creates and posts light
 // chain events when necessary.
-func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
+func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int, ancient bool) (int, error) {
 	if atomic.LoadInt32(&lc.disableCheckFreq) == 1 {
 		checkFreq = 0
 	}
@@ -373,7 +373,7 @@ func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 
 	var events []interface{}
 	whFunc := func(header *types.Header) error {
-		status, err := lc.hc.WriteHeader(header)
+		status, err := lc.hc.WriteHeader(header, false)
 
 		switch status {
 		case core.CanonStatTy:

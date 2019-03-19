@@ -131,6 +131,8 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	}
 	log.Info("Initialised chain configuration", "config", chainConfig)
 
+	core.InitFreezerWithGenesis(chainDb)
+
 	eth := &Ethereum{
 		config:         config,
 		chainDb:        chainDb,

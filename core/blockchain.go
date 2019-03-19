@@ -194,6 +194,30 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
 	}
+	// In many scenarios we will lose the header data associated with `LastHeader`.
+	// For example:
+	// (1)
+	// The last fast sync was forcibly terminated by the user or the system
+	// panic, resulting in the chain data in the freezer is not neat.
+	// During the system restart phase, the irregular data in freezer is truncated,
+	// causing the header data being referenced by the `LastHeader` to be deleted.
+	//
+	// (2)
+	// During the last fast sync process, the header data written to the freezer
+	// has not been flushed to disk, but the `LastHeader` has been updated(we can't
+	// guarantee the disk flush order strictly consistent with the file write operation).
+	if frozen, err := bc.db.Items(); err == nil && frozen > 1 {
+		if header := bc.hc.CurrentHeader(); header != nil {
+			if header.Number.Uint64() < frozen-1 {
+				bc.RaiseHead(frozen - 1)
+			}
+		}
+		if fastBlock := bc.CurrentFastBlock(); fastBlock != nil {
+			if fastBlock.Number().Uint64() < frozen-1 {
+				bc.RaiseHead(frozen - 1)
+			}
+		}
+	}
 	// Check the current state of the block hashes and make sure that we do not have any of the bad blocks in our chain
 	for hash := range BadHashes {
 		if header := bc.GetHeaderByHash(hash); header != nil {
@@ -290,9 +314,17 @@ func (bc *BlockChain) SetHead(head uint64) error {
 	bc.chainmu.Lock()
 	defer bc.chainmu.Unlock()
 
+	frozen, _ := bc.db.Items()
 	// Rewind the header chain, deleting all block bodies until then
 	delFn := func(db ethdb.Deleter, hash common.Hash, num uint64) {
-		rawdb.DeleteBody(db, hash, num)
+		if num+1 <= frozen {
+			bc.db.Truncate(num + 1)
+			rawdb.DeleteHeaderNumber(db, hash)
+		} else {
+			rawdb.DeleteBody(db, hash, num)
+			rawdb.DeleteReceipts(db, hash, num)
+		}
+		// Todo(rjl493456442) txlookup, bloombits, etc
 	}
 	bc.hc.SetHead(head, delFn)
 	currentHeader := bc.hc.CurrentHeader()
@@ -310,13 +342,72 @@ func (bc *BlockChain) SetHead(head uint64) error {
 	}
 	if currentBlock := bc.CurrentBlock(); currentBlock != nil {
 		if _, err := state.New(currentBlock.Root(), bc.stateCache); err != nil {
-			// Rewound state missing, rolled back to before pivot, reset to genesis
-			bc.currentBlock.Store(bc.genesisBlock)
+			log.Warn("Head state missing, repairing chain", "number", currentBlock.Number(), "hash", currentBlock.Hash())
+			if err := bc.repair(&currentBlock); err != nil {
+				return err
+			}
 		}
 	}
 	// Rewind the fast block in a simpleton way to the target head
 	if currentFastBlock := bc.CurrentFastBlock(); currentFastBlock != nil && currentHeader.Number.Uint64() < currentFastBlock.NumberU64() {
 		bc.currentFastBlock.Store(bc.GetBlock(currentHeader.Hash(), currentHeader.Number.Uint64()))
+	}
+	// If either blocks reached nil, reset to the genesis state
+	if currentBlock := bc.CurrentBlock(); currentBlock == nil {
+		bc.currentBlock.Store(bc.genesisBlock)
+	}
+	if currentFastBlock := bc.CurrentFastBlock(); currentFastBlock == nil {
+		bc.currentFastBlock.Store(bc.genesisBlock)
+	}
+	currentBlock := bc.CurrentBlock()
+	currentFastBlock := bc.CurrentFastBlock()
+
+	rawdb.WriteHeadBlockHash(bc.db, currentBlock.Hash())
+	rawdb.WriteHeadFastBlockHash(bc.db, currentFastBlock.Hash())
+
+	return bc.loadLastState()
+}
+
+// RaiseHead raises the local header chain to given height and also deletes
+// everything above the new head.
+//
+// Note this function call requires the caller to ensure that all block data
+// from the genesis block to the head block is locally owned.
+func (bc *BlockChain) RaiseHead(head uint64) error {
+	log.Warn("Raising blockchain", "target", head)
+
+	bc.chainmu.Lock()
+	defer bc.chainmu.Unlock()
+
+	bc.hc.RaiseHead(head)
+	currentHeader := bc.hc.CurrentHeader()
+
+	// Clear out any stale content from the caches
+	bc.bodyCache.Purge()
+	bc.bodyRLPCache.Purge()
+	bc.receiptsCache.Purge()
+	bc.blockCache.Purge()
+	bc.futureBlocks.Purge()
+
+	// Rewind the block chain, ensuring we don't end up with a stateless head block
+	if currentBlock := bc.CurrentBlock(); currentBlock != nil && currentHeader.Number.Uint64() > currentBlock.NumberU64() {
+		if newFullBlock := bc.GetBlock(currentHeader.Hash(), currentHeader.Number.Uint64()); newFullBlock != nil {
+			bc.currentBlock.Store(newFullBlock)
+		}
+	}
+	if currentBlock := bc.CurrentBlock(); currentBlock != nil {
+		if _, err := state.New(currentBlock.Root(), bc.stateCache); err != nil {
+			log.Warn("Head state missing, repairing chain", "number", currentBlock.Number(), "hash", currentBlock.Hash())
+			if err := bc.repair(&currentBlock); err != nil {
+				return err
+			}
+		}
+	}
+	// Rewind the fast block in a simpleton way to the target head
+	if currentFastBlock := bc.CurrentFastBlock(); currentFastBlock != nil && currentHeader.Number.Uint64() > currentFastBlock.NumberU64() {
+		if newFastBlock := bc.GetBlock(currentHeader.Hash(), currentHeader.Number.Uint64()); newFastBlock != nil {
+			bc.currentFastBlock.Store(newFastBlock)
+		}
 	}
 	// If either blocks reached nil, reset to the genesis state
 	if currentBlock := bc.CurrentBlock(); currentBlock == nil {
@@ -430,7 +521,7 @@ func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
 	defer bc.chainmu.Unlock()
 
 	// Prepare the genesis block and reinitialise the chain
-	if err := bc.hc.WriteTd(genesis.Hash(), genesis.NumberU64(), genesis.Difficulty()); err != nil {
+	if err := bc.hc.WriteTd(genesis.Hash(), genesis.NumberU64(), genesis.Difficulty(), false); err != nil {
 		log.Crit("Failed to write genesis block TD", "err", err)
 	}
 	rawdb.WriteBlock(bc.db, genesis)
@@ -827,7 +918,7 @@ func SetReceiptsData(config *params.ChainConfig, block *types.Block, receipts ty
 
 // InsertReceiptChain attempts to complete an already existing header chain with
 // transaction and receipt data.
-func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
+func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts, ancient bool) (int, error) {
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
@@ -867,8 +958,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			return i, fmt.Errorf("failed to set receipts data: %v", err)
 		}
 		// Write all the data out into the database
-		rawdb.WriteBody(batch, block.Hash(), block.NumberU64(), block.Body())
-		rawdb.WriteReceipts(batch, block.Hash(), block.NumberU64(), receipts)
+		if ancient {
+			rawdb.WriteAncientBody(bc.db, block.NumberU64(), block.Body())
+			rawdb.WriteAncientReceipts(bc.db, block.NumberU64(), receipts)
+		} else {
+			rawdb.WriteBody(batch, block.Hash(), block.NumberU64(), block.Body())
+			rawdb.WriteReceipts(batch, block.Hash(), block.NumberU64(), receipts)
+		}
 		rawdb.WriteTxLookupEntries(batch, block)
 
 		stats.processed++
@@ -922,7 +1018,7 @@ func (bc *BlockChain) WriteBlockWithoutState(block *types.Block, td *big.Int) (e
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
-	if err := bc.hc.WriteTd(block.Hash(), block.NumberU64(), td); err != nil {
+	if err := bc.hc.WriteTd(block.Hash(), block.NumberU64(), td, false); err != nil {
 		return err
 	}
 	rawdb.WriteBlock(bc.db, block)
@@ -955,7 +1051,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	externTd := new(big.Int).Add(block.Difficulty(), ptd)
 
 	// Irrelevant of the canonical status, write the block itself to the database
-	if err := bc.hc.WriteTd(block.Hash(), block.NumberU64(), externTd); err != nil {
+	if err := bc.hc.WriteTd(block.Hash(), block.NumberU64(), externTd, false); err != nil {
 		return NonStatTy, err
 	}
 	rawdb.WriteBlock(bc.db, block)
@@ -1620,7 +1716,7 @@ Error: %v
 // should be done or not. The reason behind the optional check is because some
 // of the header retrieval mechanisms already need to verify nonces, as well as
 // because nonces can be verified sparsely, not needing to check each.
-func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
+func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int, ancient bool) (int, error) {
 	start := time.Now()
 	if i, err := bc.hc.ValidateHeaderChain(chain, checkFreq); err != nil {
 		return i, err
@@ -1634,7 +1730,7 @@ func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	defer bc.wg.Done()
 
 	whFunc := func(header *types.Header) error {
-		_, err := bc.hc.WriteHeader(header)
+		_, err := bc.hc.WriteHeader(header, ancient)
 		return err
 	}
 	return bc.hc.InsertHeaderChain(chain, whFunc, start)

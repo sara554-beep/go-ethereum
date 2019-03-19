@@ -131,7 +131,7 @@ func (hc *HeaderChain) GetBlockNumber(hash common.Hash) *uint64 {
 // without the real blocks. Hence, writing headers directly should only be done
 // in two scenarios: pure-header mode of operation (light clients), or properly
 // separated header/block phases (non-archive clients).
-func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, err error) {
+func (hc *HeaderChain) WriteHeader(header *types.Header, ancient bool) (status WriteStatus, err error) {
 	// Cache some values to prevent constant recalculation
 	var (
 		hash   = header.Hash()
@@ -146,11 +146,15 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 	externTd := new(big.Int).Add(header.Difficulty, ptd)
 
 	// Irrelevant of the canonical status, write the td and header to the database
-	if err := hc.WriteTd(hash, number, externTd); err != nil {
+	if err := hc.WriteTd(hash, number, externTd, ancient); err != nil {
 		log.Crit("Failed to write header total difficulty", "err", err)
 	}
-	rawdb.WriteHeader(hc.chainDb, header)
-
+	// Write the given header to specified store.
+	if ancient {
+		rawdb.WriteAncientHeader(hc.chainDb, header)
+	} else {
+		rawdb.WriteHeader(hc.chainDb, header)
+	}
 	// If the total difficulty is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.
 	// Please refer to http://www.cs.cornell.edu/~ie53/publications/btcProcFC.pdf
@@ -161,6 +165,10 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 			hash := rawdb.ReadCanonicalHash(hc.chainDb, i)
 			if hash == (common.Hash{}) {
 				break
+			}
+			if ancient {
+				log.Error("Impossible ancient header reorg, please file an issue")
+				return NonStatTy, consensus.ErrImpossibleReorg
 			}
 			rawdb.DeleteCanonicalHash(batch, i)
 		}
@@ -173,6 +181,10 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 			headHeader = hc.GetHeader(headHash, headNumber)
 		)
 		for rawdb.ReadCanonicalHash(hc.chainDb, headNumber) != headHash {
+			if ancient {
+				log.Error("Impossible ancient header reorg, please file an issue")
+				return NonStatTy, consensus.ErrImpossibleReorg
+			}
 			rawdb.WriteCanonicalHash(hc.chainDb, headHash, headNumber)
 
 			headHash = headHeader.ParentHash
@@ -180,7 +192,11 @@ func (hc *HeaderChain) WriteHeader(header *types.Header) (status WriteStatus, er
 			headHeader = hc.GetHeader(headHash, headNumber)
 		}
 		// Extend the canonical chain with the new header
-		rawdb.WriteCanonicalHash(hc.chainDb, hash, number)
+		if ancient {
+			rawdb.WriteAncientCanonicalHash(hc.chainDb, hash, number)
+		} else {
+			rawdb.WriteCanonicalHash(hc.chainDb, hash, number)
+		}
 		rawdb.WriteHeadHeaderHash(hc.chainDb, hash)
 
 		hc.currentHeaderHash = hash
@@ -389,8 +405,12 @@ func (hc *HeaderChain) GetTdByHash(hash common.Hash) *big.Int {
 
 // WriteTd stores a block's total difficulty into the database, also caching it
 // along the way.
-func (hc *HeaderChain) WriteTd(hash common.Hash, number uint64, td *big.Int) error {
-	rawdb.WriteTd(hc.chainDb, hash, number, td)
+func (hc *HeaderChain) WriteTd(hash common.Hash, number uint64, td *big.Int, ancient bool) error {
+	if ancient {
+		rawdb.WriteAncientTd(hc.chainDb, number, td)
+	} else {
+		rawdb.WriteTd(hc.chainDb, hash, number, td)
+	}
 	hc.tdCache.Add(hash, new(big.Int).Set(td))
 	return nil
 }
@@ -461,7 +481,6 @@ type DeleteCallback func(ethdb.Deleter, common.Hash, uint64)
 // will be deleted and the new one set.
 func (hc *HeaderChain) SetHead(head uint64, delFn DeleteCallback) {
 	height := uint64(0)
-
 	if hdr := hc.CurrentHeader(); hdr != nil {
 		height = hdr.Number.Uint64()
 	}
@@ -491,6 +510,26 @@ func (hc *HeaderChain) SetHead(head uint64, delFn DeleteCallback) {
 	if hc.CurrentHeader() == nil {
 		hc.currentHeader.Store(hc.genesisHeader)
 	}
+	hc.currentHeaderHash = hc.CurrentHeader().Hash()
+
+	rawdb.WriteHeadHeaderHash(hc.chainDb, hc.currentHeaderHash)
+}
+
+func (hc *HeaderChain) RaiseHead(head uint64) {
+	hash := rawdb.ReadCanonicalHash(hc.chainDb, head)
+	if hash == (common.Hash{}) {
+		return
+	}
+	header := rawdb.ReadHeader(hc.chainDb, hash, head)
+	if header == nil {
+		return
+	}
+	// Clear out any stale content from the caches
+	hc.headerCache.Purge()
+	hc.tdCache.Purge()
+	hc.numberCache.Purge()
+
+	hc.currentHeader.Store(header)
 	hc.currentHeaderHash = hc.CurrentHeader().Hash()
 
 	rawdb.WriteHeadHeaderHash(hc.chainDb, hc.currentHeaderHash)

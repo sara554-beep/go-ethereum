@@ -44,7 +44,7 @@ const (
 	// freezerBlockGraduation is the number of confirmations a block must achieve
 	// before it becomes elligible for chain freezing. This must exceed any chain
 	// reorg depth, since the freezer also deletes all block siblings.
-	freezerBlockGraduation = 60000
+	freezerBlockGraduation = 90000
 
 	// freezerBatchLimit is the maximum number of blocks to freeze in one batch
 	// before doing an fsync and deleting it from the key-value store.
@@ -154,6 +154,44 @@ func (f *freezer) Ancient(kind string, number uint64) ([]byte, error) {
 	return nil, errUnknownTable
 }
 
+// Append injects a binary blob at the end of the specified freezer table.
+func (f *freezer) Append(kind string, number uint64, blob []byte) error {
+	if table := f.tables[kind]; table != nil {
+		if err := table.Append(number, blob); err != nil {
+			return err
+		}
+	}
+	min := uint64(math.MaxUint64)
+	for _, table := range f.tables {
+		if min > table.items {
+			min = table.items
+		}
+	}
+	if min > f.frozen {
+		f.frozen = min
+	}
+	return nil
+}
+
+// Truncate discards any recent data above the provided threshold number.
+func (f *freezer) Truncate(items uint64) error {
+	if f.frozen <= items {
+		return nil
+	}
+	for _, table := range f.tables {
+		if err := table.truncate(items); err != nil {
+			return err
+		}
+	}
+	f.frozen = items
+	return nil
+}
+
+// Len returns the length of the frozen items.
+func (f *freezer) Items() (uint64, error) {
+	return f.frozen, nil
+}
+
 // freeze is a background thread that periodically checks the blockchain for any
 // import progress and moves ancient data from the fast database into the freezer.
 //
@@ -165,9 +203,9 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 	for {
 		// Retrieve the freezing threshold. In theory we're interested only in full
 		// blocks post-sync, but that would keep the live database enormous during
-		// dast sync. By picking the fast block, we still get to deep freeze all the
+		// fast sync. By picking the fast block, we still get to deep freeze all the
 		// final immutable data without having to wait for sync to finish.
-		hash := ReadHeadFastBlockHash(nfdb)
+		hash := ReadHeadBlockHash(nfdb)
 		if hash == (common.Hash{}) {
 			log.Debug("Current fast block hash unavailable") // new chain, empty database
 			time.Sleep(freezerRecheckInterval)
@@ -272,6 +310,7 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 					DeleteBlock(batch, hash, number)
 				}
 			}
+			DeleteCanonicalHash(batch, number)
 		}
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to delete frozen items", "err", err)

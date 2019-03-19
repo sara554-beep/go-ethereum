@@ -34,4 +34,8 @@ var (
 	// ErrInvalidNumber is returned if a block's number doesn't equal it's parent's
 	// plus one.
 	ErrInvalidNumber = errors.New("invalid block number")
+
+	// ErrImpossibleReorg is returned if reorg happens when node is writing ancient
+	// chain data which is not allowed.
+	ErrImpossibleReorg = errors.New("impossible chain reorg")
 )
