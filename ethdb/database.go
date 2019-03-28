@@ -19,8 +19,8 @@ package ethdb
 
 import "io"
 
-// Reader wraps the Has and Get method of a backing data store.
-type Reader interface {
+// KeyValueReader wraps the Has and Get method of a backing data store.
+type KeyValueReader interface {
 	// Has retrieves if a key is present in the key-value data store.
 	Has(key []byte) (bool, error)
 
@@ -28,8 +28,8 @@ type Reader interface {
 	Get(key []byte) ([]byte, error)
 }
 
-// Writer wraps the Put method of a backing data store.
-type Writer interface {
+// KeyValueWriter wraps the Put method of a backing data store.
+type KeyValueWriter interface {
 	// Put inserts the given value into the key-value data store.
 	Put(key []byte, value []byte) error
 
@@ -58,8 +58,8 @@ type Compacter interface {
 // KeyValueStore contains all the methods required to allow handling different
 // key-value data stores backing the high level database.
 type KeyValueStore interface {
-	Reader
-	Writer
+	KeyValueReader
+	KeyValueWriter
 	Batcher
 	Iteratee
 	Stater
@@ -67,30 +67,55 @@ type KeyValueStore interface {
 	io.Closer
 }
 
-// Ancienter wraps the Ancient method for a backing immutable chain data store.
-type Ancienter interface {
+// AncientReader contains the methods required to read from immutable ancient data.
+type AncientReader interface {
+	HasAncient(kind string, number uint64) bool
+
 	// Ancient retrieves an ancient binary blob from the append-only immutable files.
 	Ancient(kind string, number uint64) ([]byte, error)
+
+	// Items returns the ancient store length
+	Items() (uint64, error)
 }
 
-// AncientReader contains the methods required to access both key-value as well as
+// AncientWriter contains the methods required to write to immutable ancient data.
+type AncientWriter interface {
+	// Append injects all binary blobs belong to block at the end of the append-only immutable table files.
+	Append(hash, header, body, receipt, td []byte) error
+
+	// Truncate discards all but the first n ancient data from the ancient store.
+	Truncate(n uint64) error
+
+	// Sync flushes all in-memory ancient store data to disk.
+	Sync() error
+}
+
+// Reader contains the methods required to read data from both key-value as well as
 // immutable ancient data.
-type AncientReader interface {
-	Reader
-	Ancienter
+type Reader interface {
+	KeyValueReader
+	AncientReader
+}
+
+// Writer contains the methods required to write data to both key-value as well as
+// immutable ancient data.
+type Writer interface {
+	KeyValueWriter
+	AncientWriter
 }
 
 // AncientStore contains all the methods required to allow handling different
 // ancient data stores backing immutable chain data store.
 type AncientStore interface {
-	Ancienter
+	AncientReader
+	AncientWriter
 	io.Closer
 }
 
 // Database contains all the methods required by the high level database to not
 // only access the key-value data store but also the chain freezer.
 type Database interface {
-	AncientReader
+	Reader
 	Writer
 	Batcher
 	Iteratee

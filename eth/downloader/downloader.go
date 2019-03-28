@@ -126,6 +126,7 @@ type Downloader struct {
 	synchronising   int32
 	notified        int32
 	committed       int32
+	ancientLimit    uint64 // The maximum block number which can be regarded as ancient data.
 
 	// Channels
 	headerCh      chan dataPack        // [eth/62] Channel receiving inbound block headers
@@ -203,7 +204,7 @@ type BlockChain interface {
 	InsertChain(types.Blocks) (int, error)
 
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
-	InsertReceiptChain(types.Blocks, []types.Receipts) (int, error)
+	InsertReceiptChain(types.Blocks, []types.Receipts, uint64) (int, error)
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
@@ -464,12 +465,33 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	if d.mode == FastSync && pivot != 0 {
 		d.committed = 0
 	}
+	// Set the ancient data limitation.
+	// If we are running fast sync, all block data not greater than ancientLimit will
+	// be written to the ancient store. Otherwise, block data will be written to active
+	// database and then wait freezer to migrate.
+	if height > MaxForkAncestry+1 {
+		d.ancientLimit = height - MaxForkAncestry - 1
+	}
+	frozen, _ := d.stateDB.Items()
+	// If a part of blockchain data has already been written into active store,
+	// disable the ancient style insertion explicitly.
+	if origin >= frozen && frozen != 0 {
+		d.ancientLimit = 0
+		log.Info("Disabling direct-ancient mode", "origin", origin, "ancient", frozen-1)
+	}
+	// Rewind the ancient store and blockchain if reorg happens.
+	if d.mode == FastSync && origin+1 < frozen {
+		var hashes []common.Hash
+		for i := origin + 1; i < d.lightchain.CurrentHeader().Number.Uint64(); i++ {
+			hashes = append(hashes, rawdb.ReadCanonicalHash(d.stateDB, i))
+		}
+		d.lightchain.Rollback(hashes)
+	}
 	// Initiate the sync using a concurrent header and content retrieval algorithm
 	d.queue.Prepare(origin+1, d.mode)
 	if d.syncInitHook != nil {
 		d.syncInitHook(origin, height)
 	}
-
 	fetchers := []func() error{
 		func() error { return d.fetchHeaders(p, origin+1, pivot) }, // Headers are always retrieved
 		func() error { return d.fetchBodies(origin + 1) },          // Bodies are retrieved during normal and fast sync
@@ -533,6 +555,9 @@ func (d *Downloader) cancel() {
 func (d *Downloader) Cancel() {
 	d.cancel()
 	d.cancelWg.Wait()
+
+	d.ancientLimit = 0
+	log.Debug("Reset ancient limit to zero")
 }
 
 // Terminate interrupts the downloader, canceling all pending operations.
@@ -1297,7 +1322,7 @@ func (d *Downloader) fetchParts(errCancel error, deliveryCh chan dataPack, deliv
 // queue until the stream ends or a failure occurs.
 func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) error {
 	// Keep a count of uncertain headers to roll back
-	rollback := []*types.Header{}
+	var rollback []*types.Header
 	defer func() {
 		if len(rollback) > 0 {
 			// Flatten the headers and roll them back
@@ -1391,11 +1416,10 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 					limit = len(headers)
 				}
 				chunk := headers[:limit]
-
 				// In case of header only syncing, validate the chunk immediately
 				if d.mode == FastSync || d.mode == LightSync {
 					// Collect the yet unknown headers to mark them as uncertain
-					unknown := make([]*types.Header, 0, len(headers))
+					unknown := make([]*types.Header, 0, len(chunk))
 					for _, header := range chunk {
 						if !d.lightchain.HasHeader(header.Hash(), header.Number.Uint64()) {
 							unknown = append(unknown, header)
@@ -1645,7 +1669,7 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 		blocks[i] = types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 		receipts[i] = result.Receipts
 	}
-	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts); err != nil {
+	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts, d.ancientLimit); err != nil {
 		log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		return errInvalidChain
 	}
@@ -1655,9 +1679,11 @@ func (d *Downloader) commitFastSyncData(results []*fetchResult, stateSync *state
 func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 	block := types.NewBlockWithHeader(result.Header).WithBody(result.Transactions, result.Uncles)
 	log.Debug("Committing fast sync pivot as new head", "number", block.Number(), "hash", block.Hash())
-	if _, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}); err != nil {
+
+	if _, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}, d.ancientLimit); err != nil {
 		return err
 	}
+
 	if err := d.blockchain.FastSyncCommitHead(block.Hash()); err != nil {
 		return err
 	}

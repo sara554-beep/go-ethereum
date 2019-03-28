@@ -39,6 +39,9 @@ var (
 	// errOutOfBounds is returned if the item requested is not contained within the
 	// freezer table.
 	errOutOfBounds = errors.New("out of bounds")
+
+	// errNotSupported is returned if the database doesn't support the required operation.
+	errNotSupported = errors.New("this operation is not supported")
 )
 
 // indexEntry contains the number/id of the file that the data resides in, aswell as the

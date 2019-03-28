@@ -28,7 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/prometheus/prometheus/util/flock"
+	"github.com/prometheus/tsdb/fileutil"
 )
 
 // errUnknownTable is returned if the user attempts to read from a table that is
@@ -44,7 +44,7 @@ const (
 	// freezerBlockGraduation is the number of confirmations a block must achieve
 	// before it becomes elligible for chain freezing. This must exceed any chain
 	// reorg depth, since the freezer also deletes all block siblings.
-	freezerBlockGraduation = 60000
+	freezerBlockGraduation = 90000
 
 	// freezerBatchLimit is the maximum number of blocks to freeze in one batch
 	// before doing an fsync and deleting it from the key-value store.
@@ -61,7 +61,7 @@ const (
 type freezer struct {
 	tables       map[string]*freezerTable // Data tables for storing everything
 	frozen       uint64                   // Number of blocks already frozen
-	instanceLock flock.Releaser           // File-system lock to prevent double opens
+	instanceLock fileutil.Releaser        // File-system lock to prevent double opens
 }
 
 // newFreezer creates a chain freezer that moves ancient chain data into
@@ -72,7 +72,7 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 		readMeter  = metrics.NewRegisteredMeter(namespace+"ancient/read", nil)
 		writeMeter = metrics.NewRegisteredMeter(namespace+"ancient/write", nil)
 	)
-	lock, _, err := flock.New(filepath.Join(datadir, "LOCK"))
+	lock, _, err := fileutil.Flock(filepath.Join(datadir, "LOCK"))
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 		tables:       make(map[string]*freezerTable),
 		instanceLock: lock,
 	}
-	for _, name := range []string{"hashes", "headers", "bodies", "receipts", "diffs"} {
+	for _, name := range []string{freezerHashTable, freezerHeaderTable, freezerBodiesTable, freezerReceiptTable, freezerDifficultyTable} {
 		table, err := newTable(datadir, name, readMeter, writeMeter)
 		if err != nil {
 			for _, table := range freezer.tables {
@@ -129,7 +129,7 @@ func (f *freezer) Close() error {
 }
 
 // sync flushes all data tables to disk.
-func (f *freezer) sync() error {
+func (f *freezer) Sync() error {
 	var errs []error
 	for _, table := range f.tables {
 		if err := table.Sync(); err != nil {
@@ -142,12 +142,67 @@ func (f *freezer) sync() error {
 	return nil
 }
 
+// HasAncient returns an indicator whether the specified ancient
+// data exists in the freezer.
+func (f *freezer) HasAncient(kind string, number uint64) bool {
+	if table := f.tables[kind]; table != nil {
+		blob, _ := table.Retrieve(number)
+		return len(blob) > 0
+	}
+	return false
+}
+
 // Ancient retrieves an ancient binary blob from the append-only immutable files.
 func (f *freezer) Ancient(kind string, number uint64) ([]byte, error) {
 	if table := f.tables[kind]; table != nil {
 		return table.Retrieve(number)
 	}
 	return nil, errUnknownTable
+}
+
+func (f *freezer) Append(hash, header, body, receipts, td []byte) error {
+	// Inject all the components into the relevant data tables
+	if err := f.tables[freezerHashTable].Append(f.frozen, hash[:]); err != nil {
+		log.Error("Failed to append ancient hash", "number", f.frozen, "hash", hash, "err", err)
+		return err
+	}
+	if err := f.tables[freezerHeaderTable].Append(f.frozen, header); err != nil {
+		log.Error("Failed to append ancient header", "number", f.frozen, "hash", hash, "err", err)
+		return err
+	}
+	if err := f.tables[freezerBodiesTable].Append(f.frozen, body); err != nil {
+		log.Error("Failed to append ancient body", "number", f.frozen, "hash", hash, "err", err)
+		return err
+	}
+	if err := f.tables[freezerReceiptTable].Append(f.frozen, receipts); err != nil {
+		log.Error("Failed to append ancient receipts", "number", f.frozen, "hash", hash, "err", err)
+		return err
+	}
+	if err := f.tables[freezerDifficultyTable].Append(f.frozen, td); err != nil {
+		log.Error("Failed to append ancient difficulty", "number", f.frozen, "hash", hash, "err", err)
+		return err
+	}
+	atomic.AddUint64(&f.frozen, 1) // Only modify atomically
+	return nil
+}
+
+// Truncate discards any recent data above the provided threshold number.
+func (f *freezer) Truncate(items uint64) error {
+	if atomic.LoadUint64(&f.frozen) <= items {
+		return nil
+	}
+	for _, table := range f.tables {
+		if err := table.truncate(items); err != nil {
+			return err
+		}
+	}
+	atomic.StoreUint64(&f.frozen, items)
+	return nil
+}
+
+// Len returns the length of the frozen items.
+func (f *freezer) Items() (uint64, error) {
+	return atomic.LoadUint64(&f.frozen), nil
 }
 
 // freeze is a background thread that periodically checks the blockchain for any
@@ -159,25 +214,22 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 	nfdb := &nofreezedb{KeyValueStore: db}
 
 	for {
-		// Retrieve the freezing threshold. In theory we're interested only in full
-		// blocks post-sync, but that would keep the live database enormous during
-		// dast sync. By picking the fast block, we still get to deep freeze all the
-		// final immutable data without having to wait for sync to finish.
-		hash := ReadHeadFastBlockHash(nfdb)
+		// Retrieve the freezing threshold.
+		hash := ReadHeadBlockHash(nfdb)
 		if hash == (common.Hash{}) {
-			log.Debug("Current fast block hash unavailable") // new chain, empty database
+			log.Debug("Current full block hash unavailable") // new chain, empty database
 			time.Sleep(freezerRecheckInterval)
 			continue
 		}
 		number := ReadHeaderNumber(nfdb, hash)
 		switch {
 		case number == nil:
-			log.Error("Current fast block number unavailable", "hash", hash)
+			log.Error("Current full block number unavailable", "hash", hash)
 			time.Sleep(freezerRecheckInterval)
 			continue
 
 		case *number < freezerBlockGraduation:
-			log.Debug("Current fast block not old enough", "number", *number, "hash", hash, "delay", freezerBlockGraduation)
+			log.Debug("Current full block not old enough", "number", *number, "hash", hash, "delay", freezerBlockGraduation)
 			time.Sleep(freezerRecheckInterval)
 			continue
 
@@ -188,7 +240,7 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 		}
 		head := ReadHeader(nfdb, hash, *number)
 		if head == nil {
-			log.Error("Current fast block unavailable", "number", *number, "hash", hash)
+			log.Error("Current full block unavailable", "number", *number, "hash", hash)
 			time.Sleep(freezerRecheckInterval)
 			continue
 		}
@@ -230,43 +282,26 @@ func (f *freezer) freeze(db ethdb.KeyValueStore) {
 				break
 			}
 			// Inject all the components into the relevant data tables
-			if err := f.tables["hashes"].Append(f.frozen, hash[:]); err != nil {
-				log.Error("Failed to deep freeze hash", "number", f.frozen, "hash", hash, "err", err)
-				break
-			}
-			if err := f.tables["headers"].Append(f.frozen, header); err != nil {
-				log.Error("Failed to deep freeze header", "number", f.frozen, "hash", hash, "err", err)
-				break
-			}
-			if err := f.tables["bodies"].Append(f.frozen, body); err != nil {
-				log.Error("Failed to deep freeze body", "number", f.frozen, "hash", hash, "err", err)
-				break
-			}
-			if err := f.tables["receipts"].Append(f.frozen, receipts); err != nil {
-				log.Error("Failed to deep freeze receipts", "number", f.frozen, "hash", hash, "err", err)
-				break
-			}
-			if err := f.tables["diffs"].Append(f.frozen, td); err != nil {
-				log.Error("Failed to deep freeze difficulty", "number", f.frozen, "hash", hash, "err", err)
+			if err := f.Append(hash[:], header, body, receipts, td); err != nil {
 				break
 			}
 			log.Trace("Deep froze ancient block", "number", f.frozen, "hash", hash)
-			atomic.AddUint64(&f.frozen, 1) // Only modify atomically
 			ancients = append(ancients, hash)
 		}
 		// Batch of blocks have been frozen, flush them before wiping from leveldb
-		if err := f.sync(); err != nil {
+		if err := f.Sync(); err != nil {
 			log.Crit("Failed to flush frozen tables", "err", err)
 		}
 		// Wipe out all data from the active database
 		batch := db.NewBatch()
+		for i := 0; i < len(ancients); i++ {
+			DeleteBlockWithoutNumber(batch, ancients[i], first+uint64(i))
+			DeleteCanonicalHash(batch, first+uint64(i))
+		}
+		// Wipe out side chain also.
 		for number := first; number < f.frozen; number++ {
-			for _, hash := range readAllHashes(db, number) {
-				if hash == ancients[number-first] {
-					deleteBlockWithoutNumber(batch, hash, number)
-				} else {
-					DeleteBlock(batch, hash, number)
-				}
+			for _, hash := range ReadAllHashes(db, number) {
+				DeleteBlock(batch, hash, number)
 			}
 		}
 		if err := batch.Write(); err != nil {
