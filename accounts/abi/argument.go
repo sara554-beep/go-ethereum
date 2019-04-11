@@ -124,6 +124,9 @@ func unpack(t *Type, dst interface{}, src interface{}) error {
 		return set(dstVal, srcVal)
 	}
 
+	// dereferences interface or pointer wrapper
+	dstVal = indirectInterfaceOrPtr(dstVal)
+
 	switch t.T {
 	case TupleTy:
 		if dstVal.Kind() != reflect.Struct {
