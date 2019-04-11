@@ -268,10 +268,35 @@ func (t Type) pack(v reflect.Value) ([]byte, error) {
 		//     head(X(i)) = enc(len(head(X(1)) ... head(X(k)) tail(X(1)) ... tail(X(i-1))))
 		//     tail(X(i)) = enc(X(i))
 		// otherwise, i.e. if Ti is a dynamic type.
-		fieldmap, err := mapArgNamesToStructFields(t.TupleRawNames, v)
-		if err != nil {
-			return nil, err
+		var getSubValue func(int) (reflect.Value, error)
+
+		switch v.Kind() {
+		case reflect.Struct:
+			fieldmap, err := mapArgNamesToStructFields(t.TupleRawNames, v)
+			if err != nil {
+				return nil, err
+			}
+			getSubValue = func(i int) (reflect.Value, error) {
+				field := v.FieldByName(fieldmap[t.TupleRawNames[i]])
+				if !field.IsValid() {
+					return reflect.Value{}, fmt.Errorf("field %s for tuple not found in the given struct", t.TupleRawNames[i])
+				}
+				return field, nil
+			}
+		case reflect.Slice, reflect.Array:
+			if v.Type().Elem().Kind() != reflect.Interface {
+				return nil, errors.New("interface must")
+			}
+			getSubValue = func(i int) (reflect.Value, error) {
+				if i >= v.Len() {
+					return reflect.Value{}, errors.New("out of bound")
+				}
+				return v.Index(i).Elem(), nil
+			}
+		default:
+			return nil, fmt.Errorf("unsupported value typ %v to pack struct", v.Kind())
 		}
+
 		// Calculate prefix occupied size.
 		offset := 0
 		for _, elem := range t.TupleElems {
@@ -279,11 +304,11 @@ func (t Type) pack(v reflect.Value) ([]byte, error) {
 		}
 		var ret, tail []byte
 		for i, elem := range t.TupleElems {
-			field := v.FieldByName(fieldmap[t.TupleRawNames[i]])
-			if !field.IsValid() {
-				return nil, fmt.Errorf("field %s for tuple not found in the given struct", t.TupleRawNames[i])
+			subval, err := getSubValue(i)
+			if err != nil {
+				return nil, err
 			}
-			val, err := elem.pack(field)
+			val, err := elem.pack(subval)
 			if err != nil {
 				return nil, err
 			}

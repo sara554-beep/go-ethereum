@@ -60,11 +60,24 @@ func sliceTypeCheck(t Type, val reflect.Value) error {
 	return nil
 }
 
+func structTypeCheck(t Type, val reflect.Value) error {
+	if t.Kind == val.Kind() {
+		return nil
+	}
+	if (val.Kind() == reflect.Slice || val.Kind() == reflect.Array) && val.Type().Elem().Kind() == reflect.Interface {
+		return nil
+	}
+	return typeErr(t.Kind, val.Kind())
+}
+
 // typeCheck checks that the given reflection value can be assigned to the reflection
 // type in t.
 func typeCheck(t Type, value reflect.Value) error {
 	if t.T == SliceTy || t.T == ArrayTy {
 		return sliceTypeCheck(t, value)
+	}
+	if t.T == TupleTy {
+		return structTypeCheck(t, value)
 	}
 
 	// Check base type validity. Element types will be checked later on.

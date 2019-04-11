@@ -22,11 +22,11 @@ package bind
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"go/format"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 	"unicode"
@@ -129,10 +129,10 @@ func Bind(types []string, abis []string, bytecodes []string, pkg string, lang La
 			events[original.Name] = &tmplEvent{Original: original, Normalized: normalized}
 		}
 
-		// There is no easy way to pass java arbitrary objects to go side.
-		if len(structs) > 0 && lang == LangJava {
-			return "", errors.New("java binding for tuple arguments is not supported yet")
-		}
+		//// There is no easy way to pass java arbitrary objects to go side.
+		//if len(structs) > 0 && lang == LangJava {
+		//	return "", errors.New("java binding for tuple arguments is not supported yet")
+		//}
 
 		// Sort all structure definition alphabetically.
 		var sorted sortedStructs
@@ -161,13 +161,15 @@ func Bind(types []string, abis []string, bytecodes []string, pkg string, lang La
 	buffer := new(bytes.Buffer)
 
 	funcs := map[string]interface{}{
-		"bindtype":      bindType[lang],
-		"bindtopictype": bindTopicType[lang],
-		"namedtype":     namedType[lang],
-		"formatmethod":  formatMethod,
-		"formatevent":   formatEvent,
-		"capitalise":    capitalise,
-		"decapitalise":  decapitalise,
+		"bindtype":       bindType[lang],
+		"bindtopictype":  bindTopicType[lang],
+		"namedtype":      namedTypeJava,
+		"formatmethod":   formatMethod,
+		"formatevent":    formatEvent,
+		"bindjavasetter": bindJavaSetter,
+		"bindjavagetter": bindJavaGetter,
+		"capitalise":     capitalise,
+		"decapitalise":   decapitalise,
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).Parse(tmplSource[lang]))
 	if err := tmpl.Execute(buffer, data); err != nil {
@@ -430,6 +432,96 @@ func namedTypeJava(javaKind string, solKind abi.Type) string {
 			return javaKind
 		}
 	}
+}
+
+// bindArgSetter returns a batch of java format getter/setter generation for
+// a solidity function.
+func bindJavaSetter(arguments []abi.Argument, input bool) []string {
+	if len(arguments) == 0 {
+		return nil
+	}
+	argName, subName := "args", "arg"
+	if !input {
+		argName, subName = "results", "result"
+	}
+	var ret []string
+	ret = append(ret, fmt.Sprintf("Interfaces %s = Geth.newInterfaces(%d);", argName, len(arguments)))
+	for index, arg := range arguments {
+		ret = append(ret, bindArgSetter(input, argName, index, fmt.Sprintf("%s_%d", subName, index), 0, arg.Name, arg.Type)...)
+	}
+	return ret
+
+}
+
+func bindArgSetter(input bool, upperName string, index int, embeddedName string, nestedCount int, paramName string, argType abi.Type) []string {
+	var ret []string
+	switch argType.T {
+	case abi.TupleTy:
+		if nestedCount > 0 {
+			// todo handle struct array
+		}
+		ret = append(ret, fmt.Sprintf("Interfaces %s = Geth.newInterfaces(%d);", embeddedName, len(argType.TupleElems)))
+		for index, field := range argType.TupleElems {
+			ret = append(ret, bindArgSetter(input, embeddedName, index, embeddedName+"_"+strconv.Itoa(index), 0, paramName+"."+argType.TupleRawNames[index], *field)...)
+		}
+		ret = append(ret, fmt.Sprintf("%s.setInterfaces(%d,%s);", upperName, index, embeddedName))
+	case abi.SliceTy, abi.ArrayTy:
+		ret = append(ret, bindArgSetter(input, upperName, index, embeddedName, nestedCount+1, paramName, *argType.Elem)...)
+	default:
+		javaKind := bindBasicTypeJava(argType)
+		for i := 0; i < nestedCount; i++ {
+			javaKind = pluralizeJavaType(javaKind)
+		}
+		defaultPrefix := ""
+		if !input {
+			defaultPrefix = "Default"
+			paramName = ""
+		}
+		ret = append(ret, fmt.Sprintf("Interface %s = Geth.newInterface();%s.set%s%s(%s);%s.set(%d,%s);",
+			embeddedName, embeddedName, defaultPrefix, namedTypeJava(javaKind, argType), paramName, upperName, index, embeddedName))
+	}
+	return ret
+}
+
+// bindJavaGetter returns a batch of java format getter/setter generation for
+// a solidity function.
+func bindJavaGetter(arguments []abi.Argument, structs map[string]*tmplStruct) []string {
+	if len(arguments) == 0 {
+		return nil
+	}
+	var ret []string
+	for index, arg := range arguments {
+		ret = append(ret, bindArgGetter("results", index, fmt.Sprintf("results_%d", index), 0, arg.Name, arg.Type, structs)...)
+	}
+	return ret
+
+}
+
+func bindArgGetter(upperName string, index int, embeddedName string, nestedCount int, paramName string, argType abi.Type, structs map[string]*tmplStruct) []string {
+	if paramName == "" {
+		paramName = fmt.Sprintf("Return%d", index)
+	}
+	var ret []string
+	switch argType.T {
+	case abi.TupleTy:
+		if nestedCount > 0 {
+			// todo handle struct array
+		}
+		ret = append(ret, fmt.Sprintf("Interfaces %s = %s.getInterfaces(%d);", embeddedName, upperName, index))
+		ret = append(ret, fmt.Sprintf("result.%s = new %s();", paramName, bindTypeJava(argType, structs)))
+		for index, field := range argType.TupleElems {
+			ret = append(ret, bindArgGetter(embeddedName, index, embeddedName+"_"+strconv.Itoa(index), 0, paramName+"."+argType.TupleRawNames[index], *field, structs)...)
+		}
+	case abi.SliceTy, abi.ArrayTy:
+		ret = append(ret, bindArgGetter(upperName, index, embeddedName, nestedCount+1, paramName, *argType.Elem, structs)...)
+	default:
+		javaKind := bindBasicTypeJava(argType)
+		for i := 0; i < nestedCount; i++ {
+			javaKind = pluralizeJavaType(javaKind)
+		}
+		ret = append(ret, fmt.Sprintf("result.%s = %s.get(%d).get%s();", paramName, upperName, index, namedTypeJava(javaKind, argType)))
+	}
+	return ret
 }
 
 // methodNormalizer is a name transformer that modifies Solidity method names to

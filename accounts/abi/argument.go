@@ -129,20 +129,37 @@ func unpack(t *Type, dst interface{}, src interface{}) error {
 
 	switch t.T {
 	case TupleTy:
-		if dstVal.Kind() != reflect.Struct {
-			return fmt.Errorf("abi: invalid dst value for unpack, want struct, got %s", dstVal.Kind())
-		}
-		fieldmap, err := mapArgNamesToStructFields(t.TupleRawNames, dstVal)
-		if err != nil {
-			return err
-		}
-		for i, elem := range t.TupleElems {
-			fname := fieldmap[t.TupleRawNames[i]]
-			field := dstVal.FieldByName(fname)
-			if !field.IsValid() {
-				return fmt.Errorf("abi: field %s can't found in the given value", t.TupleRawNames[i])
+		var getSlot func(int) (interface{}, error)
+
+		switch dstVal.Kind() {
+		case reflect.Struct:
+			fieldmap, err := mapArgNamesToStructFields(t.TupleRawNames, dstVal)
+			if err != nil {
+				return err
 			}
-			if err := unpack(elem, field.Addr().Interface(), srcVal.Field(i).Interface()); err != nil {
+			getSlot = func(i int) (interface{}, error) {
+				fname := fieldmap[t.TupleRawNames[i]]
+				field := dstVal.FieldByName(fname)
+				if !field.IsValid() {
+					return reflect.Value{}, fmt.Errorf("abi: field %s can't found in the given value", t.TupleRawNames[i])
+				}
+				return field.Addr().Interface(), nil
+			}
+		case reflect.Slice, reflect.Array:
+			getSlot = func(i int) (interface{}, error) {
+				return dstVal.Index(i).Addr().Interface(), nil
+			}
+		}
+
+		//if dstVal.Kind() != reflect.Struct {
+		//	return fmt.Errorf("abi: invalid dst value for unpack, want struct, got %s", dstVal.Kind())
+		//}
+		for i, elem := range t.TupleElems {
+			slot, err := getSlot(i)
+			if err != nil {
+				return fmt.Errorf("abi: invalid dst value for unpack")
+			}
+			if err := unpack(elem, slot, srcVal.Field(i).Interface()); err != nil {
 				return err
 			}
 		}

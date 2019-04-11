@@ -20,6 +20,7 @@ package geth
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -266,11 +267,30 @@ func (i *Interfaces) Get(index int) (iface *Interface, _ error) {
 	return &Interface{object: i.objects[index]}, nil
 }
 
+func (i *Interfaces) GetInterfaces(index int) (ifaces *Interfaces, _ error) {
+	if index < 0 || index >= len(i.objects) {
+		return nil, errors.New("index out of bounds")
+	}
+	object := i.objects[index]
+	if objects, ok := object.([]interface{}); ok {
+		return &Interfaces{objects: objects}, nil
+	}
+	return nil, fmt.Errorf("element %d is not a interfaces", index)
+}
+
 // Set sets the big int at the given index in the slice.
 func (i *Interfaces) Set(index int, object *Interface) error {
 	if index < 0 || index >= len(i.objects) {
 		return errors.New("index out of bounds")
 	}
 	i.objects[index] = object.object
+	return nil
+}
+
+func (i *Interfaces) SetInterfaces(index int, ifaces *Interfaces) error {
+	if index < 0 || index >= len(i.objects) {
+		return errors.New("index out of bounds")
+	}
+	i.objects[index] = ifaces.objects
 	return nil
 }

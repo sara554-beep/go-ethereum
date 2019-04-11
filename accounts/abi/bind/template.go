@@ -49,7 +49,7 @@ type tmplMethod struct {
 	Structured bool       // Whether the returns should be accumulated into a struct
 }
 
-// tmplEvent is a wrapper around an a
+// tmplEvent is a wrapper around an a contract event object.
 type tmplEvent struct {
 	Original   abi.Event // Original event as parsed by the abi package
 	Normalized abi.Event // Normalized version of the parsed fields
@@ -491,91 +491,101 @@ package {{.Package}};
 import org.ethereum.geth.*;
 
 {{range $contract := .Contracts}}
-	{{$structs := $contract.Structs}}
-	public class {{.Type}} {
-		// ABI is the input ABI used to generate the binding from.
-		public final static String ABI = "{{.InputABI}}";
+{{$structs := $contract.Structs}}
+public class {{.Type}} {
+	// ABI is the input ABI used to generate the binding from.
+	public final static String ABI = "{{.InputABI}}";
 
-		{{if .InputBin}}
-			// BYTECODE is the compiled bytecode used for deploying new contracts.
-			public final static String BYTECODE = "0x{{.InputBin}}";
+	{{if .InputBin}}
+	// BYTECODE is the compiled bytecode used for deploying new contracts.
+	public final static String BYTECODE = "0x{{.InputBin}}";
 
-			// deploy deploys a new Ethereum contract, binding an instance of {{.Type}} to it.
-			public static {{.Type}} deploy(TransactOpts auth, EthereumClient client{{range .Constructor.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
-				Interfaces args = Geth.newInterfaces({{(len .Constructor.Inputs)}});
-				{{range $index, $element := .Constructor.Inputs}}Interface arg{{$index}} = Geth.newInterface();arg{{$index}}.set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});args.set({{$index}},arg{{$index}});
-				{{end}}
-				return new {{.Type}}(Geth.deployContract(auth, ABI, Geth.decodeFromHex(BYTECODE), client, args));
-			}
+	// deploy deploys a new Ethereum contract, binding an instance of {{.Type}} to it.
+	public static {{.Type}} deploy(TransactOpts auth, EthereumClient client{{range .Constructor.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
+		Interfaces args = Geth.newInterfaces({{(len .Constructor.Inputs)}});
+		{{range $index, $element := .Constructor.Inputs}}Interface arg{{$index}} = Geth.newInterface();arg{{$index}}.set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});args.set({{$index}},arg{{$index}});
+		{{end}}
+		return new {{.Type}}(Geth.deployContract(auth, ABI, Geth.decodeFromHex(BYTECODE), client, args));
+	}
 
-			// Internal constructor used by contract deployment.
-			private {{.Type}}(BoundContract deployment) {
-				this.Address  = deployment.getAddress();
-				this.Deployer = deployment.getDeployer();
-				this.Contract = deployment;
-			}
+	// Internal constructor used by contract deployment.
+	private {{.Type}}(BoundContract deployment) {
+		this.Address  = deployment.getAddress();
+		this.Deployer = deployment.getDeployer();
+		this.Contract = deployment;
+	}
+	{{end}}
+
+	// Ethereum address where this contract is located at.
+	public final Address Address;
+
+	// Ethereum transaction in which this contract was deployed (if known!).
+	public final Transaction Deployer;
+
+	// Contract instance bound to a blockchain address.
+	private final BoundContract Contract;
+
+	// Creates a new instance of {{.Type}}, bound to a specific deployed contract.
+	public {{.Type}}(Address address, EthereumClient client) throws Exception {
+		this(Geth.bindContract(address, ABI, client));
+	}
+
+	{{range .SortedStructs}}
+		// {{.Name}} is an auto generated low-level java binding around an user-defined struct.
+	public class {{.Name}} {
+		{{range $field := .Fields}}
+		public {{$field.Type}} {{$field.Name}}; {{end}}
+	}
+	{{end}}
+
+	{{range .Calls}}
+		{{if gt (len .Normalized.Outputs) 1}}
+		// {{capitalise .Normalized.Name}}Results is the output of a call to {{.Normalized.Name}}.
+		public class {{capitalise .Normalized.Name}}Results {
+			{{range $index, $item := .Normalized.Outputs}}public {{bindtype .Type $structs}} {{if ne .Name ""}}{{.Name}}{{else}}Return{{$index}}{{end}};
+			{{end}}
+		}
 		{{end}}
 
-		// Ethereum address where this contract is located at.
-		public final Address Address;
-
-		// Ethereum transaction in which this contract was deployed (if known!).
-		public final Transaction Deployer;
-
-		// Contract instance bound to a blockchain address.
-		private final BoundContract Contract;
-
-		// Creates a new instance of {{.Type}}, bound to a specific deployed contract.
-		public {{.Type}}(Address address, EthereumClient client) throws Exception {
-			this(Geth.bindContract(address, ABI, client));
-		}
-
-		{{range .Calls}}
-			{{if gt (len .Normalized.Outputs) 1}}
-			// {{capitalise .Normalized.Name}}Results is the output of a call to {{.Normalized.Name}}.
-			public class {{capitalise .Normalized.Name}}Results {
-				{{range $index, $item := .Normalized.Outputs}}public {{bindtype .Type $structs}} {{if ne .Name ""}}{{.Name}}{{else}}Return{{$index}}{{end}};
-				{{end}}
-			}
+		// {{.Normalized.Name}} is a free data retrieval call binding the contract method 0x{{printf "%x" .Original.Id}}.
+		//
+		// Solidity: {{formatmethod .Original $structs}}
+		public {{if gt (len .Normalized.Outputs) 1}}{{capitalise .Normalized.Name}}Results{{else}}{{range .Normalized.Outputs}}{{bindtype .Type $structs}}{{end}}{{end}} {{.Normalized.Name}}(CallOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
+			{{$inputs := bindjavasetter .Normalized.Inputs true}}
+			{{range $input := $inputs}}{{$input}}
 			{{end}}
 
-			// {{.Normalized.Name}} is a free data retrieval call binding the contract method 0x{{printf "%x" .Original.Id}}.
-			//
-			// Solidity: {{.Original.String}}
-			public {{if gt (len .Normalized.Outputs) 1}}{{capitalise .Normalized.Name}}Results{{else}}{{range .Normalized.Outputs}}{{bindtype .Type $structs}}{{end}}{{end}} {{.Normalized.Name}}(CallOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
-				Interfaces args = Geth.newInterfaces({{(len .Normalized.Inputs)}});
-				{{range $index, $item := .Normalized.Inputs}}Interface arg{{$index}} = Geth.newInterface();arg{{$index}}.set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});args.set({{$index}},arg{{$index}});
-				{{end}}
+			{{$inputs := bindjavasetter .Normalized.Outputs false}}
+			{{range $input := $inputs}}{{$input}}
+			{{end}}
 
-				Interfaces results = Geth.newInterfaces({{(len .Normalized.Outputs)}});
-				{{range $index, $item := .Normalized.Outputs}}Interface result{{$index}} = Geth.newInterface(); result{{$index}}.setDefault{{namedtype (bindtype .Type $structs) .Type}}(); results.set({{$index}}, result{{$index}});
-				{{end}}
-
-				if (opts == null) {
-					opts = Geth.newCallOpts();
-				}
-				this.Contract.call(opts, results, "{{.Original.Name}}", args);
-				{{if gt (len .Normalized.Outputs) 1}}
-					{{capitalise .Normalized.Name}}Results result = new {{capitalise .Normalized.Name}}Results();
-					{{range $index, $item := .Normalized.Outputs}}result.{{if ne .Name ""}}{{.Name}}{{else}}Return{{$index}}{{end}} = results.get({{$index}}).get{{namedtype (bindtype .Type $structs) .Type}}();
-					{{end}}
-					return result;
-				{{else}}{{range .Normalized.Outputs}}return results.get(0).get{{namedtype (bindtype .Type $structs) .Type}}();{{end}}
-				{{end}}
+			if (opts == null) {
+				opts = Geth.newCallOpts();
 			}
-		{{end}}
+			this.Contract.call(opts, results, "{{.Original.Name}}", args);
+			{{if gt (len .Normalized.Outputs) 1}}
+				{{capitalise .Normalized.Name}}Results result = new {{capitalise .Normalized.Name}}Results();
 
-		{{range .Transacts}}
-			// {{.Normalized.Name}} is a paid mutator transaction binding the contract method 0x{{printf "%x" .Original.Id}}.
-			//
-			// Solidity: {{.Original.String}}
-			public Transaction {{.Normalized.Name}}(TransactOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
-				Interfaces args = Geth.newInterfaces({{(len .Normalized.Inputs)}});
-				{{range $index, $item := .Normalized.Inputs}}Interface arg{{$index}} = Geth.newInterface();arg{{$index}}.set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});args.set({{$index}},arg{{$index}});
+				{{$inputs := bindjavagetter .Normalized.Outputs $structs}}
+				{{range $input := $inputs}}{{$input}}
 				{{end}}
-				return this.Contract.transact(opts, "{{.Original.Name}}"	, args);
-			}
-		{{end}}
-	}
+				return result;
+			{{else}}{{range .Normalized.Outputs}}return results.get(0).get{{namedtype (bindtype .Type $structs) .Type}}();{{end}}
+			{{end}}
+		}
+	{{end}}
+
+	{{range .Transacts}}
+		// {{.Normalized.Name}} is a paid mutator transaction binding the contract method 0x{{printf "%x" .Original.Id}}.
+		//
+		// Solidity: {{formatmethod .Original $structs}}
+		public Transaction {{.Normalized.Name}}(TransactOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
+			{{$inputs := bindjavasetter .Normalized.Inputs true}}
+			{{range $input := $inputs}}{{$input}}
+			{{end}}
+			return this.Contract.transact(opts, "{{.Original.Name}}", args);
+		}
+	{{end}}
+}
 {{end}}
 `

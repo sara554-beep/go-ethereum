@@ -22,10 +22,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -1130,4 +1132,155 @@ func TestBindings(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to run binding test: %v\n%s", err, out)
 	}
+}
+
+func TestJavaAccessor(t *testing.T) {
+	// Basic types
+	Int64, _ := abi.NewType("int64", nil)
+	Uint64, _ := abi.NewType("uint64", nil)
+	Int256, _ := abi.NewType("int256", nil)
+	Uint256, _ := abi.NewType("uint256", nil)
+	Bool, _ := abi.NewType("bool", nil)
+	String, _ := abi.NewType("string", nil)
+	Address, _ := abi.NewType("address", nil)
+	FixedBytes, _ := abi.NewType("bytes32", nil)
+	Bytes, _ := abi.NewType("bytes", nil)
+
+	// Array and Slice
+	UInt256Array, _ := abi.NewType("uint256[2]", nil)
+	UInt256Slice, _ := abi.NewType("uint256[]", nil)
+	AddressArray, _ := abi.NewType("address[2]", nil)
+	AddressSlice, _ := abi.NewType("address[]", nil)
+	BytesArray, _ := abi.NewType("bytes[2]", nil)
+	BytesSlice, _ := abi.NewType("bytes[]", nil)
+	StringArray, _ := abi.NewType("string[2]", nil)
+	StringSlice, _ := abi.NewType("string[]", nil)
+	BoolArray, _ := abi.NewType("bool[2]", nil)
+	BoolSlice, _ := abi.NewType("bool[]", nil)
+
+	// Struct
+	Tuple, _ := abi.NewType("tuple", []abi.ArgumentMarshaling{
+		{Name: "a", Type: "int64"},
+		{Name: "b", Type: "int256"},
+		{Name: "c", Type: "int256"},
+		{Name: "d", Type: "bool"},
+		{Name: "e", Type: "bytes[2]"},
+		{Name: "f", Type: "tuple", Components: []abi.ArgumentMarshaling{
+			{Name: "a", Type: "int64"},
+			{Name: "b", Type: "bool"},
+		}},
+	})
+
+	var testcases = []struct {
+		arguments []abi.Argument
+		expected  []string
+		input     bool
+	}{
+		{nil, nil, true},
+		{
+			[]abi.Argument{
+				{"arg1", Int64, false},
+				{"arg2", Uint64, false},
+				{"arg3", Int256, false},
+				{"arg4", Uint256, false},
+				{"arg5", Bool, false},
+				{"arg6", String, false},
+				{"arg7", Address, false},
+				{"arg8", FixedBytes, false},
+				{"arg9", Bytes, false},
+			},
+			[]string{
+				"Interfaces args = Geth.newInterfaces(9);",
+				"Interface arg_0 = Geth.newInterface();arg_0.setInt64(arg1);args.set(0,arg_0);",
+				"Interface arg_1 = Geth.newInterface();arg_1.setUint64(arg2);args.set(1,arg_1);",
+				"Interface arg_2 = Geth.newInterface();arg_2.setBigInt(arg3);args.set(2,arg_2);",
+				"Interface arg_3 = Geth.newInterface();arg_3.setBigInt(arg4);args.set(3,arg_3);",
+				"Interface arg_4 = Geth.newInterface();arg_4.setBool(arg5);args.set(4,arg_4);",
+				"Interface arg_5 = Geth.newInterface();arg_5.setString(arg6);args.set(5,arg_5);",
+				"Interface arg_6 = Geth.newInterface();arg_6.setAddress(arg7);args.set(6,arg_6);",
+				"Interface arg_7 = Geth.newInterface();arg_7.setBinary(arg8);args.set(7,arg_7);",
+				"Interface arg_8 = Geth.newInterface();arg_8.setBinary(arg9);args.set(8,arg_8);",
+			},
+			true,
+		},
+		{
+			[]abi.Argument{
+				{"arg1", UInt256Array, false},
+				{"arg2", UInt256Slice, false},
+				{"arg3", AddressArray, false},
+				{"arg4", AddressSlice, false},
+				{"arg5", BytesArray, false},
+				{"arg6", BytesSlice, false},
+				{"arg7", StringArray, false},
+				{"arg8", StringSlice, false},
+				{"arg9", BoolArray, false},
+				{"arg10", BoolSlice, false},
+			},
+			[]string{
+				"Interfaces args = Geth.newInterfaces(10);",
+				"Interface arg_0 = Geth.newInterface();arg_0.setBigInts(arg1);args.set(0,arg_0);",
+				"Interface arg_1 = Geth.newInterface();arg_1.setBigInts(arg2);args.set(1,arg_1);",
+				"Interface arg_2 = Geth.newInterface();arg_2.setAddresses(arg3);args.set(2,arg_2);",
+				"Interface arg_3 = Geth.newInterface();arg_3.setAddresses(arg4);args.set(3,arg_3);",
+				"Interface arg_4 = Geth.newInterface();arg_4.setBinaries(arg5);args.set(4,arg_4);",
+				"Interface arg_5 = Geth.newInterface();arg_5.setBinaries(arg6);args.set(5,arg_5);",
+				"Interface arg_6 = Geth.newInterface();arg_6.setStrings(arg7);args.set(6,arg_6);",
+				"Interface arg_7 = Geth.newInterface();arg_7.setStrings(arg8);args.set(7,arg_7);",
+				"Interface arg_8 = Geth.newInterface();arg_8.setBools(arg9);args.set(8,arg_8);",
+				"Interface arg_9 = Geth.newInterface();arg_9.setBools(arg10);args.set(9,arg_9);",
+			},
+			true,
+		},
+		{
+			[]abi.Argument{
+				{"arg1", Tuple, false},
+			},
+			[]string{
+				"Interfaces args = Geth.newInterfaces(1);",
+				"Interfaces arg_0 = Geth.newInterfaces(6);",
+				"Interface arg_0_0 = Geth.newInterface();arg_0_0.setInt64(arg1.a);arg_0.set(0,arg_0_0);",
+				"Interface arg_0_1 = Geth.newInterface();arg_0_1.setBigInt(arg1.b);arg_0.set(1,arg_0_1);",
+				"Interface arg_0_2 = Geth.newInterface();arg_0_2.setBigInt(arg1.c);arg_0.set(2,arg_0_2);",
+				"Interface arg_0_3 = Geth.newInterface();arg_0_3.setBool(arg1.d);arg_0.set(3,arg_0_3);",
+				"Interface arg_0_4 = Geth.newInterface();arg_0_4.setBinaries(arg1.e);arg_0.set(4,arg_0_4);",
+				"Interfaces arg_0_5 = Geth.newInterfaces(2);",
+				"Interface arg_0_5_0 = Geth.newInterface();arg_0_5_0.setInt64(arg1.f.a);arg_0_5.set(0,arg_0_5_0);",
+				"Interface arg_0_5_1 = Geth.newInterface();arg_0_5_1.setBool(arg1.f.b);arg_0_5.set(1,arg_0_5_1);",
+				"arg_0.setInterfaces(5,arg_0_5);",
+				"args.setInterfaces(0,arg_0);",
+			},
+			true,
+		},
+		{
+			[]abi.Argument{
+				{"arg1", Tuple, false},
+			},
+			[]string{
+				"Interfaces results = Geth.newInterfaces(1);",
+				"Interfaces result_0 = Geth.newInterfaces(6);",
+				"Interface result_0_0 = Geth.newInterface();result_0_0.setDefaultInt64();result_0.set(0,result_0_0);",
+				"Interface result_0_1 = Geth.newInterface();result_0_1.setDefaultBigInt();result_0.set(1,result_0_1);",
+				"Interface result_0_2 = Geth.newInterface();result_0_2.setDefaultBigInt();result_0.set(2,result_0_2);",
+				"Interface result_0_3 = Geth.newInterface();result_0_3.setDefaultBool();result_0.set(3,result_0_3);",
+				"Interface result_0_4 = Geth.newInterface();result_0_4.setDefaultBinaries();result_0.set(4,result_0_4);",
+				"Interfaces result_0_5 = Geth.newInterfaces(2);",
+				"Interface result_0_5_0 = Geth.newInterface();result_0_5_0.setDefaultInt64();result_0_5.set(0,result_0_5_0);",
+				"Interface result_0_5_1 = Geth.newInterface();result_0_5_1.setDefaultBool();result_0_5.set(1,result_0_5_1);", "result_0.setInterfaces(5,result_0_5);",
+				"results.setInterfaces(0,result_0);",
+			},
+			false,
+		},
+	}
+	for index, c := range testcases {
+		ret := bindJavaSetter(c.arguments, c.input)
+		if !reflect.DeepEqual(ret, c.expected) {
+			t.Errorf("test %d failed: got %v, want %v", index, ret, c.expected)
+		}
+	}
+
+	res := []abi.Argument{
+		{"arg1", Tuple, false},
+	}
+
+	fmt.Println(bindJavaGetter(res))
 }

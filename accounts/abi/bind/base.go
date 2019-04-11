@@ -113,7 +113,7 @@ func DeployContract(opts *TransactOpts, abi abi.ABI, bytecode []byte, backend Co
 	return c.address, tx, c, nil
 }
 
-// Call invokes the (constant) contract method with params as input values and
+// Call invokes the (constant) contract method with params as arguments values and
 // sets the output to result. The result type might be a single field for simple
 // returns, a slice of interfaces for anonymous returns and a struct for named
 // returns.
@@ -122,7 +122,7 @@ func (c *BoundContract) Call(opts *CallOpts, result interface{}, method string, 
 	if opts == nil {
 		opts = new(CallOpts)
 	}
-	// Pack the input, call and unpack the results
+	// Pack the arguments, call and unpack the results
 	input, err := c.abi.Pack(method, params...)
 	if err != nil {
 		return err
@@ -164,7 +164,7 @@ func (c *BoundContract) Call(opts *CallOpts, result interface{}, method string, 
 	return c.abi.Unpack(result, method, output)
 }
 
-// Transact invokes the (paid) contract method with params as input values.
+// Transact invokes the (paid) contract method with params as arguments values.
 func (c *BoundContract) Transact(opts *TransactOpts, method string, params ...interface{}) (*types.Transaction, error) {
 	// Otherwise pack up the parameters and invoke the contract
 	input, err := c.abi.Pack(method, params...)

@@ -163,7 +163,6 @@ func main() {
 	}
 	// Either flush it out to a file or display on the standard output
 	if *outFlag == "" {
-		fmt.Printf("%s\n", code)
 		return
 	}
 	if err := ioutil.WriteFile(*outFlag, []byte(code), 0600); err != nil {

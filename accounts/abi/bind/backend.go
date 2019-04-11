@@ -48,7 +48,7 @@ type ContractCaller interface {
 	// between contract internal errors and the local chain being out of sync.
 	CodeAt(ctx context.Context, contract common.Address, blockNumber *big.Int) ([]byte, error)
 	// ContractCall executes an Ethereum contract call with the specified data as the
-	// input.
+	// arguments.
 	CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
 }
 
