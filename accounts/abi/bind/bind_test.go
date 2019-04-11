@@ -955,6 +955,126 @@ var bindTests = []struct {
 				t.Fatalf("Retrieved value does not match expected value! got: %d, expected: %d. %v", retrievedArr[4][3][2], testArr[4][3][2], err)
 			}
 		`,
+	}, {
+		`Tuple`,
+		`
+			pragma solidity >=0.4.19 <0.6.0;
+			pragma experimental ABIEncoderV2;
+			
+			contract Tuple {
+			  struct S { uint a; uint[] b; T[] c; }
+			  struct T { uint x; uint y; }
+			  event TupleEvent(S a, T b, S[] c, uint d);
+			
+			  function f(S memory a, T memory b, S[] memory c, uint d) public pure returns (S memory, T memory, S[] memory, uint) {
+					return (a, b, c, d);
+			  }
+			  function g(S memory a, T memory b, S[] memory c, uint d) public {
+					emit TupleEvent(a, b, c, d);
+			  }
+			}
+		`,
+		`608060405234801561001057600080fd5b50610924806100206000396000f3fe608060405234801561001057600080fd5b5060043610610053576000357c0100000000000000000000000000000000000000000000000000000000900480632c5dea1014610058578063e95b956414610074575b600080fd5b610072600480360361006d919081019061049d565b6100a7565b005b61008e6004803603610089919081019061049d565b6100ea565b60405161009e949392919061076f565b60405180910390f35b7f33213b27a0232779a8c72f38ab36397504b55d4f8fa0a82738c3962e448f54fa848484846040516100dc949392919061076f565b60405180910390a150505050565b6100f2610115565b6100fa610137565b60606000878787879350935093509350945094509450949050565b6060604051908101604052806000815260200160608152602001606081525090565b604080519081016040528060008152602001600081525090565b600082601f830112151561016457600080fd5b8135610177610172826107ef565b6107c2565b9150818183526020840193506020810190508360005b838110156101bd57813586016101a388826102d1565b84526020840193506020830192505060018101905061018d565b5050505092915050565b600082601f83011215156101da57600080fd5b81356101ed6101e882610817565b6107c2565b9150818183526020840193506020810190508385604084028201111561021257600080fd5b60005b83811015610242578161022888826103f1565b845260208401935060408301925050600181019050610215565b5050505092915050565b600082601f830112151561025f57600080fd5b813561027261026d8261083f565b6107c2565b9150818183526020840193506020810190508385602084028201111561029757600080fd5b60005b838110156102c757816102ad8882610489565b84526020840193506020830192505060018101905061029a565b5050505092915050565b6000606082840312156102e357600080fd5b6102ed60606107c2565b905060006102fd84828501610489565b600083015250602082013567ffffffffffffffff81111561031d57600080fd5b6103298482850161024c565b602083015250604082013567ffffffffffffffff81111561034957600080fd5b610355848285016101c7565b60408301525092915050565b60006060828403121561037357600080fd5b61037d60606107c2565b9050600061038d84828501610489565b600083015250602082013567ffffffffffffffff8111156103ad57600080fd5b6103b98482850161024c565b602083015250604082013567ffffffffffffffff8111156103d957600080fd5b6103e5848285016101c7565b60408301525092915050565b60006040828403121561040357600080fd5b61040d60406107c2565b9050600061041d84828501610489565b600083015250602061043184828501610489565b60208301525092915050565b60006040828403121561044f57600080fd5b61045960406107c2565b9050600061046984828501610489565b600083015250602061047d84828501610489565b60208301525092915050565b600061049582356108e0565b905092915050565b60008060008060a085870312156104b357600080fd5b600085013567ffffffffffffffff8111156104cd57600080fd5b6104d987828801610361565b94505060206104ea8782880161043d565b935050606085013567ffffffffffffffff81111561050757600080fd5b61051387828801610151565b925050608061052487828801610489565b91505092959194509250565b600061053b8261088e565b8084526020840193508360208202850161055485610867565b60005b8481101561058d57838303885261056f8383516106ab565b925061057a826108af565b9150602088019750600181019050610557565b508196508694505050505092915050565b60006105a982610899565b8084526020840193506105bb83610874565b60005b828110156105ed576105d1868351610731565b6105da826108bc565b91506040860195506001810190506105be565b50849250505092915050565b6000610604826108a4565b80845260208401935061061683610881565b60005b828110156106485761062c868351610760565b610635826108c9565b9150602086019550600181019050610619565b50849250505092915050565b600060608301600083015161066c6000860182610760565b506020830151848203602086015261068482826105f9565b9150506040830151848203604086015261069e828261059e565b9150508091505092915050565b60006060830160008301516106c36000860182610760565b50602083015184820360208601526106db82826105f9565b915050604083015184820360408601526106f5828261059e565b9150508091505092915050565b6040820160008201516107186000850182610760565b50602082015161072b6020850182610760565b50505050565b6040820160008201516107476000850182610760565b50602082015161075a6020850182610760565b50505050565b610769816108d6565b82525050565b600060a08201905081810360008301526107898187610654565b90506107986020830186610702565b81810360608301526107aa8185610530565b90506107b96080830184610760565b95945050505050565b6000604051905081810181811067ffffffffffffffff821117156107e557600080fd5b8060405250919050565b600067ffffffffffffffff82111561080657600080fd5b602082029050602081019050919050565b600067ffffffffffffffff82111561082e57600080fd5b602082029050602081019050919050565b600067ffffffffffffffff82111561085657600080fd5b602082029050602081019050919050565b6000602082019050919050565b6000602082019050919050565b6000602082019050919050565b600081519050919050565b600081519050919050565b600081519050919050565b6000602082019050919050565b6000602082019050919050565b6000602082019050919050565b6000819050919050565b600081905091905056fea265627a7a723058201caecff71b5863c81302bf769279efbe1b53fa847957a0a0924c722ead64eaa06c6578706572696d656e74616cf50037`,
+		`
+			[{"constant":false,"inputs":[{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"name":"a","type":"tuple"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"b","type":"tuple"},{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"name":"c","type":"tuple[]"},{"name":"d","type":"uint256"}],"name":"g","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"name":"a","type":"tuple"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"b","type":"tuple"},{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"name":"c","type":"tuple[]"},{"name":"d","type":"uint256"}],"name":"f","outputs":[{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"name":"","type":"tuple"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"","type":"tuple"},{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"name":"","type":"tuple[]"},{"name":"","type":"uint256"}],"payable":false,"stateMutability":"pure","type":"function"},{"anonymous":false,"inputs":[{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"indexed":false,"name":"a","type":"tuple"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"indexed":false,"name":"b","type":"tuple"},{"components":[{"name":"a","type":"uint256"},{"name":"b","type":"uint256[]"},{"components":[{"name":"x","type":"uint256"},{"name":"y","type":"uint256"}],"name":"c","type":"tuple[]"}],"indexed":false,"name":"c","type":"tuple[]"},{"indexed":false,"name":"d","type":"uint256"}],"name":"TupleEvent","type":"event"}]
+		`,
+		`
+			"math/big"
+			"reflect"
+		
+			"github.com/ethereum/go-ethereum/accounts/abi/bind"
+			"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
+			"github.com/ethereum/go-ethereum/core"
+			"github.com/ethereum/go-ethereum/crypto"
+		`,
+		`
+			key, _ := crypto.GenerateKey()
+			auth := bind.NewKeyedTransactor(key)
+			backend := backends.NewSimulatedBackend(core.GenesisAlloc{auth.From: {Balance: big.NewInt(10000000000)}}, 10000000)
+		
+			_, _, contract, err := DeployTuple(auth, backend)
+			if err != nil {
+				t.Fatalf("deploy contract failed %v", err)
+			}
+			backend.Commit()
+
+			a := Struct1{
+				A: big.NewInt(1),
+				B: []*big.Int{big.NewInt(2), big.NewInt(3)},
+				C: []Struct0{
+					{
+						X: big.NewInt(4),
+						Y: big.NewInt(5),
+					},
+					{
+						X: big.NewInt(7),
+						Y: big.NewInt(8),
+					},
+				},
+			}
+			b := Struct1{
+				A: big.NewInt(9),
+				B: []*big.Int{big.NewInt(10), big.NewInt(11)},
+				C: []Struct0{
+					{
+						X: big.NewInt(12),
+						Y: big.NewInt(13),
+					},
+					{
+						X: big.NewInt(14),
+						Y: big.NewInt(15),
+					},
+				},
+			}
+			c := Struct0{
+				X: big.NewInt(16),
+				Y: big.NewInt(17),
+			}
+			d := big.NewInt(18)
+
+			ret1, ret2, ret3, ret4, err := contract.F(nil, a, c, []Struct1{b}, d)
+			if err != nil {
+				t.Fatalf("invoke contract failed, err %v", err)
+			}
+			if !reflect.DeepEqual(ret1, a) {
+				t.Fatalf("FieldA mismatch, want %v have %v", a, ret1)
+			}
+			if !reflect.DeepEqual(ret2, c) {
+				t.Fatalf("FieldB mismatch, want %v have %v", c, ret2)
+			}
+			if !reflect.DeepEqual(ret3, []Struct1{b}) {
+				t.Fatalf("FieldC mismatch, want %v have %v", []Struct1{b}, ret3)
+			}
+			if !reflect.DeepEqual(ret4, d) {
+				t.Fatalf("FieldD mismatch, want %v have %v", d, ret4)
+			}
+
+			_, err = contract.G(auth, a, c, []Struct1{b}, d)
+			if err != nil {
+				t.Fatalf("invoke contract failed, err %v", err)
+			}
+			backend.Commit()
+
+			iter, err := contract.FilterTupleEvent(nil)
+			if err != nil {
+				t.Fatalf("failed to create event filter, err %v", err)
+			}
+			defer iter.Close()
+
+			iter.Next()
+			if !reflect.DeepEqual(iter.Event.A, a) {
+				t.Fatalf("FieldA mismatch, want %v have %v", a, iter.Event.A)
+			}
+			if !reflect.DeepEqual(iter.Event.B, c) {
+				t.Fatalf("FieldB mismatch, want %v have %v", c, iter.Event.B)
+			}
+			if !reflect.DeepEqual(iter.Event.C, []Struct1{b}) {
+				t.Fatalf("FieldC mismatch, want %v have %v", []Struct1{b}, iter.Event.C)
+			}
+			if !reflect.DeepEqual(iter.Event.D, d) {
+				t.Fatalf("FieldD mismatch, want %v have %v", d, iter.Event.D)
+			}
+		`,
 	},
 }
 
