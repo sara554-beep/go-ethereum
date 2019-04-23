@@ -469,7 +469,19 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	// If we are running fast sync, all block data not greater than ancientLimit will
 	// be written to the ancient store. Otherwise, block data will be written to active
 	// database and then wait freezer to migrate.
-	if height > MaxForkAncestry+1 {
+	//
+	// If there is checkpoint available, then calculate the ancientLimit through
+	// checkpoint. Otherwise calculate the ancient limit through the advertised
+	// height by remote peer.
+	//
+	// The reason for picking checkpoint first is: there exists an attack vector
+	// for height that: a malicious peer can give us a fake(very high) height,
+	// so that the ancient limit is also very high. And then the peer start to
+	// feed us valid blocks until head. All of these blocks might be written into
+	// the ancient store, the safe region for freezer is not enough.
+	if d.checkpoint != 0 && d.checkpoint > MaxForkAncestry+1 {
+		d.ancientLimit = height - MaxForkAncestry - 1
+	} else if height > MaxForkAncestry+1 {
 		d.ancientLimit = height - MaxForkAncestry - 1
 	}
 	frozen, _ := d.stateDB.Items()
