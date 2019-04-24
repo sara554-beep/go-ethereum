@@ -789,7 +789,7 @@ func TestLightVsFastVsFullChainHeads(t *testing.T) {
 	assert(t, "ancient", ancient, height, height, 0)
 	ancient.Rollback(remove)
 	assert(t, "ancient", ancient, height/2, height/2, 0)
-	if frozen, err := ancientDb.Items(); err != nil || frozen != height/2+1 {
+	if frozen, err := ancientDb.Ancients(); err != nil || frozen != height/2+1 {
 		t.Fatalf("failed to truncate ancient store, want %v, have %v", height/2+1, frozen)
 	}
 
@@ -1724,7 +1724,7 @@ func TestIncompleteAncientReceiptChainInsertion(t *testing.T) {
 	if ancient.CurrentFastBlock().NumberU64() != previousFastBlock.NumberU64() {
 		t.Fatalf("failed to rollback ancient data, want %d, have %d", previousFastBlock.NumberU64(), ancient.CurrentFastBlock().NumberU64())
 	}
-	if frozen, err := ancient.db.Items(); err != nil || frozen != 1 {
+	if frozen, err := ancient.db.Ancients(); err != nil || frozen != 1 {
 		t.Fatalf("failed to truncate ancient data")
 	}
 	ancient.terminateInsert = nil

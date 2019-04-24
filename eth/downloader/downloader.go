@@ -484,7 +484,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	} else if height > MaxForkAncestry+1 {
 		d.ancientLimit = height - MaxForkAncestry - 1
 	}
-	frozen, _ := d.stateDB.Items()
+	frozen, _ := d.stateDB.Ancients() // Ignore the error here since light client can also hit here.
 	// If a part of blockchain data has already been written into active store,
 	// disable the ancient style insertion explicitly.
 	if origin >= frozen && frozen != 0 {

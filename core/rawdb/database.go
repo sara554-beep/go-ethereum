@@ -51,9 +51,9 @@ type nofreezedb struct {
 	ethdb.KeyValueStore
 }
 
-// HasAncient always returns false as we don't have a backing chain freezer.
-func (db *nofreezedb) HasAncient(kind string, number uint64) bool {
-	return false
+// HasAncient returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) HasAncient(kind string, number uint64) (bool, error) {
+	return false, errNotSupported
 }
 
 // Ancient returns an error as we don't have a backing chain freezer.
@@ -61,24 +61,24 @@ func (db *nofreezedb) Ancient(kind string, number uint64) ([]byte, error) {
 	return nil, errNotSupported
 }
 
-// Append returns an error as we don't have a backing chain freezer.
-func (db *nofreezedb) Append(hash, header, body, receipts, td []byte) error {
+// Ancients returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) Ancients() (uint64, error) {
+	return 0, errNotSupported
+}
+
+// AppendAncient returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) AppendAncient(number uint64, hash, header, body, receipts, td []byte) error {
+	return errNotSupported
+}
+
+// TruncateAncients returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) TruncateAncients(items uint64) error {
 	return errNotSupported
 }
 
 // Sync returns an error as we don't have a backing chain freezer.
 func (db *nofreezedb) Sync() error {
 	return errNotSupported
-}
-
-// Truncate returns an error as we don't have a backing chain freezer.
-func (db *nofreezedb) Truncate(items uint64) error {
-	return errNotSupported
-}
-
-// Items returns an error as we don't have a backing chain freezer.
-func (db *nofreezedb) Items() (uint64, error) {
-	return 0, errNotSupported
 }
 
 // NewDatabase creates a high level database on top of a given key-value data

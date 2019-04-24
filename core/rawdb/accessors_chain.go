@@ -34,6 +34,13 @@ func ReadCanonicalHash(db ethdb.Reader, number uint64) common.Hash {
 	data, _ := db.Ancient(freezerHashTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(headerHashKey(number))
+		// In the background freezer is moving data from leveldb to flatten files.
+		// So during the first check for ancient db, the data is not yet in there,
+		// but when we reach into leveldb, the data was already moved. That would
+		// result in a not found error.
+		if len(data) == 0 {
+			data, _ = db.Ancient(freezerHashTable, number)
+		}
 	}
 	if len(data) == 0 {
 		return common.Hash{}
@@ -62,12 +69,13 @@ func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 
 	hashes := make([]common.Hash, 0, 1)
 	it := db.NewIteratorWithPrefix(prefix)
+	defer it.Release()
+
 	for it.Next() {
 		if key := it.Key(); len(key) == len(prefix)+32 {
 			hashes = append(hashes, common.BytesToHash(key[len(key)-32:]))
 		}
 	}
-	it.Release()
 	return hashes
 }
 
@@ -79,6 +87,13 @@ func ReadHeaderNumber(db ethdb.KeyValueReader, hash common.Hash) *uint64 {
 	}
 	number := binary.BigEndian.Uint64(data)
 	return &number
+}
+
+// DeleteHeaderNumber removes hash to number mapping.
+func DeleteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(headerNumberKey(hash)); err != nil {
+		log.Crit("Failed to delete hash to number mapping", "err", err)
+	}
 }
 
 // ReadHeadHeaderHash retrieves the hash of the current canonical head header.
@@ -152,6 +167,13 @@ func ReadHeaderRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValu
 	data, _ := db.Ancient(freezerHeaderTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(headerKey(number, hash))
+		// In the background freezer is moving data from leveldb to flatten files.
+		// So during the first check for ancient db, the data is not yet in there,
+		// but when we reach into leveldb, the data was already moved. That would
+		// result in a not found error.
+		if len(data) == 0 {
+			data, _ = db.Ancient(freezerHeaderTable, number)
+		}
 	}
 	return data
 }
@@ -159,9 +181,7 @@ func ReadHeaderRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValu
 // HasHeader verifies the existence of a block header corresponding to the hash.
 func HasHeader(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	if has, err := db.Ancient(freezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
-		if db.HasAncient(freezerHeaderTable, number) {
-			return true
-		}
+		return true
 	}
 	if has, err := db.Has(headerKey(number, hash)); !has || err != nil {
 		return false
@@ -215,13 +235,6 @@ func DeleteHeader(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	}
 }
 
-// DeleteHeaderNumber removes hash to number mapping.
-func DeleteHeaderNumber(db ethdb.KeyValueWriter, hash common.Hash) {
-	if err := db.Delete(headerNumberKey(hash)); err != nil {
-		log.Crit("Failed to delete hash to number mapping", "err", err)
-	}
-}
-
 // deleteHeaderWithoutNumber removes only the block header but does not remove
 // the hash to number mapping.
 func deleteHeaderWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
@@ -235,6 +248,13 @@ func ReadBodyRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue 
 	data, _ := db.Ancient(freezerBodiesTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(blockBodyKey(number, hash))
+		// In the background freezer is moving data from leveldb to flatten files.
+		// So during the first check for ancient db, the data is not yet in there,
+		// but when we reach into leveldb, the data was already moved. That would
+		// result in a not found error.
+		if len(data) == 0 {
+			data, _ = db.Ancient(freezerBodiesTable, number)
+		}
 	}
 	return data
 }
@@ -249,9 +269,7 @@ func WriteBodyRLP(db ethdb.KeyValueWriter, hash common.Hash, number uint64, rlp 
 // HasBody verifies the existence of a block body corresponding to the hash.
 func HasBody(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	if has, err := db.Ancient(freezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
-		if db.HasAncient(freezerBodiesTable, number) {
-			return true
-		}
+		return true
 	}
 	if has, err := db.Has(blockBodyKey(number, hash)); !has || err != nil {
 		return false
@@ -294,6 +312,13 @@ func ReadTdRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawValue {
 	data, _ := db.Ancient(freezerDifficultyTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(headerTDKey(number, hash))
+		// In the background freezer is moving data from leveldb to flatten files.
+		// So during the first check for ancient db, the data is not yet in there,
+		// but when we reach into leveldb, the data was already moved. That would
+		// result in a not found error.
+		if len(data) == 0 {
+			data, _ = db.Ancient(freezerDifficultyTable, number)
+		}
 	}
 	return data
 }
@@ -334,9 +359,7 @@ func DeleteTd(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 // to a block.
 func HasReceipts(db ethdb.Reader, hash common.Hash, number uint64) bool {
 	if has, err := db.Ancient(freezerHashTable, number); err == nil && common.BytesToHash(has) == hash {
-		if db.HasAncient(freezerReceiptTable, number) {
-			return true
-		}
+		return true
 	}
 	if has, err := db.Has(blockReceiptsKey(number, hash)); !has || err != nil {
 		return false
@@ -349,6 +372,13 @@ func ReadReceiptsRLP(db ethdb.Reader, hash common.Hash, number uint64) rlp.RawVa
 	data, _ := db.Ancient(freezerReceiptTable, number)
 	if len(data) == 0 {
 		data, _ = db.Get(blockReceiptsKey(number, hash))
+		// In the background freezer is moving data from leveldb to flatten files.
+		// So during the first check for ancient db, the data is not yet in there,
+		// but when we reach into leveldb, the data was already moved. That would
+		// result in a not found error.
+		if len(data) == 0 {
+			data, _ = db.Ancient(freezerReceiptTable, number)
+		}
 	}
 	return data
 }
@@ -448,23 +478,6 @@ func WriteBlock(db ethdb.KeyValueWriter, block *types.Block) {
 	WriteHeader(db, block.Header())
 }
 
-// DeleteBlock removes all block data associated with a hash.
-func DeleteBlock(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
-	DeleteReceipts(db, hash, number)
-	DeleteHeader(db, hash, number)
-	DeleteBody(db, hash, number)
-	DeleteTd(db, hash, number)
-}
-
-// DeleteBlockWithoutNumber removes all block data associated with a hash, except
-// the hash to number mapping.
-func DeleteBlockWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
-	DeleteReceipts(db, hash, number)
-	deleteHeaderWithoutNumber(db, hash, number)
-	DeleteBody(db, hash, number)
-	DeleteTd(db, hash, number)
-}
-
 // WriteAncientBlock writes entire block data into ancient store and returns the total written size.
 func WriteAncientBlock(db ethdb.AncientWriter, block *types.Block, receipts types.Receipts, td *big.Int) int {
 	// Encode all block components to RLP format.
@@ -489,11 +502,28 @@ func WriteAncientBlock(db ethdb.AncientWriter, block *types.Block, receipts type
 		log.Crit("Failed to RLP encode block total difficulty", "err", err)
 	}
 	// Write all blob to flatten files.
-	err = db.Append(block.Hash().Bytes(), headerBlob, bodyBlob, receiptBlob, tdBlob)
+	err = db.AppendAncient(block.NumberU64(), block.Hash().Bytes(), headerBlob, bodyBlob, receiptBlob, tdBlob)
 	if err != nil {
 		log.Crit("Failed to write block data to ancient store", "err", err)
 	}
 	return len(headerBlob) + len(bodyBlob) + len(receiptBlob) + len(tdBlob) + common.HashLength
+}
+
+// DeleteBlock removes all block data associated with a hash.
+func DeleteBlock(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	DeleteReceipts(db, hash, number)
+	DeleteHeader(db, hash, number)
+	DeleteBody(db, hash, number)
+	DeleteTd(db, hash, number)
+}
+
+// DeleteBlockWithoutNumber removes all block data associated with a hash, except
+// the hash to number mapping.
+func DeleteBlockWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
+	DeleteReceipts(db, hash, number)
+	deleteHeaderWithoutNumber(db, hash, number)
+	DeleteBody(db, hash, number)
+	DeleteTd(db, hash, number)
 }
 
 // FindCommonAncestor returns the last common ancestor of two block headers

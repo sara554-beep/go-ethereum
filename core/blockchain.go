@@ -64,8 +64,8 @@ var (
 	blockPrefetchExecuteTimer   = metrics.NewRegisteredTimer("chain/prefetch/executes", nil)
 	blockPrefetchInterruptMeter = metrics.NewRegisteredMeter("chain/prefetch/interrupts", nil)
 
-	ErrNoGenesis         = errors.New("genesis not found in chain")
-	insertionInterrupted = errors.New("insertion is interrupted")
+	ErrNoGenesis            = errors.New("genesis not found in chain")
+	errInsertionInterrupted = errors.New("insertion is interrupted")
 )
 
 const (
@@ -216,7 +216,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
 	}
-	if frozen, err := bc.db.Items(); err == nil && frozen >= 1 {
+	if frozen, err := bc.db.Ancients(); err == nil && frozen >= 1 {
 		var (
 			needRewind bool
 			low        uint64
@@ -375,12 +375,13 @@ func (bc *BlockChain) SetHead(head uint64) error {
 	}
 
 	// Rewind the header chain, deleting all block bodies until then
-	frozen, _ := bc.db.Items()
 	delFn := func(db ethdb.KeyValueWriter, hash common.Hash, num uint64) {
+		// Ignore the error here since light client won't hit this path
+		frozen, _ := bc.db.Ancients()
 		if num+1 <= frozen {
 			// Truncate all relative data(header, total difficulty, body, receipt
 			// and canonical hash) from ancient store.
-			bc.db.Truncate(num + 1)
+			bc.db.TruncateAncients(num + 1)
 
 			// Remove the hash <-> number mapping from the active store.
 			rawdb.DeleteHeaderNumber(db, hash)
@@ -844,24 +845,25 @@ func (bc *BlockChain) Rollback(chain []common.Hash) {
 	// but the head indicator has been updated in the active store. Regarding this issue,
 	// system will self recovery by truncating the extra data during the setup phase.
 	if err := bc.truncateAncient(bc.hc.CurrentHeader().Number.Uint64()); err != nil {
-		panic("Truncate ancient store failed")
+		log.Crit("Truncate ancient store failed", "err", err)
 	}
 }
 
 // truncateAncient rewinds the blockchain to the specified header and deletes all
 // data in the ancient store that exceeds the specified header.
-//
-// Notably, this function requires the lock has already been held.
 func (bc *BlockChain) truncateAncient(head uint64) error {
+	frozen, err := bc.db.Ancients()
+	if err != nil {
+		return err
+	}
 	// Short circuit if there is no data to truncate in ancient store.
-	if frozen, err := bc.db.Items(); err != nil || frozen <= head+1 {
+	if frozen <= head+1 {
 		return nil
 	}
 	// Truncate all the data in the freezer beyond the specified head
-	if err := bc.db.Truncate(head + 1); err != nil {
+	if err := bc.db.TruncateAncients(head + 1); err != nil {
 		return err
 	}
-
 	// Clear out any stale content from the caches
 	bc.hc.headerCache.Purge()
 	bc.hc.tdCache.Purge()
@@ -939,18 +941,15 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		// all the data written this time wll be rolled back.
 		defer func() {
 			if previous != nil {
-				bc.chainmu.Lock()
-				defer bc.chainmu.Unlock()
-
 				if err := bc.truncateAncient(previous.NumberU64()); err != nil {
-					panic("Truncate ancient store failed")
+					log.Crit("Truncate ancient store failed", "err", err)
 				}
 			}
 		}()
 		for i, block := range blockChain {
 			// Short circuit insertion if shutting down or processing failed
 			if atomic.LoadInt32(&bc.procInterrupt) == 1 {
-				return 0, insertionInterrupted
+				return 0, errInsertionInterrupted
 			}
 			// Short circuit insertion if it is required(used in testing only)
 			if bc.terminateInsert != nil && bc.terminateInsert(block.Hash(), block.NumberU64()) {
@@ -965,7 +964,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				return i, fmt.Errorf("failed to derive receipts data: %v", err)
 			}
 			// Initialize freezer with genesis block first
-			if frozen, err := bc.db.Items(); err == nil && frozen == 0 && block.NumberU64() == 1 {
+			if frozen, err := bc.db.Ancients(); err == nil && frozen == 0 && block.NumberU64() == 1 {
 				genesisBlock := rawdb.ReadBlock(bc.db, rawdb.ReadCanonicalHash(bc.db, 0), 0)
 				size += rawdb.WriteAncientBlock(bc.db, genesisBlock, nil, genesisBlock.Difficulty())
 			}
@@ -998,17 +997,20 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			rawdb.DeleteBlockWithoutNumber(batch, rawdb.ReadCanonicalHash(bc.db, 0), 0)
 			rawdb.DeleteCanonicalHash(batch, 0)
 		}
+		// Wipe out canonical block data.
+		for _, block := range blockChain {
+			rawdb.DeleteBlockWithoutNumber(batch, block.Hash(), block.NumberU64())
+			rawdb.DeleteCanonicalHash(batch, block.NumberU64())
+		}
+		if err := batch.Write(); err != nil {
+			return 0, err
+		}
+		batch.Reset()
+		// Wipe out side chain too.
 		for _, block := range blockChain {
 			for _, hash := range rawdb.ReadAllHashes(bc.db, block.NumberU64()) {
-				if hash == rawdb.ReadCanonicalHash(bc.db, block.NumberU64()) {
-					// Remove canonical block from active store.
-					rawdb.DeleteBlockWithoutNumber(batch, hash, block.NumberU64())
-				} else {
-					// Remove side block from active store.
-					rawdb.DeleteBlock(batch, hash, block.NumberU64())
-				}
+				rawdb.DeleteBlock(batch, hash, block.NumberU64())
 			}
-			rawdb.DeleteCanonicalHash(batch, block.NumberU64())
 		}
 		if err := batch.Write(); err != nil {
 			return 0, err
@@ -1021,7 +1023,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		for i, block := range blockChain {
 			// Short circuit insertion if shutting down or processing failed
 			if atomic.LoadInt32(&bc.procInterrupt) == 1 {
-				return 0, insertionInterrupted
+				return 0, errInsertionInterrupted
 			}
 			// Short circuit if the owner header is unknown
 			if !bc.HasHeader(block.Hash(), block.NumberU64()) {
@@ -1061,7 +1063,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	// Write downloaded chain data and corresponding receipt chain data.
 	if len(ancientBlocks) > 0 {
 		if n, err := writeAncient(ancientBlocks, ancientReceipts); err != nil {
-			if err == insertionInterrupted {
+			if err == errInsertionInterrupted {
 				return 0, nil
 			}
 			return n, err
@@ -1069,7 +1071,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	}
 	if len(liveBlocks) > 0 {
 		if n, err := writeLive(liveBlocks, liveReceipts); err != nil {
-			if err == insertionInterrupted {
+			if err == errInsertionInterrupted {
 				return 0, nil
 			}
 			return n, err

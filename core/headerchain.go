@@ -454,18 +454,18 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) {
 }
 
 type (
-	// UpdateCallback is a callback function that is called by SetHead before
-	// head header is updated.
-	UpdateCallback func(ethdb.KeyValueWriter, *types.Header)
+	// UpdateHeadBlocksCallback is a callback function that is called by SetHead
+	// before head header is updated.
+	UpdateHeadBlocksCallback func(ethdb.KeyValueWriter, *types.Header)
 
-	// DeleteCallback is a callback function that is called by SetHead before
-	// each header is deleted.
-	DeleteCallback func(ethdb.KeyValueWriter, common.Hash, uint64)
+	// DeleteBlockContentCallback is a callback function that is called by SetHead
+	// before each header is deleted.
+	DeleteBlockContentCallback func(ethdb.KeyValueWriter, common.Hash, uint64)
 )
 
 // SetHead rewinds the local chain to a new head. Everything above the new head
 // will be deleted and the new one set.
-func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateCallback, delFn DeleteCallback) {
+func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateHeadBlocksCallback, delFn DeleteBlockContentCallback) {
 	var (
 		parentHash common.Hash
 		batch      = hc.chainDb.NewBatch()
@@ -478,7 +478,7 @@ func (hc *HeaderChain) SetHead(head uint64, updateFn UpdateCallback, delFn Delet
 		if parent == nil {
 			parent = hc.genesisHeader
 		}
-		parentHash = parent.Hash()
+		parentHash = hdr.ParentHash
 		// Notably, since geth has the possibility for setting the head to a low
 		// height which is even lower than ancient head.
 		// In order to ensure that the head is always no higher than the data in

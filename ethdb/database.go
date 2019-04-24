@@ -69,22 +69,25 @@ type KeyValueStore interface {
 
 // AncientReader contains the methods required to read from immutable ancient data.
 type AncientReader interface {
-	HasAncient(kind string, number uint64) bool
+	// HasAncient returns an indicator whether the specified data exists in the
+	// ancient store.
+	HasAncient(kind string, number uint64) (bool, error)
 
 	// Ancient retrieves an ancient binary blob from the append-only immutable files.
 	Ancient(kind string, number uint64) ([]byte, error)
 
-	// Items returns the ancient store length
-	Items() (uint64, error)
+	// Ancients returns the ancient store length
+	Ancients() (uint64, error)
 }
 
 // AncientWriter contains the methods required to write to immutable ancient data.
 type AncientWriter interface {
-	// Append injects all binary blobs belong to block at the end of the append-only immutable table files.
-	Append(hash, header, body, receipt, td []byte) error
+	// AppendAncient injects all binary blobs belong to block at the end of the
+	// append-only immutable table files.
+	AppendAncient(number uint64, hash, header, body, receipt, td []byte) error
 
-	// Truncate discards all but the first n ancient data from the ancient store.
-	Truncate(n uint64) error
+	// TruncateAncients discards all but the first n ancient data from the ancient store.
+	TruncateAncients(n uint64) error
 
 	// Sync flushes all in-memory ancient store data to disk.
 	Sync() error
