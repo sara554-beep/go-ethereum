@@ -465,39 +465,43 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	if d.mode == FastSync && pivot != 0 {
 		d.committed = 0
 	}
-	// Set the ancient data limitation.
-	// If we are running fast sync, all block data not greater than ancientLimit will
-	// be written to the ancient store. Otherwise, block data will be written to active
-	// database and then wait freezer to migrate.
-	//
-	// If there is checkpoint available, then calculate the ancientLimit through
-	// checkpoint. Otherwise calculate the ancient limit through the advertised
-	// height by remote peer.
-	//
-	// The reason for picking checkpoint first is: there exists an attack vector
-	// for height that: a malicious peer can give us a fake(very high) height,
-	// so that the ancient limit is also very high. And then the peer start to
-	// feed us valid blocks until head. All of these blocks might be written into
-	// the ancient store, the safe region for freezer is not enough.
-	if d.checkpoint != 0 && d.checkpoint > MaxForkAncestry+1 {
-		d.ancientLimit = height - MaxForkAncestry - 1
-	} else if height > MaxForkAncestry+1 {
-		d.ancientLimit = height - MaxForkAncestry - 1
-	}
-	frozen, _ := d.stateDB.Ancients() // Ignore the error here since light client can also hit here.
-	// If a part of blockchain data has already been written into active store,
-	// disable the ancient style insertion explicitly.
-	if origin >= frozen && frozen != 0 {
-		d.ancientLimit = 0
-		log.Info("Disabling direct-ancient mode", "origin", origin, "ancient", frozen-1)
-	}
-	// Rewind the ancient store and blockchain if reorg happens.
-	if d.mode == FastSync && origin+1 < frozen {
-		var hashes []common.Hash
-		for i := origin + 1; i < d.lightchain.CurrentHeader().Number.Uint64(); i++ {
-			hashes = append(hashes, rawdb.ReadCanonicalHash(d.stateDB, i))
+	if d.mode == FastSync {
+		// Set the ancient data limitation.
+		// If we are running fast sync, all block data not greater than ancientLimit will
+		// be written to the ancient store. Otherwise, block data will be written to active
+		// database and then wait freezer to migrate.
+		//
+		// If there is checkpoint available, then calculate the ancientLimit through
+		// checkpoint. Otherwise calculate the ancient limit through the advertised
+		// height by remote peer.
+		//
+		// The reason for picking checkpoint first is: there exists an attack vector
+		// for height that: a malicious peer can give us a fake(very high) height,
+		// so that the ancient limit is also very high. And then the peer start to
+		// feed us valid blocks until head. All of these blocks might be written into
+		// the ancient store, the safe region for freezer is not enough.
+		if d.checkpoint != 0 && d.checkpoint > MaxForkAncestry+1 {
+			d.ancientLimit = height - MaxForkAncestry - 1
+		} else if height > MaxForkAncestry+1 {
+			d.ancientLimit = height - MaxForkAncestry - 1
 		}
-		d.lightchain.Rollback(hashes)
+		frozen, _ := d.stateDB.Ancients() // Ignore the error here since light client can also hit here.
+		// If a part of blockchain data has already been written into active store,
+		// disable the ancient style insertion explicitly.
+		if origin >= frozen && frozen != 0 {
+			d.ancientLimit = 0
+			log.Info("Disabling direct-ancient mode", "origin", origin, "ancient", frozen-1)
+		} else if d.ancientLimit > 0 {
+			log.Debug("Enabling direct-ancient mode", "ancient", d.ancientLimit)
+		}
+		// Rewind the ancient store and blockchain if reorg happens.
+		if origin+1 < frozen {
+			var hashes []common.Hash
+			for i := origin + 1; i < d.lightchain.CurrentHeader().Number.Uint64(); i++ {
+				hashes = append(hashes, rawdb.ReadCanonicalHash(d.stateDB, i))
+			}
+			d.lightchain.Rollback(hashes)
+		}
 	}
 	// Initiate the sync using a concurrent header and content retrieval algorithm
 	d.queue.Prepare(origin+1, d.mode)
