@@ -481,7 +481,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 		// feed us valid blocks until head. All of these blocks might be written into
 		// the ancient store, the safe region for freezer is not enough.
 		if d.checkpoint != 0 && d.checkpoint > MaxForkAncestry+1 {
-			d.ancientLimit = height - MaxForkAncestry - 1
+			d.ancientLimit = d.checkpoint - MaxForkAncestry - 1
 		} else if height > MaxForkAncestry+1 {
 			d.ancientLimit = height - MaxForkAncestry - 1
 		}

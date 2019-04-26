@@ -384,7 +384,9 @@ func (bc *BlockChain) SetHead(head uint64) error {
 		if num+1 <= frozen {
 			// Truncate all relative data(header, total difficulty, body, receipt
 			// and canonical hash) from ancient store.
-			bc.db.TruncateAncients(num + 1)
+			if err := bc.db.TruncateAncients(num + 1); err != nil {
+				log.Crit("Failed to truncate ancient data", "number", num, "err", err)
+			}
 
 			// Remove the hash <-> number mapping from the active store.
 			rawdb.DeleteHeaderNumber(db, hash)
@@ -962,10 +964,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			if !bc.HasHeader(block.Hash(), block.NumberU64()) {
 				return i, fmt.Errorf("containing header #%d [%x…] unknown", block.Number(), block.Hash().Bytes()[:4])
 			}
-			// Compute all the non-consensus fields of the receipts
-			if err := receiptChain[i].DeriveFields(bc.chainConfig, block.Hash(), block.NumberU64(), block.Transactions()); err != nil {
-				return i, fmt.Errorf("failed to derive receipts data: %v", err)
-			}
 			// Initialize freezer with genesis block first
 			if frozen, err := bc.db.Ancients(); err == nil && frozen == 0 && block.NumberU64() == 1 {
 				genesisBlock := rawdb.ReadBlock(bc.db, rawdb.ReadCanonicalHash(bc.db, 0), 0)
@@ -1035,10 +1033,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			if bc.HasBlock(block.Hash(), block.NumberU64()) {
 				stats.ignored++
 				continue
-			}
-			// Compute all the non-consensus fields of the receipts
-			if err := receiptChain[i].DeriveFields(bc.chainConfig, block.Hash(), block.NumberU64(), block.Transactions()); err != nil {
-				return i, fmt.Errorf("failed to derive receipts data: %v", err)
 			}
 			// Write all the data out into the database
 			rawdb.WriteBody(batch, block.Hash(), block.NumberU64(), block.Body())
