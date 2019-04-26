@@ -149,6 +149,14 @@ func (f *freezer) Ancients() (uint64, error) {
 	return atomic.LoadUint64(&f.frozen), nil
 }
 
+// AncientSize returns the ancient size of the specified category.
+func (f *freezer) AncientSize(kind string) (uint64, error) {
+	if table := f.tables[kind]; table != nil {
+		return table.size()
+	}
+	return 0, errUnknownTable
+}
+
 // AppendAncient injects all binary blobs belong to block at the end of the
 // append-only immutable table files.
 //

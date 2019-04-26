@@ -17,11 +17,15 @@
 package rawdb
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
+	"github.com/olekukonko/tablewriter"
 )
 
 // freezerdb is a database wrapper that enabled freezer data retrievals.
@@ -63,6 +67,11 @@ func (db *nofreezedb) Ancient(kind string, number uint64) ([]byte, error) {
 
 // Ancients returns an error as we don't have a backing chain freezer.
 func (db *nofreezedb) Ancients() (uint64, error) {
+	return 0, errNotSupported
+}
+
+// AncientSize returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) AncientSize(kind string) (uint64, error) {
 	return 0, errNotSupported
 }
 
@@ -141,4 +150,95 @@ func NewLevelDBDatabaseWithFreezer(file string, cache int, handles int, freezer 
 		return nil, err
 	}
 	return frdb, nil
+}
+
+// InspectDatabase traverses the entire database and checks the size
+// of all different categories of data.
+func InspectDatabase(db ethdb.Database, stopCh chan struct{}) {
+	it := db.NewIterator()
+	defer it.Release()
+
+	var (
+		// Key-value store statistics
+		total             common.StorageSize
+		headerSize        common.StorageSize
+		bodySize          common.StorageSize
+		receiptSize       common.StorageSize
+		tdSize            common.StorageSize
+		numHashPairing    common.StorageSize
+		hashNumberPairing common.StorageSize
+		trieSize          common.StorageSize
+		txlookupSize      common.StorageSize
+		preimageSize      common.StorageSize
+		bloomBitsSize     common.StorageSize
+
+		// Ancient store statistics
+		ancientHeaders  common.StorageSize
+		ancientBodies   common.StorageSize
+		ancientReceipts common.StorageSize
+		ancientHashes   common.StorageSize
+		ancientTds      common.StorageSize
+	)
+	// Inspect key-value database first.
+	for it.Next() {
+		var (
+			key  = it.Key()
+			size = common.StorageSize(len(key) + len(it.Value()))
+		)
+		total += size
+		switch {
+		case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
+			tdSize += size
+		case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
+			numHashPairing += size
+		case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
+			headerSize += size
+		case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
+			hashNumberPairing += size
+		case bytes.HasPrefix(key, blockBodyPrefix) && len(key) == (len(blockBodyPrefix)+8+common.HashLength):
+			bodySize += size
+		case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
+			receiptSize += size
+		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
+			txlookupSize += size
+		case bytes.HasPrefix(key, preimagePrefix) && len(key) == (len(preimagePrefix)+common.HashLength):
+			preimageSize += size
+		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
+			bloomBitsSize += size
+		case len(key) == common.HashLength:
+			trieSize += size
+		}
+	}
+	// Inspect append-only file store then.
+	ancients := []*common.StorageSize{&ancientHeaders, &ancientBodies, &ancientReceipts, &ancientHashes, &ancientTds}
+	for i, category := range []string{freezerHeaderTable, freezerBodiesTable, freezerReceiptTable, freezerHashTable, freezerDifficultyTable} {
+		if size, err := db.AncientSize(category); err == nil {
+			*ancients[i] += common.StorageSize(size)
+			total += common.StorageSize(size)
+		}
+	}
+	close(stopCh)
+
+	stats := [][]string{
+		{"Key-Value store", "Headers", headerSize.String()},
+		{"Key-Value store", "Bodies", bodySize.String()},
+		{"Key-Value store", "Receipts", receiptSize.String()},
+		{"Key-Value store", "Total Difficulty", tdSize.String()},
+		{"Key-Value store", "Block <number-hash> pairings", numHashPairing.String()},
+		{"Key-Value store", "Block <hash-number> pairings", hashNumberPairing.String()},
+		{"Key-Value store", "Trie nodes", trieSize.String()},
+		{"Key-Value store", "Transaction indexes", txlookupSize.String()},
+		{"Key-Value store", "Preimages", preimageSize.String()},
+		{"Key-Value store", "BloomBits", bloomBitsSize.String()},
+		{"Ancient store", "Headers", ancientHeaders.String()},
+		{"Ancient store", "Bodies", ancientBodies.String()},
+		{"Ancient store", "Receipts", ancientReceipts.String()},
+		{"Ancient store", "Total Difficulty", ancientTds.String()},
+		{"Ancient store", "Block <number-hash> pairings", ancientHashes.String()},
+	}
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"Database", "Category", "Size"})
+	table.SetFooter([]string{"", "Total", total.String()}) // Add Footer
+	table.AppendBulk(stats)
+	table.Render()
 }
