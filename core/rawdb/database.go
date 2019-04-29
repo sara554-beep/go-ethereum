@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/olekukonko/tablewriter"
 )
 
@@ -148,6 +149,20 @@ func NewLevelDBDatabaseWithFreezer(file string, cache int, handles int, freezer 
 	if err != nil {
 		kvdb.Close()
 		return nil, err
+	}
+	// Make sure we always use the same ancient store.
+	//
+	//                    stored == nil        stored != nil
+	//                 +------------------------------------------------
+	// freezer == nil  |  non-freezer mode  |  ancient store is missing
+	// freezer != nil  |  initialize        |  ensure consistency
+	stored := ReadAncientPath(kvdb)
+	if stored == "" && freezer != "" {
+		WriteAncientPath(kvdb, freezer)
+		log.Info("Record initial ancient path", "path", freezer)
+	} else if stored != freezer {
+		log.Warn("Ancient store mismatch", "stored", stored, "given", freezer)
+		log.Crit("Please use a consistent ancient path or modify it via the command line tool `geth upgrade-ancient`")
 	}
 	return frdb, nil
 }

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync/atomic"
@@ -166,6 +167,21 @@ Remove blockchain and state databases`,
 The arguments are interpreted as block numbers or hashes.
 Use "ethereum dump 0" to dump the genesis block.`,
 	}
+	upgradeAncientCommand = cli.Command{
+		Action:    utils.MigrateFlags(upgradeAncient),
+		Name:      "upgrade-ancient",
+		Usage:     "Upgrade ancient store path forcibly",
+		ArgsUsage: " ",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.AncientFlag,
+			utils.CacheFlag,
+			utils.TestnetFlag,
+			utils.RinkebyFlag,
+			utils.GoerliFlag,
+		},
+		Category: "BLOCKCHAIN COMMANDS",
+	}
 	inspectCommand = cli.Command{
 		Action:    utils.MigrateFlags(inspect),
 		Name:      "inspect",
@@ -175,7 +191,6 @@ Use "ethereum dump 0" to dump the genesis block.`,
 			utils.DataDirFlag,
 			utils.AncientFlag,
 			utils.CacheFlag,
-			utils.SyncModeFlag,
 			utils.TestnetFlag,
 			utils.RinkebyFlag,
 			utils.GoerliFlag,
@@ -433,29 +448,48 @@ func copyDb(ctx *cli.Context) error {
 }
 
 func removeDB(ctx *cli.Context) error {
-	stack, _ := makeConfigNode(ctx)
+	stack, config := makeConfigNode(ctx)
 
-	for _, name := range []string{"chaindata", "lightchaindata"} {
+	for i, name := range []string{"chaindata", "lightchaindata"} {
 		// Ensure the database exists in the first place
 		logger := log.New("database", name)
 
+		var (
+			dbdirs  []string
+			freezer string
+		)
 		dbdir := stack.ResolvePath(name)
 		if !common.FileExist(dbdir) {
 			logger.Info("Database doesn't exist, skipping", "path", dbdir)
 			continue
 		}
-		// Confirm removal and execute
-		fmt.Println(dbdir)
-		confirm, err := console.Stdin.PromptConfirm("Remove this database?")
-		switch {
-		case err != nil:
-			utils.Fatalf("%v", err)
-		case !confirm:
-			logger.Warn("Database deletion aborted")
-		default:
-			start := time.Now()
-			os.RemoveAll(dbdir)
-			logger.Info("Database successfully deleted", "elapsed", common.PrettyDuration(time.Since(start)))
+		dbdirs = append(dbdirs, dbdir)
+		if i == 0 {
+			freezer = config.Eth.DatabaseFreezer
+			switch {
+			case freezer == "":
+				freezer = filepath.Join(dbdir, "ancient")
+			case !filepath.IsAbs(freezer):
+				freezer = config.Node.ResolvePath(freezer)
+			}
+			if common.FileExist(freezer) {
+				dbdirs = append(dbdirs, freezer)
+			}
+		}
+		for i := len(dbdirs) - 1; i >= 0; i-- {
+			// Confirm removal and execute
+			fmt.Println(dbdirs[i])
+			confirm, err := console.Stdin.PromptConfirm("Remove this database?")
+			switch {
+			case err != nil:
+				utils.Fatalf("%v", err)
+			case !confirm:
+				logger.Warn("Database deletion aborted")
+			default:
+				start := time.Now()
+				os.RemoveAll(dbdirs[i])
+				logger.Info("Database successfully deleted", "elapsed", common.PrettyDuration(time.Since(start)))
+			}
 		}
 	}
 	return nil
@@ -489,11 +523,46 @@ func dump(ctx *cli.Context) error {
 	return nil
 }
 
+func upgradeAncient(ctx *cli.Context) error {
+	node, config := makeConfigNode(ctx)
+	defer node.Close()
+
+	dbdir := config.Node.ResolvePath("chaindata")
+	kvdb, err := rawdb.NewLevelDBDatabase(dbdir, 128, 1024, "")
+	if err != nil {
+		return err
+	}
+	defer kvdb.Close()
+
+	freezer := config.Eth.DatabaseFreezer
+	switch {
+	case freezer == "":
+		freezer = filepath.Join(dbdir, "ancient")
+	case !filepath.IsAbs(freezer):
+		freezer = config.Node.ResolvePath(freezer)
+	}
+	stored := rawdb.ReadAncientPath(kvdb)
+	if stored != freezer {
+		confirm, err := console.Stdin.PromptConfirm(fmt.Sprintf("Are you sure to upgrade ancient path? old:%s, new:%s", stored, freezer))
+		switch {
+		case err != nil:
+			utils.Fatalf("%v", err)
+		case !confirm:
+			log.Warn("Ancient path upgrade aborted")
+		default:
+			rawdb.WriteAncientPath(kvdb, freezer)
+			log.Info("Ancient path successfully upgraded")
+		}
+	}
+	return nil
+}
+
 func inspect(ctx *cli.Context) error {
 	node, _ := makeConfigNode(ctx)
 	defer node.Close()
 
 	_, chainDb := utils.MakeChain(ctx, node)
+	defer chainDb.Close()
 
 	// Spawn a goroutine to print some user-friendly logs.
 	stopCh := make(chan struct{})

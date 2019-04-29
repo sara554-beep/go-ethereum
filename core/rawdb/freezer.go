@@ -107,6 +107,7 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 		lock.Release()
 		return nil, err
 	}
+	log.Info("Open freezer as ancient database", "path", datadir)
 	return freezer, nil
 }
 

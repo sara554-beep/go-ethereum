@@ -203,6 +203,7 @@ func init() {
 		copydbCommand,
 		removedbCommand,
 		dumpCommand,
+		upgradeAncientCommand,
 		inspectCommand,
 		// See accountcmd.go:
 		accountCommand,
