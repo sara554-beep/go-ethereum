@@ -110,17 +110,6 @@ var (
 			Period: 15,
 			Epoch:  30000,
 		},
-		CheckpointContract: &CheckpointContractConfig{
-			Name:         "rinkeby",
-			ContractAddr: common.HexToAddress("0xb708d2ca0ead46f7f254a13a10c4fc7b86ea34e"),
-			Signers: []common.Address{
-				common.HexToAddress("0x779ca2fc4a31a48dc338bc71959c1f1942a9098b"),
-				common.HexToAddress("0xacf370223f3ff062a997b3d138dddf1ad4d02a54"),
-				common.HexToAddress("0x937e8a232121eed45ce654f895e662b913526cfe"),
-				common.HexToAddress("0xdab27fd1a2ec8a899f87a5fa05f2c82870c036c7"),
-			},
-			Threshold: 2,
-		},
 	}
 
 	// RinkebyTrustedCheckpoint contains the light client trusted checkpoint for the Rinkeby test network.
@@ -147,6 +136,14 @@ var (
 		Clique: &CliqueConfig{
 			Period: 15,
 			Epoch:  30000,
+		},
+		CheckpointContract: &CheckpointContractConfig{
+			Name:         "goerli",
+			ContractAddr: common.HexToAddress("0xc11f90f22fa70aaa20f05efd94fd55a11bb4838e"),
+			Signers: []common.Address{
+				common.HexToAddress("0x300d17171ea342f8413bc2a4d7943e903b5e0f2a"),
+			},
+			Threshold: 1,
 		},
 	}
 

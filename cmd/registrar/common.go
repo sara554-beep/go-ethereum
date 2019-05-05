@@ -18,6 +18,7 @@ package main
 
 import (
 	"io/ioutil"
+	"strconv"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/keystore"
@@ -27,13 +28,14 @@ import (
 	"github.com/ethereum/go-ethereum/contracts/registrar"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"gopkg.in/urfave/cli.v1"
 )
 
-// setupClient creates a client with specified remote URL.
-func setupClient(ctx *cli.Context) *ethclient.Client {
-	url := ctx.GlobalString(clientURLFlag.Name)
+// newClient creates a client with specified remote URL.
+func newClient(ctx *cli.Context) *ethclient.Client {
+	url := ctx.GlobalString(nodeURLFlag.Name)
 	client, err := ethclient.Dial(url)
 	if err != nil {
 		utils.Fatalf("Failed to setup ethereum client at url %s: %v", url, err)
@@ -42,9 +44,8 @@ func setupClient(ctx *cli.Context) *ethclient.Client {
 	return client
 }
 
-// setupDialContext creates a rpc client with specified node URL.
-func setupDialContext(ctx *cli.Context) *rpc.Client {
-	url := ctx.GlobalString(clientURLFlag.Name)
+// newRPCClient creates a rpc client with specified node URL.
+func newRPCClient(url string) *rpc.Client {
 	client, err := rpc.Dial(url)
 	if err != nil {
 		utils.Fatalf("Failed to setup rpc client at url %s: %v", url, err)
@@ -53,23 +54,66 @@ func setupDialContext(ctx *cli.Context) *rpc.Client {
 	return client
 }
 
-// setupContract creates a registrar contract instance with specified
-// contract address or the default contracts for mainnet or testnet.
-func setupContract(client *rpc.Client) *registrar.Registrar {
+// getContractAddr retrieves the register contract address through
+// rpc request.
+func getContractAddr(client *rpc.Client) common.Address {
 	var addr string
 	err := client.Call(&addr, "les_getCheckpointContractAddress")
 	if err != nil {
 		utils.Fatalf("Failed to fetch checkpoint contract address, err %v", err)
 	}
-	contractAddr := common.HexToAddress(addr)
-	if contractAddr == (common.Address{}) {
+	return common.HexToAddress(addr)
+}
+
+// getCheckpoint retrieves the specified checkpoint or the latest one
+// through rpc request.
+func getCheckpoint(ctx *cli.Context, client *rpc.Client) *params.TrustedCheckpoint {
+	var checkpoint *params.TrustedCheckpoint
+
+	if ctx.GlobalIsSet(indexFlag.Name) {
+		var result [3]string
+		index := uint64(ctx.GlobalInt64(indexFlag.Name))
+		if err := client.Call(&result, "les_getCheckpoint", index); err != nil {
+			utils.Fatalf("Failed to get local checkpoint %v, please ensure the les API is exposed", err)
+		}
+		checkpoint = &params.TrustedCheckpoint{
+			SectionIndex: index,
+			SectionHead:  common.HexToHash(result[0]),
+			CHTRoot:      common.HexToHash(result[1]),
+			BloomRoot:    common.HexToHash(result[2]),
+		}
+	} else {
+		var result [4]string
+		err := client.Call(&result, "les_latestCheckpoint")
+		if err != nil {
+			utils.Fatalf("Failed to get local checkpoint %v, please ensure the les API is exposed", err)
+		}
+		index, err := strconv.ParseUint(result[0], 0, 64)
+		if err != nil {
+			utils.Fatalf("Failed to parse checkpoint index %v", err)
+		}
+		checkpoint = &params.TrustedCheckpoint{
+			SectionIndex: index,
+			SectionHead:  common.HexToHash(result[1]),
+			CHTRoot:      common.HexToHash(result[2]),
+			BloomRoot:    common.HexToHash(result[3]),
+		}
+	}
+	return checkpoint
+}
+
+// newContract creates a registrar contract instance with specified
+// contract address or the default contracts for mainnet or testnet.
+func newContract(client *rpc.Client) *registrar.Registrar {
+	addr := getContractAddr(client)
+	if addr == (common.Address{}) {
 		utils.Fatalf("No specified registrar contract address")
 	}
-	contract, err := registrar.NewRegistrar(contractAddr, ethclient.NewClient(client))
+	contract, err := registrar.NewRegistrar(addr, ethclient.NewClient(client))
 	if err != nil {
-		utils.Fatalf("Failed to setup registrar contract %s: %v", contractAddr, err)
+		utils.Fatalf("Failed to setup registrar contract %s: %v", addr, err)
 	}
-	log.Info("Setup registrar contract", "address", contractAddr)
+	log.Info("Setup registrar contract", "address", addr)
 	return contract
 }
 
@@ -90,7 +134,6 @@ func promptPassphrase(confirmation bool) string {
 			utils.Fatalf("Passphrases do not match")
 		}
 	}
-
 	return passphrase
 }
 
@@ -107,13 +150,12 @@ func getPassphrase(ctx *cli.Context) string {
 		}
 		return strings.TrimRight(string(content), "\r\n")
 	}
-
 	// Otherwise prompt the user for the passphrase.
 	return promptPassphrase(false)
 }
 
-// getPrivateKey retrieves the user key through specified key file.
-func getPrivateKey(ctx *cli.Context) *keystore.Key {
+// getKey retrieves the user key through specified key file.
+func getKey(ctx *cli.Context) *keystore.Key {
 	// Read key from file.
 	keyFile := ctx.GlobalString(keyFileFlag.Name)
 	keyJson, err := ioutil.ReadFile(keyFile)

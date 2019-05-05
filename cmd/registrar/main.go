@@ -51,16 +51,18 @@ func init() {
 	app.Commands = []cli.Command{
 		commandQueryAdmin,
 		commandQueryCheckpoint,
-		commandPendingProposal,
 		commandDeployContract,
+		commandSignCheckpoint,
 		commandRegisterCheckpoint,
 	}
 	app.Flags = []cli.Flag{
-		checkpointIndexFlag,
-		sigThresholdFlag,
+		indexFlag,
+		thresholdFlag,
 		keyFileFlag,
-		clientURLFlag,
-		trustedSignerFlag,
+		nodeURLFlag,
+		clefURLFlag,
+		signerFlag,
+		signatureFlag,
 		utils.PasswordFileFlag,
 	}
 	cli.CommandHelpTemplate = commandHelperTemplate
@@ -68,26 +70,35 @@ func init() {
 
 // Commonly used command line flags.
 var (
-	checkpointIndexFlag = cli.Int64Flag{
+	indexFlag = cli.Int64Flag{
 		Name:  "index",
 		Usage: "The index of checkpoint, use the latest index if not specified",
 	}
-	sigThresholdFlag = cli.Int64Flag{
+	thresholdFlag = cli.Int64Flag{
 		Name:  "threshold",
 		Usage: "The minimal signature required to approve a checkpoint",
 	}
 	keyFileFlag = cli.StringFlag{
 		Name:  "keyfile",
-		Usage: "The private key file",
+		Usage: "The private key file(keyfile signature is not recommended)",
 	}
-	clientURLFlag = cli.StringFlag{
+	nodeURLFlag = cli.StringFlag{
 		Name:  "rpc",
 		Value: "http://localhost:8545",
 		Usage: "The rpc endpoint of a local or remote geth node",
 	}
-	trustedSignerFlag = cli.StringFlag{
+	clefURLFlag = cli.StringFlag{
+		Name:  "clef",
+		Value: "http://localhost:8550",
+		Usage: "The rpc endpoint of clef",
+	}
+	signerFlag = cli.StringFlag{
 		Name:  "signer",
 		Usage: "Comma separated accounts to treat as trusted checkpoint signer",
+	}
+	signatureFlag = cli.StringFlag{
+		Name:  "signature",
+		Usage: "Comma separated checkpoint signatures to submit",
 	}
 )
 

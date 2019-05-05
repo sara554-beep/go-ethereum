@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -35,20 +36,21 @@ func testCheckpointSyncing(t *testing.T, protocol int) {
 	waitIndexers := func(cIndexer, bIndexer, btIndexer *core.ChainIndexer) {
 		for {
 			cs, _, _ := cIndexer.Sections()
-			if cs >= 1 {
+			bts, _, _ := btIndexer.Sections()
+			if cs >= 1 && bts >= 1 {
 				break
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	// Generate 512+4 blocks (totally 8 CHT sections)
+	// Generate 512+4 blocks (totally 1 CHT sections)
 	server, client, tearDown := newClientServerEnv(t, int(config.ChtSize+config.ChtConfirms), protocol, waitIndexers, false)
 	defer tearDown()
 
 	// Register checkpoint 0 into the contract at block (512+4)+1
-	bts, _, head := server.bloomTrieIndexer.Sections()
-	chtRoot := light.GetChtRoot(server.db, 7, head)
-	btRoot := light.GetBloomTrieRoot(server.db, bts-1, head)
+	s, _, head := server.chtIndexer.Sections()
+	chtRoot := light.GetChtRoot(server.db, s-1, head)
+	btRoot := light.GetBloomTrieRoot(server.db, s-1, head)
 
 	cp := &params.TrustedCheckpoint{
 		SectionIndex: 0,
@@ -57,7 +59,11 @@ func testCheckpointSyncing(t *testing.T, protocol int) {
 		BloomRoot:    btRoot,
 	}
 	header := server.backend.Blockchain().CurrentHeader()
-	if _, err := server.pm.reg.contract.SetCheckpoint(signerKey, big.NewInt(int64(cp.SectionIndex)), cp.Hash().Bytes(), header.Number.Uint64(), header.Hash()); err != nil {
+
+	data := append([]byte{0x19, 0x00}, append(registrarAddr.Bytes(), append([]byte{0, 0, 0, 0, 0, 0, 0, 0}, cp.Hash().Bytes()...)...)...)
+	sig, _ := crypto.Sign(crypto.Keccak256(data), signerKey)
+	sig[64] += 27 // Transform V from 0/1 to 27/28 according to the yellow paper
+	if _, err := server.pm.reg.contract.RegisterCheckpoint(signerKey, cp.SectionIndex, cp.Hash().Bytes(), new(big.Int).Sub(header.Number, big.NewInt(1)), header.ParentHash, [][]byte{sig}); err != nil {
 		t.Error("register checkpoint failed", err)
 	}
 	server.backend.Commit()

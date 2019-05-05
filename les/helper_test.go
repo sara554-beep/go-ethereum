@@ -67,8 +67,9 @@ var (
 	testBufLimit = uint64(100)
 
 	// Checkpoint registrar relative
-	signerKey, _ = crypto.GenerateKey()
-	signerAddr   = crypto.PubkeyToAddress(signerKey.PublicKey)
+	registrarAddr common.Address
+	signerKey, _  = crypto.GenerateKey()
+	signerAddr    = crypto.PubkeyToAddress(signerKey.PublicKey)
 )
 
 var (
@@ -104,7 +105,7 @@ func prepareTestchain(n int, backend *backends.SimulatedBackend) {
 		switch i {
 		case 0:
 			// deploy checkpoint contract
-			contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, big.NewInt(1))
+			registrarAddr, _, _, _ = contract.DeployContract(bind.NewKeyedTransactor(bankKey), backend, []common.Address{signerAddr}, sectionSize, processConfirms, big.NewInt(1))
 			// bankUser transfers some ether to user1
 			nonce, _ := backend.PendingNonceAt(ctx, bankAddr)
 			tx, _ := types.SignTx(types.NewTransaction(nonce, userAddr1, big.NewInt(10000), params.TxGas, nil, nil), signer, bankKey)
@@ -199,6 +200,7 @@ func newTestProtocolManager(lightSync bool, blocks int, odr *LesOdr, indexers []
 		Name:         "test",
 		ContractAddr: crypto.CreateAddress(bankAddr, 0),
 		Signers:      []common.Address{signerAddr},
+		Threshold:    1,
 	}
 	var reg *checkpointRegistrar
 	if indexers != nil {

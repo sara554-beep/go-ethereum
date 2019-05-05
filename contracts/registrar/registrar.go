@@ -20,13 +20,13 @@ package registrar
 
 import (
 	"crypto/ecdsa"
+	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/contracts/registrar/contract"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 type Registrar struct {
@@ -47,31 +47,43 @@ func (registrar *Registrar) Contract() *contract.Contract {
 	return registrar.contract
 }
 
-// LookupCheckpointEvent searches checkpoint event for specific section in the given log batches.
-func (registrar *Registrar) LookupCheckpointEvent(blockLogs [][]*types.Log, section uint64, hash common.Hash) []*contract.ContractNewCheckpointEvent {
-	var result []*contract.ContractNewCheckpointEvent
+// LookupCheckpointEvent searches checkpoint event for specific section in the
+// given log batches.
+func (registrar *Registrar) LookupCheckpointEvent(blockLogs [][]*types.Log, section uint64, hash common.Hash) []*contract.ContractNewCheckpointVote {
+	var votes []*contract.ContractNewCheckpointVote
 
 	for _, logs := range blockLogs {
 		for _, log := range logs {
-			event, err := registrar.contract.ParseNewCheckpointEvent(*log)
+			event, err := registrar.contract.ParseNewCheckpointVote(*log)
 			if err != nil {
 				continue
 			}
-			if event.Index.Uint64() == section && common.Hash(event.CheckpointHash) == hash {
-				result = append(result, event)
+			if event.Index == section && common.Hash(event.CheckpointHash) == hash {
+				votes = append(votes, event)
 			}
 		}
 	}
-	return result
+	return votes
 }
 
-// SetCheckpoint creates a signature for given checkpoint with specified private key and registers into contract.
-func (registrar *Registrar) SetCheckpoint(key *ecdsa.PrivateKey, sectionIndex *big.Int, hash []byte, identityNumber uint64, identityHash [32]byte) (*types.Transaction, error) {
-	sig, err := crypto.Sign(hash, key)
-	if err != nil {
-		return nil, err
+// RegisterCheckpoint registers the checkpoint with a batch of associated signatures
+// that are collected off-chain and sorted by lexicographical order.
+//
+// Notably all signatures given should be transformed to "ethereum style" which transforms
+// v from 0/1 to 27/28 according to the yellow paper.
+func (registrar *Registrar) RegisterCheckpoint(key *ecdsa.PrivateKey, index uint64, hash []byte, rnum *big.Int, rhash [32]byte, sigs [][]byte) (*types.Transaction, error) {
+	var (
+		r [][32]byte
+		s [][32]byte
+		v []uint8
+	)
+	for i := 0; i < len(sigs); i++ {
+		if len(sigs[i]) != 65 {
+			return nil, errors.New("invalid signature")
+		}
+		r = append(r, common.BytesToHash(sigs[i][:32]))
+		s = append(s, common.BytesToHash(sigs[i][32:64]))
+		v = append(v, sigs[i][64])
 	}
-	var h [32]byte
-	copy(h[:], hash)
-	return registrar.contract.SetCheckpoint(bind.NewKeyedTransactor(key), sectionIndex, h, identityNumber, identityHash, sig)
+	return registrar.contract.SetCheckpoint(bind.NewKeyedTransactor(key), rnum, rhash, common.BytesToHash(hash), index, v, r, s)
 }

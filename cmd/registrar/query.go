@@ -17,7 +17,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -28,51 +27,30 @@ import (
 var commandQueryAdmin = cli.Command{
 	Name:  "queryadmin",
 	Usage: "Fetch the admin list of specified registrar contract",
-	Description: `
-Fetch the admin list of the specified registrar contract which are regarded
-as trusted signers to register checkpoint.
-`,
 	Flags: []cli.Flag{
-		clientURLFlag,
+		nodeURLFlag,
 	},
 	Action: utils.MigrateFlags(queryAdmin),
 }
 
 var commandQueryCheckpoint = cli.Command{
 	Name:  "querycheckpoint",
-	Usage: "Fetch the specified checkpoint in the registrar contract",
-	Description: `
-Fetch the registered checkpoint with the specified index.
-`,
+	Usage: "Fetch the latest registered checkpoint in the registrar contract",
 	Flags: []cli.Flag{
-		clientURLFlag,
+		nodeURLFlag,
 	},
 	Action: utils.MigrateFlags(queryCheckpoint),
 }
 
-var commandPendingProposal = cli.Command{
-	Name:  "queryproposal",
-	Usage: "Fetch the detail of the inflight new checkpoint proposal",
-	Description: `
-Get detailed data of the new checkpoint proposal currently in progress, 
-including the trusted signer address who has been approved and the corresponding 
-checkpoint hash
-`,
-	Flags: []cli.Flag{
-		clientURLFlag,
-	},
-	Action: utils.MigrateFlags(queryProposal),
-}
-
 // queryAdmin fetches the admin list of specified registrar contract.
 func queryAdmin(ctx *cli.Context) error {
-	contract := setupContract(setupDialContext(ctx))
-	adminList, err := contract.Contract().GetAllAdmin(nil)
+	contract := newContract(newRPCClient(ctx.GlobalString(nodeURLFlag.Name)))
+	admins, err := contract.Contract().GetAllAdmin(nil)
 	if err != nil {
 		return err
 	}
-	fmt.Println("Total admin number", len(adminList))
-	for i, admin := range adminList {
+	fmt.Println("Total admin number", len(admins))
+	for i, admin := range admins {
 		fmt.Printf("Admin %d => %s\n", i+1, admin.Hex())
 	}
 	return nil
@@ -81,29 +59,11 @@ func queryAdmin(ctx *cli.Context) error {
 // queryCheckpoint fetches the checkpoint hash with specified index from
 // registrar contract.
 func queryCheckpoint(ctx *cli.Context) error {
-	contract := setupContract(setupDialContext(ctx))
+	contract := newContract(newRPCClient(ctx.GlobalString(nodeURLFlag.Name)))
 	index, checkpoint, height, err := contract.Contract().GetLatestCheckpoint(nil)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("Latest checkpoint(registered at height #%d) %d => %s\n", height, index, common.Hash(checkpoint).Hex())
-	return nil
-}
-
-// queryProposal fetches the detail of inflight new checkpoint proposal
-// with specified contract address.
-func queryProposal(ctx *cli.Context) error {
-	contract := setupContract(setupDialContext(ctx))
-	index, addr, hashes, err := contract.Contract().GetPending(nil)
-	if err != nil {
-		return err
-	}
-	if len(addr) != len(hashes) {
-		return errors.New("trusted signer number is not match with corresponding hash")
-	}
-	fmt.Printf("Pending checkpoint proposal(index #%d)\n", index)
-	for i, a := range addr {
-		fmt.Printf("Signer(%s) => checkpoint hash(%s)\n", a.Hex(), common.Hash(hashes[i]).Hex())
-	}
 	return nil
 }

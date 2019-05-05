@@ -82,10 +82,11 @@ func (pm *ProtocolManager) syncer() {
 // several legacy hardcoded checkpoints in our codebase. These checkpoints are
 // also considered as valid.
 func (pm *ProtocolManager) validateCheckpoint(peer *peer) error {
-	// Fetch the block header corresponding to the checkpoint registration.
-	cp := peer.advertisedCheckpoint
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
+
+	// Fetch the block header corresponding to the checkpoint registration.
+	cp := peer.advertisedCheckpoint
 	header, err := light.GetUntrustedHeaderByNumber(ctx, pm.odr, peer.registeredHeight, peer.id)
 	if err != nil {
 		return err
@@ -96,14 +97,23 @@ func (pm *ProtocolManager) validateCheckpoint(peer *peer) error {
 		return err
 	}
 	events := pm.reg.contract.LookupCheckpointEvent(logs, cp.SectionIndex, cp.Hash())
-	for _, event := range events {
-		valid, signers := pm.reg.verifySigner(event.CheckpointHash, event.Signature)
-		if valid {
-			log.Debug("Verify advertised checkpoint successfully", "peer", peer.id, "signernum", len(signers))
-			return nil
-		}
+	if len(events) == 0 {
+		return errInvalidCheckpoint
 	}
-	return errInvalidCheckpoint
+	var (
+		index      = events[0].Index
+		hash       = events[0].CheckpointHash
+		signatures [][]byte
+	)
+	for _, event := range events {
+		signatures = append(signatures, append(event.R[:], append(event.S[:], event.V)...))
+	}
+	valid, signers := pm.reg.verifySigner(index, hash, signatures)
+	if !valid {
+		return errInvalidCheckpoint
+	}
+	log.Debug("Verify advertised checkpoint successfully", "peer", peer.id, "signernum", len(signers))
+	return nil
 }
 
 // synchronise tries to sync up our local chain with a remote peer.

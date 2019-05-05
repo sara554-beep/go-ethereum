@@ -2,56 +2,16 @@ pragma solidity ^0.5.2;
 
 /**
  * @title Registrar
- * @author Gary Rong<garyrong@ethereum.org>
+ * @author Gary Rong<garyrong@ethereum.org>, Martin Swende <martin.swende@ethereum.org>
  * @dev Implementation of the blockchain checkpoint registrar.
  */
 contract Registrar {
-    /* 
-       Definitions
-    */
-
-    // Vote represents a checkpoint announcement from a trusted signer.
-    struct Vote {
-        address addr;
-        bytes   sig;
-    }
-
-    // PendingProposal represents a tally for current pending new checkpoint
-    // proposal.
-    struct PendingProposal {
-        uint index; // Checkpoint section index
-        uint count; // Number of signers who have submitted checkpoint announcement
-        mapping(address => bytes32) usermap; // map between signer address and advertised checkpoint hash
-        mapping(bytes32 => Vote[]) votemap; // map between checkpoint hash and relative signer announcements.
-    }
-
-    /*
-        Modifiers
-    */
-
-    /**
-     * @dev Check whether the message sender is authorized.
-     */
-    modifier OnlyAuthorized() {
-        require(admins[msg.sender]);
-        _;
-    }
-
-    /**
-     * @dev Check whether the vote truly belongs to local chain.
-     */
-    modifier replayProtection(uint64 _number, bytes32 _hash) {
-        require(blockhash(_number) == _hash);
-        _;
-    }
-
     /*
         Events
     */
 
-    // NewCheckpointEvent is emitted when a new checkpoint proposal receive enough approvals.
-    // We use checkpoint hash instead of the full checkpoint to make the transaction cheaper.
-    event NewCheckpointEvent(uint indexed index, bytes32 checkpointHash, bytes signature);
+    // NewCheckpointVote is emitted when a new checkpoint proposal receives a vote.
+    event NewCheckpointVote(uint64 indexed index, bytes32 checkpointHash, uint8 v, bytes32 r, bytes32 s);
 
     /*
         Public Functions
@@ -75,39 +35,40 @@ contract Registrar {
     function GetLatestCheckpoint()
     view
     public
-    returns(uint, bytes32, uint) {
+    returns(uint64, bytes32, uint) {
         return (sectionIndex, hash, height);
     }
 
-    /**
-     * @dev Submit a new checkpoint announcement
-     * Checkpoint represents a set of post-processed trie roots (CHT and BloomTrie)
-     * associated with the appropriate section head hash.
-     *
-     * It is used to start light syncing from this checkpoint and avoid downloading
-     * the entire header chain while still being able to securely access old headers/logs.
-     *
-     * @param _sectionIndex section index
-     * @param _hash checkpoint hash calculated in the client side
-     * @param _identityNumber block number used to protect transaction replay.
-     * @param _identityHash corresponding block hash used to protect transaction replay.
-     * @param _sig admin's signature for checkpoint hash
-     *         `checkpoint_hash = Hash(index, sectionHead, chtRoot, bloomRoot)`
-     *         `_sig = Sign(privateKey, checkpoint_hash)`
-     * @return indicator whether set checkpoint successfully
-     */
+    // SetCheckpoint sets  a new checkpoint. It accepts a list of signatures
+    // @_recentNumber: a recent blocknumber, for replay protection
+    // @_recentHash : the hash of `_recentNumber`
+    // @_hash : the hash to set at _sectionIndex
+    // @_sectionIndex : the section index to set
+    // @v : the list of v-values
+    // @r : the list or r-values
+    // @s : the list of s-values
     function SetCheckpoint(
-        uint _sectionIndex,
+        uint _recentNumber,
+        bytes32 _recentHash,
         bytes32 _hash,
-        uint64 _identityNumber,
-        bytes32 _identityHash,
-        bytes memory _sig
-    )
-    replayProtection(_identityNumber, _identityHash)
-    OnlyAuthorized
-    public
-    returns(bool)
+        uint64 _sectionIndex,
+        uint8[] memory v,
+        bytes32[] memory r,
+        bytes32[] memory s)
+        public
+        returns (bool)
     {
+        // Ensure the sender is authorized.
+        require(admins[msg.sender]);
+
+        // These checks replay protection, so it cannot be replayed on forks,
+        // accidentally or intentionally
+        require(blockhash(_recentNumber) == _recentHash);
+
+        // Ensure the batch of signatures are valid.
+        require(v.length == r.length);
+        require(v.length == s.length);
+
         // Filter out "future" checkpoint.
         if (block.number < (_sectionIndex+1)*sectionSize+processConfirms) {
             return false;
@@ -121,60 +82,44 @@ contract Registrar {
             return false;
         }
         // Filter out "invalid" announcement
-        if (_hash == "" || _sig.length == 0) {
+        if (_hash == ""){
             return false;
         }
-        // Delete stale pending proposal silently
-        if (pending_proposal.index != _sectionIndex) {
-            deletePending();
-        }
-        bytes32 old = pending_proposal.usermap[msg.sender];
-        // Filter out duplicate announcement
-        if (old == _hash) {
-            return false;
-        }
-        bool isNew = (old == "");
-        pending_proposal.usermap[msg.sender] = _hash;
 
-        if (isNew) {
-            // New checkpoint announcement
-            pending_proposal.count += 1;
-            pending_proposal.index = _sectionIndex;
-            pending_proposal.votemap[_hash].push(Vote({
-                addr: msg.sender,
-                sig:  _sig
-            }));
-        } else {
-            // Checkpoint modification
-            Vote[] storage votes = pending_proposal.votemap[old];
-            for (uint i = 0; i < votes.length - 1; i++) {
-                if (votes[i].addr == msg.sender) {
-                    votes[i] = votes[votes.length - 1];
-                    break;
-                }
+        // EIP 191 style signatures
+        //
+        // Arguments when calculating hash to validate
+        // 1: byte(0x19) - the initial 0x19 byte
+        // 2: byte(0) - the version byte (data with intended validator)
+        // 3: this - the validator address
+        // --  Application specific data
+        // 4 : checkpoint section_index(uint64)
+        // 5 : checkpoint hash (bytes32)
+        //     hash = keccak256(checkpoint_index, section_head, cht_root, bloom_root)
+        bytes32 signedHash = keccak256(abi.encodePacked(byte(0x19), byte(0), this, _sectionIndex, _hash));
+
+        address lastVoter = address(0);
+
+        // In order for us not to have to maintain a mapping of who has already
+        // voted, and we don't want to count a vote twice, the signatures must
+        // be submitted in strict ordering.
+        for (uint idx = 0; idx < v.length; idx++){
+            address signer = ecrecover(signedHash, v[idx], r[idx], s[idx]);
+            require(admins[signer]);
+            require(uint256(signer) > uint256(lastVoter));
+            lastVoter = signer;
+            emit NewCheckpointVote(_sectionIndex, _hash, v[idx], r[idx], s[idx]);
+
+            // Sufficient signatures present, update latest checkpoint.
+            if (idx+1 >= threshold){
+                hash = _hash;
+                height = block.number;
+                sectionIndex = _sectionIndex;
+                return true;
             }
-            delete votes[votes.length-1];
-            votes.length -= 1;
-            pending_proposal.votemap[_hash].push(Vote({
-                addr: msg.sender,
-                sig:  _sig
-            }));
         }
-        if (pending_proposal.votemap[_hash].length < threshold) {
-           return true;
-        }
-        // Update latest checkpoint
-        hash = _hash;
-        height = block.number;
-        sectionIndex = _sectionIndex;
-
-        bytes memory sigs;
-        for (uint idx = 0; idx < threshold; idx++) {
-            sigs = abi.encodePacked(sigs, pending_proposal.votemap[_hash][idx].sig);
-        }
-        emit NewCheckpointEvent(_sectionIndex, _hash, sigs);
-        deletePending();
-        return true;
+        // We shouldn't wind up here, reverting un-emits the events
+        revert();
     }
 
     /**
@@ -193,53 +138,9 @@ contract Registrar {
         return ret;
     }
 
-    /**
-     * @dev Get the detail of pending proposal
-     * @return checkpoint index
-     * @return signers who have submitted checkpoint announcement
-     * @return hashes corresponding checkpoint hash
-     */
-    function GetPending()
-    public
-    view
-    returns(uint, address[] memory, bytes32[] memory)
-    {
-        uint idx = 0;
-        address[] memory addr = new address[](pending_proposal.count);
-        bytes32[] memory hashes = new bytes32[](pending_proposal.count);
-        for (uint i = 0; i < adminList.length; i++) {
-            bytes32 h = pending_proposal.usermap[adminList[i]];
-            if (h != "") {
-                addr[idx] = adminList[i];
-                hashes[idx] = h;
-                idx += 1;
-            }
-        }
-        return (pending_proposal.index, addr, hashes);
-    }
-
-    /**
-     * @dev Clear pending proposal
-     */
-    function deletePending()
-    private
-    {
-        for (uint i = 0; i < adminList.length; i++) {
-            bytes32 h = pending_proposal.usermap[adminList[i]];
-            if (h != "") {
-                delete pending_proposal.votemap[h];
-                delete pending_proposal.usermap[adminList[i]];
-            }
-        }
-        delete pending_proposal;
-    }
-
     /*
         Fields
     */
-    // Inflight new stable checkpoint proposal.
-    PendingProposal pending_proposal;
-
     // A map of admin users who have the permission to update CHT and bloom Trie root
     mapping(address => bool) admins;
 
@@ -247,7 +148,7 @@ contract Registrar {
     address[] adminList;
 
     // Latest stored section id
-    uint sectionIndex;
+    uint64 sectionIndex;
 
     // The block height associated with latest registered checkpoint.
     uint height;
@@ -264,10 +165,10 @@ contract Registrar {
     // We have to make sure the checkpoint registered will not be invalid due to
     // chain reorg.
     //
-    // The default value should be the same as the checkpoint process confirmations(256) 
+    // The default value should be the same as the checkpoint process confirmations(256)
     // in the ethereum.
     uint processConfirms;
-    
+
     // The required signatures to finalize a stable checkpoint.
     uint threshold;
 }
