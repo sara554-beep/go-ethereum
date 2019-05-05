@@ -168,9 +168,9 @@ The arguments are interpreted as block numbers or hashes.
 Use "ethereum dump 0" to dump the genesis block.`,
 	}
 	upgradeAncientCommand = cli.Command{
-		Action:    utils.MigrateFlags(upgradeAncient),
-		Name:      "upgrade-ancient",
-		Usage:     "Upgrade ancient store path forcibly",
+		Action:    utils.MigrateFlags(migrateAncient),
+		Name:      "migrate-ancient",
+		Usage:     "migrate ancient database forcibly",
 		ArgsUsage: " ",
 		Flags: []cli.Flag{
 			utils.DataDirFlag,
@@ -523,7 +523,7 @@ func dump(ctx *cli.Context) error {
 	return nil
 }
 
-func upgradeAncient(ctx *cli.Context) error {
+func migrateAncient(ctx *cli.Context) error {
 	node, config := makeConfigNode(ctx)
 	defer node.Close()
 
@@ -542,16 +542,20 @@ func upgradeAncient(ctx *cli.Context) error {
 		freezer = config.Node.ResolvePath(freezer)
 	}
 	stored := rawdb.ReadAncientPath(kvdb)
-	if stored != freezer {
-		confirm, err := console.Stdin.PromptConfirm(fmt.Sprintf("Are you sure to upgrade ancient path? old:%s, new:%s", stored, freezer))
+	if stored != freezer && stored != "" {
+		confirm, err := console.Stdin.PromptConfirm(fmt.Sprintf("Are you sure to migrate ancient database from %s to %s?", stored, freezer))
 		switch {
 		case err != nil:
 			utils.Fatalf("%v", err)
 		case !confirm:
-			log.Warn("Ancient path upgrade aborted")
+			log.Warn("Ancient database migration aborted")
 		default:
+			// TODO(rjl493456442) This only works on the unix/linux, but not windows.
+			if err := os.Rename(stored, freezer); err != nil {
+				utils.Fatalf("Migrate ancient database failed, err:%v", err)
+			}
 			rawdb.WriteAncientPath(kvdb, freezer)
-			log.Info("Ancient path successfully upgraded")
+			log.Info("Ancient database successfully migrated")
 		}
 	}
 	return nil
@@ -564,21 +568,7 @@ func inspect(ctx *cli.Context) error {
 	_, chainDb := utils.MakeChain(ctx, node)
 	defer chainDb.Close()
 
-	// Spawn a goroutine to print some user-friendly logs.
-	stopCh := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		for {
-			select {
-			case <-ticker.C:
-				log.Info("Inspecting database...")
-			case <-stopCh:
-				return
-			}
-		}
-	}()
-	rawdb.InspectDatabase(chainDb, stopCh)
-	return nil
+	return rawdb.InspectDatabase(chainDb)
 }
 
 // hashish returns true for strings that look like hashes.

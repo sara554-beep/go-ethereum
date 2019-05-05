@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -152,40 +153,42 @@ func NewLevelDBDatabaseWithFreezer(file string, cache int, handles int, freezer 
 	}
 	// Make sure we always use the same ancient store.
 	//
-	//                    stored == nil        stored != nil
-	//                 +------------------------------------------------
-	// freezer == nil  |  non-freezer mode  |  ancient store is missing
-	// freezer != nil  |  initialize        |  ensure consistency
+	//                 | stored == nil    | stored != nil
+	// ----------------+------------------+----------------------
+	// freezer == nil  | non-freezer mode | ancient store missing
+	// freezer != nil  | initialize       | ensure consistency
 	stored := ReadAncientPath(kvdb)
 	if stored == "" && freezer != "" {
 		WriteAncientPath(kvdb, freezer)
-		log.Info("Record initial ancient path", "path", freezer)
 	} else if stored != freezer {
-		log.Warn("Ancient store mismatch", "stored", stored, "given", freezer)
-		log.Crit("Please use a consistent ancient path or modify it via the command line tool `geth upgrade-ancient`")
+		log.Warn("Ancient path mismatch", "stored", stored, "given", freezer)
+		log.Crit("Please use a consistent ancient path or migrate it via the command line tool `geth migrate-ancient`")
 	}
 	return frdb, nil
 }
 
 // InspectDatabase traverses the entire database and checks the size
 // of all different categories of data.
-func InspectDatabase(db ethdb.Database, stopCh chan struct{}) {
+func InspectDatabase(db ethdb.Database) error {
 	it := db.NewIterator()
 	defer it.Release()
 
 	var (
+		count int64
+		start = time.Now()
+
 		// Key-value store statistics
-		total             common.StorageSize
-		headerSize        common.StorageSize
-		bodySize          common.StorageSize
-		receiptSize       common.StorageSize
-		tdSize            common.StorageSize
-		numHashPairing    common.StorageSize
-		hashNumberPairing common.StorageSize
-		trieSize          common.StorageSize
-		txlookupSize      common.StorageSize
-		preimageSize      common.StorageSize
-		bloomBitsSize     common.StorageSize
+		total          common.StorageSize
+		headerSize     common.StorageSize
+		bodySize       common.StorageSize
+		receiptSize    common.StorageSize
+		tdSize         common.StorageSize
+		numHashPairing common.StorageSize
+		hashNumPairing common.StorageSize
+		trieSize       common.StorageSize
+		txlookupSize   common.StorageSize
+		preimageSize   common.StorageSize
+		bloomBitsSize  common.StorageSize
 
 		// Ancient store statistics
 		ancientHeaders  common.StorageSize
@@ -209,7 +212,7 @@ func InspectDatabase(db ethdb.Database, stopCh chan struct{}) {
 		case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
 			headerSize += size
 		case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
-			hashNumberPairing += size
+			hashNumPairing += size
 		case bytes.HasPrefix(key, blockBodyPrefix) && len(key) == (len(blockBodyPrefix)+8+common.HashLength):
 			bodySize += size
 		case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
@@ -223,6 +226,10 @@ func InspectDatabase(db ethdb.Database, stopCh chan struct{}) {
 		case len(key) == common.HashLength:
 			trieSize += size
 		}
+		count += 1
+		if count%100000000 == 0 {
+			log.Info("Inspecting database", "count", count, "elapsed", common.PrettyDuration(time.Since(start)))
+		}
 	}
 	// Inspect append-only file store then.
 	ancients := []*common.StorageSize{&ancientHeaders, &ancientBodies, &ancientReceipts, &ancientHashes, &ancientTds}
@@ -232,15 +239,14 @@ func InspectDatabase(db ethdb.Database, stopCh chan struct{}) {
 			total += common.StorageSize(size)
 		}
 	}
-	close(stopCh)
-
+	// Display the database statistic.
 	stats := [][]string{
 		{"Key-Value store", "Headers", headerSize.String()},
 		{"Key-Value store", "Bodies", bodySize.String()},
 		{"Key-Value store", "Receipts", receiptSize.String()},
 		{"Key-Value store", "Total Difficulty", tdSize.String()},
 		{"Key-Value store", "Block <number-hash> pairings", numHashPairing.String()},
-		{"Key-Value store", "Block <hash-number> pairings", hashNumberPairing.String()},
+		{"Key-Value store", "Block <hash-number> pairings", hashNumPairing.String()},
 		{"Key-Value store", "Trie nodes", trieSize.String()},
 		{"Key-Value store", "Transaction indexes", txlookupSize.String()},
 		{"Key-Value store", "Preimages", preimageSize.String()},
@@ -256,4 +262,6 @@ func InspectDatabase(db ethdb.Database, stopCh chan struct{}) {
 	table.SetFooter([]string{"", "Total", total.String()}) // Add Footer
 	table.AppendBulk(stats)
 	table.Render()
+
+	return nil
 }
