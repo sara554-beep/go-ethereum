@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,10 @@ var (
 	// errOutOrderInsertion is returned if the user attempts to inject out-of-order
 	// binary blobs into the freezer.
 	errOutOrderInsertion = errors.New("the append operation is out-order")
+
+	// errInvalidDatadir is returned if the ancient directory specified by user
+	// is a symbolic link.
+	errInvalidDatadir = errors.New("symbolic link datadir is not supported")
 )
 
 const (
@@ -78,6 +83,13 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 		readMeter  = metrics.NewRegisteredMeter(namespace+"ancient/read", nil)
 		writeMeter = metrics.NewRegisteredMeter(namespace+"ancient/write", nil)
 	)
+	// Ensure the datadir is not a symbolic link if it exists.
+	if info, err := os.Lstat(datadir); !os.IsNotExist(err) {
+		if info.Mode()&os.ModeSymlink != 0 {
+			log.Warn("Symbolic link ancient database is not supported", "path", datadir)
+			return nil, errInvalidDatadir
+		}
+	}
 	// Leveldb uses LOCK as the filelock filename. To prevent the
 	// name collision, we use FLOCK as the lock name.
 	lock, _, err := fileutil.Flock(filepath.Join(datadir, "FLOCK"))

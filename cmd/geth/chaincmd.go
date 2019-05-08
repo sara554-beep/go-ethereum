@@ -26,6 +26,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"errors"
+	"io"
+	"io/ioutil"
+
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/console"
@@ -550,9 +554,12 @@ func migrateAncient(ctx *cli.Context) error {
 		case !confirm:
 			log.Warn("Ancient database migration aborted")
 		default:
-			// TODO(rjl493456442) This only works on the unix/linux, but not windows.
-			if err := os.Rename(stored, freezer); err != nil {
-				utils.Fatalf("Migrate ancient database failed, err:%v", err)
+			if err := rename(stored, freezer); err != nil {
+				// Renaming a file can fail if the source and destination
+				// are on different file systems.
+				if err := moveAncient(stored, freezer); err != nil {
+					utils.Fatalf("Migrate ancient database failed, %v", err)
+				}
 			}
 			rawdb.WriteAncientPath(kvdb, freezer)
 			log.Info("Ancient database successfully migrated")
@@ -575,4 +582,73 @@ func inspect(ctx *cli.Context) error {
 func hashish(x string) bool {
 	_, err := strconv.Atoi(x)
 	return err != nil
+}
+
+// copyFileSynced copies data from source file to destination
+// and synces the dest file forcibly.
+func copyFileSynced(src string, dest string, info os.FileInfo) error {
+	data, err := ioutil.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	n, err := f.Write(data)
+	if err == nil && n < len(data) {
+		err = io.ErrShortWrite
+	}
+	if err1 := f.Sync(); err == nil {
+		err = err1
+	}
+	if err1 := f.Close(); err == nil {
+		err = err1
+	}
+	return err
+}
+
+// copyDirSynced recursively copies files under the specified dir
+// to dest and synces the dest dir forcibly.
+func copyDirSynced(src string, dest string, info os.FileInfo) error {
+	if err := os.MkdirAll(dest, os.ModePerm); err != nil {
+		return err
+	}
+	defer os.Chmod(dest, info.Mode())
+
+	objects, err := ioutil.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, obj := range objects {
+		// All files in ancient database should be flatten files.
+		if !obj.Mode().IsRegular() {
+			continue
+		}
+		subsrc, subdest := filepath.Join(src, obj.Name()), filepath.Join(dest, obj.Name())
+		if err := copyFileSynced(subsrc, subdest, obj); err != nil {
+			return err
+		}
+	}
+	return syncDir(dest)
+}
+
+// moveAncient migrates ancient database from source to destination.
+func moveAncient(src string, dest string) error {
+	srcinfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !srcinfo.IsDir() {
+		return errors.New("ancient directory expected")
+	}
+	if destinfo, err := os.Lstat(dest); !os.IsNotExist(err) {
+		if destinfo.Mode()&os.ModeSymlink != 0 {
+			return errors.New("symbolic link datadir is not supported")
+		}
+	}
+	if err := copyDirSynced(src, dest, srcinfo); err != nil {
+		return err
+	}
+	return os.RemoveAll(src)
 }
