@@ -18,17 +18,16 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
-
-	"errors"
-	"io"
-	"io/ioutil"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
@@ -171,7 +170,7 @@ Remove blockchain and state databases`,
 The arguments are interpreted as block numbers or hashes.
 Use "ethereum dump 0" to dump the genesis block.`,
 	}
-	upgradeAncientCommand = cli.Command{
+	migrateAncientCommand = cli.Command{
 		Action:    utils.MigrateFlags(migrateAncient),
 		Name:      "migrate-ancient",
 		Usage:     "migrate ancient database forcibly",

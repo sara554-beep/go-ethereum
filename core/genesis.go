@@ -166,7 +166,23 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, constant
 		} else {
 			log.Info("Writing custom genesis block")
 		}
-		block, err := genesis.Commit(db)
+		block, err := genesis.Commit(db, true)
+		return genesis.Config, block.Hash(), err
+	}
+
+	// We have the genesis block in database(perhaps in ancient database)
+	// but the corresponding state is missing.
+	header := rawdb.ReadHeader(db, stored, 0)
+	if _, err := state.New(header.Root, state.NewDatabaseWithCache(db, 0)); err != nil {
+		if genesis == nil {
+			genesis = DefaultGenesisBlock()
+		}
+		// Ensure the stored genesis matches with the given one.
+		hash := genesis.ToBlock(nil).Hash()
+		if hash != stored {
+			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
+		}
+		block, err := genesis.Commit(db, false)
 		return genesis.Config, block.Hash(), err
 	}
 
@@ -267,16 +283,19 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
-func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+func (g *Genesis) Commit(db ethdb.Database, writeBlock bool) (*types.Block, error) {
 	block := g.ToBlock(db)
 	if block.Number().Sign() != 0 {
 		return nil, fmt.Errorf("can't commit genesis block with number > 0")
 	}
-	rawdb.WriteTd(db, block.Hash(), block.NumberU64(), g.Difficulty)
-	rawdb.WriteBlock(db, block)
-	rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), nil)
-	rawdb.WriteCanonicalHash(db, block.Hash(), block.NumberU64())
+	if writeBlock {
+		rawdb.WriteTd(db, block.Hash(), block.NumberU64(), g.Difficulty)
+		rawdb.WriteBlock(db, block)
+		rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), nil)
+		rawdb.WriteCanonicalHash(db, block.Hash(), block.NumberU64())
+	}
 	rawdb.WriteHeadBlockHash(db, block.Hash())
+	rawdb.WriteHeadFastBlockHash(db, block.Hash())
 	rawdb.WriteHeadHeaderHash(db, block.Hash())
 
 	config := g.Config
@@ -290,7 +309,7 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 // MustCommit writes the genesis block and state to db, panicking on error.
 // The block is committed as the canonical head block.
 func (g *Genesis) MustCommit(db ethdb.Database) *types.Block {
-	block, err := g.Commit(db)
+	block, err := g.Commit(db, true)
 	if err != nil {
 		panic(err)
 	}

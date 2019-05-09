@@ -216,10 +216,27 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	if bc.genesisBlock == nil {
 		return nil, ErrNoGenesis
 	}
+	// Initialize the chain with ancient data if it isn't empty.
+	if bc.empty() {
+		if frozen, err := bc.db.Ancients(); err == nil && frozen > 0 {
+			hash := rawdb.ReadCanonicalHash(bc.db, frozen-1)
+			if hash == (common.Hash{}) {
+				return nil, errors.New("broken ancient database")
+			}
+			rawdb.WriteHeadHeaderHash(bc.db, hash)
+			rawdb.WriteHeadFastBlockHash(bc.db, hash)
+
+			// Inject all hash<->number mapping.
+			for i := uint64(0); i < frozen; i++ {
+				rawdb.WriteHeaderNumber(bc.db, rawdb.ReadCanonicalHash(bc.db, i), i)
+			}
+			log.Info("Initialize chain with ancient", "number", frozen-1, "hash", hash)
+		}
+	}
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
 	}
-	if frozen, err := bc.db.Ancients(); err == nil && frozen >= 1 {
+	if frozen, err := bc.db.Ancients(); err == nil && frozen > 0 {
 		var (
 			needRewind bool
 			low        uint64
@@ -277,6 +294,20 @@ func (bc *BlockChain) getProcInterrupt() bool {
 // GetVMConfig returns the block chain VM config.
 func (bc *BlockChain) GetVMConfig() *vm.Config {
 	return &bc.vmConfig
+}
+
+// empty returns an indicator whether the blockchain is empty.
+// Note, it's a special case that we connect a non-empty ancient
+// database with an empty node, so that we can plugin the ancient
+// into node seamlessly.
+func (bc *BlockChain) empty() bool {
+	genesis := bc.genesisBlock.Hash()
+	for _, hash := range []common.Hash{rawdb.ReadHeadBlockHash(bc.db), rawdb.ReadHeadHeaderHash(bc.db), rawdb.ReadHeadFastBlockHash(bc.db)} {
+		if hash != genesis {
+			return false
+		}
+	}
+	return true
 }
 
 // loadLastState loads the last known chain state from the database. This method
