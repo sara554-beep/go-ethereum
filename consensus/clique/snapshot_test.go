@@ -401,7 +401,7 @@ func TestClique(t *testing.T) {
 		}
 		// Create a pristine blockchain with the genesis injected
 		db := rawdb.NewMemoryDatabase()
-		genesis.Commit(db, true)
+		genesis.Commit(db)
 
 		// Assemble a chain of headers from the cast votes
 		config := *params.TestChainConfig

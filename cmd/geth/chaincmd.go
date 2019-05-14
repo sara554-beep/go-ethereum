@@ -600,14 +600,14 @@ func copyFileSynced(src string, dest string, info os.FileInfo) error {
 	// The maximum size of ancient file is 2GB, 4MB buffer is suitable here.
 	buff := make([]byte, 4*1024*1024)
 	for {
-		n, err := srcf.Read(buff)
+		rn, err := srcf.Read(buff)
 		if err != nil && err != io.EOF {
 			return err
 		}
-		if n == 0 {
+		if rn == 0 {
 			break
 		}
-		if _, err := destf.Write(buff[:n]); err != nil {
+		if wn, err := destf.Write(buff[:rn]); err != nil || wn != rn {
 			return err
 		}
 	}

@@ -1023,13 +1023,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		}
 		previous = nil // disable rollback explicitly
 
-		// Remove the ancient data from the active store
-		cleanGenesis := len(blockChain) > 0 && blockChain[0].NumberU64() == 1
-		if cleanGenesis {
-			// Migrate genesis block to ancient store too.
-			rawdb.DeleteBlockWithoutNumber(batch, rawdb.ReadCanonicalHash(bc.db, 0), 0)
-			rawdb.DeleteCanonicalHash(batch, 0)
-		}
 		// Wipe out canonical block data.
 		for _, block := range blockChain {
 			rawdb.DeleteBlockWithoutNumber(batch, block.Hash(), block.NumberU64())
@@ -1039,6 +1032,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			return 0, err
 		}
 		batch.Reset()
+
 		// Wipe out side chain too.
 		for _, block := range blockChain {
 			for _, hash := range rawdb.ReadAllHashes(bc.db, block.NumberU64()) {
