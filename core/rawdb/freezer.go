@@ -41,9 +41,9 @@ var (
 	// binary blobs into the freezer.
 	errOutOrderInsertion = errors.New("the append operation is out-order")
 
-	// errInvalidDatadir is returned if the ancient directory specified by user
+	// errSymlinkDatadir is returned if the ancient directory specified by user
 	// is a symbolic link.
-	errInvalidDatadir = errors.New("symbolic link datadir is not supported")
+	errSymlinkDatadir = errors.New("symbolic link datadir is not supported")
 )
 
 const (
@@ -87,7 +87,7 @@ func newFreezer(datadir string, namespace string) (*freezer, error) {
 	if info, err := os.Lstat(datadir); !os.IsNotExist(err) {
 		if info.Mode()&os.ModeSymlink != 0 {
 			log.Warn("Symbolic link ancient database is not supported", "path", datadir)
-			return nil, errInvalidDatadir
+			return nil, errSymlinkDatadir
 		}
 	}
 	// Leveldb uses LOCK as the filelock filename. To prevent the

@@ -197,6 +197,7 @@ Use "ethereum dump 0" to dump the genesis block.`,
 			utils.TestnetFlag,
 			utils.RinkebyFlag,
 			utils.GoerliFlag,
+			utils.SyncModeFlag,
 		},
 		Category: "BLOCKCHAIN COMMANDS",
 	}
@@ -586,22 +587,34 @@ func hashish(x string) bool {
 // copyFileSynced copies data from source file to destination
 // and synces the dest file forcibly.
 func copyFileSynced(src string, dest string, info os.FileInfo) error {
-	data, err := ioutil.ReadFile(src)
+	srcf, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	defer srcf.Close()
+
+	destf, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
-	n, err := f.Write(data)
-	if err == nil && n < len(data) {
-		err = io.ErrShortWrite
+	// The maximum size of ancient file is 2GB, 4MB buffer is suitable here.
+	buff := make([]byte, 4*1024*1024)
+	for {
+		n, err := srcf.Read(buff)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+		if _, err := destf.Write(buff[:n]); err != nil {
+			return err
+		}
 	}
-	if err1 := f.Sync(); err == nil {
+	if err1 := destf.Sync(); err == nil {
 		err = err1
 	}
-	if err1 := f.Close(); err == nil {
+	if err1 := destf.Close(); err == nil {
 		err = err1
 	}
 	return err

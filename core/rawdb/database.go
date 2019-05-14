@@ -196,6 +196,10 @@ func InspectDatabase(db ethdb.Database) error {
 		ancientReceipts common.StorageSize
 		ancientHashes   common.StorageSize
 		ancientTds      common.StorageSize
+
+		// Les statistic
+		ChtTrieNodes   common.StorageSize
+		BloomTrieNodes common.StorageSize
 	)
 	// Inspect key-value database first.
 	for it.Next() {
@@ -223,6 +227,10 @@ func InspectDatabase(db ethdb.Database) error {
 			preimageSize += size
 		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
 			bloomBitsSize += size
+		case bytes.HasPrefix(key, []byte("cht-")) && len(key) == 4+common.HashLength:
+			ChtTrieNodes += size
+		case bytes.HasPrefix(key, []byte("blt-")) && len(key) == 4+common.HashLength:
+			BloomTrieNodes += size
 		case len(key) == common.HashLength:
 			trieSize += size
 		}
@@ -256,12 +264,13 @@ func InspectDatabase(db ethdb.Database) error {
 		{"Ancient store", "Receipts", ancientReceipts.String()},
 		{"Ancient store", "Total Difficulty", ancientTds.String()},
 		{"Ancient store", "Block <number-hash> pairings", ancientHashes.String()},
+		{"Light client", "CHT trie nodes", ChtTrieNodes.String()},
+		{"Light client", "Bloom trie nodes", BloomTrieNodes.String()},
 	}
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetHeader([]string{"Database", "Category", "Size"})
 	table.SetFooter([]string{"", "Total", total.String()}) // Add Footer
 	table.AppendBulk(stats)
 	table.Render()
-
 	return nil
 }

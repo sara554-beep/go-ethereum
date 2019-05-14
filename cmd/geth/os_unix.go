@@ -1,8 +1,7 @@
 // Copyright (c) 2012, Suryandaru Triandana <syndtr@gmail.com>
 // All rights reserved.
 //
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+// Use of this source code is governed by a BSD-style license.
 //
 // +build darwin dragonfly freebsd linux netbsd openbsd solaris
 
