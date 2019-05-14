@@ -219,19 +219,26 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	// Initialize the chain with ancient data if it isn't empty.
 	if bc.empty() {
 		if frozen, err := bc.db.Ancients(); err == nil && frozen > 0 {
-			// Inject all hash<->number mapping.
 			for i := uint64(0); i < frozen; i++ {
+				// Inject hash<->number mapping.
 				hash := rawdb.ReadCanonicalHash(bc.db, i)
 				if hash == (common.Hash{}) {
 					return nil, errors.New("broken ancient database")
 				}
 				rawdb.WriteHeaderNumber(bc.db, hash, i)
+
+				// Inject txlookup indexes.
+				block := rawdb.ReadBlock(bc.db, hash, i)
+				if block == nil {
+					return nil, errors.New("broken ancient database")
+				}
+				rawdb.WriteTxLookupEntries(bc.db, block)
 			}
 			hash := rawdb.ReadCanonicalHash(bc.db, frozen-1)
 			rawdb.WriteHeadHeaderHash(bc.db, hash)
 			rawdb.WriteHeadFastBlockHash(bc.db, hash)
 
-			log.Info("Initialize chain with ancient", "number", frozen-1, "hash", hash)
+			log.Info("Initialized chain with ancients", "number", frozen-1, "hash", hash)
 		}
 	}
 	if err := bc.loadLastState(); err != nil {

@@ -174,8 +174,9 @@ func InspectDatabase(db ethdb.Database) error {
 	defer it.Release()
 
 	var (
-		count int64
-		start = time.Now()
+		count  int64
+		start  = time.Now()
+		logged = time.Now()
 
 		// Key-value store statistics
 		total          common.StorageSize
@@ -235,8 +236,9 @@ func InspectDatabase(db ethdb.Database) error {
 			trieSize += size
 		}
 		count += 1
-		if count%100000000 == 0 {
+		if count%1000 == 0 && time.Since(logged) > 8*time.Second {
 			log.Info("Inspecting database", "count", count, "elapsed", common.PrettyDuration(time.Since(start)))
+			logged = time.Now()
 		}
 	}
 	// Inspect append-only file store then.
