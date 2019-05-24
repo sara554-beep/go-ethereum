@@ -106,7 +106,6 @@ func (f *freeClientPool) connect(address, id string) bool {
 	if f.closed {
 		return false
 	}
-
 	if f.connectedLimit == 0 {
 		log.Debug("Client rejected", "address", address)
 		return false

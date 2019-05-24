@@ -165,12 +165,14 @@ type priorityClientInfo struct {
 
 // newPriorityClientPool creates a new priority client pool
 func newPriorityClientPool(freeClientCap uint64, ps *peerSet, child clientPool) *priorityClientPool {
-	return &priorityClientPool{
+	pool := &priorityClientPool{
 		clients:       make(map[enode.ID]priorityClientInfo),
 		freeClientCap: freeClientCap,
 		ps:            ps,
 		child:         child,
 	}
+	ps.notify(pool)
+	return pool
 }
 
 // registerPeer is called when a new client is connected. If the client has no
@@ -436,7 +438,7 @@ func (api *PrivateLightServerAPI) Benchmark(setups []map[string]interface{}, pas
 			return nil, ErrUnknownBenchmarkType
 		}
 	}
-	rs := api.server.protocolManager.runBenchmark(benchmarks, passCount, time.Millisecond*time.Duration(length))
+	rs := api.server.handler.runBenchmark(benchmarks, passCount, time.Millisecond*time.Duration(length))
 	result := make([]map[string]interface{}, len(setups))
 	for i, r := range rs {
 		res := make(map[string]interface{})

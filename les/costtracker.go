@@ -30,7 +30,10 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-const makeCostStats = false // make request cost statistics during operation
+const (
+	makeCostStats = false // make request cost statistics during operation
+	bufLimitRatio = 6000  // fixed bufLimit/MRR ratio
+)
 
 var (
 	// average request cost estimates based on serving time

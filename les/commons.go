@@ -22,20 +22,45 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/p2p/discv5"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 )
 
+func errResp(code errCode, format string, v ...interface{}) error {
+	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
+}
+
+func lesTopic(genesisHash common.Hash, protocolVersion uint) discv5.Topic {
+	var name string
+	switch protocolVersion {
+	case lpv2:
+		name = "LES2"
+	default:
+		panic(nil)
+	}
+	return discv5.Topic(name + "@" + common.Bytes2Hex(genesisHash.Bytes()[0:8]))
+}
+
+type chainReader interface {
+	CurrentHeader() *types.Header
+}
+
 // lesCommons contains fields needed by both server and client.
 type lesCommons struct {
+	genesis                      common.Hash
 	config                       *eth.Config
+	chainConfig                  *params.ChainConfig
 	iConfig                      *light.IndexerConfig
 	chainDb                      ethdb.Database
-	protocolManager              *ProtocolManager
+	peers                        *peerSet
+	chainReader                  chainReader
 	chtIndexer, bloomTrieIndexer *core.ChainIndexer
 }
 
@@ -51,24 +76,21 @@ type NodeInfo struct {
 }
 
 // makeProtocols creates protocol descriptors for the given LES versions.
-func (c *lesCommons) makeProtocols(versions []uint) []p2p.Protocol {
+func (c *lesCommons) makeProtocols(versions []uint, runPeer func(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) error, peerInfo func(id enode.ID) interface{}) []p2p.Protocol {
 	protos := make([]p2p.Protocol, len(versions))
 	for i, version := range versions {
 		version := version
 		protos[i] = p2p.Protocol{
-			Name:     "les",
-			Version:  version,
-			Length:   ProtocolLengths[version],
-			NodeInfo: c.nodeInfo,
-			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-				return c.protocolManager.runPeer(version, p, rw)
+			Name:    "les",
+			Version: version,
+			Length:  ProtocolLengths[version],
+			NodeInfo: func() interface{} {
+				return c.nodeInfo()
 			},
-			PeerInfo: func(id enode.ID) interface{} {
-				if p := c.protocolManager.peers.Peer(fmt.Sprintf("%x", id.Bytes())); p != nil {
-					return p.Info()
-				}
-				return nil
+			Run: func(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
+				return runPeer(version, peer, rw)
 			},
+			PeerInfo: peerInfo,
 		}
 	}
 	return protos
@@ -93,16 +115,14 @@ func (c *lesCommons) nodeInfo() interface{} {
 			BloomRoot:    light.GetBloomTrieRoot(c.chainDb, sectionIndex, sectionHead),
 		}
 	}
-
-	chain := c.protocolManager.blockchain
-	head := chain.CurrentHeader()
-	hash := head.Hash()
+	header := c.chainReader.CurrentHeader()
+	number, hash := header.Number.Uint64(), header.Hash()
 	return &NodeInfo{
 		Network:    c.config.NetworkId,
-		Difficulty: chain.GetTd(hash, head.Number.Uint64()),
-		Genesis:    chain.Genesis().Hash(),
-		Config:     chain.Config(),
-		Head:       chain.CurrentHeader().Hash(),
+		Difficulty: rawdb.ReadTd(c.chainDb, hash, number),
+		Genesis:    c.genesis,
+		Config:     c.chainConfig,
+		Head:       hash,
 		CHT:        cht,
 	}
 }

@@ -53,7 +53,7 @@ func (odr *LesOdr) Database() ethdb.Database {
 	return odr.db
 }
 
-// SetIndexers adds the necessary chain indexers to the ODR backend
+// SetIndexers adds the necessary chain indexers to the ODR server
 func (odr *LesOdr) SetIndexers(chtIndexer, bloomTrieIndexer, bloomIndexer *core.ChainIndexer) {
 	odr.chtIndexer = chtIndexer
 	odr.bloomTrieIndexer = bloomTrieIndexer
@@ -108,7 +108,7 @@ func (odr *LesOdr) Retrieve(ctx context.Context, req light.OdrRequest) (err erro
 		},
 		canSend: func(dp distPeer) bool {
 			p := dp.(*peer)
-			if !p.isOnlyAnnounce {
+			if !p.announceOnly {
 				return lreq.CanSend(p)
 			}
 			return false
