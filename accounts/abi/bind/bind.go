@@ -130,7 +130,7 @@ func Bind(types []string, abis []string, bytecodes []string, pkg string, lang La
 			events[original.Name] = &tmplEvent{Original: original, Normalized: normalized}
 		}
 
-		// There is no easy way to pass java arbitrary objects to go side.
+		// There is no easy way to pass arbitrary java objects to the Go side.
 		if len(structs) > 0 && lang == LangJava {
 			return "", errors.New("java binding for tuple arguments is not supported yet")
 		}
@@ -210,8 +210,7 @@ func bindBasicTypeGo(kind abi.Type) string {
 	case abi.BytesTy:
 		return "[]byte"
 	case abi.FunctionTy:
-		// todo(rjl493456442)
-		return ""
+		return "[24]byte"
 	default:
 		// string, bool types
 		return kind.String()
@@ -271,8 +270,7 @@ func bindBasicTypeJava(kind abi.Type) string {
 	case abi.StringTy:
 		return "String"
 	case abi.FunctionTy:
-		// todo(rjl493456442)
-		return ""
+		return "byte[24]"
 	default:
 		return kind.String()
 	}
