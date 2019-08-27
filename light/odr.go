@@ -111,6 +111,7 @@ type BlockRequest struct {
 	OdrRequest
 	Hash   common.Hash
 	Number uint64
+	Header *types.Header
 	Rlp    []byte
 }
 
@@ -119,7 +120,7 @@ func (req *BlockRequest) StoreResult(db ethdb.Database) {
 	rawdb.WriteBodyRLP(db, req.Hash, req.Number, req.Rlp)
 }
 
-// ReceiptsRequest is the ODR request type for retrieving block bodies
+// ReceiptsRequest is the ODR request type for retrieving receipts.
 type ReceiptsRequest struct {
 	OdrRequest
 	Untrusted bool // Indicator whether the result retrieved is trusted or not
