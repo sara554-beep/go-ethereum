@@ -20,42 +20,50 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
-func NewState(ctx context.Context, head *types.Header, odr OdrBackend) *state.StateDB {
-	state, _ := state.New(head.Root, NewStateDatabase(ctx, head, odr))
+func NewState(ctx context.Context, head *types.Header, odr OdrBackend, cdnURL string, cdnSwitch time.Duration) *state.StateDB {
+	state, _ := state.New(head.Root, NewStateDatabase(ctx, head, odr, cdnURL, cdnSwitch))
 	return state
 }
 
-func NewStateDatabase(ctx context.Context, head *types.Header, odr OdrBackend) state.Database {
-	return &odrDatabase{ctx, StateTrieID(head), odr}
+func NewStateDatabase(ctx context.Context, head *types.Header, odr OdrBackend, cdnURL string, cdnSwitch time.Duration) state.Database {
+	return &odrDatabase{ctx, StateTrieID(head), odr, cdnURL, cdnSwitch}
 }
 
 type odrDatabase struct {
-	ctx     context.Context
-	id      *TrieID
-	backend OdrBackend
+	ctx       context.Context
+	id        *TrieID
+	backend   OdrBackend
+	cdnURL    string
+	cdnSwitch time.Duration
 }
 
 func (db *odrDatabase) OpenTrie(root common.Hash) (state.Trie, error) {
-	return &odrTrie{db: db, id: db.id}, nil
+	return &odrTrie{db: db, id: db.id, cdnURL: db.cdnURL, cdnSwitch: db.cdnSwitch}, nil
 }
 
 func (db *odrDatabase) OpenStorageTrie(addrHash, root common.Hash) (state.Trie, error) {
-	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root)}, nil
+	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root), cdnURL: db.cdnURL, cdnSwitch: db.cdnSwitch}, nil
 }
 
 func (db *odrDatabase) CopyTrie(t state.Trie) state.Trie {
 	switch t := t.(type) {
 	case *odrTrie:
-		cpy := &odrTrie{db: t.db, id: t.id}
+		cpy := &odrTrie{db: t.db, id: t.id, cdnURL: t.cdnURL, cdnSwitch: t.cdnSwitch}
 		if t.trie != nil {
 			cpytrie := *t.trie
 			cpy.trie = &cpytrie
@@ -73,11 +81,22 @@ func (db *odrDatabase) ContractCode(addrHash, codeHash common.Hash) ([]byte, err
 	if code, err := db.backend.Database().Get(codeHash[:]); err == nil {
 		return code, nil
 	}
-	id := *db.id
-	id.AccKey = addrHash[:]
-	req := &CodeRequest{Id: &id, Hash: codeHash}
-	err := db.backend.Retrieve(db.ctx, req)
-	return req.Data, err
+	ctx, cancel := context.WithCancel(db.ctx)
+	fetchData(db.cdnURL, db.cdnSwitch, func() error {
+		id := &TrieID{
+			BlockNumber: db.id.BlockNumber,
+			BlockHash:   db.id.BlockHash,
+			Root:        db.id.Root,
+			AccKey:      addrHash.Bytes(),
+		}
+		req := &CodeRequest{Id: id, Hash: codeHash}
+		return db.backend.Retrieve(ctx, req)
+	}, func() error {
+		return fetchCodeFromCDN(db.cdnURL, codeHash, db.backend.Database())
+	}, func() {
+		cancel()
+	})
+	return db.backend.Database().Get(codeHash[:])
 }
 
 func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, error) {
@@ -90,9 +109,11 @@ func (db *odrDatabase) TrieDB() *trie.Database {
 }
 
 type odrTrie struct {
-	db   *odrDatabase
-	id   *TrieID
-	trie *trie.Trie
+	db        *odrDatabase
+	id        *TrieID
+	trie      *trie.Trie
+	cdnURL    string
+	cdnSwitch time.Duration
 }
 
 func (t *odrTrie) TryGet(key []byte) ([]byte, error) {
@@ -156,11 +177,19 @@ func (t *odrTrie) do(key []byte, fn func() error) error {
 		if err == nil {
 			err = fn()
 		}
-		if _, ok := err.(*trie.MissingNodeError); !ok {
+		trieError, ok := err.(*trie.MissingNodeError)
+		if !ok {
 			return err
 		}
-		r := &TrieRequest{Id: t.id, Key: key}
-		if err := t.db.backend.Retrieve(t.db.ctx, r); err != nil {
+		ctx, cancel := context.WithCancel(t.db.ctx)
+		if err := fetchData(t.cdnURL, t.cdnSwitch, func() error {
+			r := &TrieRequest{Id: t.id, Key: key}
+			return t.db.backend.Retrieve(ctx, r)
+		}, func() error {
+			return fetchNodesFromCDN(t.cdnURL, trieError.NodeHash, t.db.backend.Database())
+		}, func() {
+			cancel()
+		}); err != nil {
 			return err
 		}
 	}
@@ -240,4 +269,106 @@ func nibblesToKey(nib []byte) []byte {
 		key[bi] = nib[ni]<<4 | nib[ni+1]
 	}
 	return key
+}
+
+func fetchCodeFromCDN(url string, codeHash common.Hash, db ethdb.Database) error {
+	res, err := http.Get(fmt.Sprintf("%s/state/0x%x?target=%d&limit=%d&barrier=%d", url, codeHash, 16, 256, 2))
+	if err != nil {
+		return err
+	}
+	blob, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	var nodes [][]byte
+	if err := rlp.DecodeBytes(blob, &nodes); err != nil {
+		return err
+	}
+	db.Put(codeHash.Bytes(), nodes[0])
+	return nil
+}
+
+func fetchNodesFromCDN(url string, root common.Hash, db ethdb.Database) error {
+	res, err := http.Get(fmt.Sprintf("%s/state/0x%x?target=%d&limit=%d&barrier=%d", url, root, 16, 256, 2))
+	if err != nil {
+		return err
+	}
+	blob, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+
+	var nodes [][]byte
+	if err := rlp.DecodeBytes(blob, &nodes); err != nil {
+		return err
+	}
+	// Write all retrieved nodes in the specified tile into database
+	for _, node := range nodes {
+		db.Put(crypto.Keccak256(node), node)
+	}
+	return nil
+}
+
+func fetchData(cdnURL string, cdnSwitch time.Duration, p2pFetcher func() error, cdnFetcher func() error, stopP2P func()) (err error) {
+	defer func(start time.Time) {
+		log.Debug("Retrieved data", "elapsed", common.PrettyDuration(time.Since(start)))
+	}(time.Now())
+
+	var (
+		count   int
+		wg      sync.WaitGroup
+		errorCh = make(chan error, 2)
+		closeCh = make(chan struct{})
+	)
+	// If no external CDN is configured or p2p request is not disabled,
+	// spin up a p2p fetcher.
+	if (cdnURL == "" || cdnSwitch != 0) && p2pFetcher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := p2pFetcher()
+			select {
+			case errorCh <- err:
+			case <-closeCh:
+			}
+		}()
+	}
+	// If external CDN is configured, spin up a cdn fetcher.
+	if cdnURL != "" && cdnFetcher != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case <-time.NewTimer(cdnSwitch).C:
+			case <-closeCh:
+				return
+			}
+			select {
+			case errorCh <- cdnFetcher():
+				stopP2P()
+			case <-closeCh:
+			}
+		}()
+	}
+
+loop:
+	for {
+		select {
+		case cerr := <-errorCh:
+			if cerr != nil {
+				count += 1
+				if count == 2 {
+					break loop
+				}
+				continue
+			}
+			err = cerr
+			break loop
+		}
+	}
+	close(closeCh)
+	wg.Wait()
+	return
 }

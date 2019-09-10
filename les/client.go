@@ -19,6 +19,7 @@ package les
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -48,6 +49,11 @@ import (
 type LightEthereum struct {
 	lesCommons
 
+	// CDN configurations
+	lesCDNURL    string        // The URL of les cdn if configured
+	lesCDNSwitch time.Duration // The maximum waiting time on p2p network before switch to CDN
+
+	// Handles
 	reqDist    *requestDistributor
 	retriever  *retrieveManager
 	odr        *LesOdr
@@ -89,6 +95,8 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 			peers:       peers,
 			closeCh:     make(chan struct{}),
 		},
+		lesCDNURL:      config.LesCDNURL,
+		lesCDNSwitch:   config.LesCDNSwitch,
 		eventMux:       ctx.EventMux,
 		reqDist:        newRequestDistributor(peers, &mclock.System{}),
 		accountManager: ctx.AccountManager,
