@@ -76,7 +76,7 @@ func makeChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common
 
 // fetcherTester is a test simulator for mocking out local block chain.
 type fetcherTester struct {
-	fetcher *Fetcher
+	fetcher *BlockFetcher
 
 	hashes []common.Hash                // Hash chain belonging to the tester
 	blocks map[common.Hash]*types.Block // Blocks belonging to the tester
@@ -286,7 +286,7 @@ func testSequentialAnnouncements(t *testing.T, protocol int) {
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
-	// Iteratively announce blocks until all are imported
+	// Iteratively blockAnnounce blocks until all are imported
 	imported := make(chan *types.Block)
 	tester.fetcher.importedHook = func(block *types.Block) { imported <- block }
 
@@ -324,7 +324,7 @@ func testConcurrentAnnouncements(t *testing.T, protocol int) {
 		atomic.AddUint32(&counter, 1)
 		return secondHeaderFetcher(hash)
 	}
-	// Iteratively announce blocks until all are imported
+	// Iteratively blockAnnounce blocks until all are imported
 	imported := make(chan *types.Block)
 	tester.fetcher.importedHook = func(block *types.Block) { imported <- block }
 
@@ -357,7 +357,7 @@ func testOverlappingAnnouncements(t *testing.T, protocol int) {
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
-	// Iteratively announce blocks, but overlap them continuously
+	// Iteratively blockAnnounce blocks, but overlap them continuously
 	overlap := 16
 	imported := make(chan *types.Block, len(hashes)-1)
 	for i := 0; i < overlap; i++ {
@@ -435,7 +435,7 @@ func testRandomArrivalImport(t *testing.T, protocol int) {
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
-	// Iteratively announce blocks, skipping one entry
+	// Iteratively blockAnnounce blocks, skipping one entry
 	imported := make(chan *types.Block, len(hashes)-1)
 	tester.fetcher.importedHook = func(block *types.Block) { imported <- block }
 
@@ -445,19 +445,19 @@ func testRandomArrivalImport(t *testing.T, protocol int) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	// Finally announce the skipped entry and check full import
+	// Finally blockAnnounce the skipped entry and check full import
 	tester.fetcher.Notify("valid", hashes[skip], uint64(len(hashes)-skip-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
 	verifyImportCount(t, imported, len(hashes)-1)
 }
 
-// Tests that direct block enqueues (due to block propagation vs. hash announce)
+// Tests that direct block enqueues (due to block propagation vs. hash blockAnnounce)
 // are correctly schedule, filling and import queue gaps.
 func TestQueueGapFill62(t *testing.T) { testQueueGapFill(t, 62) }
 func TestQueueGapFill63(t *testing.T) { testQueueGapFill(t, 63) }
 func TestQueueGapFill64(t *testing.T) { testQueueGapFill(t, 64) }
 
 func testQueueGapFill(t *testing.T, protocol int) {
-	// Create a chain of blocks to import, and choose one to not announce at all
+	// Create a chain of blocks to import, and choose one to not blockAnnounce at all
 	targetBlocks := maxQueueDist
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 	skip := targetBlocks / 2
@@ -466,7 +466,7 @@ func testQueueGapFill(t *testing.T, protocol int) {
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
-	// Iteratively announce blocks, skipping one entry
+	// Iteratively blockAnnounce blocks, skipping one entry
 	imported := make(chan *types.Block, len(hashes)-1)
 	tester.fetcher.importedHook = func(block *types.Block) { imported <- block }
 
@@ -668,7 +668,7 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 	imported := make(chan *types.Block)
 	tester.fetcher.importedHook = func(block *types.Block) { imported <- block }
 
-	// Iteratively announce blocks until all are imported
+	// Iteratively blockAnnounce blocks until all are imported
 	for i := len(hashes) - 2; i >= 0; i-- {
 		tester.fetcher.Notify("valid", hashes[i], uint64(len(hashes)-i-1), time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
 
@@ -722,7 +722,7 @@ func testHashMemoryExhaustionAttack(t *testing.T, protocol int) {
 		tester.fetcher.Notify("attacker", attack[i], 1 /* don't distance drop */, time.Now(), attackerHeaderFetcher, attackerBodyFetcher)
 	}
 	if count := atomic.LoadInt32(&announces); count != hashLimit+maxQueueDist {
-		t.Fatalf("queued announce count mismatch: have %d, want %d", count, hashLimit+maxQueueDist)
+		t.Fatalf("queued blockAnnounce count mismatch: have %d, want %d", count, hashLimit+maxQueueDist)
 	}
 	// Wait for fetches to complete
 	verifyImportCount(t, imported, maxQueueDist)

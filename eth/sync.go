@@ -38,8 +38,9 @@ const (
 )
 
 type txsync struct {
-	p   *peer
-	txs []*types.Transaction
+	p      *peer
+	hashes []common.Hash
+	txs    []*types.Transaction
 }
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
@@ -53,7 +54,7 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 		return
 	}
 	select {
-	case pm.txsyncCh <- &txsync{p, txs}:
+	case pm.txsyncCh <- &txsync{p: p, txs: txs}:
 	case <-pm.quitSync:
 	}
 }
@@ -75,20 +76,26 @@ func (pm *ProtocolManager) txsyncLoop() {
 		// Fill pack with transactions up to the target size.
 		size := common.StorageSize(0)
 		pack.p = s.p
+		pack.hashes = pack.hashes[:0]
 		pack.txs = pack.txs[:0]
 		for i := 0; i < len(s.txs) && size < txsyncPackSize; i++ {
+			pack.hashes = append(pack.hashes, s.txs[i].Hash())
 			pack.txs = append(pack.txs, s.txs[i])
 			size += s.txs[i].Size()
 		}
 		// Remove the transactions that will be sent.
-		s.txs = s.txs[:copy(s.txs, s.txs[len(pack.txs):])]
+		s.txs = s.txs[:copy(s.txs, s.txs[len(pack.hashes):])]
 		if len(s.txs) == 0 {
 			delete(pending, s.p.ID())
 		}
 		// Send the pack in the background.
 		s.p.Log().Trace("Sending batch of transactions", "count", len(pack.txs), "bytes", size)
 		sending = true
-		go func() { done <- pack.p.SendTransactions(pack.txs) }()
+		if s.p.version >= eth64 {
+			go func() { done <- pack.p.SendTransactionHashes(pack.hashes) }()
+		} else {
+			go func() { done <- pack.p.SendTransactions(pack.txs) }()
+		}
 	}
 
 	// pick chooses the next pending sync.
@@ -133,8 +140,9 @@ func (pm *ProtocolManager) txsyncLoop() {
 // downloading hashes and blocks as well as handling the announcement handler.
 func (pm *ProtocolManager) syncer() {
 	// Start and ensure cleanup of sync mechanisms
-	pm.fetcher.Start()
-	defer pm.fetcher.Stop()
+	pm.blockFetcher.Start()
+	defer pm.blockFetcher.Stop()
+	defer pm.txFetcher.Stop()
 	defer pm.downloader.Terminate()
 
 	// Wait for different events to fire synchronisation operations

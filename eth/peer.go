@@ -46,6 +46,8 @@ const (
 	// contain a single transaction, or thousands.
 	maxQueuedTxs = 128
 
+	maxQueuedTxAnns = 256
+
 	// maxQueuedProps is the maximum number of block propagations to queue up before
 	// dropping broadcasts. There's not much point in queueing stale blocks, so a few
 	// that might cover uncles should be enough.
@@ -86,26 +88,28 @@ type peer struct {
 	td   *big.Int
 	lock sync.RWMutex
 
-	knownTxs    mapset.Set                // Set of transaction hashes known to be known by this peer
-	knownBlocks mapset.Set                // Set of block hashes known to be known by this peer
-	queuedTxs   chan []*types.Transaction // Queue of transactions to broadcast to the peer
-	queuedProps chan *propEvent           // Queue of blocks to broadcast to the peer
-	queuedAnns  chan *types.Block         // Queue of blocks to announce to the peer
-	term        chan struct{}             // Termination channel to stop the broadcaster
+	knownTxs     mapset.Set                // Set of transaction hashes known to be known by this peer
+	knownBlocks  mapset.Set                // Set of block hashes known to be known by this peer
+	queuedTxs    chan []*types.Transaction // Queue of transactions to broadcast to the peer
+	queuedTxAnns chan []common.Hash
+	queuedProps  chan *propEvent   // Queue of blocks to broadcast to the peer
+	queuedAnns   chan *types.Block // Queue of blocks to announce to the peer
+	term         chan struct{}     // Termination channel to stop the broadcaster
 }
 
 func newPeer(version int, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
 	return &peer{
-		Peer:        p,
-		rw:          rw,
-		version:     version,
-		id:          fmt.Sprintf("%x", p.ID().Bytes()[:8]),
-		knownTxs:    mapset.NewSet(),
-		knownBlocks: mapset.NewSet(),
-		queuedTxs:   make(chan []*types.Transaction, maxQueuedTxs),
-		queuedProps: make(chan *propEvent, maxQueuedProps),
-		queuedAnns:  make(chan *types.Block, maxQueuedAnns),
-		term:        make(chan struct{}),
+		Peer:         p,
+		rw:           rw,
+		version:      version,
+		id:           fmt.Sprintf("%x", p.ID().Bytes()[:8]),
+		knownTxs:     mapset.NewSet(),
+		knownBlocks:  mapset.NewSet(),
+		queuedTxs:    make(chan []*types.Transaction, maxQueuedTxs),
+		queuedTxAnns: make(chan []common.Hash, maxQueuedTxAnns),
+		queuedProps:  make(chan *propEvent, maxQueuedProps),
+		queuedAnns:   make(chan *types.Block, maxQueuedAnns),
+		term:         make(chan struct{}),
 	}
 }
 
@@ -120,6 +124,12 @@ func (p *peer) broadcast() {
 				return
 			}
 			p.Log().Trace("Broadcast transactions", "count", len(txs))
+
+		case hashes := <-p.queuedTxAnns:
+			if err := p.SendTransactionHashes(hashes); err != nil {
+				return
+			}
+			p.Log().Trace("Announced transactions", "count", len(hashes))
 
 		case prop := <-p.queuedProps:
 			if err := p.SendNewBlock(prop.block, prop.td); err != nil {
@@ -194,6 +204,19 @@ func (p *peer) MarkTransaction(hash common.Hash) {
 	p.knownTxs.Add(hash)
 }
 
+// SendTransactionHashes sends a batch of transaction hashes to the peer and
+// includes the hashes in its transaction hash set for future reference.
+func (p *peer) SendTransactionHashes(hashes []common.Hash) error {
+	// Mark all the transactions as known, but ensure we don't overflow our limits
+	for _, hash := range hashes {
+		p.knownTxs.Add(hash)
+	}
+	for p.knownTxs.Cardinality() >= maxKnownTxs {
+		p.knownTxs.Pop()
+	}
+	return p2p.Send(p.rw, NewTxHashesMsg, hashes)
+}
+
 // SendTransactions sends transactions to the peer and includes the hashes
 // in its transaction hash set for future reference.
 func (p *peer) SendTransactions(txs types.Transactions) error {
@@ -204,6 +227,10 @@ func (p *peer) SendTransactions(txs types.Transactions) error {
 	for p.knownTxs.Cardinality() >= maxKnownTxs {
 		p.knownTxs.Pop()
 	}
+	return p2p.Send(p.rw, TxMsg, txs)
+}
+
+func (p *peer) SendTransactionRLP(txs []rlp.RawValue) error {
 	return p2p.Send(p.rw, TxMsg, txs)
 }
 
@@ -221,6 +248,23 @@ func (p *peer) AsyncSendTransactions(txs []*types.Transaction) {
 		}
 	default:
 		p.Log().Debug("Dropping transaction propagation", "count", len(txs))
+	}
+}
+
+// AsyncSendTransactions queues list of transactions propagation to a remote
+// peer. If the peer's broadcast queue is full, the event is silently dropped.
+func (p *peer) AsyncSendTransactionHashes(hashes []common.Hash) {
+	select {
+	case p.queuedTxAnns <- hashes:
+		// Mark all the transactions as known, but ensure we don't overflow our limits
+		for _, hash := range hashes {
+			p.knownTxs.Add(hash)
+		}
+		for p.knownTxs.Cardinality() >= maxKnownTxs {
+			p.knownTxs.Pop()
+		}
+	default:
+		p.Log().Debug("Dropping transaction announcement", "count", len(hashes))
 	}
 }
 
@@ -350,6 +394,12 @@ func (p *peer) RequestNodeData(hashes []common.Hash) error {
 func (p *peer) RequestReceipts(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
 	return p2p.Send(p.rw, GetReceiptsMsg, hashes)
+}
+
+// RequestTxs fetches a batch of transactions from a remote node.
+func (p *peer) RequestTxs(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
+	return p2p.Send(p.rw, GetTxsMsg, hashes)
 }
 
 // Handshake executes the eth protocol handshake, negotiating version number,

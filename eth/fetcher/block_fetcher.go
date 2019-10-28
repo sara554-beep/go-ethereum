@@ -67,9 +67,9 @@ type chainInsertFn func(types.Blocks) (int, error)
 // peerDropFn is a callback type for dropping a peer detected as malicious.
 type peerDropFn func(id string)
 
-// announce is the hash notification of the availability of a new block in the
+// blockAnnounce is the hash notification of the availability of a new block in the
 // network.
-type announce struct {
+type blockAnnounce struct {
 	hash   common.Hash   // Hash of the block being announced
 	number uint64        // Number of the block being announced (0 = unknown | old protocol)
 	header *types.Header // Header of the block partially reassembled (new protocol)
@@ -97,18 +97,18 @@ type bodyFilterTask struct {
 	time         time.Time              // Arrival time of the blocks' contents
 }
 
-// inject represents a schedules import operation.
-type inject struct {
+// blockInject represents a schedules import operation.
+type blockInject struct {
 	origin string
 	block  *types.Block
 }
 
-// Fetcher is responsible for accumulating block announcements from various peers
+// BlockFetcher is responsible for accumulating block announcements from various peers
 // and scheduling them for retrieval.
-type Fetcher struct {
+type BlockFetcher struct {
 	// Various event channels
-	notify chan *announce
-	inject chan *inject
+	notify chan *blockAnnounce
+	inject chan *blockInject
 
 	headerFilter chan chan *headerFilterTask
 	bodyFilter   chan chan *bodyFilterTask
@@ -117,16 +117,16 @@ type Fetcher struct {
 	quit chan struct{}
 
 	// Announce states
-	announces  map[string]int              // Per peer announce counts to prevent memory exhaustion
-	announced  map[common.Hash][]*announce // Announced blocks, scheduled for fetching
-	fetching   map[common.Hash]*announce   // Announced blocks, currently fetching
-	fetched    map[common.Hash][]*announce // Blocks with headers fetched, scheduled for body retrieval
-	completing map[common.Hash]*announce   // Blocks with headers, currently body-completing
+	announces  map[string]int                   // Per peer blockAnnounce counts to prevent memory exhaustion
+	announced  map[common.Hash][]*blockAnnounce // Announced blocks, scheduled for fetching
+	fetching   map[common.Hash]*blockAnnounce   // Announced blocks, currently fetching
+	fetched    map[common.Hash][]*blockAnnounce // Blocks with headers fetched, scheduled for body retrieval
+	completing map[common.Hash]*blockAnnounce   // Blocks with headers, currently body-completing
 
 	// Block cache
-	queue  *prque.Prque            // Queue containing the import operations (block number sorted)
-	queues map[string]int          // Per peer block counts to prevent memory exhaustion
-	queued map[common.Hash]*inject // Set of already queued blocks (to dedupe imports)
+	queue  *prque.Prque                 // Queue containing the import operations (block number sorted)
+	queues map[string]int               // Per peer block counts to prevent memory exhaustion
+	queued map[common.Hash]*blockInject // Set of already queued blocks (to dedupe imports)
 
 	// Callbacks
 	getBlock       blockRetrievalFn   // Retrieves a block from the local chain
@@ -137,7 +137,7 @@ type Fetcher struct {
 	dropPeer       peerDropFn         // Drops a peer for misbehaving
 
 	// Testing hooks
-	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the announce list
+	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
 	queueChangeHook    func(common.Hash, bool) // Method to call upon adding or deleting a block from the import queue
 	fetchingHook       func([]common.Hash)     // Method to call upon starting a block (eth/61) or header (eth/62) fetch
 	completingHook     func([]common.Hash)     // Method to call upon starting a block body fetch (eth/62)
@@ -145,22 +145,22 @@ type Fetcher struct {
 }
 
 // New creates a block fetcher to retrieve blocks based on hash announcements.
-func New(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertChain chainInsertFn, dropPeer peerDropFn) *Fetcher {
-	return &Fetcher{
-		notify:         make(chan *announce),
-		inject:         make(chan *inject),
+func New(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBlock blockBroadcasterFn, chainHeight chainHeightFn, insertChain chainInsertFn, dropPeer peerDropFn) *BlockFetcher {
+	return &BlockFetcher{
+		notify:         make(chan *blockAnnounce),
+		inject:         make(chan *blockInject),
 		headerFilter:   make(chan chan *headerFilterTask),
 		bodyFilter:     make(chan chan *bodyFilterTask),
 		done:           make(chan common.Hash),
 		quit:           make(chan struct{}),
 		announces:      make(map[string]int),
-		announced:      make(map[common.Hash][]*announce),
-		fetching:       make(map[common.Hash]*announce),
-		fetched:        make(map[common.Hash][]*announce),
-		completing:     make(map[common.Hash]*announce),
+		announced:      make(map[common.Hash][]*blockAnnounce),
+		fetching:       make(map[common.Hash]*blockAnnounce),
+		fetched:        make(map[common.Hash][]*blockAnnounce),
+		completing:     make(map[common.Hash]*blockAnnounce),
 		queue:          prque.New(nil),
 		queues:         make(map[string]int),
-		queued:         make(map[common.Hash]*inject),
+		queued:         make(map[common.Hash]*blockInject),
 		getBlock:       getBlock,
 		verifyHeader:   verifyHeader,
 		broadcastBlock: broadcastBlock,
@@ -172,21 +172,21 @@ func New(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, broadcastBloc
 
 // Start boots up the announcement based synchroniser, accepting and processing
 // hash notifications and block fetches until termination requested.
-func (f *Fetcher) Start() {
+func (f *BlockFetcher) Start() {
 	go f.loop()
 }
 
 // Stop terminates the announcement based synchroniser, canceling all pending
 // operations.
-func (f *Fetcher) Stop() {
+func (f *BlockFetcher) Stop() {
 	close(f.quit)
 }
 
 // Notify announces the fetcher of the potential availability of a new block in
 // the network.
-func (f *Fetcher) Notify(peer string, hash common.Hash, number uint64, time time.Time,
+func (f *BlockFetcher) Notify(peer string, hash common.Hash, number uint64, time time.Time,
 	headerFetcher headerRequesterFn, bodyFetcher bodyRequesterFn) error {
-	block := &announce{
+	block := &blockAnnounce{
 		hash:        hash,
 		number:      number,
 		time:        time,
@@ -203,8 +203,8 @@ func (f *Fetcher) Notify(peer string, hash common.Hash, number uint64, time time
 }
 
 // Enqueue tries to fill gaps the fetcher's future import queue.
-func (f *Fetcher) Enqueue(peer string, block *types.Block) error {
-	op := &inject{
+func (f *BlockFetcher) Enqueue(peer string, block *types.Block) error {
+	op := &blockInject{
 		origin: peer,
 		block:  block,
 	}
@@ -218,7 +218,7 @@ func (f *Fetcher) Enqueue(peer string, block *types.Block) error {
 
 // FilterHeaders extracts all the headers that were explicitly requested by the fetcher,
 // returning those that should be handled differently.
-func (f *Fetcher) FilterHeaders(peer string, headers []*types.Header, time time.Time) []*types.Header {
+func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time time.Time) []*types.Header {
 	log.Trace("Filtering headers", "peer", peer, "headers", len(headers))
 
 	// Send the filter channel to the fetcher
@@ -246,7 +246,7 @@ func (f *Fetcher) FilterHeaders(peer string, headers []*types.Header, time time.
 
 // FilterBodies extracts all the block bodies that were explicitly requested by
 // the fetcher, returning those that should be handled differently.
-func (f *Fetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, time time.Time) ([][]*types.Transaction, [][]*types.Header) {
+func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transaction, uncles [][]*types.Header, time time.Time) ([][]*types.Transaction, [][]*types.Header) {
 	log.Trace("Filtering bodies", "peer", peer, "txs", len(transactions), "uncles", len(uncles))
 
 	// Send the filter channel to the fetcher
@@ -274,7 +274,7 @@ func (f *Fetcher) FilterBodies(peer string, transactions [][]*types.Transaction,
 
 // Loop is the main fetcher loop, checking and processing various notification
 // events.
-func (f *Fetcher) loop() {
+func (f *BlockFetcher) loop() {
 	// Iterate the block fetching until a quit is requested
 	fetchTimer := time.NewTimer(0)
 	completeTimer := time.NewTimer(0)
@@ -289,7 +289,7 @@ func (f *Fetcher) loop() {
 		// Import any queued blocks that could potentially fit
 		height := f.chainHeight()
 		for !f.queue.Empty() {
-			op := f.queue.PopItem().(*inject)
+			op := f.queue.PopItem().(*blockInject)
 			hash := op.block.Hash()
 			if f.queueChangeHook != nil {
 				f.queueChangeHook(hash, false)
@@ -313,7 +313,7 @@ func (f *Fetcher) loop() {
 		// Wait for an outside event to occur
 		select {
 		case <-f.quit:
-			// Fetcher terminating, abort all operations
+			// BlockFetcher terminating, abort all operations
 			return
 
 		case notification := <-f.notify:
@@ -439,7 +439,7 @@ func (f *Fetcher) loop() {
 
 			// Split the batch of headers into unknown ones (to return to the caller),
 			// known incomplete ones (requiring body retrievals) and completed blocks.
-			unknown, incomplete, complete := []*types.Header{}, []*announce{}, []*types.Block{}
+			unknown, incomplete, complete := []*types.Header{}, []*blockAnnounce{}, []*types.Block{}
 			for _, header := range task.headers {
 				hash := header.Hash()
 
@@ -475,7 +475,7 @@ func (f *Fetcher) loop() {
 						f.forgetHash(hash)
 					}
 				} else {
-					// Fetcher doesn't know about it, add to the return list
+					// BlockFetcher doesn't know about it, add to the return list
 					unknown = append(unknown, header)
 				}
 			}
@@ -562,8 +562,8 @@ func (f *Fetcher) loop() {
 	}
 }
 
-// rescheduleFetch resets the specified fetch timer to the next announce timeout.
-func (f *Fetcher) rescheduleFetch(fetch *time.Timer) {
+// rescheduleFetch resets the specified fetch timer to the next blockAnnounce timeout.
+func (f *BlockFetcher) rescheduleFetch(fetch *time.Timer) {
 	// Short circuit if no blocks are announced
 	if len(f.announced) == 0 {
 		return
@@ -579,7 +579,7 @@ func (f *Fetcher) rescheduleFetch(fetch *time.Timer) {
 }
 
 // rescheduleComplete resets the specified completion timer to the next fetch timeout.
-func (f *Fetcher) rescheduleComplete(complete *time.Timer) {
+func (f *BlockFetcher) rescheduleComplete(complete *time.Timer) {
 	// Short circuit if no headers are fetched
 	if len(f.fetched) == 0 {
 		return
@@ -596,7 +596,7 @@ func (f *Fetcher) rescheduleComplete(complete *time.Timer) {
 
 // enqueue schedules a new future import operation, if the block to be imported
 // has not yet been seen.
-func (f *Fetcher) enqueue(peer string, block *types.Block) {
+func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 	hash := block.Hash()
 
 	// Ensure the peer isn't DOSing us
@@ -616,7 +616,7 @@ func (f *Fetcher) enqueue(peer string, block *types.Block) {
 	}
 	// Schedule the block for future importing
 	if _, ok := f.queued[hash]; !ok {
-		op := &inject{
+		op := &blockInject{
 			origin: peer,
 			block:  block,
 		}
@@ -633,7 +633,7 @@ func (f *Fetcher) enqueue(peer string, block *types.Block) {
 // insert spawns a new goroutine to run a block insertion into the chain. If the
 // block's number is at the same height as the current import phase, it updates
 // the phase states accordingly.
-func (f *Fetcher) insert(peer string, block *types.Block) {
+func (f *BlockFetcher) insert(peer string, block *types.Block) {
 	hash := block.Hash()
 
 	// Run the import on a new thread
@@ -681,7 +681,7 @@ func (f *Fetcher) insert(peer string, block *types.Block) {
 
 // forgetHash removes all traces of a block announcement from the fetcher's
 // internal state.
-func (f *Fetcher) forgetHash(hash common.Hash) {
+func (f *BlockFetcher) forgetHash(hash common.Hash) {
 	// Remove all pending announces and decrement DOS counters
 	for _, announce := range f.announced[hash] {
 		f.announces[announce.origin]--
@@ -723,7 +723,7 @@ func (f *Fetcher) forgetHash(hash common.Hash) {
 
 // forgetBlock removes all traces of a queued block from the fetcher's internal
 // state.
-func (f *Fetcher) forgetBlock(hash common.Hash) {
+func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 	if insert := f.queued[hash]; insert != nil {
 		f.queues[insert.origin]--
 		if f.queues[insert.origin] == 0 {
