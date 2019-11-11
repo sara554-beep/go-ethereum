@@ -21,6 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/les/payment/lotterypmt"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/mclock"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -107,7 +109,7 @@ func (h *clientHandler) handle(p *peer) error {
 		number = head.Number.Uint64()
 		td     = h.backend.blockchain.GetTd(hash, number)
 	)
-	if err := p.Handshake(td, hash, number, h.backend.blockchain.Genesis().Hash(), nil); err != nil {
+	if err := p.Handshake(td, hash, number, h.backend.blockchain.Genesis().Hash(), h.backend, nil); err != nil {
 		p.Log().Debug("Light Ethereum handshake failed", "err", err)
 		return err
 	}
@@ -123,6 +125,16 @@ func (h *clientHandler) handle(p *peer) error {
 		h.backend.peers.Unregister(p.id)
 		connectionTimer.Update(time.Duration(mclock.Now() - connectedAt))
 		serverConnectionGauge.Update(int64(h.backend.peers.Len()))
+
+		p.lock.Lock()
+		for identity, route := range p.routes {
+			switch identity {
+			case lotterypmt.Identity:
+				_, receiver, _ := route.Info()
+				h.backend.lmgr.CloseRoute(receiver)
+			}
+		}
+		p.lock.Unlock()
 	}()
 
 	h.fetcher.announce(p, p.headInfo)

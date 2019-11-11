@@ -31,6 +31,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/les/payment"
+	"github.com/ethereum/go-ethereum/les/payment/lotterypmt"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -117,7 +119,7 @@ func (h *serverHandler) handle(p *peer) error {
 		number = head.Number.Uint64()
 		td     = h.blockchain.GetTd(hash, number)
 	)
-	if err := p.Handshake(td, hash, number, h.blockchain.Genesis().Hash(), h.server); err != nil {
+	if err := p.Handshake(td, hash, number, h.blockchain.Genesis().Hash(), nil, h.server); err != nil {
 		p.Log().Debug("Light Ethereum handshake failed", "err", err)
 		return err
 	}
@@ -129,6 +131,10 @@ func (h *serverHandler) handle(p *peer) error {
 	// Reject light clients if server is not synced.
 	if !h.synced() {
 		return p2p.DiscRequested
+	}
+	// Reject light clients if payment module is still initializing.
+	if h.server.config.LightServiceCharge && atomic.LoadUint32(&h.server.paymentInited) == 0 {
+		return errors.New("payment hasn't been initialized")
 	}
 	defer p.fcClient.Disconnect()
 
@@ -154,8 +160,17 @@ func (h *serverHandler) handle(p *peer) error {
 		h.server.clientPool.disconnect(p)
 		clientConnectionGauge.Update(int64(h.server.peers.Len()))
 		connectionTimer.Update(time.Duration(mclock.Now() - connectedAt))
-	}()
 
+		p.lock.Lock()
+		for identity, route := range p.routes {
+			switch identity {
+			case lotterypmt.Identity:
+				sender, _, _ := route.Info()
+				h.server.lmgr.CloseRoute(sender)
+			}
+		}
+		p.lock.Unlock()
+	}()
 	// Spawn a main loop to handle all incoming messages.
 	for {
 		select {
@@ -822,7 +837,20 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 				}
 			}()
 		}
-
+	case PaymentMsg:
+		var packet payment.PaymentPacket
+		if err := msg.Decode(&packet); err != nil {
+			clientErrorMeter.Mark(1)
+			return errResp(ErrDecode, "msg %v: %v", msg, err)
+		}
+		switch {
+		case packet.Identity == lotterypmt.Identity && p.routes[lotterypmt.Identity] != nil:
+			if err := p.routes[lotterypmt.Identity].Receive(packet.ProofOfPayment); err != nil {
+				return errResp(ErrInvalidPayment, "error: %v", err)
+			}
+		default:
+			return errResp(ErrUnsupportedPayment, "identity: %s", packet.Identity)
+		}
 	default:
 		p.Log().Trace("Received invalid message", "code", msg.Code)
 		clientErrorMeter.Mark(1)

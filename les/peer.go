@@ -32,6 +32,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/les/flowcontrol"
+	"github.com/ethereum/go-ethereum/les/payment"
+	"github.com/ethereum/go-ethereum/les/payment/lotterypmt"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -117,6 +119,9 @@ type peer struct {
 	onlyAnnounce            bool
 	chainSince, chainRecent uint64
 	stateSince, stateRecent uint64
+
+	// Payment relative fields
+	routes map[string]payment.PaymentRoute
 }
 
 func newPeer(version int, network uint64, trusted bool, p *p2p.Peer, rw p2p.MsgReadWriter) *peer {
@@ -128,6 +133,7 @@ func newPeer(version int, network uint64, trusted bool, p *p2p.Peer, rw p2p.MsgR
 		id:      peerIdToString(p.ID()),
 		trusted: trusted,
 		errCh:   make(chan error, 1),
+		routes:  make(map[string]payment.PaymentRoute),
 	}
 }
 
@@ -398,6 +404,17 @@ func (p *peer) SendResume(bv uint64) error {
 	return p2p.Send(p.rw, ResumeMsg, bv)
 }
 
+// SendPayment sends a payment proof to this peer.
+func (p *peer) SendPayment(proofOfPayment []byte, identity string) error {
+	return p2p.Send(p.rw, PaymentMsg, payment.PaymentPacket{Identity: identity, ProofOfPayment: proofOfPayment})
+}
+
+// Only for debugging
+func (p *peer) AddBalance(amount uint64) error {
+	fmt.Printf("[Add balance] add %d for %s\n", amount, p.id)
+	return nil
+}
+
 // ReplyBlockHeaders creates a reply with a batch of block headers
 func (p *peer) ReplyBlockHeaders(reqID uint64, headers []*types.Header) *reply {
 	data, _ := rlp.EncodeToBytes(headers)
@@ -572,7 +589,7 @@ func (p *peer) sendReceiveHandshake(sendList keyValueList) (keyValueList, error)
 
 // Handshake executes the les protocol handshake, negotiating version number,
 // network IDs, difficulties, head and genesis blocks.
-func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis common.Hash, server *LesServer) error {
+func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis common.Hash, client *LightEthereum, server *LesServer) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -623,6 +640,10 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 				send = send.add("checkpoint/registerHeight", height)
 			}
 		}
+		// Add local supported payment schemas
+		if len(server.schemas) > 0 {
+			send = send.add("payment/schemas", server.schemas)
+		}
 	} else {
 		// Add some client-specific handshake fields
 		p.announceType = announceTypeSimple
@@ -630,6 +651,10 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 			p.announceType = announceTypeSigned
 		}
 		send = send.add("announceType", p.announceType)
+		// Add local supported payment schemas
+		if len(client.schemas) > 0 {
+			send = send.add("payment/schemas", client.schemas)
+		}
 	}
 
 	recvList, err := p.sendReceiveHandshake(send)
@@ -684,6 +709,25 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 				p.announceType = announceTypeSimple
 			}
 			p.fcClient = flowcontrol.NewClientNode(server.fcManager, server.defParams)
+
+			// Parse payment relative handshake
+			var schemas []payment.SchemaRLP
+			if err := recv.get("payment/schemas", &schemas); err == nil {
+				for _, s := range schemas {
+					switch {
+					case s.Key == lotterypmt.Identity && server.lmgr != nil:
+						schema, err := server.lmgr.ResolveSchema(s.Value)
+						if err != nil {
+							continue
+						}
+						route, err := server.lmgr.OpenRoute(schema, p)
+						if err != nil {
+							continue
+						}
+						p.routes[schema.Identity()] = route
+					}
+				}
+			}
 		}
 	} else {
 		if recv.get("serveChainSince", &p.chainSince) != nil {
@@ -732,6 +776,25 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 			}
 		}
 		p.server = true
+
+		// Parse payment relative handshake
+		var schemas []payment.SchemaRLP
+		if err := recv.get("payment/schemas", &schemas); err == nil {
+			for _, s := range schemas {
+				switch {
+				case s.Key == lotterypmt.Identity && client.lmgr != nil:
+					schema, err := client.lmgr.ResolveSchema(s.Value)
+					if err != nil {
+						continue
+					}
+					route, err := client.lmgr.OpenRoute(schema, p)
+					if err != nil {
+						continue
+					}
+					p.routes[schema.Identity()] = route
+				}
+			}
+		}
 	}
 	p.headInfo = &announceData{Td: rTd, Hash: rHash, Number: rNum}
 	return nil
