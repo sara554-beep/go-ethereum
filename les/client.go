@@ -131,7 +131,7 @@ func New(ctx *node.ServiceContext, config *eth.Config) (*LightEthereum, error) {
 	leth.bloomIndexer.Start(leth.blockchain)
 
 	// Start a light chain pruner to delete useless historical data.
-	leth.pruner = newPruner(leth.chtIndexer, leth.bloomTrieIndexer)
+	leth.pruner = newPruner(chainDb, leth.chtIndexer, leth.bloomTrieIndexer)
 
 	leth.handler = newClientHandler(config.UltraLightServers, config.UltraLightFraction, checkpoint, leth)
 	if leth.handler.ulc != nil {

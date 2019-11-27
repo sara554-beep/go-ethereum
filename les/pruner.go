@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethdb"
+
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/log"
@@ -27,14 +29,16 @@ import (
 
 // pruner is responsible for pruning historical light chain data.
 type pruner struct {
+	db       ethdb.Database
 	indexers []*core.ChainIndexer
 	closeCh  chan struct{}
 	wg       sync.WaitGroup
 }
 
 // newPruner returns a light chain pruner instance.
-func newPruner(indexers ...*core.ChainIndexer) *pruner {
+func newPruner(db ethdb.Database, indexers ...*core.ChainIndexer) *pruner {
 	pruner := &pruner{
+		db:       db,
 		indexers: indexers,
 		closeCh:  make(chan struct{}),
 	}
@@ -82,6 +86,7 @@ func (p *pruner) loop() {
 				return
 			}
 		}
+		p.db.Compact(nil, nil) // Compact entire database, ensure all removed data are deleted.
 	}
 	for {
 		pruning()

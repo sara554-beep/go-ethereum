@@ -123,7 +123,7 @@ func TestLightPruner(t *testing.T) {
 	}
 	// Start light pruner.
 	time.Sleep(1500 * time.Millisecond) // Ensure light client has finished the syncing and indexing
-	newPruner(client.chtIndexer, client.bloomTrieIndexer)
+	newPruner(client.db, client.chtIndexer, client.bloomTrieIndexer)
 
 	time.Sleep(1500 * time.Millisecond) // Ensure pruner have enough time to prune data.
 	checkPruned(1, config.ChtSize-1)
@@ -191,7 +191,7 @@ func TestLightPruner(t *testing.T) {
 	}
 
 	// Ensure the ODR cached data can be cleaned by pruner.
-	newPruner(client.chtIndexer, client.bloomTrieIndexer)
+	newPruner(client.db, client.chtIndexer, client.bloomTrieIndexer)
 	time.Sleep(50 * time.Millisecond) // Ensure pruner have enough time to prune data.
 	checkPruned(1, config.ChtSize-1)  // Ensure all cached data(by odr) is cleaned.
 }
