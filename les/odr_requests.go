@@ -54,6 +54,8 @@ type LesOdrRequest interface {
 
 func LesRequest(req light.OdrRequest) LesOdrRequest {
 	switch r := req.(type) {
+	case *light.HeaderRequest:
+		return (*HeaderRequest)(r)
 	case *light.BlockRequest:
 		return (*BlockRequest)(r)
 	case *light.ReceiptsRequest:
@@ -71,6 +73,48 @@ func LesRequest(req light.OdrRequest) LesOdrRequest {
 	default:
 		return nil
 	}
+}
+
+// BlockRequest is the ODR request type for block header
+type HeaderRequest light.HeaderRequest
+
+// GetCost returns the cost of the given ODR request according to the serving
+// peer's cost table (implementation of LesOdrRequest)
+func (r *HeaderRequest) GetCost(peer *peer) uint64 {
+	return peer.GetRequestCost(GetBlockHeadersMsg, 1)
+}
+
+// CanSend tells if a certain peer is suitable for serving the given request
+func (r *HeaderRequest) CanSend(peer *peer) bool {
+	return peer.headInfo.Number >= r.Number && (r.Peer == "" || r.Peer == peer.id)
+}
+
+// Request sends an ODR request to the LES network (implementation of LesOdrRequest)
+func (r *HeaderRequest) Request(reqID uint64, peer *peer) error {
+	peer.Log().Debug("Requesting block header", "number", r.Number)
+	return peer.RequestHeadersByNumber(reqID, r.GetCost(peer), r.Number, 1, 0, false)
+}
+
+// Valid processes an ODR request reply message from the LES network
+// returns true and stores results in memory if the message was a valid reply
+// to the request (implementation of LesOdrRequest)
+func (r *HeaderRequest) Validate(db ethdb.Database, msg *Msg) error {
+	log.Debug("Validating block heaeder", "number", r.Number)
+
+	// Ensure we have a correct message with a single block body
+	if msg.MsgType != MsgBlockHeader {
+		return errInvalidMessageType
+	}
+	headers := msg.Obj.([]*types.Header)
+	if len(headers) != 1 {
+		return errInvalidEntryCount
+	}
+	header := headers[0]
+	if header.Number.Uint64() != r.Number {
+		return errors.New("invalid header response")
+	}
+	r.Header = header
+	return nil
 }
 
 // BlockRequest is the ODR request type for block bodies
@@ -295,8 +339,6 @@ const (
 	htCanonical = iota // Canonical hash trie
 	htBloomBits        // BloomBits trie
 
-	// applicable for all helper trie requests
-	auxRoot = 1
 	// applicable for htCanonical
 	auxHeader = 2
 )
@@ -327,11 +369,7 @@ func (r *ChtRequest) CanSend(peer *peer) bool {
 	peer.lock.RLock()
 	defer peer.lock.RUnlock()
 
-	if r.Untrusted {
-		return peer.headInfo.Number >= r.BlockNum && peer.id == r.PeerId
-	} else {
-		return peer.headInfo.Number >= r.Config.ChtConfirms && r.ChtNum <= (peer.headInfo.Number-r.Config.ChtConfirms)/r.Config.ChtSize
-	}
+	return peer.headInfo.Number >= r.Config.ChtConfirms && r.ChtNum <= (peer.headInfo.Number-r.Config.ChtConfirms)/r.Config.ChtSize
 }
 
 // Request sends an ODR request to the LES network (implementation of LesOdrRequest)
@@ -370,39 +408,31 @@ func (r *ChtRequest) Validate(db ethdb.Database, msg *Msg) error {
 	if err := rlp.DecodeBytes(headerEnc, header); err != nil {
 		return errHeaderUnavailable
 	}
-
 	// Verify the CHT
-	// Note: For untrusted CHT request, there is no proof response but
-	// header data.
 	var node light.ChtNode
-	if !r.Untrusted {
-		var encNumber [8]byte
-		binary.BigEndian.PutUint64(encNumber[:], r.BlockNum)
-
-		reads := &readTraceDB{db: nodeSet}
-		value, _, err := trie.VerifyProof(r.ChtRoot, encNumber[:], reads)
-		if err != nil {
-			return fmt.Errorf("merkle proof verification failed: %v", err)
-		}
-		if len(reads.reads) != nodeSet.KeyCount() {
-			return errUselessNodes
-		}
-
-		if err := rlp.DecodeBytes(value, &node); err != nil {
-			return err
-		}
-		if node.Hash != header.Hash() {
-			return errCHTHashMismatch
-		}
-		if r.BlockNum != header.Number.Uint64() {
-			return errCHTNumberMismatch
-		}
+	var encNumber [8]byte
+	binary.BigEndian.PutUint64(encNumber[:], r.BlockNum)
+	reads := &readTraceDB{db: nodeSet}
+	value, _, err := trie.VerifyProof(r.ChtRoot, encNumber[:], reads)
+	if err != nil {
+		return fmt.Errorf("merkle proof verification failed: %v", err)
+	}
+	if len(reads.reads) != nodeSet.KeyCount() {
+		return errUselessNodes
+	}
+	if err := rlp.DecodeBytes(value, &node); err != nil {
+		return err
+	}
+	if node.Hash != header.Hash() {
+		return errCHTHashMismatch
+	}
+	if r.BlockNum != header.Number.Uint64() {
+		return errCHTNumberMismatch
 	}
 	// Verifications passed, store and return
 	r.Header = header
 	r.Proof = nodeSet
-	r.Td = node.Td // For untrusted request, td here is nil, todo improve the les/2 protocol
-
+	r.Td = node.Td
 	return nil
 }
 

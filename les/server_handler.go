@@ -265,8 +265,8 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			})
 		}
 	}
-	switch msg.Code {
-	case GetBlockHeadersMsg:
+	switch {
+	case p.version >= lpv2 && msg.Code == GetBlockHeadersMsg:
 		p.Log().Trace("Received block header request")
 		if metrics.EnabledExpensive {
 			miscInHeaderPacketsMeter.Mark(1)
@@ -379,7 +379,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case GetBlockBodiesMsg:
+	case p.version >= lpv2 && msg.Code == GetBlockBodiesMsg:
 		p.Log().Trace("Received block bodies request")
 		if metrics.EnabledExpensive {
 			miscInBodyPacketsMeter.Mark(1)
@@ -428,7 +428,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case GetCodeMsg:
+	case p.version >= lpv2 && msg.Code == GetCodeMsg:
 		p.Log().Trace("Received code request")
 		if metrics.EnabledExpensive {
 			miscInCodePacketsMeter.Mark(1)
@@ -500,7 +500,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case GetReceiptsMsg:
+	case p.version >= lpv2 && msg.Code == GetReceiptsMsg:
 		p.Log().Trace("Received receipts request")
 		if metrics.EnabledExpensive {
 			miscInReceiptPacketsMeter.Mark(1)
@@ -557,7 +557,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case GetProofsV2Msg:
+	case p.version >= lpv2 && msg.Code == GetProofsV2Msg:
 		p.Log().Trace("Received les/2 proofs request")
 		if metrics.EnabledExpensive {
 			miscInTrieProofPacketsMeter.Mark(1)
@@ -660,7 +660,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case GetHelperTrieProofsMsg:
+	case p.version >= lpv2 && msg.Code == GetHelperTrieProofsMsg:
 		p.Log().Trace("Received helper trie proof request")
 		if metrics.EnabledExpensive {
 			miscInHelperTriePacketsMeter.Mark(1)
@@ -705,22 +705,22 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 							auxTrie, _ = trie.New(root, trie.NewDatabase(rawdb.NewTable(h.chainDb, prefix)))
 						}
 					}
-					if request.AuxReq == auxRoot {
-						var data []byte
-						if root != (common.Hash{}) {
-							data = root[:]
+					// If we failed to construct the helper trie, it means the request
+					// is invalid. For backward compatibility, lpv2 and lpv3 are allowed
+					// to accept this type of requests.
+					if auxTrie == nil && p.version >= lpv4 {
+						atomic.AddUint32(&p.invalidCount, 1)
+						continue
+					}
+					if auxTrie != nil {
+						if err := auxTrie.Prove(request.Key, request.FromLevel, nodes); err != nil {
+							continue
 						}
+					}
+					if request.AuxReq != 0 {
+						data := h.getAuxiliaryHeaders(request)
 						auxData = append(auxData, data)
 						auxBytes += len(data)
-					} else {
-						if auxTrie != nil {
-							auxTrie.Prove(request.Key, request.FromLevel, nodes)
-						}
-						if request.AuxReq != 0 {
-							data := h.getAuxiliaryHeaders(request)
-							auxData = append(auxData, data)
-							auxBytes += len(data)
-						}
 					}
 					if nodes.DataSize()+auxBytes >= softResponseLimit {
 						break
@@ -735,7 +735,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case SendTxV2Msg:
+	case p.version >= lpv2 && msg.Code == SendTxV2Msg:
 		p.Log().Trace("Received new transactions")
 		if metrics.EnabledExpensive {
 			miscInTxsPacketsMeter.Mark(1)
@@ -784,7 +784,7 @@ func (h *serverHandler) handleMsg(p *peer, wg *sync.WaitGroup) error {
 			}()
 		}
 
-	case GetTxStatusMsg:
+	case p.version >= lpv2 && msg.Code == GetTxStatusMsg:
 		p.Log().Trace("Received transaction status query request")
 		if metrics.EnabledExpensive {
 			miscInTxStatusPacketsMeter.Mark(1)

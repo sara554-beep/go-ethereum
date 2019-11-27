@@ -61,18 +61,13 @@ func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*typ
 	return r.Header, nil
 }
 
-// GetUntrustedHeaderByNumber retrieves specified block header without
+// GetUnverifiedHeaderByNumber retrieves specified block header without
 // correctness checking. Note this function should only be used in light
 // client checkpoint syncing.
-func GetUntrustedHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64, peerId string) (*types.Header, error) {
-	// todo(rjl493456442) it's a hack to retrieve headers which is not covered
-	// by CHT. Fix it in LES4
-	r := &ChtRequest{
-		BlockNum:  number,
-		ChtNum:    number / odr.IndexerConfig().ChtSize,
-		Untrusted: true,
-		PeerId:    peerId,
-		Config:    odr.IndexerConfig(),
+func GetUnverifiedHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64, peerId string) (*types.Header, error) {
+	r := &HeaderRequest{
+		Peer:   peerId,
+		Number: number,
 	}
 	if err := odr.Retrieve(ctx, r); err != nil {
 		return nil, err

@@ -83,7 +83,8 @@ func (odr *LesOdr) IndexerConfig() *light.IndexerConfig {
 }
 
 const (
-	MsgBlockBodies = iota
+	MsgBlockHeader = iota
+	MsgBlockBodies
 	MsgCode
 	MsgReceipts
 	MsgProofsV2

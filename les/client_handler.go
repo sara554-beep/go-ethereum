@@ -202,9 +202,16 @@ func (h *clientHandler) handleMsg(p *peer) error {
 			return errResp(ErrDecode, "msg %v: %v", msg, err)
 		}
 		p.fcServer.ReceivedReply(resp.ReqID, resp.BV)
-		if h.fetcher.requestedID(resp.ReqID) {
+		switch {
+		case h.fetcher.requestedID(resp.ReqID):
 			h.fetcher.deliverHeaders(p, resp.ReqID, resp.Headers)
-		} else {
+		case h.backend.retriever.requestedID(resp.ReqID):
+			deliverMsg = &Msg{
+				MsgType: MsgBlockHeader,
+				ReqID:   resp.ReqID,
+				Obj:     resp.Headers,
+			}
+		default:
 			if err := h.downloader.DeliverHeaders(p.id, resp.Headers); err != nil {
 				log.Debug("Failed to deliver headers", "err", err)
 			}

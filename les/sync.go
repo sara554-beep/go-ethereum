@@ -57,7 +57,7 @@ func (h *clientHandler) validateCheckpoint(peer *peer) error {
 
 	// Fetch the block header corresponding to the checkpoint registration.
 	cp := peer.checkpoint
-	header, err := light.GetUntrustedHeaderByNumber(ctx, h.backend.odr, peer.checkpointNumber, peer.id)
+	header, err := light.GetUnverifiedHeaderByNumber(ctx, h.backend.odr, peer.checkpointNumber, peer.id)
 	if err != nil {
 		return err
 	}
