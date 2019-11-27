@@ -277,6 +277,9 @@ func (c *ChtIndexerBackend) Prune(threshold uint64) error {
 			//
 			// Storage size wise, the size of a mapping is ~41bytes. For one
 			// section is about 1.3MB which is acceptable.
+			//
+			// In order to totally get rid of this index, we need an additional
+			// flag to specify how many historical data light client can serve.
 			rawdb.DeleteCanonicalHash(batch, numbers[i])
 			rawdb.DeleteBlockWithoutNumber(batch, hashes[i], numbers[i])
 		}

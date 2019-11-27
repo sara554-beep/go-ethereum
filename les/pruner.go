@@ -78,7 +78,7 @@ func (p *pruner) loop() {
 		}
 		for _, indexer := range p.indexers {
 			if err := indexer.Prune(min - 2); err != nil {
-				log.Debug("Prune historical data failed", "err", err)
+				log.Debug("Failed to prune historical data", "err", err)
 				return
 			}
 		}

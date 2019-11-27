@@ -34,21 +34,27 @@ var sha3Nil = crypto.Keccak256Hash(nil)
 // GetHeaderByNumber retrieves the canonical block header corresponding to the
 // given number.
 func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*types.Header, error) {
-	// Try to find it in database first.
+	// Try to find it in the local database first.
 	db := odr.Database()
 	hash := rawdb.ReadCanonicalHash(db, number)
+	// If there is a canonical hash, there should have a header too
 	if (hash != common.Hash{}) {
-		// If there is a canonical hash, there should have a header too
 		if header := rawdb.ReadHeader(db, hash, number); header != nil {
 			return header, nil
 		}
 	}
-	// Retrieve the header via ODR
+	// Retrieve the header via ODR, ensure the requested header is covered
+	// by local trusted CHT.
 	chts, _, chtHead := odr.ChtIndexer().Sections()
 	if number >= chts*odr.IndexerConfig().ChtSize {
 		return nil, errNoTrustedCht
 	}
-	r := &ChtRequest{ChtRoot: GetChtRoot(db, chts-1, chtHead), ChtNum: chts - 1, BlockNum: number, Config: odr.IndexerConfig()}
+	r := &ChtRequest{
+		ChtRoot:  GetChtRoot(db, chts-1, chtHead),
+		ChtNum:   chts - 1,
+		BlockNum: number,
+		Config:   odr.IndexerConfig(),
+	}
 	if err := odr.Retrieve(ctx, r); err != nil {
 		return nil, err
 	}
@@ -59,7 +65,15 @@ func GetHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64) (*typ
 // correctness checking. Note this function should only be used in light
 // client checkpoint syncing.
 func GetUntrustedHeaderByNumber(ctx context.Context, odr OdrBackend, number uint64, peerId string) (*types.Header, error) {
-	r := &ChtRequest{BlockNum: number, ChtNum: number / odr.IndexerConfig().ChtSize, Untrusted: true, PeerId: peerId, Config: odr.IndexerConfig()}
+	// todo(rjl493456442) it's a hack to retrieve headers which is not covered
+	// by CHT. Fix it in LES4
+	r := &ChtRequest{
+		BlockNum:  number,
+		ChtNum:    number / odr.IndexerConfig().ChtSize,
+		Untrusted: true,
+		PeerId:    peerId,
+		Config:    odr.IndexerConfig(),
+	}
 	if err := odr.Retrieve(ctx, r); err != nil {
 		return nil, err
 	}
@@ -76,6 +90,7 @@ func GetCanonicalHash(ctx context.Context, odr OdrBackend, number uint64) (commo
 	if err != nil {
 		return common.Hash{}, err
 	}
+	// number -> canonical mapping already be stored in db, get it.
 	return header.Hash(), nil
 }
 
@@ -89,6 +104,7 @@ func GetTd(ctx context.Context, odr OdrBackend, hash common.Hash, number uint64)
 	if err != nil {
 		return nil, err
 	}
+	// <hash, number> -> td mapping already be stored in db, get it.
 	return rawdb.ReadTd(odr.Database(), hash, number), nil
 }
 
@@ -180,7 +196,6 @@ func GetBlockLogs(ctx context.Context, odr OdrBackend, hash common.Hash, number 
 	if err != nil {
 		return nil, err
 	}
-	// Return the logs without deriving any computed fields on the receipts
 	logs := make([][]*types.Log, len(receipts))
 	for i, receipt := range receipts {
 		logs[i] = receipt.Logs
@@ -243,10 +258,14 @@ func GetBloomBits(ctx context.Context, odr OdrBackend, bit uint, sections []uint
 		return result, nil
 	}
 	// Send odr request to retrieve missing bloombits.
-	r := &BloomRequest{BloomTrieRoot: GetBloomTrieRoot(db, blooms-1, sectionHead), BloomTrieNum: blooms - 1,
-		BitIdx: bit, SectionIndexList: reqSections, Config: odr.IndexerConfig()}
-	err := odr.Retrieve(ctx, r)
-	if err != nil {
+	r := &BloomRequest{
+		BloomTrieRoot:    GetBloomTrieRoot(db, blooms-1, sectionHead),
+		BloomTrieNum:     blooms - 1,
+		BitIdx:           bit,
+		SectionIndexList: reqSections,
+		Config:           odr.IndexerConfig(),
+	}
+	if err := odr.Retrieve(ctx, r); err != nil {
 		return nil, err
 	}
 	for i, idx := range reqIndex {
