@@ -187,8 +187,17 @@ func (h *hasher) store(path []byte, n node, db *Database, force bool) (node, err
 		// We are pooling the trie nodes into an intermediate memory cache
 		hash := common.BytesToHash(hash)
 
+		// The position of the node in the trie.
+		// If the node is on the storage trie, use the corresponding accounthash
+		// as the position prefix. The position of node is totally unique.
+		pos := h.owner.Bytes()
+		if h.owner != (common.Hash{}) {
+			pos = append(pos, 0xff) // Add additional path separator
+		}
+		pos = append(pos, hexToCompact(common.CopyBytes(path))...)
+
 		db.lock.Lock()
-		db.insert(h.owner, hash, h.tmp, n)
+		db.insert(h.owner, hash, h.tmp, pos, n)
 		db.lock.Unlock()
 
 		// Track external references from account->storage trie

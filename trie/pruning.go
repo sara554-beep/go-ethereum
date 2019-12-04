@@ -289,15 +289,22 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 		return nil
 	}
 	// Iterate over all the live tries and check node liveliness
-	crosspath := path
-	if owner != (common.Hash{}) {
-		crosspath = append(append(keybytesToHex(owner[:]), 0xff), crosspath...)
-	}
+	paths := ethdb.IterateReferences(p.db.diskdb.(*ethdb.LDBDatabase), hash)
+	// We still need more paths to check, since different path can reference
+	// to same node!!
 	unrefs := make(map[common.Hash]bool)
 	for _, trie := range tries {
-		// If the node is still live, abort
-		if trie.live(owner, hash, crosspath, unrefs) {
-			return nil
+		for _, path := range paths {
+			var hexpath []byte
+			if index := bytes.Index(path, []byte{0xff}); index != -1 {
+				hexpath = append(append(path[:index], byte(0xff)), compactToHex(path[index+1:])...)
+			} else {
+				hexpath = compactToHex(path)
+			}
+			// If the node is still live, abort
+			if trie.live(owner, hash, hexpath, unrefs) {
+				return nil
+			}
 		}
 		// Node dead in this trie, cache the result for subsequent traversals
 		trie.unref(2, unrefs)
@@ -318,6 +325,12 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 	}
 	p.db.cleans.Delete(string(hash[:]))
 	batch.Delete(dead)
+
+	// Delete all references as well.
+	for _, path := range paths {
+		batch.Delete(append(dead, path...))
+		p.db.prunesize += common.StorageSize(common.HashLength + len(path))
+	}
 	p.db.prunenodes++
 	p.db.prunesize += common.StorageSize(len(blob))
 

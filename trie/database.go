@@ -199,6 +199,7 @@ func (n *rawShortNode) fstring(ind string) string {
 // cachedNode is all the information we know about a single cached node in the
 // memory database write layer.
 type cachedNode struct {
+	pos  []byte // The position of node in the trie
 	node node   // Cached collapsed trie node, or raw rlp data
 	size uint16 // Byte size of the useful cached data
 
@@ -436,7 +437,7 @@ func (db *Database) DiskDB() DatabaseReader {
 // a more generic version of InsertBlob, supporting both raw blob insertions as
 // well ex trie node insertions. The blob must always be specified to allow proper
 // size tracking.
-func (db *Database) insert(owner common.Hash, hash common.Hash, blob []byte, node node) {
+func (db *Database) insert(owner common.Hash, hash common.Hash, blob []byte, pos []byte, node node) {
 	if owner == faultyOwner && hash == faultyHash {
 		log.Error("Inserting sensitive dex trie node", "owner", owner, "hash", hash)
 	}
@@ -447,6 +448,7 @@ func (db *Database) insert(owner common.Hash, hash common.Hash, blob []byte, nod
 	}
 	// Create the cached entry for this node
 	entry := &cachedNode{
+		pos:       common.CopyBytes(pos),
 		node:      simplifyNode(node),
 		size:      uint16(len(blob)),
 		flushPrev: db.newest,
@@ -466,7 +468,7 @@ func (db *Database) insert(owner common.Hash, hash common.Hash, blob []byte, nod
 	} else {
 		db.dirties[db.newest].flushNext, db.newest = key, key
 	}
-	db.dirtiesSize += common.StorageSize(common.HashLength + entry.size)
+	db.dirtiesSize += common.StorageSize(common.HashLength + int(entry.size) + len(entry.pos))
 
 	if owner == faultyOwner && hash == faultyHash {
 		log.Error("Inserted sensitive dex trie node", "owner", owner, "hash", hash)
@@ -770,6 +772,11 @@ func (db *Database) Cap(limit common.StorageSize) error {
 			db.lock.RUnlock()
 			return err
 		}
+		// Store the additional reference: node_hash + node_pos => NULL
+		if err := batch.Put(append([]byte(oldest), node.pos...), nil); err != nil {
+			db.lock.RUnlock()
+			return err
+		}
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
@@ -783,7 +790,7 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		// is the total size, including both the useful cached data (hash -> blob), as
 		// well as the flushlist metadata (2*hash). When flushing items from the cache,
 		// we need to reduce both.
-		size -= common.StorageSize(3*common.HashLength + int(node.size))
+		size -= common.StorageSize(3*common.HashLength + int(node.size) + len(node.pos))
 		oldest = node.flushNext
 	}
 	// Flush out any remainder data from the last batch
@@ -926,6 +933,10 @@ func (db *Database) commit(owner common.Hash, hash common.Hash, batch ethdb.Batc
 	if err := batch.Put([]byte(key), node.rlp()); err != nil {
 		return err
 	}
+	// Store the additional reference: node_hash + node_pos => NULL
+	if err := batch.Put(append([]byte(key), node.pos...), nil); err != nil {
+		return err
+	}
 	// If we've reached an optimal batch size, commit and start over
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
@@ -969,7 +980,7 @@ func (db *Database) uncache(owner common.Hash, hash common.Hash) {
 		db.uncache(splitNodeKey(child))
 	}
 	delete(db.dirties, key)
-	db.dirtiesSize -= common.StorageSize(common.HashLength + int(node.size))
+	db.dirtiesSize -= common.StorageSize(common.HashLength + int(node.size) + len(node.pos))
 }
 
 // Size returns the current storage size of the memory cache in front of the
@@ -993,7 +1004,7 @@ func (db *Database) Size() (common.StorageSize, common.StorageSize) {
 // This method is extremely CPU and memory intensive, only use when must.
 func (db *Database) verifyIntegrity() {
 	// Iterate over all the cached nodes and accumulate them into a set
-	reachable := map[string]struct{}{metaRoot: struct{}{}}
+	reachable := map[string]struct{}{metaRoot: {}}
 
 	for key := range db.dirties[metaRoot].children {
 		_, root := splitNodeKey(key)
