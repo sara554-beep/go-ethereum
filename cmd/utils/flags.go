@@ -32,7 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/fdlimit"
+	// "github.com/ethereum/go-ethereum/common/fdlimit"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
@@ -946,15 +946,16 @@ func SetULC(ctx *cli.Context, cfg *eth.Config) {
 // makeDatabaseHandles raises out the number of allowed file handles per process
 // for Geth and returns half of the allowance to assign to the database.
 func makeDatabaseHandles() int {
-	limit, err := fdlimit.Maximum()
-	if err != nil {
-		Fatalf("Failed to retrieve file descriptor allowance: %v", err)
-	}
-	raised, err := fdlimit.Raise(uint64(limit))
-	if err != nil {
-		Fatalf("Failed to raise file descriptor allowance: %v", err)
-	}
-	return int(raised / 2) // Leave half for networking and other stuff
+	//limit, err := fdlimit.Maximum()
+	//if err != nil {
+	//	Fatalf("Failed to retrieve file descriptor allowance: %v", err)
+	//}
+	return 1024
+	//raised, err := fdlimit.Raise(uint64(limit))
+	//if err != nil {
+	//	Fatalf("Failed to raise file descriptor allowance: %v", err)
+	//}
+	//return int(raised / 2) // Leave half for networking and other stuff
 }
 
 // MakeAddress converts an account specified directly as a hex encoded string or

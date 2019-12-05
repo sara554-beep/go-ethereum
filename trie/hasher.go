@@ -190,8 +190,9 @@ func (h *hasher) store(path []byte, n node, db *Database, force bool) (node, err
 		// The position of the node in the trie.
 		// If the node is on the storage trie, use the corresponding accounthash
 		// as the position prefix. The position of node is totally unique.
-		pos := h.owner.Bytes()
+		var pos []byte
 		if h.owner != (common.Hash{}) {
+			pos = h.owner.Bytes()
 			pos = append(pos, 0xff) // Add additional path separator
 		}
 		pos = append(pos, hexToCompact(common.CopyBytes(path))...)

@@ -934,7 +934,7 @@ func (db *Database) commit(owner common.Hash, hash common.Hash, batch ethdb.Batc
 		return err
 	}
 	// Store the additional reference: node_hash + node_pos => NULL
-	if err := batch.Put(append([]byte(key), node.pos...), nil); err != nil {
+	if err := batch.Put(append(hash.Bytes(), node.pos...), nil); err != nil {
 		return err
 	}
 	// If we've reached an optimal batch size, commit and start over
