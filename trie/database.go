@@ -773,7 +773,8 @@ func (db *Database) Cap(limit common.StorageSize) error {
 			return err
 		}
 		// Store the additional reference: node_hash + node_pos => NULL
-		if err := batch.Put(append([]byte(oldest), node.pos...), nil); err != nil {
+		_, hash := splitNodeKey(oldest)
+		if err := batch.Put(append(hash.Bytes(), node.pos...), nil); err != nil {
 			db.lock.RUnlock()
 			return err
 		}

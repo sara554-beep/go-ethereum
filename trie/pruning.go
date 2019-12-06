@@ -295,7 +295,6 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 	}
 	var hasCrossPath bool
 	var hasAdditional bool
-	var hexpaths [][]byte
 	// Iterate over all the live tries and check node liveliness
 	paths := ethdb.IterateReferences(p.db.diskdb.(*ethdb.LDBDatabase), hash)
 	// We still need more paths to check, since different path can reference
@@ -316,8 +315,8 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 				hasCrossPath = true
 			} else {
 				hasAdditional = true
+				log.Warn("addtional", "hexpath", hexpath, "p", p, "crosspath", crosspath)
 			}
-			hexpaths = append(hexpaths, hexpath)
 			// If the node is still live, abort
 			if trie.live(owner, hash, hexpath, unrefs) {
 				return nil
@@ -326,11 +325,11 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 		// Node dead in this trie, cache the result for subsequent traversals
 		trie.unref(2, unrefs)
 	}
-	if !hasCrossPath {
-		log.Crit("PANIC", "crosspath", crosspath, "hash", hash, "owner", owner, "hexpaths", hexpaths, "paths", paths)
-	}
 	if hasAdditional {
-		log.Warn("Additional reference path", "hash", hash, "owner", owner)
+		log.Warn("Additional reference path", "hash", hash, "owner", owner, "paths", paths)
+	}
+	if !hasCrossPath {
+		log.Crit("PANIC", "crosspath", crosspath, "hash", hash, "owner", owner, "paths", paths)
 	}
 	// Dead node found, delete it from the database
 	dead := []byte(key)
