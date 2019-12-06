@@ -87,6 +87,7 @@ func splitNodeKey(key string) (common.Hash, common.Hash) {
 		return common.Hash{}, common.BytesToHash([]byte(key))
 
 	case 2 * common.HashLength:
+		// owner, hash
 		return common.BytesToHash([]byte(key[common.HashLength:])), common.BytesToHash([]byte(key[:common.HashLength]))
 
 	default:

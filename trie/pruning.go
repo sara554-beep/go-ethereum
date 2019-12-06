@@ -302,8 +302,20 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 	unrefs := make(map[common.Hash]bool)
 	for _, trie := range tries {
 		for _, p := range paths {
+			// CAN WE CONTINUE HERE????
+			//
+			// hash + accounthash => storage trie node....
+			if len(p) == 32 {
+				continue
+			}
+			var localOwner common.Hash
 			var hexpath []byte
 			if len(p) >= 33 && p[32] == 0xff {
+				localOwner = common.BytesToHash(p[:32])
+				if localOwner != owner {
+					fmt.Println("Other storage trie", "local", owner.Hex(), "this", localOwner.Hex())
+					continue
+				}
 				hexpath = append(append(keybytesToHex(p[:32]), byte(0xff)), compactToHex(p[33:])...)
 			} else {
 				hexpath = compactToHex(p)
@@ -334,6 +346,7 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 	// Dead node found, delete it from the database
 	dead := []byte(key)
 	blob, err := p.db.diskdb.Get(dead)
+	// hash + owner => storage trie node.
 	if blob == nil || err != nil {
 		// Node already deleted by something else, happens with delayed pruning
 		//log.Error("Missing prune target", "owner", owner, "hash", hash, "path", fmt.Sprintf("%x", path))
@@ -350,7 +363,11 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 
 	// Delete all references as well.
 	for _, path := range paths {
-		batch.Delete(append(dead, path...))
+		// hash + accounthash -> storage_trie_node
+		if len(path) == 32 {
+			continue
+		}
+		batch.Delete(append(hash.Bytes(), path...))
 		p.db.prunesize += common.StorageSize(common.HashLength + len(path))
 	}
 	p.db.prunenodes++
