@@ -341,7 +341,8 @@ func (p *pruner) prune(owner common.Hash, hash common.Hash, path []byte, taskset
 		log.Warn("Additional reference path", "hash", hash, "owner", owner, "paths", paths)
 	}
 	if !hasCrossPath {
-		log.Crit("PANIC", "crosspath", crosspath, "hash", hash, "owner", owner, "paths", paths)
+		log.Info("NO CROSSPATH FOUND", "crosspath", crosspath, "hash", hash.Hex(), "owner", owner.Hex(), "paths", paths)
+		return nil
 	}
 	// Dead node found, delete it from the database
 	dead := []byte(key)
