@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/les/lesserver"
 	"io"
 	"io/ioutil"
 	"math/big"
@@ -48,7 +49,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethstats"
 	"github.com/ethereum/go-ethereum/graphql"
-	"github.com/ethereum/go-ethereum/les"
+	"github.com/ethereum/go-ethereum/les/lesclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/metrics/influxdb"
@@ -1529,13 +1530,13 @@ func RegisterEthService(stack *node.Node, cfg *eth.Config) {
 	var err error
 	if cfg.SyncMode == downloader.LightSync {
 		err = stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
-			return les.New(ctx, cfg)
+			return lesclient.New(ctx, cfg)
 		})
 	} else {
 		err = stack.Register(func(ctx *node.ServiceContext) (node.Service, error) {
 			fullNode, err := eth.New(ctx, cfg)
 			if fullNode != nil && cfg.LightServ > 0 {
-				ls, _ := les.NewLesServer(fullNode, cfg)
+				ls, _ := lesserver.NewLesServer(fullNode, cfg)
 				fullNode.AddLesServer(ls)
 			}
 			return fullNode, err
@@ -1563,7 +1564,7 @@ func RegisterEthStatsService(stack *node.Node, url string) {
 		var ethServ *eth.Ethereum
 		ctx.Service(&ethServ)
 
-		var lesServ *les.LightEthereum
+		var lesServ *lesclient.LightEthereum
 		ctx.Service(&lesServ)
 
 		// Let ethstats use whichever is not nil
@@ -1582,7 +1583,7 @@ func RegisterGraphQLService(stack *node.Node, endpoint string, cors, vhosts []st
 			return graphql.New(ethServ.APIBackend, endpoint, cors, vhosts, timeouts)
 		}
 		// Try to construct the GraphQL service backed by a light node
-		var lesServ *les.LightEthereum
+		var lesServ *lesclient.LightEthereum
 		if err := ctx.Service(&lesServ); err == nil {
 			return graphql.New(lesServ.ApiBackend, endpoint, cors, vhosts, timeouts)
 		}

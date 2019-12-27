@@ -38,7 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/internal/debug"
-	"github.com/ethereum/go-ethereum/les"
+	"github.com/ethereum/go-ethereum/les/lesclient"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
@@ -343,7 +343,7 @@ func startNode(ctx *cli.Context, stack *node.Node) {
 	// Set contract backend for les service if local node is
 	// running as a light client.
 	if ctx.GlobalString(utils.SyncModeFlag.Name) == "light" {
-		var lesService *les.LightEthereum
+		var lesService *lesclient.LightEthereum
 		if err := stack.Service(&lesService); err != nil {
 			utils.Fatalf("Failed to retrieve light ethereum service: %v", err)
 		}
