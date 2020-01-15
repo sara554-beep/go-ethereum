@@ -231,6 +231,7 @@ func (s *LightEthereum) Engine() consensus.Engine           { return s.engine }
 func (s *LightEthereum) LesVersion() int                    { return int(ClientProtocolVersions[0]) }
 func (s *LightEthereum) Downloader() *downloader.Downloader { return s.handler.downloader }
 func (s *LightEthereum) EventMux() *event.TypeMux           { return s.eventMux }
+func (s *LightEthereum) Synced() bool                       { return atomic.LoadUint32(&s.handler.synced) == 1 }
 
 // Protocols implements node.Service, returning all the currently configured
 // network protocols to start.
@@ -305,16 +306,18 @@ func (s *LightEthereum) SetBackends(contract bind.ContractBackend, deploy bind.D
 			chequeSigner := func(data []byte) ([]byte, error) {
 				return wallet.SignData(account, accounts.MimetypeDataWithValidator, data)
 			}
-			// Ensure we have LES server connected. Note it's super ugly here, will remove it
-			// very soon.
+			// Ensure local chain is synced. Since we heavily depend on the status
+			// of payment contract, it would be dangerous if the status is not latest.
 			for {
-				if s.peers.Len() == 0 {
+				if !s.Synced() {
 					time.Sleep(time.Second * 3)
 				} else {
 					break
 				}
 			}
 			// Note it can take several minutes or even longer for first initialization
+			//
+			// todo(rjl493456442) user should be able to specify contract manually.
 			mgr, err := lotterypmt.NewManager(lotterypmt.DefaultSenderConfig, s.chainReader, bind.NewRawTransactor(wallet.SignTx, account), chequeSigner, s.address, contract, deploy, s.paymentDb)
 			if err != nil {
 				log.Warn("Failed to setup payment manager", "error", err)
@@ -329,7 +332,9 @@ func (s *LightEthereum) SetBackends(contract bind.ContractBackend, deploy bind.D
 			s.schemas = append(s.schemas, schema)
 			atomic.StoreUint32(&s.paymentInited, 1) // Mark payment channel is available now
 			log.Info("Succeed to setup payment manager", "address", s.address)
-			// Try to re-setup payment routes for all connected peers
+
+			// todo(rjl493456442) this procedure can take several minutes, if we already
+			// have peer connections, how to setup payment routes with these peers?
 		}()
 	}
 }

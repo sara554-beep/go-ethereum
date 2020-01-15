@@ -19,6 +19,7 @@ package lotterypmt
 import (
 	"context"
 	"errors"
+	"github.com/ethereum/go-ethereum/contracts/lotterybook/contract"
 	"reflect"
 	"sync"
 	"time"
@@ -170,7 +171,8 @@ var DefaultSenderConfig = &Config{
 
 // DefaultReceiverConfig is the default manager config for receiver.
 var DefaultReceiverConfig = &Config{
-	Role: Receiver,
+	Role:             Receiver,
+	TrustedContracts: []common.Hash{contract.RuntimeCodehash},
 }
 
 // Manager is responsible for payment routes management.
