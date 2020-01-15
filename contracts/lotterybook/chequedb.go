@@ -30,38 +30,8 @@ const (
 )
 
 var (
-	// Database schema definitions
-	//                                                                     +-------------------+
-	//                                             >  Drawer1(server) ---> |  cheque1,2,...,n  |
-	//        Cheque Drawee(Light client)        -/                        +-------------------+
-	//                                         -/
-	//   +------------+      +-----------+  -/                             +------------------+
-	//   |client addr1|----->| Contract1 |-/------->  Drawer2(server) ---> |  cheque1,2,..,n  |
-	//   +------------+      +-----------+  -\                             +------------------+
-	//                                         -\
-	//                                           -\                        +-------------------+
-	//                                             >  Drawer3(server) ---> |  cheque1,2,...,n  |
-	//                                                                     +-------------------+
-	//                  ...
-	//   +------------+      +-----------+
-	//   |client addrn|----->| Contractn |
-	//   +------------+      +-----------+
-	//
-	//       Cheque Drawer(Les server)
-	//                                                   +-------------------+
-	//                     -> Drawee1(client) ---------> |  cheque1,2,...,n  |
-	//   +------------+  -/                              +-------------------+
-	//   |server addr1|-/---> Drawee2(client) ---------> |  cheque1,2,...,n  |
-	//   +------------+  -\                              +-------------------+
-	//                     -> Drawee3(client) ---------> |  cheque1,2,...,n  |
-	//                                                   +-------------------+
-	//        ...
-	//   +------------+
-	//   |server addrn|
-	//   +------------+
-	contractAddrPrefix = []byte("-a") // contractAddrPrefix + deployer(20bytes) -> contract_addr
-	lotteryPrefix      = []byte("-l") // lotteryPrefix + drawer_id(20bytes) + lottery_id(32byte) -> lottery
-	tmpLotteryPrefix   = []byte("-t") // tmpLotteryPrefix + drawer_id(20bytes) + lottery_id(32byte) -> lottery
+	lotteryPrefix    = []byte("-l") // lotteryPrefix + drawer_id(20bytes) + lottery_id(32byte) -> lottery
+	tmpLotteryPrefix = []byte("-t") // tmpLotteryPrefix + drawer_id(20bytes) + lottery_id(32byte) -> lottery
 
 	// For sender side, the schema is:
 	//      chequePrefix + drawer_id(20bytes) + lottery_id(32byte) + drawee_id(20bytes) -> cheque
@@ -89,26 +59,6 @@ func newChequeDB(db ethdb.Database) *chequeDB {
 		lCache: lCache,
 		cCache: cCache,
 		db:     db,
-	}
-}
-
-// readContractAddr returns the contract address deployed by specified deployer.
-func (db *chequeDB) readContractAddr(deployer common.Address) *common.Address {
-	blob, err := db.db.Get(append(contractAddrPrefix, deployer.Bytes()...))
-	if err != nil {
-		return nil
-	}
-	if len(blob) != common.AddressLength {
-		return nil
-	}
-	addr := common.BytesToAddress(blob)
-	return &addr
-}
-
-// writeContractAddr writes the contract address which deployed by current address.
-func (db *chequeDB) writeContractAddr(deployer, contractAddr common.Address) {
-	if err := db.db.Put(append(contractAddrPrefix, deployer.Bytes()...), contractAddr.Bytes()); err != nil {
-		log.Crit("Failed to write contract address", "err", err)
 	}
 }
 

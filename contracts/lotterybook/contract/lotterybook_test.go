@@ -53,7 +53,8 @@ type testLotteryBook struct {
 	sim      *backends.SimulatedBackend
 	contract *LotteryBook
 	address  common.Address
-	owner    Account
+	deployer Account
+	sender   Account
 	receiver Account
 }
 
@@ -63,12 +64,14 @@ func newAccount() Account {
 }
 
 func newTestLotteryBook(t *testing.T) *testLotteryBook {
-	owner, receiver := newAccount(), newAccount()
+	deployer, sender, receiver := newAccount(), newAccount(), newAccount()
 
-	sim := backends.NewSimulatedBackend(core.GenesisAlloc{owner.addr: {Balance: big.NewInt(2e18)}, receiver.addr: {Balance: big.NewInt(1000000000)}}, 10000000)
-	transactOpts := bind.NewKeyedTransactor(owner.key)
-
-	addr, _, c, err := DeployLotteryBook(transactOpts, sim)
+	sim := backends.NewSimulatedBackend(core.GenesisAlloc{
+		deployer.addr: {Balance: big.NewInt(2e18)},
+		sender.addr:   {Balance: big.NewInt(2e18)},
+		receiver.addr: {Balance: big.NewInt(1000000000)},
+	}, 10000000)
+	addr, _, c, err := DeployLotteryBook(bind.NewKeyedTransactor(deployer.key), sim)
 	if err != nil {
 		t.Error("Failed to deploy registrar contract", err)
 	}
@@ -78,7 +81,8 @@ func newTestLotteryBook(t *testing.T) *testLotteryBook {
 		sim:      sim,
 		contract: c,
 		address:  addr,
-		owner:    owner,
+		deployer: deployer,
+		sender:   sender,
 		receiver: receiver,
 	}
 }
@@ -103,7 +107,7 @@ func (tester *testLotteryBook) issueCheque(id common.Hash, revealRange [4]byte) 
 	appContent = append(appContent, id.Bytes()...)
 	appContent = append(appContent, revealRange[:]...)
 	data := append([]byte{0x19, 0x00}, append(tester.address.Bytes(), appContent...)...)
-	sig, _ := crypto.Sign(crypto.Keccak256(data), tester.owner.key)
+	sig, _ := crypto.Sign(crypto.Keccak256(data), tester.sender.key)
 	sig[64] += 27 // Transform V from 0/1 to 27/28 according to the yellow paper
 	return sig
 }
@@ -143,7 +147,7 @@ func TestNewLottery(t *testing.T) {
 	submitAndCheck := func(owner bool, id [32]byte, amount uint64, revealNumber uint64, salt uint64, expectErr bool) {
 		var opt *bind.TransactOpts
 		if owner {
-			opt = bind.NewKeyedTransactor(tester.owner.key)
+			opt = bind.NewKeyedTransactor(tester.sender.key)
 			opt.Value = big.NewInt(int64(amount))
 		} else {
 			opt = bind.NewKeyedTransactor(tester.receiver.key)
@@ -193,8 +197,8 @@ func TestNewLottery(t *testing.T) {
 	now := tester.sim.Blockchain().CurrentHeader().Number.Uint64()
 	submitAndCheck(true, common.HexToHash("deadbeef3"), 100, now, 200, true) // Useless lottery should be rejected
 
-	// Invalid lottery submitter
-	submitAndCheck(false, common.HexToHash("deadbeef3"), 100, 100, 100, true) // Non-owner is not allowed to submit
+	// Different lottery submitter
+	submitAndCheck(false, common.HexToHash("deadbeef3"), 100, 100, 100, false) // Other user is also allowed to submit
 }
 
 func TestClaimLottery(t *testing.T) {
@@ -206,7 +210,7 @@ func TestClaimLottery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to construct merkle tree: %v", err)
 		}
-		opt := bind.NewKeyedTransactor(tester.owner.key)
+		opt := bind.NewKeyedTransactor(tester.sender.key)
 		opt.Value = big.NewInt(100000)
 
 		// Compute id based on a random salt and merkle root
@@ -317,7 +321,7 @@ func TestResetLottery(t *testing.T) {
 	tester := newTestLotteryBook(t)
 	defer tester.teardown()
 
-	opt := bind.NewKeyedTransactor(tester.owner.key)
+	opt := bind.NewKeyedTransactor(tester.sender.key)
 	opt.Value = big.NewInt(100)
 
 	current := tester.sim.Blockchain().CurrentHeader().Number.Uint64()
@@ -338,7 +342,7 @@ func TestResetLottery(t *testing.T) {
 	}
 	for index, c := range cases {
 		tester.commitEmptyUntil(c.shift)
-		opt := bind.NewKeyedTransactor(tester.owner.key)
+		opt := bind.NewKeyedTransactor(tester.sender.key)
 		opt.Value = big.NewInt(int64(c.amount))
 		_, err := tester.contract.ResetLottery(opt, common.HexToHash("deadbeef"), common.HexToHash("deadbeef2"), 10086, 20)
 		if c.expectErr && err == nil {
@@ -377,11 +381,40 @@ func TestResetLottery(t *testing.T) {
 	}
 }
 
+func TestResetAndReset(t *testing.T) {
+	tester := newTestLotteryBook(t)
+	defer tester.teardown()
+
+	opt := bind.NewKeyedTransactor(tester.sender.key)
+	opt.Value = big.NewInt(100)
+
+	current := tester.sim.Blockchain().CurrentHeader().Number.Uint64()
+	_, err := tester.contract.NewLottery(opt, common.HexToHash("deadbeef"), current+5, 10) // The reveal point is 4 blocks after
+	if err != nil {
+		t.Fatalf("Failed to submit new lottery: %v", err)
+	}
+	tester.sim.Commit()
+	tester.commitEmptyBlocks(10+256)
+
+	current = tester.sim.Blockchain().CurrentHeader().Number.Uint64()
+	_, err = tester.contract.ResetLottery(opt, common.HexToHash("deadbeef"), common.HexToHash("deadbeef1"), current+5, 20)
+	if err != nil {
+		t.Fatalf("Failed to reset lottery: %v", err)
+	}
+	tester.sim.Commit()
+	tester.commitEmptyBlocks(10+256)
+
+	_, err = tester.contract.ResetLottery(opt, common.HexToHash("deadbeef1"), common.HexToHash("deadbeef2"), 10086, 20)
+	if err != nil {
+		t.Fatalf("Failed to double reset lottery: %v", err)
+	}
+}
+
 func TestDestoryLottery(t *testing.T) {
 	tester := newTestLotteryBook(t)
 	defer tester.teardown()
 
-	opt := bind.NewKeyedTransactor(tester.owner.key)
+	opt := bind.NewKeyedTransactor(tester.sender.key)
 	opt.Value = big.NewInt(100)
 
 	current := tester.sim.Blockchain().CurrentHeader().Number.Uint64()
@@ -401,9 +434,9 @@ func TestDestoryLottery(t *testing.T) {
 	for index, c := range cases {
 		tester.commitEmptyUntil(c.shift)
 
-		opt := bind.NewKeyedTransactor(tester.owner.key)
+		opt := bind.NewKeyedTransactor(tester.sender.key)
 		opt.GasPrice = big.NewInt(0)
-		balance, err := tester.sim.BalanceAt(context.Background(), tester.owner.addr, nil)
+		balance, err := tester.sim.BalanceAt(context.Background(), tester.sender.addr, nil)
 		if err != nil {
 			t.Fatalf("Failed to retrieve balance: %v", err)
 		}
@@ -423,7 +456,7 @@ func TestDestoryLottery(t *testing.T) {
 			if lottery.Amount != 0 {
 				t.Fatal("Lottery should be destoryed")
 			}
-			balance2, err := tester.sim.BalanceAt(context.Background(), tester.owner.addr, nil)
+			balance2, err := tester.sim.BalanceAt(context.Background(), tester.sender.addr, nil)
 			if err != nil {
 				t.Fatalf("Failed to retrieve balance: %v", err)
 			}

@@ -46,7 +46,7 @@ func TestCreateLottery(t *testing.T) {
 			}
 		}
 	}()
-	drawer, err := NewChequeDrawer(env.drawerAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
+	drawer, err := NewChequeDrawer(env.drawerAddr, env.contractAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
 	if err != nil {
 		t.Fatalf("Faield to create drawer, err: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestIssueCheque(t *testing.T) {
 			}
 		}
 	}()
-	drawer, err := NewChequeDrawer(env.drawerAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
+	drawer, err := NewChequeDrawer(env.drawerAddr, env.contractAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
 	if err != nil {
 		t.Fatalf("Faield to create drawer, err: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestAllowance(t *testing.T) {
 			}
 		}
 	}()
-	drawer, err := NewChequeDrawer(env.drawerAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
+	drawer, err := NewChequeDrawer(env.drawerAddr, env.contractAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
 	if err != nil {
 		t.Fatalf("Faield to create drawer, err: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestEstimatedExpiry(t *testing.T) {
 			}
 		}
 	}()
-	drawer, err := NewChequeDrawer(env.drawerAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
+	drawer, err := NewChequeDrawer(env.drawerAddr, env.contractAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
 	if err != nil {
 		t.Fatalf("Faield to create drawer, err: %v", err)
 	}

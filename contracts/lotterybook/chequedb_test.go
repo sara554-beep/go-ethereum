@@ -26,25 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func TestPersistContractAddr(t *testing.T) {
-	db := newChequeDB(rawdb.NewMemoryDatabase())
-	local, contract := common.HexToAddress("cafebabe"), common.HexToAddress("deadbeef")
-
-	// Read non-existent data
-	got := db.readContractAddr(local)
-	if got != nil {
-		t.Fatalf("Should return nil for non-existent data")
-	}
-	db.writeContractAddr(local, contract)
-	got = db.readContractAddr(local)
-	if got == nil {
-		t.Fatalf("Can't read back the written addr")
-	}
-	if *got != contract {
-		t.Fatalf("Mismatch between the written addr with read one, want: %s, got %s", contract.Hex(), got.Hex())
-	}
-}
-
 func TestPersistCheque(t *testing.T) {
 	db := newChequeDB(rawdb.NewMemoryDatabase())
 

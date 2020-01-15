@@ -19,7 +19,6 @@ package lotterypmt
 import (
 	"context"
 	"errors"
-	"github.com/ethereum/go-ethereum/contracts/lotterybook/contract"
 	"reflect"
 	"sync"
 	"time"
@@ -120,28 +119,6 @@ func (r *Route) Close() error {
 	return r.drawer.Destroy(ctx)
 }
 
-// Verify ensures the contract code of lottery contract is trusted.
-func (r *Route) Verify() error {
-	if r.role != Receiver {
-		return nil
-	}
-	if len(r.trusted) == 0 {
-		return nil
-	}
-	ctx, cancelFn := context.WithTimeout(context.Background(), time.Minute*5)
-	defer cancelFn()
-	hash, err := r.drawee.CodeHash(ctx)
-	if err != nil {
-		return err
-	}
-	for _, h := range r.trusted {
-		if h == hash {
-			return nil
-		}
-	}
-	return errors.New("untrusted contract")
-}
-
 // Info returns the infomation union of payment route.
 func (r *Route) Info() (common.Address, common.Address, common.Address) {
 	if r.role == Sender {
@@ -172,7 +149,6 @@ var DefaultSenderConfig = &Config{
 // DefaultReceiverConfig is the default manager config for receiver.
 var DefaultReceiverConfig = &Config{
 	Role:             Receiver,
-	TrustedContracts: []common.Hash{contract.RuntimeCodehash},
 }
 
 // Manager is responsible for payment routes management.
@@ -211,7 +187,8 @@ func NewManager(config *Config, chainReader payment.ChainReader, txSigner *bind.
 		routes:       make(map[common.Address]*Route),
 	}
 	if c.config.Role == Sender {
-		sender, err := lotterybook.NewChequeDrawer(c.localAddr, txSigner, chequeSigner, chainReader, cBackend, dBackend, db)
+		// todo
+		sender, err := lotterybook.NewChequeDrawer(c.localAddr, common.Address{}, txSigner, chequeSigner, chainReader, cBackend, dBackend, db)
 		if err != nil {
 			return nil, err
 		}

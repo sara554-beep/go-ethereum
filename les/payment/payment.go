@@ -39,9 +39,6 @@ type PaymentRoute interface {
 	// for payment processing and proving.
 	Receive(proofOfPayment []byte) error
 
-	// Verify checks whether the payment route is trustable
-	Verify() error
-
 	// Close exits the payment and opens the reqeust to withdraw all funds.
 	Close() error
 

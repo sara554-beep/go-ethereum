@@ -57,24 +57,15 @@ type ChequeDrawer struct {
 }
 
 // NewChequeDrawer creates a payment drawer and deploys the contract if necessary.
-func NewChequeDrawer(selfAddr common.Address, txSigner *bind.TransactOpts, chequeSigner func(data []byte) ([]byte, error), chain Blockchain, cBackend bind.ContractBackend, dBackend bind.DeployBackend, db ethdb.Database) (*ChequeDrawer, error) {
-	// Deploy the contract if we don't have one yet.
-	var chanAddr common.Address
-	cdb := newChequeDB(db)
-	if stored := cdb.readContractAddr(selfAddr); stored != nil {
-		chanAddr = *stored
-	} else {
-		addr, err := deployLotteryBook(txSigner, cBackend, dBackend)
-		if err != nil {
-			return nil, err
-		}
-		cdb.writeContractAddr(selfAddr, addr)
-		chanAddr = addr
+func NewChequeDrawer(selfAddr, contractAddr common.Address, txSigner *bind.TransactOpts, chequeSigner func(data []byte) ([]byte, error), chain Blockchain, cBackend bind.ContractBackend, dBackend bind.DeployBackend, db ethdb.Database) (*ChequeDrawer, error) {
+	if contractAddr == (common.Address{}) {
+		return nil, errors.New("empty contract address")
 	}
-	book, err := newLotteryBook(chanAddr, cBackend)
+	book, err := newLotteryBook(contractAddr, cBackend)
 	if err != nil {
 		return nil, err
 	}
+	cdb := newChequeDB(db)
 	drawer := &ChequeDrawer{
 		address:      selfAddr,
 		cdb:          cdb,

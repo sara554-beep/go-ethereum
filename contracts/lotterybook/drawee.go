@@ -26,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -96,15 +95,6 @@ func NewChequeDrawee(opts *bind.TransactOpts, selfAddr, drawerAddr, contractAddr
 // ContractAddr returns the address of lottery contract which is used now.
 func (drawee *ChequeDrawee) ContractAddr() common.Address {
 	return drawee.book.address
-}
-
-// CodeHash returns the code hash of connected lottery contract.
-func (drawee *ChequeDrawee) CodeHash(context context.Context) (common.Hash, error) {
-	code, err := drawee.dBackend.CodeAt(context, drawee.book.address, nil)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	return crypto.Keccak256Hash(code), nil
 }
 
 func (drawee *ChequeDrawee) Close() {

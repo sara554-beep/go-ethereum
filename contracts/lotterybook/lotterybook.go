@@ -20,7 +20,6 @@ package lotterybook
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -374,22 +373,12 @@ func newLotteryBook(address common.Address, contractBackend bind.ContractBackend
 	return &LotteryBook{contract: c, address: address}, nil
 }
 
-// deployLotteryBook deploys the lotterybook smart contract and waits the transaction
-// is confirmed by network.
-func deployLotteryBook(auth *bind.TransactOpts, contractBackend bind.ContractBackend, deployBackend bind.DeployBackend) (common.Address, error) {
-	log.Info("Deploying lotterybook contract")
-	start := time.Now()
-	_, tx, _, err := contract.DeployLotteryBook(auth, contractBackend)
+// DeployLotteryBook deploys the lotterybook smart contract.
+func DeployLotteryBook(auth *bind.TransactOpts, contractBackend bind.ContractBackend) (common.Address, *LotteryBook, error) {
+	addr, _, c, err := contract.DeployLotteryBook(auth, contractBackend)
 	if err != nil {
-		return common.Address{}, err
+		return common.Address{}, nil, err
 	}
-	context, cancelFn := context.WithTimeout(context.Background(), txTimeout)
-	defer cancelFn()
-	addr, err := bind.WaitDeployed(context, deployBackend, tx)
-	if err != nil {
-		return common.Address{}, err
-	}
-	log.Info("Deployed lotterybook contract", "address", addr, "elapsed", common.PrettyDuration(time.Since(start)))
-	deployDurationTimer.UpdateSince(start)
-	return addr, nil
+	log.Info("Deployed lotterybook contract", "address", addr)
+	return addr, &LotteryBook{contract: c, address: addr}, nil
 }

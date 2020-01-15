@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/binary"
 	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"math/big"
 	"math/rand"
 	"testing"
@@ -35,30 +36,40 @@ import (
 )
 
 type testEnv struct {
-	draweeDb   ethdb.Database
-	drawerDb   ethdb.Database
-	draweeKey  *ecdsa.PrivateKey
-	draweeAddr common.Address
-	drawerKey  *ecdsa.PrivateKey
-	drawerAddr common.Address
-	backend    *backends.SimulatedBackend
+	draweeDb     ethdb.Database
+	drawerDb     ethdb.Database
+	draweeKey    *ecdsa.PrivateKey
+	draweeAddr   common.Address
+	drawerKey    *ecdsa.PrivateKey
+	drawerAddr   common.Address
+	contractAddr common.Address
+	backend      *backends.SimulatedBackend
 }
 
 func newTestEnv(t *testing.T) *testEnv {
 	db1, db2 := rawdb.NewMemoryDatabase(), rawdb.NewMemoryDatabase()
 	key, _ := crypto.GenerateKey()
 	key2, _ := crypto.GenerateKey()
+	key3, _ := crypto.GenerateKey()
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	addr2 := crypto.PubkeyToAddress(key2.PublicKey)
-	sim := backends.NewSimulatedBackend(core.GenesisAlloc{addr: {Balance: big.NewInt(2e18)}, addr2: {Balance: big.NewInt(2e18)}}, 10000000)
+	addr3 := crypto.PubkeyToAddress(key3.PublicKey)
+
+	sim := backends.NewSimulatedBackend(core.GenesisAlloc{
+		addr:  {Balance: big.NewInt(2e18)},
+		addr2: {Balance: big.NewInt(2e18)},
+		addr3: {Balance: big.NewInt(2e18)},
+	}, 10000000)
+	contractAddr, _, _ := DeployLotteryBook(bind.NewKeyedTransactor(key3), sim)
 	return &testEnv{
-		draweeDb:   db1,
-		draweeKey:  key,
-		draweeAddr: addr,
-		drawerDb:   db2,
-		drawerKey:  key2,
-		drawerAddr: addr2,
-		backend:    sim,
+		draweeDb:     db1,
+		draweeKey:    key,
+		draweeAddr:   addr,
+		drawerDb:     db2,
+		drawerKey:    key2,
+		drawerAddr:   addr2,
+		contractAddr: contractAddr,
+		backend:      sim,
 	}
 }
 

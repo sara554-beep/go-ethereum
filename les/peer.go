@@ -724,9 +724,6 @@ func (p *peer) Handshake(td *big.Int, head common.Hash, headNum uint64, genesis 
 						if err != nil {
 							continue
 						}
-						if err := route.Verify(); err != nil {
-							continue
-						}
 						p.routes[schema.Identity()] = route
 					}
 				}

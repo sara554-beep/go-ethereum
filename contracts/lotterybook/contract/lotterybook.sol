@@ -46,23 +46,15 @@ contract LotteryBook {
         // Lottery id is derived by keccak256(tree_root+id) so that we can store
         // many lotteries with same root hash.
         uint64 salt;
-    }
 
-    /*
-        Modifier
-    */
-    modifier onlyOwner() {
-        require(msg.sender == owner, "only owner allowed");
-        _;
+        // owner is the creator of lottery, all issued cheques should be verified
+        // based on the owner field.
+        address payable owner;
     }
 
     /*
         Public Functions
     */
-    constructor() public {
-        owner = msg.sender;
-    }
-
     // newLottery creates a new lottery with the specified probabilistic tree
     // root hash and the corresponding lottery amount.
     //
@@ -109,14 +101,14 @@ contract LotteryBook {
     // The reason to put a winning hash range in the cheque is: the expected transaction cost
     // of claiming the winnings is proportional to the cheque amount. The real transaction cost
     // only occurs when cashing the whole deposit (so their ratio can be known in advance)
-    function newLottery(bytes32 id, uint64 blockNumber, uint64 salt) public payable onlyOwner {
+    function newLottery(bytes32 id, uint64 blockNumber, uint64 salt) public payable {
         // Ensure the given reveal block number and lottery amount is reasonable.
         require(blockNumber > block.number && msg.value > 0 && msg.value <= 1 ether, "invalid lottery settings");
 
         // Ensure there is no duplicated lottery.
         require(lotteries[id].revealNumber == 0, "duplicated lottery");
 
-        lotteries[id] = lottery({amount: uint64(msg.value), revealNumber: blockNumber, salt: salt});
+        lotteries[id] = lottery({amount: uint64(msg.value), revealNumber: blockNumber, salt: salt, owner: msg.sender});
     }
 
     // resetLottery reowns the expired lottery if no one claims or this is no winner.
@@ -124,13 +116,16 @@ contract LotteryBook {
     // @newid: the id of new lottery for replacement
     // @newRevealNumber: the specified block number at which to reveal the lottery
     // @newSalt: the random number which used to calculate the lottery id
-    function resetLottery(bytes32 id, bytes32 newid, uint64 newRevealNumber, uint64 newSalt) public payable onlyOwner {
+    function resetLottery(bytes32 id, bytes32 newid, uint64 newRevealNumber, uint64 newSalt) public payable {
         // Ensure the new reveal block number is a valid future number.
         require(newRevealNumber > block.number, "invalid lottery reset operation");
 
         // Ensure the lottery exists and it's expired.
         uint64 oldRevealNumber = lotteries[id].revealNumber;
         require(oldRevealNumber != 0 && oldRevealNumber+256 < block.number, "non-existent or non-expired lottery");
+
+        // Ensure it's called by owner.
+        require(lotteries[id].owner == msg.sender, "only owner is allowed to reset lottery");
 
         // Now we can make sure the old lottery is expired.
         // There are a few cases can lead to this situation:
@@ -146,6 +141,7 @@ contract LotteryBook {
         lotteries[newid].revealNumber = newRevealNumber;
         lotteries[newid].salt = newSalt;
         lotteries[newid].amount = lotteries[id].amount;
+        lotteries[newid].owner = msg.sender;
         // Increase lottery amount if caller requires
         if (msg.value > 0) {
             uint64 amount = lotteries[newid].amount;
@@ -158,10 +154,14 @@ contract LotteryBook {
 
     // destroyLottery destorys the expired lottery and reclaim
     // the deposit inside.
-    function destroyLottery(bytes32 id) public onlyOwner {
+    function destroyLottery(bytes32 id) public {
         // Ensure the lottery exists and it's expired.
         uint64 revealNumber = lotteries[id].revealNumber;
         require(revealNumber != 0 && revealNumber+256 < block.number, "non-existent or non-expired lottery");
+
+        // Ensure it's called by owner.
+        address payable owner = lotteries[id].owner;
+        require(owner == msg.sender, "only owner is allowed to reset lottery");
 
         owner.transfer(lotteries[id].amount);
         delete lotteries[id];
@@ -232,7 +232,7 @@ contract LotteryBook {
         // 5: range - the promised hash range allowed for lottery redemption.
         //    Once the range is verified, the corresponding receiver is verified.
         bytes32 hash = keccak256(abi.encodePacked(byte(0x19), byte(0), this, id, revealRange));
-        require(owner == ecrecover(hash, sig_v, sig_r, sig_s), "invalid signature");
+        require(lotteries[id].owner == ecrecover(hash, sig_v, sig_r, sig_s), "invalid signature");
 
         // Pass cheque verification, now we can ensure:
         // * the lottery is claimable
@@ -255,9 +255,6 @@ contract LotteryBook {
     */
     // deposits is the map which contains all created deposit by owner.
     mapping(bytes32=>lottery) public lotteries;
-
-    // owner is the address of the payment channel owner(aka sender)
-    address payable public owner;
 
     // The maximum weight which used to calculate reveal range.
     uint64 constant maxWeight = 1<<32;

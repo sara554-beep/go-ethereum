@@ -28,7 +28,6 @@ var (
 	invalidChequeMeter = metrics.NewRegisteredMeter("payment/lotterybook/receiver/invalid", nil)
 
 	claimDurationTimer   = metrics.NewRegisteredTimer("payment/lotterybook/duration/claim", nil)
-	deployDurationTimer  = metrics.NewRegisteredTimer("payment/lotterybook/duration/deploy", nil)
 	depositDurationTimer = metrics.NewRegisteredTimer("payment/lotterybook/duration/deposit", nil)
 	destroyDurationTimer = metrics.NewRegisteredTimer("payment/lotterybook/duration/destroy", nil)
 
