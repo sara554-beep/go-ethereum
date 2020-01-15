@@ -434,6 +434,6 @@ func TestDestoryLottery(t *testing.T) {
 	}
 	_, err = tester.contract.DestroyLottery(opt, common.HexToHash("deadbeef1"))
 	if err == nil {
-		t.Fatalf("Destory non-existent lottery should be rejected")
+		t.Fatalf("Destroy non-existent lottery should be rejected")
 	}
 }

@@ -159,6 +159,7 @@ func (drawer *ChequeDrawer) submitLottery(context context.Context, payers []comm
 	drawer.cdb.writeLottery(drawer.address, lotteryId, true, lottery) // tmp = true
 
 	// Submit the new created lottery to contract by specified on-chain function.
+	start := time.Now()
 	tx, err := onchainFn(amount, lotteryId, revealNumber, salt)
 	if err != nil {
 		return nil, err
@@ -170,6 +171,8 @@ func (drawer *ChequeDrawer) submitLottery(context context.Context, payers []comm
 	if receipt.Status != types.ReceiptStatusSuccessful {
 		return nil, ErrTransactionFailed
 	}
+	depositDurationTimer.UpdateSince(start)
+
 	// Generate empty unused cheques based on the newly created lottery.
 	for _, entry := range entries {
 		witness, err := tree.Prove(entry)
@@ -217,6 +220,7 @@ func (drawer *ChequeDrawer) createLottery(context context.Context, payers []comm
 	if err := drawer.lmgr.trackLottery(lottery); err != nil {
 		return common.Hash{}, err
 	}
+	createLotteryGauge.Inc(1)
 	return lottery.Id, err
 }
 
@@ -265,6 +269,7 @@ func (drawer *ChequeDrawer) resetLottery(context context.Context, id common.Hash
 	for _, addr := range addresses {
 		drawer.cdb.deleteCheque(drawer.address, addr, id, true)
 	}
+	reownLotteryGauge.Inc(1)
 	return newLottery.Id, nil
 }
 
@@ -286,9 +291,9 @@ func (drawer *ChequeDrawer) Deposit(context context.Context, payers []common.Add
 	return drawer.createLottery(context, payers, amounts, revealNumber)
 }
 
-// destoryLottery destorys a stale lottery, claims all deposit inside back to
+// destroyLottery destroys a stale lottery, claims all deposit inside back to
 // our own pocket.
-func (drawer *ChequeDrawer) destoryLottery(context context.Context, id common.Hash) error {
+func (drawer *ChequeDrawer) destroyLottery(context context.Context, id common.Hash) error {
 	// Short circuit if the specified stale lottery doesn't exist.
 	lottery := drawer.cdb.readLottery(drawer.address, id)
 	if lottery == nil {
@@ -296,6 +301,7 @@ func (drawer *ChequeDrawer) destoryLottery(context context.Context, id common.Ha
 	}
 	// The on-chain transaction may fail dues to lots of reasons like
 	// the lottery doesn't exist or lottery hasn't been expired yet.
+	start := time.Now()
 	tx, err := drawer.book.contract.DestroyLottery(drawer.txSigner, id)
 	if err != nil {
 		return err
@@ -307,6 +313,7 @@ func (drawer *ChequeDrawer) destoryLottery(context context.Context, id common.Ha
 	if receipt.Status != types.ReceiptStatusSuccessful {
 		return ErrTransactionFailed
 	}
+	destroyDurationTimer.UpdateSince(start)
 	// Update manager's status
 	if err := drawer.lmgr.deleteExpired(id); err != nil {
 		return err
@@ -323,15 +330,16 @@ func (drawer *ChequeDrawer) destoryLottery(context context.Context, id common.Ha
 	return nil
 }
 
-// Destory is a wrapper function of destroyLottery. It destorys all
+// Destroy is a wrapper function of destroyLottery. It destorys all
 // expired lotteries and claim back all deposit inside.
-func (drawer *ChequeDrawer) Destory(context context.Context) error {
+func (drawer *ChequeDrawer) Destroy(context context.Context) error {
 	expired, err := drawer.lmgr.expiredLotteris()
 	if err != nil {
 		return err
 	}
+	reownLotteryGauge.Inc(1)
 	for _, l := range expired {
-		drawer.destoryLottery(context, l.Id)
+		drawer.destroyLottery(context, l.Id)
 	}
 	return nil
 }

@@ -390,5 +390,6 @@ func deployLotteryBook(auth *bind.TransactOpts, contractBackend bind.ContractBac
 		return common.Address{}, err
 	}
 	log.Info("Deployed lotterybook contract", "address", addr, "elapsed", common.PrettyDuration(time.Since(start)))
+	deployDurationTimer.UpdateSince(start)
 	return addr, nil
 }

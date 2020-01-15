@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -128,11 +129,13 @@ func (drawee *ChequeDrawee) AddCheque(c *Cheque) (uint64, error) {
 	// via sending cheques without deposit? Read status from
 	// contract is not trivial.
 	if lottery.Amount == 0 {
+		invalidChequeMeter.Mark(1)
 		return 0, errors.New("no lottery created")
 	}
 	// Short circuit if the lottery is already revealed.
 	current := drawee.chain.CurrentHeader().Number.Uint64()
 	if current >= lottery.RevealNumber {
+		invalidChequeMeter.Mark(1)
 		return 0, errors.New("lottery expired")
 	}
 	var diff uint64
@@ -142,7 +145,8 @@ func (drawee *ChequeDrawee) AddCheque(c *Cheque) (uint64, error) {
 			// There are many cases can lead to this situation:
 			// * Drawer sends a stale cheque deliberately
 			// * Drawer's chequedb is broken, it loses all payment history
-			// No matter the reason, reject the cheque here.
+			// No matter which reason, reject the cheque here.
+			staleChequeMeter.Mark(1)
 			return 0, errors.New("stale cheque")
 		}
 		// Figure out the net newly signed reveal range
@@ -150,6 +154,7 @@ func (drawee *ChequeDrawee) AddCheque(c *Cheque) (uint64, error) {
 	} else {
 		// Reject cheque if the paid amount is zero.
 		if c.SignedRange == c.LowerLimit || c.SignedRange == 0 {
+			invalidChequeMeter.Mark(1)
 			return 0, errors.New("invalid payment amount")
 		}
 		diff = c.SignedRange - c.LowerLimit + 1
@@ -163,6 +168,7 @@ func (drawee *ChequeDrawee) AddCheque(c *Cheque) (uint64, error) {
 	// to calculate percentage first. Otherwise the calculation may overflow.
 	diffAmount := uint64((float64(diff) / float64(c.UpperLimit-c.LowerLimit+1)) * float64(assigned))
 	if diffAmount == 0 {
+		invalidChequeMeter.Mark(1)
 		return 0, errors.New("invalid payment amount")
 	}
 	drawee.cdb.writeCheque(drawee.selfAddr, c.Signer(), c, false)
@@ -193,6 +199,7 @@ func (drawee *ChequeDrawee) claim(context context.Context, cheque *Cheque) error
 		copy(p[:], cheque.Witness[i].Bytes())
 		proofslice = append(proofslice, p)
 	}
+	start := time.Now()
 	tx, err := drawee.book.contract.Claim(drawee.opts, cheque.LotteryId, cheque.RevealRange, cheque.Sig[64], common.BytesToHash(cheque.Sig[:common.HashLength]), common.BytesToHash(cheque.Sig[common.HashLength:2*common.HashLength]), proofslice)
 	if err != nil {
 		return err
@@ -207,6 +214,8 @@ func (drawee *ChequeDrawee) claim(context context.Context, cheque *Cheque) error
 	if drawee.onClaimedHook != nil {
 		drawee.onClaimedHook(cheque.LotteryId)
 	}
+	claimDurationTimer.UpdateSince(start)
+	winLotteryGauge.Inc(1)
 	log.Debug("Claimed lottery", "id", cheque.LotteryId)
 	return nil
 }

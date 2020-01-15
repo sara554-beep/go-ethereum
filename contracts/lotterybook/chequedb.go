@@ -137,8 +137,10 @@ func (db *chequeDB) readCheque(drawee, drawer common.Address, id common.Hash, se
 	key := chequeKey(drawee, drawer, id, sender)
 	if item, exist := db.cCache.Get(string(key)); exist {
 		c := item.(Cheque)
+		chequeDBCacheHitMeter.Mark(1)
 		return &c
 	}
+	chequeDBCacheMissMeter.Mark(1)
 	blob, err := db.db.Get(key)
 	if err != nil {
 		return nil
@@ -148,6 +150,7 @@ func (db *chequeDB) readCheque(drawee, drawer common.Address, id common.Hash, se
 		return nil
 	}
 	db.cCache.Add(string(key), cheque)
+	chequeDBReadMeter.Mark(int64(len(blob)))
 	return &cheque
 }
 
@@ -163,6 +166,7 @@ func (db *chequeDB) writeCheque(drawee, drawer common.Address, cheque *Cheque, s
 		log.Crit("Failed to store cheque", "error", err)
 	}
 	db.cCache.Add(string(key), *cheque)
+	chequeDBWriteMeter.Mark(int64(len(blob)))
 }
 
 // deleteCheque deletes the specified cheque from disk.
@@ -179,8 +183,10 @@ func (db *chequeDB) readLottery(drawer common.Address, id common.Hash) *Lottery 
 	key := append(lotteryPrefix, append(drawer.Bytes(), id.Bytes()...)...)
 	if item, exist := db.lCache.Get(string(key)); exist {
 		l := item.(Lottery)
+		chequeDBCacheHitMeter.Mark(1)
 		return &l
 	}
+	chequeDBCacheMissMeter.Mark(1)
 	blob, err := db.db.Get(key)
 	if err != nil {
 		return nil
@@ -190,6 +196,7 @@ func (db *chequeDB) readLottery(drawer common.Address, id common.Hash) *Lottery 
 		return nil
 	}
 	db.lCache.Add(string(key), lottery)
+	chequeDBReadMeter.Mark(int64(len(blob)))
 	return &lottery
 }
 
@@ -211,6 +218,7 @@ func (db *chequeDB) writeLottery(drawer common.Address, id common.Hash, tmp bool
 	if !tmp {
 		db.lCache.Add(string(key), *lottery)
 	}
+	chequeDBWriteMeter.Mark(int64(len(blob)))
 }
 
 // deleteLottery deletes the specified lottery from disk
@@ -236,6 +244,7 @@ func (db *chequeDB) listLotteries(addr common.Address, tmp bool) []*Lottery {
 	defer iter.Release()
 
 	var lotteries []*Lottery
+	var size int64
 	for iter.Next() {
 		if len(iter.Key()) != len(lotteryPrefix)+common.AddressLength+common.HashLength {
 			continue
@@ -245,7 +254,9 @@ func (db *chequeDB) listLotteries(addr common.Address, tmp bool) []*Lottery {
 			continue
 		}
 		lotteries = append(lotteries, &lottery)
+		size += int64(len(iter.Value()) + len(iter.Key()))
 	}
+	chequeDBReadMeter.Mark(size)
 	return lotteries
 }
 
@@ -258,6 +269,7 @@ func (db *chequeDB) listCheques(addr common.Address, filterFn func(common.Addres
 	iter := db.db.NewIteratorWithPrefix(append(chequePrefix, addr.Bytes()...))
 	defer iter.Release()
 
+	var size int64
 	for iter.Next() {
 		if len(iter.Key()) != len(chequePrefix)+2*common.AddressLength+common.HashLength {
 			continue
@@ -273,6 +285,8 @@ func (db *chequeDB) listCheques(addr common.Address, filterFn func(common.Addres
 		}
 		cheques = append(cheques, &cheque)
 		addresses = append(addresses, common.BytesToAddress(addr))
+		size += int64(len(iter.Value()) + len(iter.Key()))
 	}
+	chequeDBReadMeter.Mark(size)
 	return
 }

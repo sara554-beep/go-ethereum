@@ -116,7 +116,7 @@ func (r *Route) Close() error {
 	}
 	ctx, cancelFn := context.WithTimeout(context.Background(), time.Minute*5)
 	defer cancelFn()
-	return r.drawer.Destory(ctx)
+	return r.drawer.Destroy(ctx)
 }
 
 // Verify ensures the contract code of lottery contract is trusted.
