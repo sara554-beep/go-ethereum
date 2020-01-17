@@ -27,17 +27,3 @@ var (
 	// ErrTransactionFailed is returned if the sent transaction is failed.
 	ErrTransactionFailed = errors.New("transaction failed")
 )
-
-// StaleChequeError wraps a error msg and the evidence for a stale cheque.
-//
-// Cheque drawer can sign the stale cheques deliberately or indeliberately.
-// E.G. If the cheque db of drawer is missing, it can lead to a indeliberate
-// stale cheque.
-type StaleChequeError struct {
-	Msg      string
-	Evidence *Cheque // The latest received cheque can be used as an evidence
-}
-
-func (err *StaleChequeError) Error() string {
-	return err.Msg
-}

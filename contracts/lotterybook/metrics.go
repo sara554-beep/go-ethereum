@@ -33,5 +33,6 @@ var (
 
 	createLotteryGauge = metrics.NewRegisteredGauge("payment/lotterybook/lottery/create", nil)
 	winLotteryGauge    = metrics.NewRegisteredGauge("payment/lotterybook/lottery/win", nil)
+	loseLotteryGauge   = metrics.NewRegisteredGauge("payment/lotterybook/lottery/lose", nil)
 	reownLotteryGauge  = metrics.NewRegisteredGauge("payment/lotterybook/lottery/reown", nil)
 )

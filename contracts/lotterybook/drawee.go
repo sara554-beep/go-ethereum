@@ -19,23 +19,14 @@ package lotterybook
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 )
-
-// WrappedCheque wraps the cheque and a few additional fields
-type WrappedCheque struct {
-	Drawer       common.Address
-	Cheque       *Cheque
-	RevealNumber uint64
-}
 
 // ChequeDrawee represents the payment drawee in a off-chain payment channel.
 // In chequeDrawee the most basic functions related to payment are defined
@@ -53,13 +44,10 @@ type ChequeDrawee struct {
 	cdb      *chequeDB          // Database which saves all received payments
 	book     *LotteryBook       // Shared lottery contract used to verify deposit and claim payment
 	opts     *bind.TransactOpts // Signing handler for transaction signing
+	cmgr     *chequeManager
 	cBackend bind.ContractBackend
 	dBackend bind.DeployBackend
 	chain    Blockchain
-	queryCh  chan chan []*WrappedCheque
-	chequeCh chan *WrappedCheque
-	closeCh  chan struct{}
-	wg       sync.WaitGroup
 
 	// Testing hooks
 	onClaimedHook func(common.Hash) // onClaimedHook is called if a lottery is successfully claimed
@@ -74,38 +62,29 @@ func NewChequeDrawee(opts *bind.TransactOpts, address, contractAddr common.Addre
 	if err != nil {
 		return nil, err
 	}
+	cdb := newChequeDB(db)
 	drawee := &ChequeDrawee{
-		cdb:      newChequeDB(db),
+		cdb:      cdb,
 		cBackend: cBackend,
 		dBackend: dBackend,
 		chain:    chain,
 		address:  address,
 		book:     book,
 		opts:     opts,
-		queryCh:  make(chan chan []*WrappedCheque),
-		chequeCh: make(chan *WrappedCheque),
-		closeCh:  make(chan struct{}),
 	}
-	drawee.wg.Add(1)
-	go drawee.waitingReveal()
+	drawee.cmgr = newChequeManager(address, chain, book.contract, cdb, drawee.claim)
 	return drawee, nil
 }
 
-// ContractAddr returns the address of lottery contract which is used now.
-func (drawee *ChequeDrawee) ContractAddr() common.Address {
-	return drawee.book.address
-}
-
 func (drawee *ChequeDrawee) Close() {
-	close(drawee.closeCh)
-	drawee.wg.Wait()
+	drawee.cmgr.close()
 }
 
 // AddCheque receives a cheque from the specified drawer, checks the validity
 // and stores it locally. Besides, this function will return the net amount of
 // this cheque.
 func (drawee *ChequeDrawee) AddCheque(drawer common.Address, c *Cheque) (uint64, error) {
-	if err := validateCheque(c, drawer, drawee.address, drawee.ContractAddr()); err != nil {
+	if err := validateCheque(c, drawer, drawee.address, drawee.book.address); err != nil {
 		return 0, err
 	}
 	// Short circuit if specified lottery doesn't exist.
@@ -164,23 +143,8 @@ func (drawee *ChequeDrawee) AddCheque(drawer common.Address, c *Cheque) (uint64,
 		return 0, errors.New("invalid payment amount")
 	}
 	drawee.cdb.writeCheque(drawee.address, drawer, c, false)
-	select {
-	case drawee.chequeCh <- &WrappedCheque{drawer, c, lottery.RevealNumber}:
-	case <-drawee.closeCh:
-	}
+	drawee.cmgr.trackCheque(c, lottery.RevealNumber)
 	return diffAmount, nil
-}
-
-// ActiveCheques returns all active cheques received which is
-// waiting for reveal.
-func (drawee *ChequeDrawee) ActiveCheques() []*WrappedCheque {
-	reqCh := make(chan []*WrappedCheque, 1)
-	select {
-	case drawee.queryCh <- reqCh:
-		return <-reqCh
-	case <-drawee.closeCh:
-		return nil
-	}
 }
 
 // claim sends a on-chain transaction to claim the specified lottery.
@@ -207,145 +171,6 @@ func (drawee *ChequeDrawee) claim(context context.Context, cheque *Cheque) error
 		drawee.onClaimedHook(cheque.LotteryId)
 	}
 	claimDurationTimer.UpdateSince(start)
-	winLotteryGauge.Inc(1)
 	log.Debug("Claimed lottery", "id", cheque.LotteryId)
 	return nil
-}
-
-// waitingReveal starts a background routine to wait all received cheques to be revealed.
-func (drawee *ChequeDrawee) waitingReveal() {
-	defer drawee.wg.Done()
-
-	// Establish subscriptions
-	newHeadCh := make(chan core.ChainHeadEvent, 1024)
-	sub := drawee.chain.SubscribeChainHeadEvent(newHeadCh)
-	if sub == nil {
-		return
-	}
-	defer sub.Unsubscribe()
-
-	var (
-		current uint64
-		active  = make(map[uint64][]*WrappedCheque)
-	)
-	// checkAndClaim checks whether the cheque is the winner or not.
-	// If so, claim the corresponding lottery via sending on-chain
-	// transaction.
-	checkAndClaim := func(cheque *Cheque, drawer common.Address, hash common.Hash) (err error) {
-		defer func() {
-			// No matter we aren't the lucky winner or we already claim
-			// the lottery, delete the record anyway. Keep it if any error
-			// occurs.
-			if err == nil {
-				drawee.cdb.deleteCheque(drawee.address, drawer, cheque.LotteryId, false)
-			}
-		}()
-		if !cheque.reveal(hash) {
-			return nil
-		}
-		ctx, cancelFn := context.WithTimeout(context.Background(), txTimeout)
-		defer cancelFn()
-		return drawee.claim(ctx, cheque)
-	}
-	// Initialize local blockchain height
-	current = drawee.chain.CurrentHeader().Number.Uint64()
-
-	// Read all stored cheques received locally
-	cheques, drawers := drawee.cdb.listCheques(drawee.address, nil)
-	for index, cheque := range cheques {
-		ret, err := drawee.book.contract.Lotteries(nil, cheque.LotteryId)
-		if err != nil {
-			log.Error("Failed to retrieve corresponding lottery", "error", err)
-			continue
-		}
-		// If the amount of corresponding lottery is 0, it means the lottery
-		// is claimed or reset by someone, just delete it.
-		if ret.Amount == 0 {
-			log.Debug("Lottery is claimed")
-			drawee.cdb.deleteCheque(drawee.address, drawers[index], cheque.LotteryId, false)
-			continue
-		}
-		// The valid claim block range is [revealNumber+1, revealNumber+256].
-		// However the head block can be reorged with very high chance. So
-		// a small processing confirms is applied to ensure the reveal hash
-		// is stable enough.
-		//
-		// For receiver, the reasonable claim range (revealNumber+6, revealNumber+256].
-		if current < ret.RevealNumber+lotteryProcessConfirms {
-			active[ret.RevealNumber] = append(active[ret.RevealNumber], &WrappedCheque{
-				Drawer:       drawers[index],
-				Cheque:       cheque,
-				RevealNumber: ret.RevealNumber,
-			})
-		} else if current < ret.RevealNumber+lotteryClaimPeriod {
-			// Lottery can still be claimed, try it!
-			revealHash := drawee.chain.GetHeaderByNumber(ret.RevealNumber)
-
-			// Create an independent routine to claim the lottery.
-			// This function may takes very long time, don't block
-			// the entire thread here. It's ok to spin up routines
-			// blindly here, there won't have too many cheques to claim.
-			go checkAndClaim(cheque, drawers[index], revealHash.Hash())
-		} else {
-			// Lottery is already out of claim window, delete it.
-			log.Debug("Cheque expired", "lotteryid", cheque.LotteryId)
-			drawee.cdb.deleteCheque(drawee.address, drawers[index], cheque.LotteryId, false)
-		}
-	}
-	for {
-		select {
-		case ev := <-newHeadCh:
-			current = ev.Block.NumberU64()
-			for revealAt, cheques := range active {
-				// Short circuit if they are still active lotteries.
-				if current < revealAt+lotteryProcessConfirms {
-					continue
-				}
-				// Wipe all cheques if they are already stale.
-				if current >= revealAt+lotteryClaimPeriod {
-					for _, cheque := range cheques {
-						drawee.cdb.deleteCheque(drawee.address, cheque.Drawer, cheque.Cheque.LotteryId, false)
-					}
-					delete(active, revealAt)
-					continue
-				}
-				revealHash := drawee.chain.GetHeaderByNumber(revealAt).Hash()
-				for _, cheque := range cheques {
-					// Create an independent routine to claim the lottery.
-					// This function may takes very long time, don't block
-					// the entire thread here. It's ok to spin up routines
-					// blindly here, there won't have too many cheques to claim.
-					go checkAndClaim(cheque.Cheque, cheque.Drawer, revealHash)
-				}
-				delete(active, revealAt)
-			}
-
-		case req := <-drawee.chequeCh:
-			var replaced bool
-			cheques := active[req.RevealNumber]
-			for index, cheque := range cheques {
-				if cheque.Cheque.LotteryId == req.Cheque.LotteryId {
-					cheques[index] = req // Replace the original one
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				active[req.RevealNumber] = append(active[req.RevealNumber], req)
-			}
-
-		case retCh := <-drawee.queryCh:
-			var ret []*WrappedCheque
-			for _, cheques := range active {
-				for _, cheque := range cheques {
-					ret = append(ret, cheque)
-				}
-			}
-			retCh <- ret
-
-		case <-drawee.closeCh:
-			log.Debug("Stopping cheque drawee instance...")
-			return
-		}
-	}
 }

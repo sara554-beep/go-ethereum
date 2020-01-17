@@ -28,7 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-var errManagerClosed = errors.New("lottery manager closed")
+var errLotteryManagerClosed = errors.New("lottery manager closed")
 
 const (
 	activeLotteryQuery = iota
@@ -253,7 +253,6 @@ func (m *lotteryManager) run() {
 			}
 
 		case <-m.closeCh:
-			log.Debug("Stopping lottery manager...")
 			return
 		}
 	}
@@ -265,7 +264,7 @@ func (m *lotteryManager) trackLottery(l *Lottery) error {
 	case m.lotteryCh <- l:
 		return nil
 	case <-m.closeCh:
-		return errManagerClosed
+		return errLotteryManagerClosed
 	}
 }
 
@@ -280,7 +279,7 @@ func (m *lotteryManager) activeLotteris() ([]*Lottery, error) {
 	}:
 		return <-reqCh, nil
 	case <-m.closeCh:
-		return nil, errManagerClosed
+		return nil, errLotteryManagerClosed
 	}
 }
 
@@ -294,7 +293,7 @@ func (m *lotteryManager) expiredLotteris() ([]*Lottery, error) {
 	}:
 		return <-reqCh, nil
 	case <-m.closeCh:
-		return nil, errManagerClosed
+		return nil, errLotteryManagerClosed
 	}
 }
 
@@ -303,7 +302,7 @@ func (m *lotteryManager) deleteExpired(id common.Hash) error {
 	case m.deleteCh <- id:
 		return nil
 	case <-m.closeCh:
-		return errManagerClosed
+		return errLotteryManagerClosed
 	}
 }
 
