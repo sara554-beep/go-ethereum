@@ -57,7 +57,7 @@ func TestAddCheque(t *testing.T) {
 		sig, _ := crypto.Sign(data, env.drawerKey)
 		return sig, nil
 	}
-	drawee, err := NewChequeDrawee(bind.NewKeyedTransactor(env.draweeKey), env.draweeAddr, env.drawerAddr, drawer.ContractAddr(), env.backend.Blockchain(), env.backend, env.backend, env.draweeDb)
+	drawee, err := NewChequeDrawee(bind.NewKeyedTransactor(env.draweeKey), env.draweeAddr, drawer.ContractAddr(), env.backend.Blockchain(), env.backend, env.backend, env.draweeDb)
 	if err != nil {
 		t.Fatalf("Faield to create drawee, err: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestAddCheque(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		amount, err := drawee.AddCheque(c.genCheque())
+		amount, err := drawee.AddCheque(env.drawerAddr, c.genCheque())
 		if c.expectErr {
 			if err == nil {
 				t.Fatalf("Expect error, not get nil")
@@ -229,7 +229,7 @@ func TestClaimLottery(t *testing.T) {
 		sig, _ := crypto.Sign(data, env.drawerKey)
 		return sig, nil
 	}
-	drawee, err := NewChequeDrawee(bind.NewKeyedTransactor(env.draweeKey), env.draweeAddr, env.drawerAddr, drawer.ContractAddr(), env.backend.Blockchain(), env.backend, env.backend, env.draweeDb)
+	drawee, err := NewChequeDrawee(bind.NewKeyedTransactor(env.draweeKey), env.draweeAddr, drawer.ContractAddr(), env.backend.Blockchain(), env.backend, env.backend, env.draweeDb)
 	if err != nil {
 		t.Fatalf("Faield to create drawee, err: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestClaimLottery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Faield to create cheque, err: %v", err)
 	}
-	drawee.AddCheque(cheque)
+	drawee.AddCheque(env.drawerAddr, cheque)
 	done := make(chan struct{}, 1)
 	drawee.onClaimedHook = func(id common.Hash) {
 		if id == cheque.LotteryId {

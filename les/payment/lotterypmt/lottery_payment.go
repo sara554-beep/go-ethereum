@@ -47,7 +47,6 @@ const (
 
 type Route struct {
 	role         Role
-	trusted      []common.Hash
 	chainReader  payment.ChainReader
 	localAddr    common.Address
 	contractAddr common.Address
@@ -57,10 +56,9 @@ type Route struct {
 	drawee       *lotterybook.ChequeDrawee // Nil if route is opened by sender
 }
 
-func newRoute(role Role, trusted []common.Hash, chainReader payment.ChainReader, localAddr, remoteAddr, chanAddr common.Address, drawer *lotterybook.ChequeDrawer, drawee *lotterybook.ChequeDrawee, peer payment.Peer) *Route {
+func newRoute(role Role, chainReader payment.ChainReader, localAddr, remoteAddr, chanAddr common.Address, drawer *lotterybook.ChequeDrawer, drawee *lotterybook.ChequeDrawee, peer payment.Peer) *Route {
 	route := &Route{
 		role:         role,
-		trusted:      trusted,
 		chainReader:  chainReader,
 		localAddr:    localAddr,
 		remoteAddr:   remoteAddr,
@@ -101,7 +99,7 @@ func (r *Route) Receive(proofOfPayment []byte) error {
 	if err := rlp.DecodeBytes(proofOfPayment, &cheque); err != nil {
 		return err
 	}
-	amount, err := r.drawee.AddCheque(&cheque)
+	amount, err := r.drawee.AddCheque(r.remoteAddr, &cheque)
 	if err != nil {
 		return err
 	}
@@ -122,7 +120,7 @@ func (r *Route) Close() error {
 // Info returns the infomation union of payment route.
 func (r *Route) Info() (common.Address, common.Address, common.Address) {
 	if r.role == Sender {
-		return r.localAddr, r.remoteAddr, r.drawer.ContractAddr()
+		return r.localAddr, r.remoteAddr, r.contractAddr
 	} else {
 		return r.remoteAddr, r.localAddr, r.contractAddr
 	}
@@ -134,11 +132,6 @@ type Config struct {
 	// Role is the role of the user in the payment channel, either the
 	// payer or the payee.
 	Role Role
-
-	// TrustedContract is a list of contract code hash which payment receivers
-	// can trust for usage. Les servers can configure or extend it by themselves,
-	// but by default the in-built contract code hash is included.
-	TrustedContracts []common.Hash
 }
 
 // DefaultSenderConfig is the default manager config for sender.
@@ -148,15 +141,16 @@ var DefaultSenderConfig = &Config{
 
 // DefaultReceiverConfig is the default manager config for receiver.
 var DefaultReceiverConfig = &Config{
-	Role:             Receiver,
+	Role: Receiver,
 }
 
 // Manager is responsible for payment routes management.
 type Manager struct {
-	config      *Config
-	chainReader payment.ChainReader
-	localAddr   common.Address
-	db          ethdb.Database
+	config       *Config
+	chainReader  payment.ChainReader
+	contractAddr common.Address
+	localAddr    common.Address
+	db           ethdb.Database
 
 	txSigner     *bind.TransactOpts                // Signer used to sign transaction
 	chequeSigner func(data []byte) ([]byte, error) // Signer used to sign cheque
@@ -164,9 +158,10 @@ type Manager struct {
 	// routes are all established channels. For payment receiver,
 	// the key of routes map is sender's address; otherwise the
 	// key refers to receiver's address.
-	routes map[common.Address]*Route
-	lock   sync.RWMutex              // The lock used to protect routes
-	sender *lotterybook.ChequeDrawer // Nil if manager is opened by receiver
+	routes   map[common.Address]*Route
+	lock     sync.RWMutex              // The lock used to protect routes
+	sender   *lotterybook.ChequeDrawer // Nil if manager is opened by receiver
+	receiver *lotterybook.ChequeDrawee // Nil if manager is opened by sender
 
 	// Backends used to interact with the underlying contract
 	cBackend bind.ContractBackend
@@ -174,10 +169,11 @@ type Manager struct {
 }
 
 // newRoute initializes a one-to-one payment channel for both sender and receiver.
-func NewManager(config *Config, chainReader payment.ChainReader, txSigner *bind.TransactOpts, chequeSigner func(digestHash []byte) ([]byte, error), localAddr common.Address, cBackend bind.ContractBackend, dBackend bind.DeployBackend, db ethdb.Database) (*Manager, error) {
+func NewManager(config *Config, chainReader payment.ChainReader, txSigner *bind.TransactOpts, chequeSigner func(digestHash []byte) ([]byte, error), localAddr, contractAddr common.Address, cBackend bind.ContractBackend, dBackend bind.DeployBackend, db ethdb.Database) (*Manager, error) {
 	c := &Manager{
 		config:       config,
 		chainReader:  chainReader,
+		contractAddr: contractAddr,
 		localAddr:    localAddr,
 		txSigner:     txSigner,
 		chequeSigner: chequeSigner,
@@ -187,12 +183,17 @@ func NewManager(config *Config, chainReader payment.ChainReader, txSigner *bind.
 		routes:       make(map[common.Address]*Route),
 	}
 	if c.config.Role == Sender {
-		// todo
-		sender, err := lotterybook.NewChequeDrawer(c.localAddr, common.Address{}, txSigner, chequeSigner, chainReader, cBackend, dBackend, db)
+		sender, err := lotterybook.NewChequeDrawer(c.localAddr, contractAddr, txSigner, chequeSigner, chainReader, cBackend, dBackend, db)
 		if err != nil {
 			return nil, err
 		}
 		c.sender = sender
+	} else {
+		receiver, err := lotterybook.NewChequeDrawee(c.txSigner, c.localAddr, contractAddr, c.chainReader, c.cBackend, c.dBackend, c.db)
+		if err != nil {
+			return nil, err
+		}
+		c.receiver = receiver
 	}
 	return c, nil
 }
@@ -205,20 +206,13 @@ func (c *Manager) OpenRoute(schema payment.Schema, peer payment.Peer) (payment.P
 	defer c.lock.Unlock()
 
 	if c.config.Role == Receiver {
-		chanAddr := schema.Load("Contract").(common.Address)
 		remoteAddr := schema.Load("Sender").(common.Address)
 		// Filter all duplicated channels.
 		if _, exist := c.routes[remoteAddr]; exist {
 			return nil, errors.New("duplicated payment route")
 		}
-		// We are payment receiver, establish an incoming route with
-		// specified contract address and counterparty peer.
-		receiver, err := lotterybook.NewChequeDrawee(c.txSigner, c.localAddr, remoteAddr, chanAddr, c.chainReader, c.cBackend, c.dBackend, c.db)
-		if err != nil {
-			return nil, err
-		}
-		c.routes[remoteAddr] = newRoute(Receiver, c.config.TrustedContracts, c.chainReader, c.localAddr, remoteAddr, chanAddr, nil, receiver, peer)
-		log.Debug("Opened route", "contract", chanAddr, "localAddr", c.localAddr, "remoteAddr", remoteAddr)
+		c.routes[remoteAddr] = newRoute(Receiver, c.chainReader, c.localAddr, remoteAddr, c.contractAddr, nil, c.receiver, peer)
+		log.Debug("Opened route", "localAddr", c.localAddr, "remoteAddr", remoteAddr)
 		return c.routes[remoteAddr], nil
 	} else {
 		remoteAddr := schema.Load("Receiver").(common.Address)
@@ -228,8 +222,8 @@ func (c *Manager) OpenRoute(schema payment.Schema, peer payment.Peer) (payment.P
 		}
 		// We are payment sender, establish a outgoing route with
 		// specified counterparty address and peer.
-		c.routes[remoteAddr] = newRoute(Sender, c.config.TrustedContracts, c.chainReader, c.localAddr, remoteAddr, c.sender.ContractAddr(), c.sender, nil, peer)
-		log.Debug("Opened route", "contract", c.sender.ContractAddr(), "localAddr", c.localAddr, "remoteAddr", remoteAddr)
+		c.routes[remoteAddr] = newRoute(Sender, c.chainReader, c.localAddr, remoteAddr, c.sender.ContractAddr(), c.sender, nil, peer)
+		log.Debug("Opened route", "localAddr", c.localAddr, "remoteAddr", remoteAddr)
 		return c.routes[remoteAddr], nil
 	}
 }
@@ -297,9 +291,9 @@ func (c *Manager) DepositAndWait(receivers []common.Address, amounts []uint64) (
 	return done, nil
 }
 
-// CounterParities returns the address of counterparty peer for
-// all established payment routes.
-func (c *Manager) CounterParities() []common.Address {
+// Remotes returns the address of counterparty peer for all
+// established payment routes.
+func (c *Manager) Remotes() []common.Address {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	var addresses []common.Address
@@ -309,13 +303,9 @@ func (c *Manager) CounterParities() []common.Address {
 	return addresses
 }
 
-// ContractAddr returns the address of lottery contract used. Only valid
-// if caller is sender.
+// ContractAddr returns the address of lottery contract used.
 func (c *Manager) ContractAddr() common.Address {
-	if c.config.Role == Receiver {
-		return common.Address{}
-	}
-	return c.sender.ContractAddr()
+	return c.contractAddr
 }
 
 // LotteryPaymentSchema defines the schema of payment.
@@ -345,11 +335,16 @@ func (schema *LotteryPaymentSchema) Load(key string) interface{} {
 
 // LocalSchema returns the payment schema of lottery payment.
 func (c *Manager) LocalSchema() (payment.SchemaRLP, error) {
-	schema := &LotteryPaymentSchema{Receiver: c.localAddr}
+	var schema *LotteryPaymentSchema
 	if c.config.Role == Sender {
 		schema = &LotteryPaymentSchema{
 			Sender:   c.localAddr,
-			Contract: c.sender.ContractAddr(),
+			Contract: c.contractAddr,
+		}
+	} else {
+		schema = &LotteryPaymentSchema{
+			Receiver: c.localAddr,
+			Contract: c.contractAddr,
 		}
 	}
 	encoded, err := rlp.EncodeToBytes(schema)
@@ -373,12 +368,18 @@ func (c *Manager) ResolveSchema(blob []byte) (payment.Schema, error) {
 		if schema.Receiver == (common.Address{}) {
 			return nil, errors.New("invald schema")
 		}
+		if schema.Contract != c.contractAddr {
+			return nil, errors.New("invald schema")
+		}
 		return &schema, nil
 	} else {
 		if err := rlp.DecodeBytes(blob, &schema); err != nil {
 			return nil, err
 		}
-		if schema.Sender == (common.Address{}) || schema.Contract == (common.Address{}) {
+		if schema.Sender == (common.Address{}) {
+			return nil, errors.New("invald schema")
+		}
+		if schema.Contract != c.contractAddr {
 			return nil, errors.New("invald schema")
 		}
 		return &schema, nil

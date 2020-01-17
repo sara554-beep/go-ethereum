@@ -394,7 +394,7 @@ func TestResetAndReset(t *testing.T) {
 		t.Fatalf("Failed to submit new lottery: %v", err)
 	}
 	tester.sim.Commit()
-	tester.commitEmptyBlocks(10+256)
+	tester.commitEmptyBlocks(10 + 256)
 
 	current = tester.sim.Blockchain().CurrentHeader().Number.Uint64()
 	_, err = tester.contract.ResetLottery(opt, common.HexToHash("deadbeef"), common.HexToHash("deadbeef1"), current+5, 20)
@@ -402,7 +402,7 @@ func TestResetAndReset(t *testing.T) {
 		t.Fatalf("Failed to reset lottery: %v", err)
 	}
 	tester.sim.Commit()
-	tester.commitEmptyBlocks(10+256)
+	tester.commitEmptyBlocks(10 + 256)
 
 	_, err = tester.contract.ResetLottery(opt, common.HexToHash("deadbeef1"), common.HexToHash("deadbeef2"), 10086, 20)
 	if err != nil {

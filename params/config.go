@@ -51,6 +51,12 @@ var CheckpointOracles = map[common.Hash]*CheckpointOracleConfig{
 	GoerliGenesisHash:  GoerliCheckpointOracle,
 }
 
+// PaymentContracts associates each known payment contracts with the genesis
+// hash of the chain it belongs to.
+var PaymentContracts = map[common.Hash]common.Address{
+	GoerliGenesisHash: {},
+}
+
 var (
 	// MainnetChainConfig is the chain parameters to run a node on the main network.
 	MainnetChainConfig = &ChainConfig{

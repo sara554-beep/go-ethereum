@@ -293,6 +293,11 @@ func (s *LightEthereum) SetBackends(contract bind.ContractBackend, deploy bind.D
 	}
 	if s.config.LightServicePay {
 		go func() {
+			// Ensure the payment contract is deployed.
+			paymentContract, exist := params.PaymentContracts[s.genesis]
+			if !exist {
+				return
+			}
 			if s.address == (common.Address{}) {
 				log.Warn("Failed to setup payment manager", "error", "empty sender address")
 				return
@@ -315,10 +320,7 @@ func (s *LightEthereum) SetBackends(contract bind.ContractBackend, deploy bind.D
 					break
 				}
 			}
-			// Note it can take several minutes or even longer for first initialization
-			//
-			// todo(rjl493456442) user should be able to specify contract manually.
-			mgr, err := lotterypmt.NewManager(lotterypmt.DefaultSenderConfig, s.chainReader, bind.NewRawTransactor(wallet.SignTx, account), chequeSigner, s.address, contract, deploy, s.paymentDb)
+			mgr, err := lotterypmt.NewManager(lotterypmt.DefaultSenderConfig, s.chainReader, bind.NewRawTransactor(wallet.SignTx, account), chequeSigner, s.address, paymentContract, contract, deploy, s.paymentDb)
 			if err != nil {
 				log.Warn("Failed to setup payment manager", "error", err)
 				return
@@ -332,9 +334,6 @@ func (s *LightEthereum) SetBackends(contract bind.ContractBackend, deploy bind.D
 			s.schemas = append(s.schemas, schema)
 			atomic.StoreUint32(&s.paymentInited, 1) // Mark payment channel is available now
 			log.Info("Succeed to setup payment manager", "address", s.address)
-
-			// todo(rjl493456442) this procedure can take several minutes, if we already
-			// have peer connections, how to setup payment routes with these peers?
 		}()
 	}
 }

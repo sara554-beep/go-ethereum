@@ -239,6 +239,11 @@ func (s *LesServer) SetBackends(cbackend bind.ContractBackend, dbackend bind.Dep
 	}
 	if s.config.LightServiceCharge {
 		go func() {
+			// Ensure the payment contract is deployed.
+			paymentContract, exist := params.PaymentContracts[s.genesis]
+			if !exist {
+				return
+			}
 			if s.address == (common.Address{}) {
 				log.Warn("Failed to setup payment manager", "error", "empty receiver address")
 				return
@@ -258,7 +263,7 @@ func (s *LesServer) SetBackends(cbackend bind.ContractBackend, dbackend bind.Dep
 				log.Warn("Failed to setup payment manager", "error", err)
 				return
 			}
-			mgr, err := lotterypmt.NewManager(lotterypmt.DefaultReceiverConfig, s.chainReader, bind.NewRawTransactor(wallet.SignTx, account), nil, s.address, cbackend, dbackend, s.paymentDb)
+			mgr, err := lotterypmt.NewManager(lotterypmt.DefaultReceiverConfig, s.chainReader, bind.NewRawTransactor(wallet.SignTx, account), nil, s.address, paymentContract, cbackend, dbackend, s.paymentDb)
 			if err != nil {
 				log.Warn("Failed to setup payment manager", "error", err)
 				return
