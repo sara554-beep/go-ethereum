@@ -44,7 +44,7 @@ var (
 )
 
 // Number of implemented message corresponding to different protocol versions.
-var ProtocolLengths = map[uint]uint64{lpv2: 22, lpv3: 24, lpv4: 26}
+var ProtocolLengths = map[uint]uint64{lpv2: 22, lpv3: 24, lpv4: 25}
 
 const (
 	NetworkId          = 1

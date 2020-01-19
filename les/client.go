@@ -20,7 +20,6 @@ package les
 import (
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -310,15 +309,6 @@ func (s *LightEthereum) SetBackends(contract bind.ContractBackend, deploy bind.D
 			}
 			chequeSigner := func(data []byte) ([]byte, error) {
 				return wallet.SignData(account, accounts.MimetypeDataWithValidator, data)
-			}
-			// Ensure local chain is synced. Since we heavily depend on the status
-			// of payment contract, it would be dangerous if the status is not latest.
-			for {
-				if !s.Synced() {
-					time.Sleep(time.Second * 3)
-				} else {
-					break
-				}
 			}
 			mgr, err := lotterypmt.NewManager(lotterypmt.DefaultSenderConfig, s.chainReader, bind.NewRawTransactor(wallet.SignTx, account), chequeSigner, s.address, paymentContract, contract, deploy, s.paymentDb)
 			if err != nil {

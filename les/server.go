@@ -248,15 +248,6 @@ func (s *LesServer) SetBackends(cbackend bind.ContractBackend, dbackend bind.Dep
 				log.Warn("Failed to setup payment manager", "error", "empty receiver address")
 				return
 			}
-			// Ensure local chain is synced. Since we heavily depend on the status
-			// of payment contract, it would be dangerous if the status is not latest.
-			for {
-				if !s.synced() {
-					time.Sleep(time.Second * 3)
-				} else {
-					break
-				}
-			}
 			account := accounts.Account{Address: s.address}
 			wallet, err := s.am.Find(account)
 			if err != nil {

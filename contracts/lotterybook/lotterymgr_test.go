@@ -44,7 +44,7 @@ func TestStateTransition(t *testing.T) {
 
 	_, _ = mgr.activeLotteris() // Ensure internal initialization is done
 	current := env.backend.Blockchain().CurrentHeader().Number.Uint64()
-	l, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 30)
+	l, _, _, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 30)
 	var cases = []struct {
 		testFn func()
 		expect []LotteryEvent
@@ -59,6 +59,13 @@ func TestStateTransition(t *testing.T) {
 		if !env.checkEvent(events, c.expect) {
 			t.Fatalf("Case %d failed", index)
 		}
+	}
+	lotteries, err := mgr.expiredLotteris()
+	if err != nil {
+		t.Fatalf("Failed to retrieve lotteries :%v", err)
+	}
+	if len(lotteries) != 1 && lotteries[0].Id != l.Id {
+		t.Fatal("Expect to retrieve expired lottery")
 	}
 }
 
@@ -75,8 +82,8 @@ func TestStateRecovery(t *testing.T) {
 	mgr := newLotteryManager(env.drawerAddr, env.backend.Blockchain(), c, cdb)
 
 	current := env.backend.Blockchain().CurrentHeader().Number.Uint64()
-	l1, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 30)
-	l2, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 40)
+	l1, _, _, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 30)
+	l2, _, _, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 40)
 	cdb.writeLottery(env.drawerAddr, l1.Id, false, l1)
 	cdb.writeLottery(env.drawerAddr, l2.Id, false, l2)
 

@@ -20,12 +20,12 @@ import (
 	"crypto/ecdsa"
 	"encoding/binary"
 	"fmt"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"math/big"
 	"math/rand"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind/backends"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/contracts/lotterybook/merkletree"
@@ -116,9 +116,12 @@ func (env *testEnv) checkEvent(sink chan []LotteryEvent, expect []LotteryEvent) 
 	}
 }
 
-func (env *testEnv) newRawLottery(payers []common.Address, weight []uint64, revealShift uint64) (*Lottery, error) {
-	var entries []*merkletree.Entry
-	var total uint64
+func (env *testEnv) newRawLottery(payers []common.Address, weight []uint64, revealShift uint64) (*Lottery, []*Cheque, uint64, error) {
+	var (
+		total   uint64
+		cheques []*Cheque
+		entries []*merkletree.Entry
+	)
 	for index, p := range payers {
 		entries = append(entries, &merkletree.Entry{
 			Value:  p.Bytes(),
@@ -128,7 +131,7 @@ func (env *testEnv) newRawLottery(payers []common.Address, weight []uint64, reve
 	}
 	tree, err := merkletree.NewMerkleTree(entries)
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
 	// New random lottery salt to ensure the id is unique.
 	salt := rand.Uint64()
@@ -143,5 +146,10 @@ func (env *testEnv) newRawLottery(payers []common.Address, weight []uint64, reve
 		Amount:       total,
 		Receivers:    payers,
 	}
-	return lottery, nil
+	for _, entry := range entries {
+		witness, _ := tree.Prove(entry)
+		c, _ := newCheque(witness, env.contractAddr, salt)
+		cheques = append(cheques, c)
+	}
+	return lottery, cheques, salt, nil
 }

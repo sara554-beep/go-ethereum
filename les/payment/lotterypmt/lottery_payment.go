@@ -46,26 +46,26 @@ const (
 )
 
 type Route struct {
-	role         Role
-	chainReader  payment.ChainReader
-	localAddr    common.Address
-	contractAddr common.Address
-	remoteAddr   common.Address
-	peer         payment.Peer              // The peer handler of counterparty
-	drawer       *lotterybook.ChequeDrawer // Nil if route is opened by receiver
-	drawee       *lotterybook.ChequeDrawee // Nil if route is opened by sender
+	role        Role
+	chainReader payment.ChainReader
+	local       common.Address
+	contract    common.Address
+	remote      common.Address
+	peer        payment.Peer              // The peer handler of counterparty
+	drawer      *lotterybook.ChequeDrawer // Nil if route is opened by receiver
+	drawee      *lotterybook.ChequeDrawee // Nil if route is opened by sender
 }
 
-func newRoute(role Role, chainReader payment.ChainReader, localAddr, remoteAddr, chanAddr common.Address, drawer *lotterybook.ChequeDrawer, drawee *lotterybook.ChequeDrawee, peer payment.Peer) *Route {
+func newRoute(role Role, chainReader payment.ChainReader, local, remote, contract common.Address, drawer *lotterybook.ChequeDrawer, drawee *lotterybook.ChequeDrawee, peer payment.Peer) *Route {
 	route := &Route{
-		role:         role,
-		chainReader:  chainReader,
-		localAddr:    localAddr,
-		remoteAddr:   remoteAddr,
-		contractAddr: chanAddr,
-		peer:         peer,
-		drawer:       drawer,
-		drawee:       drawee,
+		role:        role,
+		chainReader: chainReader,
+		local:       local,
+		remote:      remote,
+		contract:    contract,
+		peer:        peer,
+		drawer:      drawer,
+		drawee:      drawee,
 	}
 	return route
 }
@@ -77,7 +77,7 @@ func (r *Route) Pay(amount uint64) error {
 	if r.role != Sender {
 		return errInvalidOpt
 	}
-	cheque, err := r.drawer.IssueCheque(r.remoteAddr, amount)
+	cheque, err := r.drawer.IssueCheque(r.remote, amount)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func (r *Route) Pay(amount uint64) error {
 	if err != nil {
 		return err
 	}
-	log.Debug("Issued payment", "amount", amount, "route", r.contractAddr)
+	log.Debug("Issued payment", "amount", amount, "route", r.contract)
 	return r.peer.SendPayment(proofOfPayment, Identity)
 }
 
@@ -99,11 +99,11 @@ func (r *Route) Receive(proofOfPayment []byte) error {
 	if err := rlp.DecodeBytes(proofOfPayment, &cheque); err != nil {
 		return err
 	}
-	amount, err := r.drawee.AddCheque(r.remoteAddr, &cheque)
+	amount, err := r.drawee.AddCheque(r.remote, &cheque)
 	if err != nil {
 		return err
 	}
-	log.Debug("Received payment", "amount", amount, "route", r.contractAddr)
+	log.Debug("Received payment", "amount", amount, "route", r.contract)
 	return r.peer.AddBalance(amount)
 }
 
@@ -120,9 +120,9 @@ func (r *Route) Close() error {
 // Info returns the infomation union of payment route.
 func (r *Route) Info() (common.Address, common.Address, common.Address) {
 	if r.role == Sender {
-		return r.localAddr, r.remoteAddr, r.contractAddr
+		return r.local, r.remote, r.contract
 	} else {
-		return r.remoteAddr, r.localAddr, r.contractAddr
+		return r.remote, r.local, r.contract
 	}
 }
 
@@ -146,11 +146,11 @@ var DefaultReceiverConfig = &Config{
 
 // Manager is responsible for payment routes management.
 type Manager struct {
-	config       *Config
-	chainReader  payment.ChainReader
-	contractAddr common.Address
-	localAddr    common.Address
-	db           ethdb.Database
+	config      *Config
+	chainReader payment.ChainReader
+	contract    common.Address
+	local       common.Address
+	db          ethdb.Database
 
 	txSigner     *bind.TransactOpts                // Signer used to sign transaction
 	chequeSigner func(data []byte) ([]byte, error) // Signer used to sign cheque
@@ -173,8 +173,8 @@ func NewManager(config *Config, chainReader payment.ChainReader, txSigner *bind.
 	c := &Manager{
 		config:       config,
 		chainReader:  chainReader,
-		contractAddr: contractAddr,
-		localAddr:    localAddr,
+		contract:     contractAddr,
+		local:        localAddr,
 		txSigner:     txSigner,
 		chequeSigner: chequeSigner,
 		db:           db,
@@ -183,13 +183,13 @@ func NewManager(config *Config, chainReader payment.ChainReader, txSigner *bind.
 		routes:       make(map[common.Address]*Route),
 	}
 	if c.config.Role == Sender {
-		sender, err := lotterybook.NewChequeDrawer(c.localAddr, contractAddr, txSigner, chequeSigner, chainReader, cBackend, dBackend, db)
+		sender, err := lotterybook.NewChequeDrawer(c.local, contractAddr, txSigner, chequeSigner, chainReader, cBackend, dBackend, db)
 		if err != nil {
 			return nil, err
 		}
 		c.sender = sender
 	} else {
-		receiver, err := lotterybook.NewChequeDrawee(c.txSigner, c.localAddr, contractAddr, c.chainReader, c.cBackend, c.dBackend, c.db)
+		receiver, err := lotterybook.NewChequeDrawee(c.txSigner, c.local, contractAddr, c.chainReader, c.cBackend, c.dBackend, c.db)
 		if err != nil {
 			return nil, err
 		}
@@ -206,25 +206,25 @@ func (c *Manager) OpenRoute(schema payment.Schema, peer payment.Peer) (payment.P
 	defer c.lock.Unlock()
 
 	if c.config.Role == Receiver {
-		remoteAddr := schema.Load("Sender").(common.Address)
+		remote := schema.Load("Sender").(common.Address)
 		// Filter all duplicated channels.
-		if _, exist := c.routes[remoteAddr]; exist {
+		if _, exist := c.routes[remote]; exist {
 			return nil, errors.New("duplicated payment route")
 		}
-		c.routes[remoteAddr] = newRoute(Receiver, c.chainReader, c.localAddr, remoteAddr, c.contractAddr, nil, c.receiver, peer)
-		log.Debug("Opened route", "localAddr", c.localAddr, "remoteAddr", remoteAddr)
-		return c.routes[remoteAddr], nil
+		c.routes[remote] = newRoute(Receiver, c.chainReader, c.local, remote, c.contract, nil, c.receiver, peer)
+		log.Debug("Opened route", "localAddr", c.local, "remoteAddr", remote)
+		return c.routes[remote], nil
 	} else {
-		remoteAddr := schema.Load("Receiver").(common.Address)
+		remote := schema.Load("Receiver").(common.Address)
 		// Filter all duplicated channels.
-		if _, exist := c.routes[remoteAddr]; exist {
+		if _, exist := c.routes[remote]; exist {
 			return nil, errors.New("duplicated payment route")
 		}
 		// We are payment sender, establish a outgoing route with
 		// specified counterparty address and peer.
-		c.routes[remoteAddr] = newRoute(Sender, c.chainReader, c.localAddr, remoteAddr, c.sender.ContractAddr(), c.sender, nil, peer)
-		log.Debug("Opened route", "localAddr", c.localAddr, "remoteAddr", remoteAddr)
-		return c.routes[remoteAddr], nil
+		c.routes[remote] = newRoute(Sender, c.chainReader, c.local, remote, c.sender.ContractAddr(), c.sender, nil, peer)
+		log.Debug("Opened route", "localAddr", c.local, "remoteAddr", remote)
+		return c.routes[remote], nil
 	}
 }
 
@@ -303,11 +303,6 @@ func (c *Manager) Remotes() []common.Address {
 	return addresses
 }
 
-// ContractAddr returns the address of lottery contract used.
-func (c *Manager) ContractAddr() common.Address {
-	return c.contractAddr
-}
-
 // LotteryPaymentSchema defines the schema of payment.
 type LotteryPaymentSchema struct {
 	Sender   common.Address
@@ -338,13 +333,13 @@ func (c *Manager) LocalSchema() (payment.SchemaRLP, error) {
 	var schema *LotteryPaymentSchema
 	if c.config.Role == Sender {
 		schema = &LotteryPaymentSchema{
-			Sender:   c.localAddr,
-			Contract: c.contractAddr,
+			Sender:   c.local,
+			Contract: c.contract,
 		}
 	} else {
 		schema = &LotteryPaymentSchema{
-			Receiver: c.localAddr,
-			Contract: c.contractAddr,
+			Receiver: c.local,
+			Contract: c.contract,
 		}
 	}
 	encoded, err := rlp.EncodeToBytes(schema)
@@ -368,7 +363,7 @@ func (c *Manager) ResolveSchema(blob []byte) (payment.Schema, error) {
 		if schema.Receiver == (common.Address{}) {
 			return nil, errors.New("invald schema")
 		}
-		if schema.Contract != c.contractAddr {
+		if schema.Contract != c.contract {
 			return nil, errors.New("invald schema")
 		}
 		return &schema, nil
@@ -379,7 +374,7 @@ func (c *Manager) ResolveSchema(blob []byte) (payment.Schema, error) {
 		if schema.Sender == (common.Address{}) {
 			return nil, errors.New("invald schema")
 		}
-		if schema.Contract != c.contractAddr {
+		if schema.Contract != c.contract {
 			return nil, errors.New("invald schema")
 		}
 		return &schema, nil

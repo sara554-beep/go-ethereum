@@ -18,6 +18,7 @@ package lotterybook
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -204,6 +205,7 @@ func (m *chequeManager) run() {
 func (m *chequeManager) trackCheque(cheque *Cheque, revealAt uint64) error {
 	select {
 	case m.chequeCh <- &WrappedCheque{Cheque: cheque, RevealNumber: revealAt}:
+		return nil
 	case <-m.closeCh:
 		return errChequeManagerClosed
 	}

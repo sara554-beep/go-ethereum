@@ -112,6 +112,10 @@ func (h *serverHandler) runPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter)
 func (h *serverHandler) handle(p *peer) error {
 	p.Log().Debug("Light Ethereum peer connected", "name", p.Name())
 
+	// Reject light clients if payment module is still initializing.
+	if h.server.config.LightServiceCharge && atomic.LoadUint32(&h.server.paymentInited) == 0 {
+		return errors.New("payment hasn't been initialized")
+	}
 	// Execute the LES handshake
 	var (
 		head   = h.blockchain.CurrentHeader()
@@ -131,10 +135,6 @@ func (h *serverHandler) handle(p *peer) error {
 	// Reject light clients if server is not synced.
 	if !h.synced() {
 		return p2p.DiscRequested
-	}
-	// Reject light clients if payment module is still initializing.
-	if h.server.config.LightServiceCharge && atomic.LoadUint32(&h.server.paymentInited) == 0 {
-		return errors.New("payment hasn't been initialized")
 	}
 	defer p.fcClient.Disconnect()
 

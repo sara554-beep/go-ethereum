@@ -40,14 +40,14 @@ import (
 // In order to avoid inconsistency, you need to ensure that the local node has
 // completed synchronization before using drawee.
 type ChequeDrawee struct {
-	address  common.Address     // Address used by chequeDrawee to accept payment
-	cdb      *chequeDB          // Database which saves all received payments
-	book     *LotteryBook       // Shared lottery contract used to verify deposit and claim payment
-	opts     *bind.TransactOpts // Signing handler for transaction signing
-	cmgr     *chequeManager
-	cBackend bind.ContractBackend
-	dBackend bind.DeployBackend
-	chain    Blockchain
+	address  common.Address       // Address used by chequeDrawee to accept payment
+	cdb      *chequeDB            // Database which saves all received payments
+	book     *LotteryBook         // Shared lottery contract used to verify deposit and claim payment
+	opts     *bind.TransactOpts   // Signing handler for transaction signing
+	cmgr     *chequeManager       // The manager for all received cheques management
+	cBackend bind.ContractBackend // Blockchain backend for contract interaction
+	dBackend bind.DeployBackend   // Blockchain backend for contract interaction
+	chain    Blockchain           // Backend for local blockchain accessing
 
 	// Testing hooks
 	onClaimedHook func(common.Hash) // onClaimedHook is called if a lottery is successfully claimed

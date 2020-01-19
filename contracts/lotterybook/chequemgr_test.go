@@ -16,58 +16,120 @@
 
 package lotterybook
 
-func TestClaimLottery(t *testing.T) {
+import (
+	"context"
+	"math/big"
+	"reflect"
+	"testing"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/contracts/lotterybook/contract"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
+)
+
+func TestChequeManagement(t *testing.T) {
 	env := newTestEnv(t)
 	defer env.close()
 
-	// Start the automatic blockchain.
-	var exit = make(chan struct{})
-	defer close(exit)
-	go func() {
-		ticker := time.NewTicker(time.Millisecond * 100)
-		for {
-			select {
-			case <-ticker.C:
-				env.backend.Commit()
-			case <-exit:
-				return
-			}
-		}
-	}()
-	drawer, err := NewChequeDrawer(env.drawerAddr, env.contractAddr, bind.NewKeyedTransactor(env.drawerKey), nil, env.backend.Blockchain(), env.backend, env.backend, env.drawerDb)
+	_, _, c, err := contract.DeployLotteryBook(bind.NewKeyedTransactor(env.drawerKey), env.backend)
 	if err != nil {
-		t.Fatalf("Faield to create drawer, err: %v", err)
+		t.Fatalf("Failed to deploy contract: %v", err)
 	}
-	defer drawer.Close()
-	drawer.keySigner = func(data []byte) ([]byte, error) {
-		sig, _ := crypto.Sign(data, env.drawerKey)
-		return sig, nil
-	}
-	drawee, err := NewChequeDrawee(bind.NewKeyedTransactor(env.draweeKey), env.draweeAddr, drawer.ContractAddr(), env.backend.Blockchain(), env.backend, env.backend, env.draweeDb)
-	if err != nil {
-		t.Fatalf("Faield to create drawee, err: %v", err)
-	}
-	defer drawee.Close()
+	env.backend.Commit()
+	cdb := newChequeDB(rawdb.NewMemoryDatabase())
+
+	claim := make(chan struct{}, 1)
+	mgr := newChequeManager(env.draweeAddr, env.backend.Blockchain(), c, cdb, func(ctx context.Context, cheque *Cheque) error {
+		claim <- struct{}{}
+		return nil
+	})
+	defer mgr.close()
 
 	current := env.backend.Blockchain().CurrentHeader().Number.Uint64()
-	id, err := drawer.createLottery(context.Background(), []common.Address{env.draweeAddr}, []uint64{128}, current+30)
-	if err != nil {
-		t.Fatalf("Faield to create lottery, err: %v", err)
+	_, cheques, _, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 5)
+
+	var signed = cheques[0]
+	signed.RevealRange = [4]byte{0xff, 0xff, 0xff, 0xff}
+	signed.SignedRange = math.MaxUint32
+	signed.signWithKey(func(digestHash []byte) ([]byte, error) {
+		return crypto.Sign(digestHash, env.drawerKey)
+	})
+	var cases = []struct {
+		testFn func()
+		expect []*WrappedCheque
+	}{
+		{func() { mgr.trackCheque(cheques[0], current+5) }, []*WrappedCheque{{cheques[0], current + 5}}},
+
+		// Sign it and re-track, de-duplicated is expected
+		{func() { mgr.trackCheque(signed, current+5) }, []*WrappedCheque{{signed, current + 5}}},
+
+		// Lottery is revealed, but wait more confirmations
+		{func() { env.commitEmptyBlocks(5) }, []*WrappedCheque{{signed, current + 5}}},
+
+		// Time to claim the lottery
+		{func() { env.commitEmptyBlocks(lotteryProcessConfirms); <-claim }, nil},
 	}
-	cheque, err := drawer.issueCheque(env.draweeAddr, id, 128)
-	if err != nil {
-		t.Fatalf("Faield to create cheque, err: %v", err)
-	}
-	drawee.AddCheque(env.drawerAddr, cheque)
-	done := make(chan struct{}, 1)
-	drawee.onClaimedHook = func(id common.Hash) {
-		if id == cheque.LotteryId {
-			done <- struct{}{}
+	for _, c := range cases {
+		c.testFn()
+		got := mgr.activeCheques()
+		if !reflect.DeepEqual(got, c.expect) {
+			t.Fatal("Active cheques mismatch")
 		}
 	}
-	select {
-	case <-done:
-	case <-time.NewTimer(10 * time.Second).C:
-		t.Fatalf("timeout")
+}
+
+func TestChequeRecovery(t *testing.T) {
+	env := newTestEnv(t)
+	defer env.close()
+
+	_, _, contract, err := contract.DeployLotteryBook(bind.NewKeyedTransactor(env.drawerKey), env.backend)
+	if err != nil {
+		t.Fatalf("Failed to deploy contract: %v", err)
+	}
+	env.backend.Commit()
+	cdb := newChequeDB(rawdb.NewMemoryDatabase())
+
+	current := env.backend.Blockchain().CurrentHeader().Number.Uint64()
+	lottery, cheques, salt, _ := env.newRawLottery([]common.Address{env.draweeAddr}, []uint64{128}, 5)
+
+	var signed = cheques[0]
+	signed.RevealRange = [4]byte{0xff, 0xff, 0xff, 0xff}
+	signed.SignedRange = math.MaxUint32
+	signed.signWithKey(func(digestHash []byte) ([]byte, error) {
+		return crypto.Sign(digestHash, env.drawerKey)
+	})
+	opt := bind.NewKeyedTransactor(env.drawerKey)
+	opt.Value = big.NewInt(128)
+	contract.NewLottery(opt, lottery.Id, current+5, salt)
+	env.backend.Commit()
+	cdb.writeCheque(env.draweeAddr, env.drawerAddr, signed, false)
+
+	var cases = []struct {
+		testFn func()
+		claim  bool
+		expect []*WrappedCheque
+	}{
+		{func() {}, false, []*WrappedCheque{{signed, current + 5}}},
+		{func() { env.commitEmptyUntil(current + 5) }, false, []*WrappedCheque{{signed, current + 5}}},
+		{func() { env.commitEmptyUntil(current + 5 + lotteryProcessConfirms) }, true, nil},
+	}
+	for _, c := range cases {
+		claim := make(chan struct{}, 1)
+		mgr := newChequeManager(env.draweeAddr, env.backend.Blockchain(), contract, cdb, func(ctx context.Context, cheque *Cheque) error {
+			claim <- struct{}{}
+			return nil
+		})
+		c.testFn()
+		if c.claim {
+			<-claim
+		}
+		got := mgr.activeCheques()
+		if !reflect.DeepEqual(got, c.expect) {
+			t.Fatal("Active cheques mismatch")
+		}
+		mgr.close()
 	}
 }

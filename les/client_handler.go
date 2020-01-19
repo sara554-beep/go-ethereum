@@ -17,8 +17,10 @@
 package les
 
 import (
+	"errors"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -99,6 +101,10 @@ func (h *clientHandler) runPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter)
 func (h *clientHandler) handle(p *peer) error {
 	if h.backend.peers.Len() >= h.backend.config.LightPeers && !p.Peer.Info().Network.Trusted {
 		return p2p.DiscTooManyPeers
+	}
+	// Reject les server if payment module is still initializing.
+	if h.backend.config.LightServicePay && atomic.LoadUint32(&h.backend.paymentInited) == 0 {
+		return errors.New("payment hasn't been initialized")
 	}
 	p.Log().Debug("Light Ethereum peer connected", "name", p.Name())
 
