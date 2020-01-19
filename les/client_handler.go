@@ -155,7 +155,11 @@ func (h *clientHandler) handle(p *peer) error {
 		ticker := time.NewTicker(time.Second * 5)
 		defer ticker.Stop()
 
-		_, receiver, _ := p.routes[lotterypmt.Identity].Info()
+		route := p.routes[lotterypmt.Identity]
+		if route == nil {
+			return
+		}
+		_, receiver, _ := route.Info()
 		deposit, err := h.backend.lmgr.DepositAndWait([]common.Address{receiver}, []uint64{10000000})
 		if err != nil {
 			log.Error("Failed to deposit", "err", err)
@@ -167,7 +171,6 @@ func (h *clientHandler) handle(p *peer) error {
 				if deposit != nil {
 					continue
 				}
-				route := p.routes[lotterypmt.Identity]
 				if err := route.Pay(100); err != nil {
 					log.Error("Failed to pay", "error", err)
 				}
