@@ -54,7 +54,7 @@ var CheckpointOracles = map[common.Hash]*CheckpointOracleConfig{
 // PaymentContracts associates each known payment contracts with the genesis
 // hash of the chain it belongs to.
 var PaymentContracts = map[common.Hash]common.Address{
-	GoerliGenesisHash: {},
+	GoerliGenesisHash: common.HexToAddress("0xAeD6634EF4C5C4d279DB256781E452a54e9A8543"),
 }
 
 var (
