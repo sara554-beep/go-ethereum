@@ -47,7 +47,16 @@ func (s *Service) Protocols() []p2p.Protocol { return nil }
 
 // APIs implements node.Service, returning the RPC API endpoints provided by the
 // lescdn service (nil as it doesn't provide any user callable APIs).
-func (s *Service) APIs() []rpc.API { return nil }
+func (s *Service) APIs() []rpc.API {
+	return []rpc.API{
+		{
+			Namespace: "cdn",
+			Version:   "1.0",
+			Service:   NewLESCDNAPI(s.chain),
+			Public:    true,
+		},
+	}
+}
 
 // Start implements node.Service, starting up the content distribution source.
 func (s *Service) Start(server *p2p.Server) error {

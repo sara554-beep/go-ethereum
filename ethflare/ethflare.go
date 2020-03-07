@@ -11,7 +11,7 @@ import (
 func main() {
 	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
-	client, err := rpc.Dial("/home/karalabe/.ethereum/goerli/geth.ipc")
+	client, err := rpc.Dial("ws://172.16.30.194:8546")
 	if err != nil {
 		log.Crit("Failed to dial remote node", "err", err)
 	}

@@ -15,6 +15,12 @@ type tileInfo struct {
 	depth uint8
 	size  common.StorageSize
 	refs  []common.Hash
+
+	// Ideas
+	//
+	// 1. parent tile hash?
+	// 2. root node path?
+	// 3. any else needed?
 }
 
 // tileContext is a pending tile retrieval task to hold the contextual infos.
@@ -84,8 +90,32 @@ func (t *Tiler) Update(backends map[string]*Backend, heads map[string]*types.Hea
 
 		// If tile retrieval failed or nothing returned, reschedule it
 		if tile.err != nil || len(tile.nodes) == 0 {
+			if tile.err != nil {
+				log.Warn("Failed to crawl tile", "hash", tile.hash, "error", tile.err)
+			} else {
+				log.Warn("Empty tile", "hash", tile.hash)
+			}
 			t.taskset[context.block][context.root][tile.hash] = context.depth
 			continue
+		}
+		// Decode the nodes in the tile and continue expansion to newly discovered ones
+		var (
+			removed  []int
+			included = make(map[common.Hash]struct{})
+		)
+		for index, node := range tile.nodes {
+			hash := crypto.Keccak256Hash(node)
+			if t.tileset[hash] != nil {
+				removed = append(removed, index)
+				continue
+			}
+			included[hash] = struct{}{}
+		}
+		// If any intermediate nodes are the root of another tile, remove it.
+		// But the first node is always the root node of tile.
+		for index := range removed {
+			tile.nodes[index] = tile.nodes[len(tile.nodes)-1]
+			tile.nodes = tile.nodes[:len(tile.nodes)-1]
 		}
 		// Mark the tile as crawled and available
 		t.tileset[tile.hash] = &tileInfo{
@@ -96,12 +126,6 @@ func (t *Tiler) Update(backends map[string]*Backend, heads map[string]*types.Hea
 			storage += common.StorageSize(len(node))
 		}
 		t.tileset[tile.hash].size = storage
-
-		// Decode the nodes in the tile and continue expansion to newly discovered ones
-		included := make(map[common.Hash]struct{})
-		for _, node := range tile.nodes {
-			included[crypto.Keccak256Hash(node)] = struct{}{}
-		}
 		depths := map[common.Hash]uint8{
 			crypto.Keccak256Hash(tile.nodes[0]): context.depth,
 		}
@@ -110,8 +134,12 @@ func (t *Tiler) Update(backends map[string]*Backend, heads map[string]*types.Hea
 				depths[child] = depths[crypto.Keccak256Hash(node)] + uint8(len(path))
 				if _, ok := included[child]; !ok {
 					t.tileset[tile.hash].refs = append(t.tileset[tile.hash].refs, child)
-					if queue, ok := t.taskset[context.block]; ok {
-						queue[context.root][tile.hash] = depths[child]
+
+					// Add the ref as the task if it's still not crawled.
+					if t.tileset[child] == nil {
+						if queue, ok := t.taskset[context.block]; ok {
+							queue[context.root][tile.hash] = depths[child]
+						}
 					}
 				}
 				return nil
@@ -196,6 +224,8 @@ func (t *Tiler) dropStaleTasks(heads map[string]*types.Header) (uint64, uint64) 
 	// Drop all tasks below the cutoff threshold
 	for number := range t.taskset {
 		if number <= cutoff {
+			// If the tiles are still referenced by new head, will
+			// be scheduled later.
 			var tasks int
 			for _, subtasks := range t.taskset[number] {
 				tasks += len(subtasks)
