@@ -21,17 +21,17 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 )
 
-// PrivateLightAPI provides an API to access the LES light server or light client.
-type LESCDNAPI struct {
+// LesCDNAPI provides an API to access the LES CDN server.
+type LesCDNAPI struct {
 	chain *core.BlockChain
 }
 
-// NewPrivateLightAPI creates a new LES service API.
-func NewLESCDNAPI(chain *core.BlockChain) *LESCDNAPI {
-	return &LESCDNAPI{chain: chain}
+// NewLesCDNAPI creates a new LES CDN service API.
+func NewLesCDNAPI(chain *core.BlockChain) *LesCDNAPI {
+	return &LesCDNAPI{chain: chain}
 }
 
-func (api *LESCDNAPI) Tile(hash common.Hash, target, limit, barrier int) ([][]byte, error) {
+func (api *LesCDNAPI) Tile(hash common.Hash, target, limit, barrier int) ([][]byte, error) {
 	// Do a breadth-first expansion to collect a fixed size tile
 	triedb := api.chain.StateCache().TrieDB()
 

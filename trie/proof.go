@@ -184,7 +184,7 @@ func VerifyTrie(rootHash common.Hash, proofDb ethdb.KeyValueReader, nodes int) e
 			queue.Push(hash, int64(-1*count))
 			count += 1
 			return nil
-		})
+		}, nil)
 		if err != nil {
 			return err
 		}

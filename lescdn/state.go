@@ -163,7 +163,7 @@ func makeIdealTile(triedb *trie.Database, root common.Hash, limit int, barrier i
 			queue.Push(child, -(depth + int64(len(path))))
 			refs[child] = struct{}{}
 			return nil
-		})
+		}, nil)
 		refset = append(refset, refs)
 	}
 	return nodes, refset, cutset, nil

@@ -1,301 +1,278 @@
-package main
+// Copyright 2020 The go-ethereum Authors
+// This file is part of the go-ethereum library.
+//
+// The go-ethereum library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-ethereum library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+
+package ethflare
 
 import (
-	"context"
+	"bytes"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/rlp"
 )
 
-type tileInfo struct {
-	depth uint8
-	size  common.StorageSize
-	refs  []common.Hash
-
-	// Ideas
-	//
-	// 1. parent tile hash?
-	// 2. root node path?
-	// 3. any else needed?
+// headAnnounce is a new-head event tagged with the origin backend.
+type headAnnounce struct {
+	origin *backend
+	head   *types.Header
 }
 
-// tileContext is a pending tile retrieval task to hold the contextual infos.
-// The task may be reowned by blocks more recent than the origin.
-type tileContext struct {
-	block uint64      // Block number to reschedule into upon failure
-	root  common.Hash // State root within siblings to reschedule into upon failure
-	depth uint8       // Depth tracker to allow reporting per-depth statistics
+// statistic is a set of stats for logging.
+type statistic struct {
+	storageTask     uint32 // Total number of allocated storage trie task
+	stateTask       uint32 // Total number of allocated state trie task
+	dropEntireTile  uint32 // Counter for dropping entire fetched tile to dedup
+	dropPartialTile uint32 // Counter for dropping partial fetched tile
+	duplicateTask   uint32 // Counter of allocated but duplicated task
+	emptyTask       uint32 // Counter of allocated but empty task
+	failures        uint32 // Counter of tile task failures
 }
 
-// tileDelivery is a tile creation event tagged with the origin backend.
-type tileDelivery struct {
-	origin *Backend    // Backend that should be marked idle on delivery
-	hash   common.Hash // Trie node (tile root) to reschedule upon failure
-	nodes  [][]byte    // Delivered tile data upon success
-	err    error       // Encountered error upon failure
+// tileQuery represents a request for asking whether a specified
+// tile is indexed.
+type tileQuery struct {
+	hash   common.Hash
+	result chan tileAnswer
 }
 
-// Tiler is responsible for keeping track of pending state-tile crawl jobs
-// and distributing them to backends that have the dataset available.
-type Tiler struct {
-	// is used to deliver tiles from individual backends
-	sink chan *tileDelivery
-
-	// taskset is the crawl tasks, grouped first by block numbers, then by root hash,
-	// mapping finally to the depth where this tile is rooted at.
-	taskset map[uint64]map[common.Hash]map[common.Hash]uint8
-
-	// tileset contains metadata about all the tracked state tiles that are used
-	// for both crawling as well as pruning.
-	tileset map[common.Hash]*tileInfo
-
-	// pending contains the currently pending tile retrieval tasks with enough
-	// contextual metadata to reschedule it in case of failure.
-	pending map[common.Hash]*tileContext
-
-	// assigned tracks the backends currnetly assigned to some task.
-	assigned map[string]bool
+// tileAnswer represents an answer for tile querying.
+type tileAnswer struct {
+	tile  *tileInfo
+	state common.Hash
 }
 
-// NewTiler creates a state-tile crawl scheduler.
-func NewTiler(sink chan *tileDelivery) *Tiler {
-	return &Tiler{
-		sink:     sink,
-		taskset:  make(map[uint64]map[common.Hash]map[common.Hash]uint8),
-		tileset:  make(map[common.Hash]*tileInfo),
-		pending:  make(map[common.Hash]*tileContext),
-		assigned: make(map[string]bool),
+// tiler is responsible for keeping track of pending state and chain crawl
+// jobs and distributing them to backends that have the dataset available.
+type tiler struct {
+	db            ethdb.Database
+	addBackendCh  chan *backend
+	remBackendCh  chan *backend
+	newHeadCh     chan *headAnnounce
+	newTileCh     chan *tileDelivery
+	tileQueryCh   chan *tileQuery
+	closeCh       chan struct{}
+	removeBackend func(string) error
+	stat          *statistic
+	wg            sync.WaitGroup
+}
+
+// newTiler creates a tile crawl tiler.
+func newTiler(db ethdb.Database, removeBackend func(string) error) *tiler {
+	s := &tiler{
+		db:            db,
+		addBackendCh:  make(chan *backend),
+		remBackendCh:  make(chan *backend),
+		newHeadCh:     make(chan *headAnnounce),
+		newTileCh:     make(chan *tileDelivery),
+		tileQueryCh:   make(chan *tileQuery),
+		removeBackend: removeBackend,
+		closeCh:       make(chan struct{}),
+		stat:          &statistic{},
 	}
+	return s
 }
 
-// Update modifies the tiler's internal state by discarding all crawl tasks that
-// became stale, adds any new tasks originating from head announcements or tile
-// deliveries and issues the crawl request to suitable idle backends.
-func (t *Tiler) Update(backends map[string]*Backend, heads map[string]*types.Header, progress map[string]struct{}, tiles []*tileDelivery) {
-	// Discard stale tasks and schedule new ones
-	cutoff, latest := t.dropStaleTasks(heads)
-	t.schedNewTasks(backends, progress, cutoff)
-
-	// Iterate over any recently delivered tiles and integrate them into the tasksets
-	for _, tile := range tiles {
-		// First up, mark the backend as idle
-		t.assigned[tile.origin.id] = false
-
-		context := t.pending[tile.hash]
-		delete(t.pending, tile.hash)
-
-		// If tile retrieval failed or nothing returned, reschedule it
-		if tile.err != nil || len(tile.nodes) == 0 {
-			if tile.err != nil {
-				log.Warn("Failed to crawl tile", "hash", tile.hash, "error", tile.err)
-			} else {
-				log.Warn("Empty tile", "hash", tile.hash)
-			}
-			t.taskset[context.block][context.root][tile.hash] = context.depth
-			continue
-		}
-		// Decode the nodes in the tile and continue expansion to newly discovered ones
-		var (
-			removed  []int
-			included = make(map[common.Hash]struct{})
-		)
-		for index, node := range tile.nodes {
-			hash := crypto.Keccak256Hash(node)
-			if t.tileset[hash] != nil {
-				removed = append(removed, index)
-				continue
-			}
-			included[hash] = struct{}{}
-		}
-		// If any intermediate nodes are the root of another tile, remove it.
-		// But the first node is always the root node of tile.
-		for index := range removed {
-			tile.nodes[index] = tile.nodes[len(tile.nodes)-1]
-			tile.nodes = tile.nodes[:len(tile.nodes)-1]
-		}
-		// Mark the tile as crawled and available
-		t.tileset[tile.hash] = &tileInfo{
-			depth: context.depth,
-		}
-		var storage common.StorageSize
-		for _, node := range tile.nodes {
-			storage += common.StorageSize(len(node))
-		}
-		t.tileset[tile.hash].size = storage
-		depths := map[common.Hash]uint8{
-			crypto.Keccak256Hash(tile.nodes[0]): context.depth,
-		}
-		for _, node := range tile.nodes {
-			trie.IterateRefs(node, func(path []byte, child common.Hash) error {
-				depths[child] = depths[crypto.Keccak256Hash(node)] + uint8(len(path))
-				if _, ok := included[child]; !ok {
-					t.tileset[tile.hash].refs = append(t.tileset[tile.hash].refs, child)
-
-					// Add the ref as the task if it's still not crawled.
-					if t.tileset[child] == nil {
-						if queue, ok := t.taskset[context.block]; ok {
-							queue[context.root][tile.hash] = depths[child]
-						}
-					}
-				}
-				return nil
-			})
-		}
-	}
-	// Iterate over the idle backends and attempt to assign crawl tasks to them
-	for id, b := range backends {
-		if !t.assigned[id] {
-			// Found an idle backend, find the next most urgent task needing crawling
-			for block := latest; block > cutoff; block-- {
-				for root, tasks := range t.taskset[block] {
-					// If there are no tasks or the node doesn't have the state, skip
-					if len(tasks) == 0 {
-						continue
-					}
-					if !b.Available(root) {
-						continue
-					}
-					// Yay, we found a task for this node, assign it (we don't care about the
-					// order, we need to crawl everything anyway).
-					var (
-						task  common.Hash
-						depth uint8
-					)
-					for key, val := range tasks {
-						task, depth = key, val
-						break
-					}
-					delete(tasks, task)
-
-					// If the tile was retrieved in the mean time, skip it
-					if _, ok := t.tileset[task]; ok {
-						continue
-					}
-					// If the tile is being actively retrieved, reown it but also skip it
-					if pend, ok := t.pending[task]; ok {
-						if pend.block < block {
-							pend.block, pend.root = block, root
-						}
-						continue
-					}
-					// Start a tile fetch in the background and deliver the result or failure
-					// to the tiler sink.
-					t.pending[task] = &tileContext{block: block, root: root, depth: depth}
-					t.assigned[id] = true
-
-					go t.fetchTile(b, task)
-					break
-				}
-				// If something was assigned, skip to the next backend
-				if t.assigned[id] {
-					break
-				}
-			}
-		}
-	}
-	// If any backend went missing, drop the assignment tracking
-	for id := range t.assigned {
-		if _, ok := backends[id]; !ok {
-			delete(t.assigned, id)
-		}
-	}
+func (t *tiler) start() {
+	t.wg.Add(2)
+	go t.loop()
+	go t.logger()
 }
 
-// dropStaleTasks calculates the ideal header range, discarding tasks below the
-// cutoff threshold based on the best available backend.
-func (t *Tiler) dropStaleTasks(heads map[string]*types.Header) (uint64, uint64) {
-	// Calculate the idea header range
+func (t *tiler) stop() {
+	close(t.closeCh)
+	t.wg.Wait()
+}
+
+// loop is the main event loop of the tiler, receiving various events and
+// acting on them.
+func (t *tiler) loop() {
+	defer t.wg.Done()
+
 	var (
-		cutoff uint64
-		latest uint64
+		ids      []string
+		backends = make(map[string]*backend)
+		heads    = make(map[string]*types.Header)
+		assigned = make(map[string]struct{})
+
+		generator *generator
+		pivot     *types.Header
+		latest    *types.Header
+		tileDB    = newTileDatabase(t.db)
 	)
-	for _, head := range heads {
-		if number := head.Number.Uint64(); number > latest {
-			latest = number
-		}
-	}
-	if latest > recentnessCutoff {
-		cutoff = latest - recentnessCutoff
-	}
-	// Drop all tasks below the cutoff threshold
-	for number := range t.taskset {
-		if number <= cutoff {
-			// If the tiles are still referenced by new head, will
-			// be scheduled later.
-			var tasks int
-			for _, subtasks := range t.taskset[number] {
-				tasks += len(subtasks)
-			}
-			log.Warn("Block stale, dropping crawl tasks", "number", number, "tasks", tasks)
-			delete(t.taskset, number)
-		}
-	}
-	return cutoff, latest
-}
 
-// schedNewTasks retrieves the entire set of available headers for any backends
-// that just progressed and schedules a crawl task for the root hash.
-func (t *Tiler) schedNewTasks(backends map[string]*Backend, progress map[string]struct{}, cutoff uint64) {
-	for id := range progress {
-		// Skip any progressed backends that quit since
-		b := backends[id]
-		if b == nil {
-			continue
-		}
-		// Retrieve all the available headers above the cutoff and schedule their state
-		for _, header := range b.Availability(cutoff) {
-			number := header.Number.Uint64()
-
-			// Skip any tiles already crawled or currently crawling (reown if newer)
-			if _, ok := t.tileset[header.Root]; ok {
-				continue
-			}
-			if pend, ok := t.pending[header.Root]; ok {
-				if pend.block < number {
-					pend.block, pend.root = number, header.Root
+	for {
+		// Assign new tasks to backends for tile indexing
+		if generator != nil {
+			for id, backend := range backends {
+				if _, ok := assigned[id]; ok {
+					continue
 				}
+				task := generator.assignTasks(id)
+				if task == (common.Hash{}) {
+					continue
+				}
+				assigned[id] = struct{}{}
+
+				// Better solution, using a worker pool instead
+				// of creating routines infinitely.
+				go func() {
+					nodes, err := backend.getTile(task)
+					t.newTileCh <- &tileDelivery{
+						origin: backend,
+						hash:   task,
+						nodes:  nodes,
+						err:    err,
+					}
+				}()
+			}
+			if generator.pending() == 0 && pivot != nil {
+				tileDB.commit(pivot.Root)
+				log.Info("Tiles indexed", "number", pivot.Number, "hash", pivot.Hash(), "state", pivot.Root)
+
+				pivot = nil
+			}
+		}
+		// Handle any events, not much to do if nothing happens
+		select {
+		case <-t.closeCh:
+			return
+
+		case b := <-t.addBackendCh:
+			if _, ok := backends[b.id]; ok {
+				b.logger.Error("backend already registered in tiler")
 				continue
 			}
-			// Not yet crawled, deduplicate and schedule it if unique
-			if _, ok := t.taskset[number]; !ok {
-				t.taskset[number] = make(map[common.Hash]map[common.Hash]uint8)
+			b.logger.Info("backend registered into tiler")
+			go t.muxHeadEvents(b)
+			backends[b.id] = b
+			ids = append(ids, b.id)
+
+		case b := <-t.remBackendCh:
+			if _, ok := backends[b.id]; !ok {
+				b.logger.Error("backend not registered in tiler")
+				continue
 			}
-			if _, ok := t.taskset[number][header.Root]; !ok {
-				t.taskset[number][header.Root] = make(map[common.Hash]uint8)
+			b.logger.Info("backend unregistered from tiler")
+			delete(backends, b.id)
+
+			for index, id := range ids {
+				if id == b.id {
+					ids = append(ids[:index], ids[index+1:]...)
+					break
+				}
 			}
-			if _, ok := t.taskset[number][header.Root][header.Root]; !ok {
-				log.Info("Scheduled new crawl task set", "number", number, "hash", header.Hash(), "root", header.Root)
-				t.taskset[number][header.Root][header.Root] = 0
+			if t.removeBackend != nil {
+				t.removeBackend(b.id)
+			}
+
+		case announce := <-t.newHeadCh:
+			heads[announce.origin.id] = announce.head
+			if latest == nil || announce.head.Number.Uint64() > latest.Number.Uint64() {
+				latest = announce.head
+			}
+			callback := func(leaf []byte, parent common.Hash) error {
+				var obj state.Account
+				if err := rlp.Decode(bytes.NewReader(leaf), &obj); err != nil {
+					return err
+				}
+				generator.addTask(obj.Root, 64, parent, nil) // Spin up more sub tasks for storage trie
+				return nil
+			}
+			// If it's first fired or newer state is available,
+			// create generator to generate crawl tasks
+			if pivot == nil || pivot.Number.Uint64()+recentnessCutoff <= announce.head.Number.Uint64() {
+				pivot = announce.head
+				generator = newGenerator(pivot.Root, tileDB, t.stat)
+				generator.addTask(pivot.Root, 0, common.Hash{}, callback)
+			}
+
+		case tile := <-t.newTileCh:
+			delete(assigned, tile.origin.id)
+			generator.process(tile, ids)
+
+		case req := <-t.tileQueryCh:
+			tile, state := generator.getTile(req.hash)
+			req.result <- tileAnswer{
+				tile:  tile,
+				state: state,
 			}
 		}
 	}
 }
 
-// fetchTile attempts to retrieve a state trie tile from a remote backend.
-func (t *Tiler) fetchTile(b *Backend, hash common.Hash) {
-	// Make sure the tile retrieval doesn't hang indefinitely
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+// muxHeadEvents registers a watcher for new chain head events on the backend and
+// multiplexes the events into a common channel for the tiler to handle.
+func (t *tiler) muxHeadEvents(b *backend) {
+	heads := make(chan *types.Header)
 
-	// Fetch the tile and construct a delivery report out of it
-	b.logger.Trace("Fetching state tile", "block", hash)
-	start := time.Now()
+	sub := b.subscribeNewHead(heads)
+	defer sub.Unsubscribe()
 
-	result := &tileDelivery{
-		origin: b,
-		hash:   hash,
+	for {
+		select {
+		case head := <-heads:
+			b.logger.Trace("new header", "hash", head.Hash(), "number", head.Number)
+			t.newHeadCh <- &headAnnounce{origin: b, head: head}
+		case err := <-sub.Err():
+			b.logger.Warn("backend head subscription failed", "err", err)
+			t.remBackendCh <- b
+			return
+		}
 	}
-	result.err = b.conn.CallContext(ctx, &result.nodes, "cdn_tile", hash, 16, 256, 2)
+}
 
-	if result.err != nil {
-		b.logger.Trace("Failed to fetch state tile", "block", hash)
-	} else {
-		b.logger.Trace("State tile fetched", "block", hash, "nodes", len(result.nodes), "elapsed", time.Since(start))
+// registerBackend starts tracking a new Ethereum backend to delegate tasks to.
+func (t *tiler) registerBackend(b *backend) {
+	t.addBackendCh <- b
+}
+
+func (t *tiler) hasTile(root common.Hash) tileAnswer {
+	result := make(chan tileAnswer, 1)
+	select {
+	case t.tileQueryCh <- &tileQuery{
+		hash:   root,
+		result: result,
+	}:
+		return <-result
+	case <-t.closeCh:
+		return tileAnswer{}
 	}
-	// Eiter way, deliver the results to the tiler
-	t.sink <- result
+}
+
+// logger is a helper loop to print internal statistic with a fixed time interval.
+func (t *tiler) logger() {
+	defer t.wg.Done()
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-t.closeCh:
+			return
+		case <-ticker.C:
+			log.Info("Tiler progress", "state", atomic.LoadUint32(&t.stat.stateTask), "storage", atomic.LoadUint32(&t.stat.storageTask),
+				"drop", atomic.LoadUint32(&t.stat.dropEntireTile), "droppart", atomic.LoadUint32(&t.stat.dropPartialTile),
+				"duplicate", atomic.LoadUint32(&t.stat.duplicateTask), "empty", atomic.LoadUint32(&t.stat.emptyTask), "failure", atomic.LoadUint32(&t.stat.failures))
+		}
+	}
 }
