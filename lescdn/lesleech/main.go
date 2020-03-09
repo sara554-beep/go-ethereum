@@ -132,7 +132,7 @@ func main() {
 						queue.Push(child, -int64(depths[child]))
 					}
 					return nil
-				})
+				}, nil)
 			}
 			log.Printf("D=%d R=0x%x: %d nodes, %d refs, %v (%d tiles, %v total)", depth, root, len(nodes), len(current[root].Refs), current[root].Size, tiles, storage)
 		}

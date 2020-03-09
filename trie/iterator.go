@@ -579,33 +579,41 @@ func (it *unionIterator) Error() error {
 
 // IterateRefs decodes a trie node, iterates all its children and invokes a
 // callback for each hash node found.
-func IterateRefs(node []byte, onHashNode func([]byte, common.Hash) error) error {
+func IterateRefs(node []byte, onHashNode func([]byte, common.Hash) error, onValueNode func([]byte, []byte) error) error {
 	n, err := decodeNode(nil, node)
 	if err != nil {
 		return err
 	}
-	return iterateRefs(n, nil, onHashNode)
+	return iterateRefs(n, nil, onHashNode, onValueNode)
 }
 
 // iterateRefs traverses the node hierarchy of a cached node and invokes the
 // provided callback on all hash nodes.
-func iterateRefs(n node, path []byte, onHashNode func([]byte, common.Hash) error) error {
+func iterateRefs(n node, path []byte, onHashNode func([]byte, common.Hash) error, onValueNode func([]byte, []byte) error) error {
 	switch n := n.(type) {
 	case *shortNode:
-		return iterateRefs(n.Val, append(path, n.Key...), onHashNode)
+		return iterateRefs(n.Val, append(path, n.Key...), onHashNode, onValueNode)
 
 	case *fullNode:
 		for i := 0; i < 16; i++ {
-			if err := iterateRefs(n.Children[i], append(path, byte(i)), onHashNode); err != nil {
+			if err := iterateRefs(n.Children[i], append(path, byte(i)), onHashNode, onValueNode); err != nil {
 				return err
 			}
 		}
 		return nil
 
 	case hashNode:
+		if onHashNode == nil {
+			return nil
+		}
 		return onHashNode(path, common.BytesToHash(n))
 
-	case valueNode, nil:
+	case valueNode:
+		if onValueNode == nil {
+			return nil
+		}
+		return onValueNode(path, n)
+	case nil:
 		return nil
 
 	default:

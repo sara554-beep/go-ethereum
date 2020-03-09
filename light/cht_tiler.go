@@ -251,7 +251,7 @@ func (t *chtTiler) run(sectionCount uint64) {
 						hashes = append(hashes, hash)
 					}
 					return nil
-				})
+				}, nil)
 			}
 			// Nothing to expand
 			if len(hashes) == 0 {

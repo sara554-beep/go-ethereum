@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2020 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -14,67 +14,96 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package lescdn
+package ethflare
 
 import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 
-	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-// Service is a RESTful HTTP service meant to act as a data source for a light client
-// content distribution network.
-type Service struct {
-	chain *core.BlockChain
+// ServerConfig is a set of options used to config ethflare server.
+type ServerConfig struct {
+	Path      string // The file path points to database, empty means memory db
+	RateLimit uint64 // The rate limit config for each backend
 }
 
-// New creates a data source for a les content distribution network.
-func New(chain *core.BlockChain) *Service {
-	return &Service{
-		chain: chain,
+// Server is the frontend to accept les requests, relay them to proper
+// backend and return the response.
+type Server struct {
+	config *ServerConfig
+
+	// tiler is responible for indexing state trie and providing state
+	// request validation service.
+	tiler *tiler
+
+	lock     sync.RWMutex
+	backends *backendSet
+}
+
+func NewServer(config *ServerConfig) (*Server, error) {
+	db := rawdb.NewMemoryDatabase()
+	if config.Path != "" {
+		ldb, err := rawdb.NewLevelDBDatabase(config.Path, 1024, 512, "tile")
+		if err != nil {
+			return nil, err
+		}
+		db = ldb
 	}
+	backends := newBackendSet()
+	return &Server{
+		config:   config,
+		backends: backends,
+		tiler:    newTiler(db, backends.removeBackend),
+	}, nil
 }
 
-// Protocols implements node.Service, returning the P2P network protocols used
-// by the lescdn service (nil as it doesn't use the devp2p overlay network).
-func (s *Service) Protocols() []p2p.Protocol { return nil }
+func (s *Server) Start(address string) {
+	s.tiler.start()
+	go http.ListenAndServe(address, newGzipHandler(s))
 
-// APIs implements node.Service, returning the RPC API endpoints provided by the
-// lescdn service (nil as it doesn't provide any user callable APIs).
-func (s *Service) APIs() []rpc.API {
-	return []rpc.API{
-		{
-			Namespace: "cdn",
-			Version:   "1.0",
-			Service:   NewLesCDNAPI(s.chain),
-			Public:    true,
-		},
+	log.Info("Ethflare started", "listen", address)
+}
+
+func (s *Server) Stop() {
+	s.tiler.stop()
+	log.Info("Ethflare stopped")
+}
+
+func (s *Server) RegisterBackends(ids []string, clients []*rpc.Client) {
+	if len(ids) != len(clients) {
+		return
 	}
-}
-
-// Start implements node.Service, starting up the content distribution source.
-func (s *Service) Start(server *p2p.Server) error {
-	go http.ListenAndServe("localhost:8548", newGzipHandler(s))
-
-	log.Info("Light client CDN started")
-	return nil
-}
-
-// Stop implements node.Service, terminating the content distribution source.
-func (s *Service) Stop() error {
-	log.Info("Light client CDN stopped")
-	return nil
+	var backends []*backend
+	for index, client := range clients {
+		backend, err := newBackend(ids[index], client, s.config.RateLimit)
+		if err != nil {
+			log.Debug("Failed to initialize backend", "error", err)
+			continue
+		}
+		backend.start()
+		err = s.backends.addBackend(ids[index], backend)
+		if err != nil {
+			log.Debug("Failed to register backend", "error", err)
+			continue
+		}
+		backends = append(backends, backend)
+	}
+	// Notify other components for new backends arrival
+	for _, backend := range backends {
+		s.tiler.registerBackend(backend)
+	}
 }
 
 // ServeHTTP is the entry point of the les cdn, splitting the request across the
 // supported submodules.
-func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch shift(&r.URL.Path) {
 	case "chain":
 		s.serveChain(w, r)
@@ -83,10 +112,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "state":
 		s.serveState(w, r)
 		return
-
-	case "misc":
-		s.serveMisc(w, r)
-		return
+		//
+		//case "misc":
+		//	s.serveMisc(w, r)
+		//	return
 	}
 	http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 }
