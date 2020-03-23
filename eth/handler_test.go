@@ -55,27 +55,27 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 	// Create a batch of tests for various scenarios
 	limit := uint64(downloader.MaxHeaderFetch)
 	tests := []struct {
-		query  *getBlockHeadersData // The query to execute for header retrieval
-		expect []common.Hash        // The hashes of the block whose headers are expected
+		query  *eth.getBlockHeadersData // The query to execute for header retrieval
+		expect []common.Hash            // The hashes of the block whose headers are expected
 	}{
 		// A single random block should be retrievable by hash and number too
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(limit / 2).Hash()}, Amount: 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(limit / 2).Hash()}, Amount: 1},
 			[]common.Hash{pm.blockchain.GetBlockByNumber(limit / 2).Hash()},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Amount: 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: limit / 2}, Amount: 1},
 			[]common.Hash{pm.blockchain.GetBlockByNumber(limit / 2).Hash()},
 		},
 		// Multiple headers should be retrievable in both directions
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Amount: 3},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: limit / 2}, Amount: 3},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
 				pm.blockchain.GetBlockByNumber(limit/2 + 1).Hash(),
 				pm.blockchain.GetBlockByNumber(limit/2 + 2).Hash(),
 			},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Amount: 3, Reverse: true},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: limit / 2}, Amount: 3, Reverse: true},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
 				pm.blockchain.GetBlockByNumber(limit/2 - 1).Hash(),
@@ -84,14 +84,14 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		},
 		// Multiple headers with skip lists should be retrievable
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Skip: 3, Amount: 3},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: limit / 2}, Skip: 3, Amount: 3},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
 				pm.blockchain.GetBlockByNumber(limit/2 + 4).Hash(),
 				pm.blockchain.GetBlockByNumber(limit/2 + 8).Hash(),
 			},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Skip: 3, Amount: 3, Reverse: true},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: limit / 2}, Skip: 3, Amount: 3, Reverse: true},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
 				pm.blockchain.GetBlockByNumber(limit/2 - 4).Hash(),
@@ -100,26 +100,26 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		},
 		// The chain endpoints should be retrievable
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: 0}, Amount: 1},
 			[]common.Hash{pm.blockchain.GetBlockByNumber(0).Hash()},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64()}, Amount: 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64()}, Amount: 1},
 			[]common.Hash{pm.blockchain.CurrentBlock().Hash()},
 		},
 		// Ensure protocol limits are honored
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 1}, Amount: limit + 10, Reverse: true},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 1}, Amount: limit + 10, Reverse: true},
 			pm.blockchain.GetBlockHashesFromHash(pm.blockchain.CurrentBlock().Hash(), limit),
 		},
 		// Check that requesting more than available is handled gracefully
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 4}, Skip: 3, Amount: 3},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 4}, Skip: 3, Amount: 3},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64() - 4).Hash(),
 				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64()).Hash(),
 			},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 4}, Skip: 3, Amount: 3, Reverse: true},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: 4}, Skip: 3, Amount: 3, Reverse: true},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(4).Hash(),
 				pm.blockchain.GetBlockByNumber(0).Hash(),
@@ -127,13 +127,13 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		},
 		// Check that requesting more than available is handled gracefully, even if mid skip
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 4}, Skip: 2, Amount: 3},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() - 4}, Skip: 2, Amount: 3},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64() - 4).Hash(),
 				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().NumberU64() - 1).Hash(),
 			},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 4}, Skip: 2, Amount: 3, Reverse: true},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: 4}, Skip: 2, Amount: 3, Reverse: true},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(4).Hash(),
 				pm.blockchain.GetBlockByNumber(1).Hash(),
@@ -141,7 +141,7 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		},
 		// Check a corner case where requesting more can iterate past the endpoints
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 2}, Amount: 5, Reverse: true},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: 2}, Amount: 5, Reverse: true},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(2).Hash(),
 				pm.blockchain.GetBlockByNumber(1).Hash(),
@@ -150,24 +150,24 @@ func testGetBlockHeaders(t *testing.T, protocol int) {
 		},
 		// Check a corner case where skipping overflow loops back into the chain start
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(3).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64 - 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(3).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64 - 1},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(3).Hash(),
 			},
 		},
 		// Check a corner case where skipping overflow loops back to the same header
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(1).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(1).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64},
 			[]common.Hash{
 				pm.blockchain.GetBlockByNumber(1).Hash(),
 			},
 		},
 		// Check that non existing headers aren't returned
 		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: unknown}, Amount: 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Hash: unknown}, Amount: 1},
 			[]common.Hash{},
 		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() + 1}, Amount: 1},
+			&eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: pm.blockchain.CurrentBlock().NumberU64() + 1}, Amount: 1},
 			[]common.Hash{},
 		},
 	}
@@ -237,7 +237,7 @@ func testGetBlockBodies(t *testing.T, protocol int) {
 	for i, tt := range tests {
 		// Collect the hashes to request, and the response to expect
 		hashes, seen := []common.Hash{}, make(map[int64]bool)
-		bodies := []*blockBody{}
+		bodies := []*eth.blockBody{}
 
 		for j := 0; j < tt.random; j++ {
 			for {
@@ -248,7 +248,7 @@ func testGetBlockBodies(t *testing.T, protocol int) {
 					block := pm.blockchain.GetBlockByNumber(uint64(num))
 					hashes = append(hashes, block.Hash())
 					if len(bodies) < tt.expected {
-						bodies = append(bodies, &blockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
+						bodies = append(bodies, &eth.blockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
 					}
 					break
 				}
@@ -258,7 +258,7 @@ func testGetBlockBodies(t *testing.T, protocol int) {
 			hashes = append(hashes, hash)
 			if tt.available[j] && len(bodies) < tt.expected {
 				block := pm.blockchain.GetBlockByHash(hash)
-				bodies = append(bodies, &blockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
+				bodies = append(bodies, &eth.blockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
 			}
 		}
 		// Send the hash request and verify the response
@@ -503,31 +503,31 @@ func testCheckpointChallenge(t *testing.T, syncmode downloader.SyncMode, checkpo
 	defer pm.Stop()
 
 	// Connect a new peer and check that we receive the checkpoint challenge
-	peer, _ := newTestPeer("peer", eth63, pm, true)
+	peer, _ := newTestPeer("peer", eth.eth63, pm, true)
 	defer peer.close()
 
 	if checkpoint {
-		challenge := &getBlockHeadersData{
-			Origin:  hashOrNumber{Number: response.Number.Uint64()},
+		challenge := &eth.getBlockHeadersData{
+			Origin:  eth.hashOrNumber{Number: response.Number.Uint64()},
 			Amount:  1,
 			Skip:    0,
 			Reverse: false,
 		}
-		if err := p2p.ExpectMsg(peer.app, GetBlockHeadersMsg, challenge); err != nil {
+		if err := p2p.ExpectMsg(peer.app, eth.ethGetBlockHeadersMsg, challenge); err != nil {
 			t.Fatalf("challenge mismatch: %v", err)
 		}
 		// Create a block to reply to the challenge if no timeout is simulated
 		if !timeout {
 			if empty {
-				if err := p2p.Send(peer.app, BlockHeadersMsg, []*types.Header{}); err != nil {
+				if err := p2p.Send(peer.app, eth.ethBlockHeadersMsg, []*types.Header{}); err != nil {
 					t.Fatalf("failed to answer challenge: %v", err)
 				}
 			} else if match {
-				if err := p2p.Send(peer.app, BlockHeadersMsg, []*types.Header{response}); err != nil {
+				if err := p2p.Send(peer.app, eth.ethBlockHeadersMsg, []*types.Header{response}); err != nil {
 					t.Fatalf("failed to answer challenge: %v", err)
 				}
 			} else {
-				if err := p2p.Send(peer.app, BlockHeadersMsg, []*types.Header{{Number: response.Number}}); err != nil {
+				if err := p2p.Send(peer.app, eth.ethBlockHeadersMsg, []*types.Header{{Number: response.Number}}); err != nil {
 					t.Fatalf("failed to answer challenge: %v", err)
 				}
 			}
@@ -590,7 +590,7 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 	defer pm.Stop()
 	var peers []*testPeer
 	for i := 0; i < totalPeers; i++ {
-		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), eth63, pm, true)
+		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), eth.eth63, pm, true)
 		defer peer.close()
 
 		peers = append(peers, peer)
@@ -602,7 +602,7 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 	doneCh := make(chan struct{}, totalPeers)
 	for _, peer := range peers {
 		go func(p *testPeer) {
-			if err := p2p.ExpectMsg(p.app, NewBlockMsg, &newBlockData{Block: chain[0], TD: big.NewInt(131136)}); err != nil {
+			if err := p2p.ExpectMsg(p.app, eth.ethNewBlockMsg, &eth.newBlockData{Block: chain[0], TD: big.NewInt(131136)}); err != nil {
 				errCh <- err
 			} else {
 				doneCh <- struct{}{}
@@ -652,10 +652,10 @@ func TestBroadcastMalformedBlock(t *testing.T) {
 
 	// Create two peers, one to send the malformed block with and one to check
 	// propagation
-	source, _ := newTestPeer("source", eth63, pm, true)
+	source, _ := newTestPeer("source", eth.eth63, pm, true)
 	defer source.close()
 
-	sink, _ := newTestPeer("sink", eth63, pm, true)
+	sink, _ := newTestPeer("sink", eth.eth63, pm, true)
 	defer sink.close()
 
 	// Create various combinations of malformed blocks
@@ -679,7 +679,7 @@ func TestBroadcastMalformedBlock(t *testing.T) {
 	// Try to broadcast all malformations and ensure they all get discarded
 	for _, header := range []*types.Header{malformedUncles, malformedTransactions, malformedEverything} {
 		block := types.NewBlockWithHeader(header).WithBody(chain[0].Transactions(), chain[0].Uncles())
-		if err := p2p.Send(source.app, NewBlockMsg, []interface{}{block, big.NewInt(131136)}); err != nil {
+		if err := p2p.Send(source.app, eth.ethNewBlockMsg, []interface{}{block, big.NewInt(131136)}); err != nil {
 			t.Fatalf("failed to broadcast block: %v", err)
 		}
 		select {

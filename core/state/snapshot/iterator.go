@@ -42,7 +42,7 @@ type AccountIterator interface {
 	Hash() common.Hash
 
 	// Account returns the RLP encoded slim account the iterator is currently at.
-	// An error will be returned if the iterator becomes invalid (e.g. snaph
+	// An error will be returned if the iterator becomes invalid.
 	Account() []byte
 
 	// Release releases associated resources. Release should always succeed and

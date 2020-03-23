@@ -40,6 +40,8 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
+	"github.com/ethereum/go-ethereum/eth/protocols/eth"
+	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -48,7 +50,6 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -68,11 +69,12 @@ type Ethereum struct {
 	config *Config
 
 	// Handlers
-	txPool          *core.TxPool
-	blockchain      *core.BlockChain
-	protocolManager *ProtocolManager
-	lesServer       LesServer
-	dialCandiates   enode.Iterator
+	txPool             *core.TxPool
+	blockchain         *core.BlockChain
+	protocolManager    *ProtocolManager
+	lesServer          LesServer
+	ethDialCandidates  enode.Iterator
+	snapDialCandidates enode.Iterator
 
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
@@ -161,7 +163,7 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol", "versions", ProtocolVersions, "network", config.NetworkId, "dbversion", dbVer)
+	log.Info("Initialising Ethereum protocol", "network", config.NetworkId, "dbversion", dbVer)
 
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > core.BlockChainVersion {
@@ -222,11 +224,14 @@ func New(ctx *node.ServiceContext, config *Config) (*Ethereum, error) {
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
 
-	eth.dialCandiates, err = eth.setupDiscovery(&ctx.Config.P2P)
+	eth.ethDialCandidates, err = setupDiscovery(&ctx.Config.P2P, eth.config.EthDiscoveryURLs)
 	if err != nil {
 		return nil, err
 	}
-
+	eth.snapDialCandidates, err = setupDiscovery(&ctx.Config.P2P, eth.config.SnapDiscoveryURLs)
+	if err != nil {
+		return nil, err
+	}
 	return eth, nil
 }
 
@@ -504,8 +509,6 @@ func (s *Ethereum) EventMux() *event.TypeMux           { return s.eventMux }
 func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
-func (s *Ethereum) EthVersion() int                    { return int(ProtocolVersions[0]) }
-func (s *Ethereum) NetVersion() uint64                 { return s.networkID }
 func (s *Ethereum) Downloader() *downloader.Downloader { return s.protocolManager.downloader }
 func (s *Ethereum) Synced() bool                       { return atomic.LoadUint32(&s.protocolManager.acceptTxs) == 1 }
 func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
@@ -513,11 +516,9 @@ func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruni
 // Protocols implements node.Service, returning all the currently configured
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
-	protos := make([]p2p.Protocol, len(ProtocolVersions))
-	for i, vsn := range ProtocolVersions {
-		protos[i] = s.protocolManager.makeProtocol(vsn)
-		protos[i].Attributes = []enr.Entry{s.currentEthEntry()}
-		protos[i].DialCandidates = s.dialCandiates
+	protos := eth.MakeProtocols(s.blockchain, s.networkID, s.ethDialCandidates)
+	if s.config.SnapshotCache > 0 {
+		protos = append(protos, snap.MakeProtocols(s.blockchain, s.snapDialCandidates)...)
 	}
 	if s.lesServer != nil {
 		protos = append(protos, s.lesServer.Protocols()...)
@@ -528,7 +529,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 // Start implements node.Service, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (s *Ethereum) Start(srvr *p2p.Server) error {
-	s.startEthEntryUpdate(srvr.LocalNode())
+	eth.StartENRUpdater(s.blockchain, srvr.LocalNode())
 
 	// Start the bloom bits servicing goroutines
 	s.startBloomHandlers(params.BloomBitsBlocks)

@@ -33,11 +33,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
+	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -56,7 +56,7 @@ var (
 	syncChallengeTimeout = 15 * time.Second // Time allowance for a node to reply to the sync progress challenge
 )
 
-func errResp(code errCode, format string, v ...interface{}) error {
+func errResp(code eth.errCode, format string, v ...interface{}) error {
 	return fmt.Errorf("%v - %v", code, fmt.Sprintf(format, v...))
 }
 
@@ -70,7 +70,7 @@ type ProtocolManager struct {
 	checkpointNumber uint64      // Block number for the sync progress validator to cross reference
 	checkpointHash   common.Hash // Block hash for the sync progress validator to cross reference
 
-	txpool     txPool
+	txpool     eth.txPool
 	blockchain *core.BlockChain
 	maxPeers   int
 
@@ -100,7 +100,7 @@ type ProtocolManager struct {
 
 // NewProtocolManager returns a new Ethereum sub protocol manager. The Ethereum sub protocol manages peers capable
 // with the Ethereum network.
-func NewProtocolManager(config *params.ChainConfig, checkpoint *params.TrustedCheckpoint, mode downloader.SyncMode, networkID uint64, mux *event.TypeMux, txpool txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database, cacheLimit int, whitelist map[uint64]common.Hash) (*ProtocolManager, error) {
+func NewProtocolManager(config *params.ChainConfig, checkpoint *params.TrustedCheckpoint, mode downloader.SyncMode, networkID uint64, mux *event.TypeMux, txpool eth.txPool, engine consensus.Engine, blockchain *core.BlockChain, chaindb ethdb.Database, cacheLimit int, whitelist map[uint64]common.Hash) (*ProtocolManager, error) {
 	// Create the protocol manager with the base fields
 	manager := &ProtocolManager{
 		networkID:  networkID,
@@ -200,31 +200,6 @@ func NewProtocolManager(config *params.ChainConfig, checkpoint *params.TrustedCh
 	manager.chainSync = newChainSyncer(manager)
 
 	return manager, nil
-}
-
-func (pm *ProtocolManager) makeProtocol(version uint) p2p.Protocol {
-	length, ok := protocolLengths[version]
-	if !ok {
-		panic("makeProtocol for unknown version")
-	}
-
-	return p2p.Protocol{
-		Name:    protocolName,
-		Version: version,
-		Length:  length,
-		Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-			return pm.runPeer(pm.newPeer(int(version), p, rw, pm.txpool.Get))
-		},
-		NodeInfo: func() interface{} {
-			return pm.NodeInfo()
-		},
-		PeerInfo: func(id enode.ID) interface{} {
-			if p := pm.peers.Peer(fmt.Sprintf("%x", id[:8])); p != nil {
-				return p.Info()
-			}
-			return nil
-		},
-	}
 }
 
 func (pm *ProtocolManager) removePeer(id string) {
@@ -366,38 +341,38 @@ func (pm *ProtocolManager) handle(p *peer) error {
 	}
 	// Handle incoming messages until the connection is torn down
 	for {
-		if err := pm.handleMsg(p); err != nil {
+		if err := pm.handleMessage(p); err != nil {
 			p.Log().Debug("Ethereum message handling failed", "err", err)
 			return err
 		}
 	}
 }
 
-// handleMsg is invoked whenever an inbound message is received from a remote
+// handleMessage is invoked whenever an inbound message is received from a remote
 // peer. The remote connection is torn down upon returning any error.
-func (pm *ProtocolManager) handleMsg(p *peer) error {
+func (pm *ProtocolManager) handleMessage(p *peer) error {
 	// Read the next message from the remote peer, and ensure it's fully consumed
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
 		return err
 	}
-	if msg.Size > protocolMaxMsgSize {
-		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, protocolMaxMsgSize)
+	if msg.Size > eth.ethMaxMessageSize {
+		return errResp(eth.ErrMsgTooLarge, "%v > %v", msg.Size, eth.ethMaxMessageSize)
 	}
 	defer msg.Discard()
 
 	// Handle the message depending on its contents
 	switch {
-	case msg.Code == StatusMsg:
+	case msg.Code == eth.ethStatusMsg:
 		// Status messages should never arrive after the handshake
-		return errResp(ErrExtraStatusMsg, "uncontrolled status message")
+		return errResp(eth.ErrExtraStatusMsg, "uncontrolled status message")
 
 	// Block header query, collect the requested headers and reply
-	case msg.Code == GetBlockHeadersMsg:
+	case msg.Code == eth.ethGetBlockHeadersMsg:
 		// Decode the complex header query
-		var query getBlockHeadersData
+		var query eth.getBlockHeadersData
 		if err := msg.Decode(&query); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
+			return errResp(eth.ErrDecode, "%v: %v", msg, err)
 		}
 		hashMode := query.Origin.Hash != (common.Hash{})
 		first := true
@@ -480,11 +455,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		return p.SendBlockHeaders(headers)
 
-	case msg.Code == BlockHeadersMsg:
+	case msg.Code == eth.ethBlockHeadersMsg:
 		// A batch of headers arrived to one of our previous requests
 		var headers []*types.Header
 		if err := msg.Decode(&headers); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
+			return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 		}
 		// If no headers were received, but we're expencting a checkpoint header, consider it that
 		if len(headers) == 0 && p.syncDrop != nil {
@@ -533,7 +508,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 		}
 
-	case msg.Code == GetBlockBodiesMsg:
+	case msg.Code == eth.ethGetBlockBodiesMsg:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -550,7 +525,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
 			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
+				return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 			}
 			// Retrieve the requested block body, stopping if enough was found
 			if data := pm.blockchain.GetBodyRLP(hash); len(data) != 0 {
@@ -560,11 +535,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		return p.SendBlockBodiesRLP(bodies)
 
-	case msg.Code == BlockBodiesMsg:
+	case msg.Code == eth.ethBlockBodiesMsg:
 		// A batch of block bodies arrived to one of our previous requests
-		var request blockBodiesData
+		var request eth.blockBodiesData
 		if err := msg.Decode(&request); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
+			return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Deliver them all to the downloader for queuing
 		transactions := make([][]*types.Transaction, len(request))
@@ -586,7 +561,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			}
 		}
 
-	case p.version >= eth63 && msg.Code == GetNodeDataMsg:
+	case p.version >= eth.eth63 && msg.Code == eth.ethGetNodeDataMsg:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -603,7 +578,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
 			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
+				return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 			}
 			// Retrieve the requested state entry, stopping if enough was found
 			if entry, err := pm.blockchain.TrieNode(hash); err == nil {
@@ -613,18 +588,18 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		return p.SendNodeData(data)
 
-	case p.version >= eth63 && msg.Code == NodeDataMsg:
+	case p.version >= eth.eth63 && msg.Code == eth.ethNodeDataMsg:
 		// A batch of node state data arrived to one of our previous requests
 		var data [][]byte
 		if err := msg.Decode(&data); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
+			return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Deliver all to the downloader
 		if err := pm.downloader.DeliverNodeData(p.id, data); err != nil {
 			log.Debug("Failed to deliver node state data", "err", err)
 		}
 
-	case p.version >= eth63 && msg.Code == GetReceiptsMsg:
+	case p.version >= eth.eth63 && msg.Code == eth.ethGetReceiptsMsg:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -641,7 +616,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
 			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
+				return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 			}
 			// Retrieve the requested block's receipts, skipping if unknown to us
 			results := pm.blockchain.GetReceiptsByHash(hash)
@@ -660,28 +635,28 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		return p.SendReceiptsRLP(receipts)
 
-	case p.version >= eth63 && msg.Code == ReceiptsMsg:
+	case p.version >= eth.eth63 && msg.Code == eth.ethReceiptsMsg:
 		// A batch of receipts arrived to one of our previous requests
 		var receipts [][]*types.Receipt
 		if err := msg.Decode(&receipts); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
+			return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Deliver all to the downloader
 		if err := pm.downloader.DeliverReceipts(p.id, receipts); err != nil {
 			log.Debug("Failed to deliver receipts", "err", err)
 		}
 
-	case msg.Code == NewBlockHashesMsg:
-		var announces newBlockHashesData
+	case msg.Code == eth.ethNewBlockHashesMsg:
+		var announces eth.newBlockHashesData
 		if err := msg.Decode(&announces); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
+			return errResp(eth.ErrDecode, "%v: %v", msg, err)
 		}
 		// Mark the hashes as present at the remote node
 		for _, block := range announces {
 			p.MarkBlock(block.Hash)
 		}
 		// Schedule all the unknown hashes for retrieval
-		unknown := make(newBlockHashesData, 0, len(announces))
+		unknown := make(eth.newBlockHashesData, 0, len(announces))
 		for _, block := range announces {
 			if !pm.blockchain.HasBlock(block.Hash, block.Number) {
 				unknown = append(unknown, block)
@@ -691,11 +666,11 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			pm.blockFetcher.Notify(p.id, block.Hash, block.Number, time.Now(), p.RequestOneHeader, p.RequestBodies)
 		}
 
-	case msg.Code == NewBlockMsg:
+	case msg.Code == eth.ethNewBlockMsg:
 		// Retrieve and decode the propagated block
-		var request newBlockData
+		var request eth.newBlockData
 		if err := msg.Decode(&request); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
+			return errResp(eth.ErrDecode, "%v: %v", msg, err)
 		}
 		if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
 			log.Warn("Propagated block has invalid uncles", "have", hash, "exp", request.Block.UncleHash())
@@ -727,7 +702,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			pm.chainSync.handlePeerEvent(p)
 		}
 
-	case msg.Code == NewPooledTransactionHashesMsg && p.version >= eth65:
+	case msg.Code == eth.ethNewPooledTransactionHashesMsg && p.version >= eth.eth65:
 		// New transaction announcement arrived, make sure we have
 		// a valid and fresh chain to handle them
 		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
@@ -735,7 +710,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		var hashes []common.Hash
 		if err := msg.Decode(&hashes); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
+			return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 		}
 		// Schedule all the unknown hashes for retrieval
 		for _, hash := range hashes {
@@ -743,7 +718,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		pm.txFetcher.Notify(p.id, hashes)
 
-	case msg.Code == GetPooledTransactionsMsg && p.version >= eth65:
+	case msg.Code == eth.ethGetPooledTransactionsMsg && p.version >= eth.eth65:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -761,7 +736,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
 			} else if err != nil {
-				return errResp(ErrDecode, "msg %v: %v", msg, err)
+				return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 			}
 			// Retrieve the requested transaction, skipping if unknown to us
 			tx := pm.txpool.Get(hash)
@@ -779,7 +754,7 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		}
 		return p.SendPooledTransactionsRLP(hashes, txs)
 
-	case msg.Code == TransactionMsg || (msg.Code == PooledTransactionsMsg && p.version >= eth65):
+	case msg.Code == eth.ethTransactionMsg || (msg.Code == eth.ethPooledTransactionsMsg && p.version >= eth.eth65):
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
 		if atomic.LoadUint32(&pm.acceptTxs) == 0 {
 			break
@@ -787,19 +762,19 @@ func (pm *ProtocolManager) handleMsg(p *peer) error {
 		// Transactions can be processed, parse all of them and deliver to the pool
 		var txs []*types.Transaction
 		if err := msg.Decode(&txs); err != nil {
-			return errResp(ErrDecode, "msg %v: %v", msg, err)
+			return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 		}
 		for i, tx := range txs {
 			// Validate and mark the remote transaction
 			if tx == nil {
-				return errResp(ErrDecode, "transaction %d is nil", i)
+				return errResp(eth.ErrDecode, "transaction %d is nil", i)
 			}
 			p.MarkTransaction(tx.Hash())
 		}
-		pm.txFetcher.Enqueue(p.id, txs, msg.Code == PooledTransactionsMsg)
+		pm.txFetcher.Enqueue(p.id, txs, msg.Code == eth.ethPooledTransactionsMsg)
 
 	default:
-		return errResp(ErrInvalidMsgCode, "%v", msg.Code)
+		return errResp(eth.ErrInvalidMsgCode, "%v", msg.Code)
 	}
 	return nil
 }
@@ -869,7 +844,7 @@ func (pm *ProtocolManager) BroadcastTransactions(txs types.Transactions, propaga
 		}
 	}
 	for peer, hashes := range annos {
-		if peer.version >= eth65 {
+		if peer.version >= eth.eth65 {
 			peer.AsyncSendPooledTransactionHashes(hashes)
 		} else {
 			peer.AsyncSendTransactions(hashes)
@@ -907,27 +882,5 @@ func (pm *ProtocolManager) txBroadcastLoop() {
 		case <-pm.txsSub.Err():
 			return
 		}
-	}
-}
-
-// NodeInfo represents a short summary of the Ethereum sub-protocol metadata
-// known about the host peer.
-type NodeInfo struct {
-	Network    uint64              `json:"network"`    // Ethereum network ID (1=Frontier, 2=Morden, Ropsten=3, Rinkeby=4)
-	Difficulty *big.Int            `json:"difficulty"` // Total difficulty of the host's blockchain
-	Genesis    common.Hash         `json:"genesis"`    // SHA3 hash of the host's genesis block
-	Config     *params.ChainConfig `json:"config"`     // Chain configuration for the fork rules
-	Head       common.Hash         `json:"head"`       // SHA3 hash of the host's best owned block
-}
-
-// NodeInfo retrieves some protocol metadata about the running host node.
-func (pm *ProtocolManager) NodeInfo() *NodeInfo {
-	currentBlock := pm.blockchain.CurrentBlock()
-	return &NodeInfo{
-		Network:    pm.networkID,
-		Difficulty: pm.blockchain.GetTd(currentBlock.Hash(), currentBlock.NumberU64()),
-		Genesis:    pm.blockchain.Genesis().Hash(),
-		Config:     pm.blockchain.Config(),
-		Head:       currentBlock.Hash(),
 	}
 }

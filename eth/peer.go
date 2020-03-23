@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -68,14 +69,6 @@ func max(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// PeerInfo represents a short summary of the Ethereum sub-protocol metadata known
-// about a connected peer.
-type PeerInfo struct {
-	Version    int      `json:"version"`    // Ethereum protocol version negotiated
-	Difficulty *big.Int `json:"difficulty"` // Total difficulty of the peer's blockchain
-	Head       string   `json:"head"`       // SHA3 hash of the peer's best owned block
 }
 
 // propEvent is a block propagation, waiting for its turn in the broadcast queue.
@@ -279,36 +272,6 @@ func (p *peer) close() {
 	close(p.term)
 }
 
-// Info gathers and returns a collection of metadata known about a peer.
-func (p *peer) Info() *PeerInfo {
-	hash, td := p.Head()
-
-	return &PeerInfo{
-		Version:    p.version,
-		Difficulty: td,
-		Head:       hash.Hex(),
-	}
-}
-
-// Head retrieves a copy of the current head hash and total difficulty of the
-// peer.
-func (p *peer) Head() (hash common.Hash, td *big.Int) {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-
-	copy(hash[:], p.head[:])
-	return hash, new(big.Int).Set(p.td)
-}
-
-// SetHead updates the head hash and total difficulty of the peer.
-func (p *peer) SetHead(hash common.Hash, td *big.Int) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	copy(p.head[:], hash[:])
-	p.td.Set(td)
-}
-
 // MarkBlock marks a block as known for the peer, ensuring that the block will
 // never be propagated to this particular peer.
 func (p *peer) MarkBlock(hash common.Hash) {
@@ -352,7 +315,7 @@ func (p *peer) sendTransactions(txs types.Transactions) error {
 	for _, tx := range txs {
 		p.knownTxs.Add(tx.Hash())
 	}
-	return p2p.Send(p.rw, TransactionMsg, txs)
+	return p2p.Send(p.rw, eth.ethTransactionMsg, txs)
 }
 
 // AsyncSendTransactions queues a list of transactions (by hash) to eventually
@@ -387,7 +350,7 @@ func (p *peer) sendPooledTransactionHashes(hashes []common.Hash) error {
 	for _, hash := range hashes {
 		p.knownTxs.Add(hash)
 	}
-	return p2p.Send(p.rw, NewPooledTransactionHashesMsg, hashes)
+	return p2p.Send(p.rw, eth.ethNewPooledTransactionHashesMsg, hashes)
 }
 
 // AsyncSendPooledTransactionHashes queues a list of transactions hashes to eventually
@@ -421,7 +384,7 @@ func (p *peer) SendPooledTransactionsRLP(hashes []common.Hash, txs []rlp.RawValu
 	for _, hash := range hashes {
 		p.knownTxs.Add(hash)
 	}
-	return p2p.Send(p.rw, PooledTransactionsMsg, txs)
+	return p2p.Send(p.rw, eth.ethPooledTransactionsMsg, txs)
 }
 
 // SendNewBlockHashes announces the availability of a number of blocks through
@@ -434,12 +397,12 @@ func (p *peer) SendNewBlockHashes(hashes []common.Hash, numbers []uint64) error 
 	for _, hash := range hashes {
 		p.knownBlocks.Add(hash)
 	}
-	request := make(newBlockHashesData, len(hashes))
+	request := make(eth.newBlockHashesData, len(hashes))
 	for i := 0; i < len(hashes); i++ {
 		request[i].Hash = hashes[i]
 		request[i].Number = numbers[i]
 	}
-	return p2p.Send(p.rw, NewBlockHashesMsg, request)
+	return p2p.Send(p.rw, eth.ethNewBlockHashesMsg, request)
 }
 
 // AsyncSendNewBlockHash queues the availability of a block for propagation to a
@@ -465,7 +428,7 @@ func (p *peer) SendNewBlock(block *types.Block, td *big.Int) error {
 		p.knownBlocks.Pop()
 	}
 	p.knownBlocks.Add(block.Hash())
-	return p2p.Send(p.rw, NewBlockMsg, []interface{}{block, td})
+	return p2p.Send(p.rw, eth.ethNewBlockMsg, []interface{}{block, td})
 }
 
 // AsyncSendNewBlock queues an entire block for propagation to a remote peer. If
@@ -485,77 +448,77 @@ func (p *peer) AsyncSendNewBlock(block *types.Block, td *big.Int) {
 
 // SendBlockHeaders sends a batch of block headers to the remote peer.
 func (p *peer) SendBlockHeaders(headers []*types.Header) error {
-	return p2p.Send(p.rw, BlockHeadersMsg, headers)
+	return p2p.Send(p.rw, eth.ethBlockHeadersMsg, headers)
 }
 
 // SendBlockBodies sends a batch of block contents to the remote peer.
-func (p *peer) SendBlockBodies(bodies []*blockBody) error {
-	return p2p.Send(p.rw, BlockBodiesMsg, blockBodiesData(bodies))
+func (p *peer) SendBlockBodies(bodies []*eth.blockBody) error {
+	return p2p.Send(p.rw, eth.ethBlockBodiesMsg, eth.blockBodiesData(bodies))
 }
 
 // SendBlockBodiesRLP sends a batch of block contents to the remote peer from
 // an already RLP encoded format.
 func (p *peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
-	return p2p.Send(p.rw, BlockBodiesMsg, bodies)
+	return p2p.Send(p.rw, eth.ethBlockBodiesMsg, bodies)
 }
 
 // SendNodeDataRLP sends a batch of arbitrary internal data, corresponding to the
 // hashes requested.
 func (p *peer) SendNodeData(data [][]byte) error {
-	return p2p.Send(p.rw, NodeDataMsg, data)
+	return p2p.Send(p.rw, eth.ethNodeDataMsg, data)
 }
 
 // SendReceiptsRLP sends a batch of transaction receipts, corresponding to the
 // ones requested from an already RLP encoded format.
 func (p *peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
-	return p2p.Send(p.rw, ReceiptsMsg, receipts)
+	return p2p.Send(p.rw, eth.ethReceiptsMsg, receipts)
 }
 
 // RequestOneHeader is a wrapper around the header query functions to fetch a
 // single header. It is used solely by the fetcher.
 func (p *peer) RequestOneHeader(hash common.Hash) error {
 	p.Log().Debug("Fetching single header", "hash", hash)
-	return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
+	return p2p.Send(p.rw, eth.ethGetBlockHeadersMsg, &eth.getBlockHeadersData{Origin: eth.hashOrNumber{Hash: hash}, Amount: uint64(1), Skip: uint64(0), Reverse: false})
 }
 
 // RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the hash of an origin block.
 func (p *peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromhash", origin, "skip", skip, "reverse", reverse)
-	return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
+	return p2p.Send(p.rw, eth.ethGetBlockHeadersMsg, &eth.getBlockHeadersData{Origin: eth.hashOrNumber{Hash: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestHeadersByNumber fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the number of an origin block.
 func (p *peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromnum", origin, "skip", skip, "reverse", reverse)
-	return p2p.Send(p.rw, GetBlockHeadersMsg, &getBlockHeadersData{Origin: hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
+	return p2p.Send(p.rw, eth.ethGetBlockHeadersMsg, &eth.getBlockHeadersData{Origin: eth.hashOrNumber{Number: origin}, Amount: uint64(amount), Skip: uint64(skip), Reverse: reverse})
 }
 
 // RequestBodies fetches a batch of blocks' bodies corresponding to the hashes
 // specified.
 func (p *peer) RequestBodies(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
-	return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
+	return p2p.Send(p.rw, eth.ethGetBlockBodiesMsg, hashes)
 }
 
 // RequestNodeData fetches a batch of arbitrary data from a node's known state
 // data, corresponding to the specified hashes.
 func (p *peer) RequestNodeData(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
-	return p2p.Send(p.rw, GetNodeDataMsg, hashes)
+	return p2p.Send(p.rw, eth.ethGetNodeDataMsg, hashes)
 }
 
 // RequestReceipts fetches a batch of transaction receipts from a remote node.
 func (p *peer) RequestReceipts(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
-	return p2p.Send(p.rw, GetReceiptsMsg, hashes)
+	return p2p.Send(p.rw, eth.ethGetReceiptsMsg, hashes)
 }
 
 // RequestTxs fetches a batch of transactions from a remote node.
 func (p *peer) RequestTxs(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
-	return p2p.Send(p.rw, GetPooledTransactionsMsg, hashes)
+	return p2p.Send(p.rw, eth.ethGetPooledTransactionsMsg, hashes)
 }
 
 // Handshake executes the eth protocol handshake, negotiating version number,
@@ -565,21 +528,21 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	errc := make(chan error, 2)
 
 	var (
-		status63 statusData63 // safe to read after two values have been received from errc
-		status   statusData   // safe to read after two values have been received from errc
+		status63 eth.statusData63 // safe to read after two values have been received from errc
+		status   eth.statusData   // safe to read after two values have been received from errc
 	)
 	go func() {
 		switch {
-		case p.version == eth63:
-			errc <- p2p.Send(p.rw, StatusMsg, &statusData63{
+		case p.version == eth.eth63:
+			errc <- p2p.Send(p.rw, eth.ethStatusMsg, &eth.statusData63{
 				ProtocolVersion: uint32(p.version),
 				NetworkId:       network,
 				TD:              td,
 				CurrentBlock:    head,
 				GenesisBlock:    genesis,
 			})
-		case p.version >= eth64:
-			errc <- p2p.Send(p.rw, StatusMsg, &statusData{
+		case p.version >= eth.eth64:
+			errc <- p2p.Send(p.rw, eth.ethStatusMsg, &eth.statusData{
 				ProtocolVersion: uint32(p.version),
 				NetworkID:       network,
 				TD:              td,
@@ -593,9 +556,9 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	}()
 	go func() {
 		switch {
-		case p.version == eth63:
+		case p.version == eth.eth63:
 			errc <- p.readStatusLegacy(network, &status63, genesis)
-		case p.version >= eth64:
+		case p.version >= eth.eth64:
 			errc <- p.readStatus(network, &status, genesis, forkFilter)
 		default:
 			panic(fmt.Sprintf("unsupported eth protocol version: %d", p.version))
@@ -614,9 +577,9 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 		}
 	}
 	switch {
-	case p.version == eth63:
+	case p.version == eth.eth63:
 		p.td, p.head = status63.TD, status63.CurrentBlock
-	case p.version >= eth64:
+	case p.version >= eth.eth64:
 		p.td, p.head = status.TD, status.Head
 	default:
 		panic(fmt.Sprintf("unsupported eth protocol version: %d", p.version))
@@ -624,59 +587,59 @@ func (p *peer) Handshake(network uint64, td *big.Int, head common.Hash, genesis 
 	return nil
 }
 
-func (p *peer) readStatusLegacy(network uint64, status *statusData63, genesis common.Hash) error {
+func (p *peer) readStatusLegacy(network uint64, status *eth.statusData63, genesis common.Hash) error {
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
 		return err
 	}
-	if msg.Code != StatusMsg {
-		return errResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
+	if msg.Code != eth.ethStatusMsg {
+		return errResp(eth.ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, eth.ethStatusMsg)
 	}
-	if msg.Size > protocolMaxMsgSize {
-		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, protocolMaxMsgSize)
+	if msg.Size > eth.ethMaxMessageSize {
+		return errResp(eth.ErrMsgTooLarge, "%v > %v", msg.Size, eth.ethMaxMessageSize)
 	}
 	// Decode the handshake and make sure everything matches
 	if err := msg.Decode(&status); err != nil {
-		return errResp(ErrDecode, "msg %v: %v", msg, err)
+		return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 	}
 	if status.GenesisBlock != genesis {
-		return errResp(ErrGenesisMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
+		return errResp(eth.ErrGenesisMismatch, "%x (!= %x)", status.GenesisBlock[:8], genesis[:8])
 	}
 	if status.NetworkId != network {
-		return errResp(ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkId, network)
+		return errResp(eth.ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkId, network)
 	}
 	if int(status.ProtocolVersion) != p.version {
-		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
+		return errResp(eth.ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
 	}
 	return nil
 }
 
-func (p *peer) readStatus(network uint64, status *statusData, genesis common.Hash, forkFilter forkid.Filter) error {
+func (p *peer) readStatus(network uint64, status *eth.statusData, genesis common.Hash, forkFilter forkid.Filter) error {
 	msg, err := p.rw.ReadMsg()
 	if err != nil {
 		return err
 	}
-	if msg.Code != StatusMsg {
-		return errResp(ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, StatusMsg)
+	if msg.Code != eth.ethStatusMsg {
+		return errResp(eth.ErrNoStatusMsg, "first msg has code %x (!= %x)", msg.Code, eth.ethStatusMsg)
 	}
-	if msg.Size > protocolMaxMsgSize {
-		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, protocolMaxMsgSize)
+	if msg.Size > eth.ethMaxMessageSize {
+		return errResp(eth.ErrMsgTooLarge, "%v > %v", msg.Size, eth.ethMaxMessageSize)
 	}
 	// Decode the handshake and make sure everything matches
 	if err := msg.Decode(&status); err != nil {
-		return errResp(ErrDecode, "msg %v: %v", msg, err)
+		return errResp(eth.ErrDecode, "msg %v: %v", msg, err)
 	}
 	if status.NetworkID != network {
-		return errResp(ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkID, network)
+		return errResp(eth.ErrNetworkIDMismatch, "%d (!= %d)", status.NetworkID, network)
 	}
 	if int(status.ProtocolVersion) != p.version {
-		return errResp(ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
+		return errResp(eth.ErrProtocolVersionMismatch, "%d (!= %d)", status.ProtocolVersion, p.version)
 	}
 	if status.Genesis != genesis {
-		return errResp(ErrGenesisMismatch, "%x (!= %x)", status.Genesis, genesis)
+		return errResp(eth.ErrGenesisMismatch, "%x (!= %x)", status.Genesis, genesis)
 	}
 	if err := forkFilter(status.ForkID); err != nil {
-		return errResp(ErrForkIDRejected, "%v", err)
+		return errResp(eth.ErrForkIDRejected, "%v", err)
 	}
 	return nil
 }

@@ -36,39 +36,40 @@ const (
 	eth65 = 65
 )
 
-// protocolName is the official short name of the protocol used during capability negotiation.
+// protocolName is the official short name of the `eth` protocol used during
+// devp2p capability negotiation.
 const protocolName = "eth"
 
-// ProtocolVersions are the supported versions of the eth protocol (first is primary).
-var ProtocolVersions = []uint{eth65, eth64, eth63}
+// protocolVersions are the supported versions of the `eth` protocol (first
+// is primary).
+var protocolVersions = []uint{eth65, eth64, eth63}
 
-// protocolLengths are the number of implemented message corresponding to different protocol versions.
+// protocolLengths are the number of implemented message corresponding to
+// different protocol versions.
 var protocolLengths = map[uint]uint64{eth65: 17, eth64: 17, eth63: 17}
 
-const protocolMaxMsgSize = 10 * 1024 * 1024 // Maximum cap on the size of a protocol message
+// maxMessageSize is the maximum cap on the size of a protocol message.
+const maxMessageSize = 10 * 1024 * 1024
 
-// eth protocol message codes
 const (
-	StatusMsg          = 0x00
-	NewBlockHashesMsg  = 0x01
-	TransactionMsg     = 0x02
-	GetBlockHeadersMsg = 0x03
-	BlockHeadersMsg    = 0x04
-	GetBlockBodiesMsg  = 0x05
-	BlockBodiesMsg     = 0x06
-	NewBlockMsg        = 0x07
-	GetNodeDataMsg     = 0x0d
-	NodeDataMsg        = 0x0e
-	GetReceiptsMsg     = 0x0f
-	ReceiptsMsg        = 0x10
+	// Protocol messages in eth/63 and eth/64
+	statusMsg          = 0x00
+	newBlockHashesMsg  = 0x01
+	transactionMsg     = 0x02
+	getBlockHeadersMsg = 0x03
+	blockHeadersMsg    = 0x04
+	getBlockBodiesMsg  = 0x05
+	blockBodiesMsg     = 0x06
+	newBlockMsg        = 0x07
+	getNodeDataMsg     = 0x0d
+	nodeDataMsg        = 0x0e
+	getReceiptsMsg     = 0x0f
+	receiptsMsg        = 0x10
 
-	// New protocol message codes introduced in eth65
-	//
-	// Previously these message ids were used by some legacy and unsupported
-	// eth protocols, reown them here.
-	NewPooledTransactionHashesMsg = 0x08
-	GetPooledTransactionsMsg      = 0x09
-	PooledTransactionsMsg         = 0x0a
+	// Protocol messages overloaded in eth/65
+	newPooledTransactionHashesMsg = 0x08
+	getPooledTransactionsMsg      = 0x09
+	pooledTransactionsMsg         = 0x0a
 )
 
 type errCode int
