@@ -18,7 +18,9 @@ package lescdn
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // LesCDNAPI provides an API to access the LES CDN server.
@@ -75,6 +77,40 @@ func (api *LesCDNAPI) Tile(hash common.Hash, target, limit, barrier int) ([][]by
 		}
 	} else {
 		nodes = append(nodes, merges...)
+	}
+	return nodes, nil
+}
+
+func (api *LesCDNAPI) Nodes(hash common.Hash, number uint16, cutoff []common.Hash) ([][]byte, error) {
+	triedb := api.chain.StateCache().TrieDB()
+
+	queue := prque.New(nil)
+	queue.Push(hash, 0)
+
+	var cutset = make(map[common.Hash]bool)
+	for _, h := range cutoff {
+		cutset[h] = true
+	}
+	var nodes [][]byte
+	for !queue.Empty() {
+		root, prio := queue.Pop()
+		hash, depth := root.(common.Hash), -prio
+		if cutset[hash] {
+			continue
+		}
+		node, err := triedb.Node(hash)
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, node)
+		if len(nodes) >= int(number) {
+			return nodes, nil
+		}
+		// Expand the trie node and queue all children up
+		trie.IterateRefs(node, func(path []byte, child common.Hash) error {
+			queue.Push(child, -(depth + int64(len(path))))
+			return nil
+		}, nil)
 	}
 	return nodes, nil
 }

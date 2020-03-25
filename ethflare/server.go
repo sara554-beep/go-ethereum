@@ -108,14 +108,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "chain":
 		s.serveChain(w, r)
 		return
-
-	case "state":
-		s.serveState(w, r)
-		return
-		//
-		//case "misc":
-		//	s.serveMisc(w, r)
-		//	return
 	}
 	http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 }
