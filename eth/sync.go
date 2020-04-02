@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
@@ -39,12 +40,12 @@ const (
 )
 
 type txsync struct {
-	p   *peer
+	p   *eth.Peer
 	txs []*types.Transaction
 }
 
 // syncTransactions starts sending all currently pending transactions to the given peer.
-func (pm *ProtocolManager) syncTransactions(p *peer) {
+func (pm *ProtocolManager) syncTransactions(p *eth.Peer) {
 	// Assemble the set of transaction to broadcast or announce to the remote
 	// peer. Fun fact, this is quite an expensive operation as it needs to sort
 	// the transactions if the sorting is not cached yet. However, with a random
@@ -62,7 +63,7 @@ func (pm *ProtocolManager) syncTransactions(p *peer) {
 	// The eth/65 protocol introduces proper transaction announcements, so instead
 	// of dripping transactions across multiple peers, just send the entire list as
 	// an announcement and let the remote side decide what they need (likely nothing).
-	if p.version >= eth.eth65 {
+	if p.Version() >= eth.ETH65 {
 		hashes := make([]common.Hash, len(txs))
 		for i, tx := range txs {
 			hashes[i] = tx.Hash()
@@ -93,7 +94,7 @@ func (pm *ProtocolManager) txsyncLoop64() {
 
 	// send starts a sending a pack of transactions from the sync.
 	send := func(s *txsync) {
-		if s.p.version >= eth.eth65 {
+		if s.p.Version() >= eth.ETH65 {
 			panic("initial transaction syncer running on eth/65+")
 		}
 		// Fill pack with transactions up to the target size.
@@ -107,7 +108,7 @@ func (pm *ProtocolManager) txsyncLoop64() {
 		// Remove the transactions that will be sent.
 		s.txs = s.txs[:copy(s.txs, s.txs[len(pack.txs):])]
 		if len(s.txs) == 0 {
-			delete(pending, s.p.ID())
+			delete(pending, s.p.Peer.ID())
 		}
 		// Send the pack in the background.
 		s.p.Log().Trace("Sending batch of transactions", "count", len(pack.txs), "bytes", size)
@@ -132,7 +133,7 @@ func (pm *ProtocolManager) txsyncLoop64() {
 	for {
 		select {
 		case s := <-pm.txsyncCh:
-			pending[s.p.ID()] = s
+			pending[s.p.Peer.ID()] = s
 			if !sending {
 				send(s)
 			}
@@ -141,7 +142,7 @@ func (pm *ProtocolManager) txsyncLoop64() {
 			// Stop tracking peers that cause send failures.
 			if err != nil {
 				pack.p.Log().Debug("Transaction send failed", "err", err)
-				delete(pending, pack.p.ID())
+				delete(pending, pack.p.Peer.ID())
 			}
 			// Schedule the next send.
 			if s := pick(); s != nil {
@@ -165,7 +166,7 @@ type chainSyncer struct {
 // chainSyncOp is a scheduled sync operation.
 type chainSyncOp struct {
 	mode downloader.SyncMode
-	peer *peer
+	peer *eth.Peer
 	td   *big.Int
 	head common.Hash
 }
@@ -181,7 +182,7 @@ func newChainSyncer(pm *ProtocolManager) *chainSyncer {
 // handlePeerEvent notifies the syncer about a change in the peer set.
 // This is called for new peers and every time a peer announces a new
 // chain head.
-func (cs *chainSyncer) handlePeerEvent(p *peer) bool {
+func (cs *chainSyncer) handlePeerEvent(peer *eth.Peer) bool {
 	select {
 	case cs.peerEventCh <- struct{}{}:
 		return true
@@ -246,9 +247,8 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 	if cs.pm.peers.Len() < minPeers {
 		return nil
 	}
-
-	// We have enough peers, check TD.
-	peer := cs.pm.peers.BestPeer()
+	// We have enough peers, check TD
+	peer := cs.pm.peers.ethPeerWithHighestTD()
 	if peer == nil {
 		return nil
 	}
@@ -260,7 +260,7 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 	return op
 }
 
-func peerToSyncOp(mode downloader.SyncMode, p *peer) *chainSyncOp {
+func peerToSyncOp(mode downloader.SyncMode, p *eth.Peer) *chainSyncOp {
 	peerHead, peerTD := p.Head()
 	return &chainSyncOp{mode: mode, peer: p, td: peerTD, head: peerHead}
 }
@@ -286,7 +286,7 @@ func (cs *chainSyncer) startSync(op *chainSyncOp) {
 // doSync synchronizes the local blockchain with a remote peer.
 func (pm *ProtocolManager) doSync(op *chainSyncOp) error {
 	// Run the sync cycle, and disable fast sync if we're past the pivot block
-	err := pm.downloader.Synchronise(op.peer.id, op.head, op.td, op.mode)
+	err := pm.downloader.Synchronise(op.peer.ID(), op.head, op.td, op.mode)
 	if err != nil {
 		return err
 	}

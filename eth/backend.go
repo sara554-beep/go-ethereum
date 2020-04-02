@@ -516,9 +516,9 @@ func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruni
 // Protocols implements node.Service, returning all the currently configured
 // network protocols to start.
 func (s *Ethereum) Protocols() []p2p.Protocol {
-	protos := eth.MakeProtocols(s.blockchain, s.networkID, s.ethDialCandidates)
+	protos := eth.MakeProtocols((*ethHandler)(s.protocolManager), s.networkID, s.ethDialCandidates)
 	if s.config.SnapshotCache > 0 {
-		protos = append(protos, snap.MakeProtocols(s.blockchain, s.snapDialCandidates)...)
+		protos = append(protos, snap.MakeProtocols(nil /*(*snapHandler)(s.protocolManager)*/, s.snapDialCandidates)...)
 	}
 	if s.lesServer != nil {
 		protos = append(protos, s.lesServer.Protocols()...)
@@ -528,27 +528,27 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 
 // Start implements node.Service, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
-func (s *Ethereum) Start(srvr *p2p.Server) error {
-	eth.StartENRUpdater(s.blockchain, srvr.LocalNode())
+func (s *Ethereum) Start(server *p2p.Server) error {
+	eth.StartENRUpdater(s.blockchain, server.LocalNode())
 
 	// Start the bloom bits servicing goroutines
 	s.startBloomHandlers(params.BloomBitsBlocks)
 
 	// Start the RPC service
-	s.netRPCService = ethapi.NewPublicNetAPI(srvr, s.NetVersion())
+	s.netRPCService = ethapi.NewPublicNetAPI(server)
 
 	// Figure out a max peers count based on the server limits
-	maxPeers := srvr.MaxPeers
+	maxPeers := server.MaxPeers
 	if s.config.LightServ > 0 {
-		if s.config.LightPeers >= srvr.MaxPeers {
-			return fmt.Errorf("invalid peer config: light peer count (%d) >= total peer count (%d)", s.config.LightPeers, srvr.MaxPeers)
+		if s.config.LightPeers >= server.MaxPeers {
+			return fmt.Errorf("invalid peer config: light peer count (%d) >= total peer count (%d)", s.config.LightPeers, server.MaxPeers)
 		}
 		maxPeers -= s.config.LightPeers
 	}
 	// Start the networking layer and the light server if requested
 	s.protocolManager.Start(maxPeers)
 	if s.lesServer != nil {
-		s.lesServer.Start(srvr)
+		s.lesServer.Start(server)
 	}
 	return nil
 }

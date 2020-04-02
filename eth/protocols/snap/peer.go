@@ -16,7 +16,9 @@
 
 package snap
 
-import "github.com/ethereum/go-ethereum/p2p"
+import (
+	"github.com/ethereum/go-ethereum/p2p"
+)
 
 // Peer is a collection of relevant information we have about a `snap` peer.
 type Peer struct {
@@ -25,9 +27,9 @@ type Peer struct {
 	version   uint              // Protocol version negotiated
 }
 
-// NewPeer create a wrapper for a network connection and negotiated  protocol
+// newPeer create a wrapper for a network connection and negotiated  protocol
 // version.
-func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
+func newPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
 	return &Peer{
 		Peer:    p,
 		rw:      rw,

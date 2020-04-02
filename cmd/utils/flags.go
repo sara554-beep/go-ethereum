@@ -1499,9 +1499,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 	if ctx.GlobalIsSet(DNSDiscoveryFlag.Name) {
 		urls := ctx.GlobalString(DNSDiscoveryFlag.Name)
 		if urls == "" {
-			cfg.DiscoveryURLs = []string{}
+			cfg.EthDiscoveryURLs = []string{}
 		} else {
-			cfg.DiscoveryURLs = splitAndTrim(urls)
+			cfg.EthDiscoveryURLs = splitAndTrim(urls)
 		}
 	}
 
@@ -1561,10 +1561,10 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *eth.Config) {
 // setDNSDiscoveryDefaults configures DNS discovery with the given URL if
 // no URLs are set.
 func setDNSDiscoveryDefaults(cfg *eth.Config, url string) {
-	if cfg.DiscoveryURLs != nil {
+	if cfg.EthDiscoveryURLs != nil {
 		return
 	}
-	cfg.DiscoveryURLs = []string{url}
+	cfg.EthDiscoveryURLs = []string{url}
 }
 
 // RegisterEthService adds an Ethereum client to the stack.

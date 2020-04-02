@@ -27,25 +27,46 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enr"
 )
 
+// Handler is a callback to invoke from an outside runner after the boilerplate
+// exchanges have passed.
+type Handler func(peer *Peer) error
+
+// Backend defines the data retrieval methods to serve remote requests and the
+// calback methods to invoke on remote deliveries.
+type Backend interface {
+	// Chain retrieves the blockchain object to serve data.
+	Chain() *core.BlockChain
+
+	// RunPeer is invoked when a peer joins on the `eth` protocol. The handler
+	// should do any peer maintenance work, handshakes and validations. If all
+	// is passed, control should be given back to the `handler` to process the
+	// inbound messages going forward.
+	RunPeer(peer *Peer, handler Handler) error
+
+	// PeerInfo retrieves all known `eth` information about a peer.
+	PeerInfo(id enode.ID) interface{}
+}
+
 // MakeProtocols constructs the P2P protocol definitions for `snap`.
-func MakeProtocols(chain *core.BlockChain, dnsdisc enode.Iterator) []p2p.Protocol {
+func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 	protocols := make([]p2p.Protocol, len(protocolVersions))
 	for i, version := range protocolVersions {
+		version := version // Closure
+
 		protocols[i] = p2p.Protocol{
 			Name:    protocolName,
 			Version: version,
 			Length:  protocolLengths[version],
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-				return handle(NewPeer(version, p, rw), chain)
+				return backend.RunPeer(newPeer(version, p, rw), func(peer *Peer) error {
+					return handle(backend, peer)
+				})
 			},
 			NodeInfo: func() interface{} {
-				return nodeInfo(chain)
+				return nodeInfo(backend.Chain())
 			},
 			PeerInfo: func(id enode.ID) interface{} {
-				if p := pm.peers.Peer(fmt.Sprintf("%x", id[:8])); p != nil {
-					return p.Info()
-				}
-				return nil
+				return backend.PeerInfo(id)
 			},
 			Attributes:     []enr.Entry{&enrEntry{}},
 			DialCandidates: dnsdisc,
@@ -56,11 +77,10 @@ func MakeProtocols(chain *core.BlockChain, dnsdisc enode.Iterator) []p2p.Protoco
 
 // handle is the callback invoked to manage the life cycle of a `snap` peer.
 // When this function terminates, the peer is disconnected.
-func handle(p *Peer, chain *core.BlockChain) error {
-	p.Log().Warn("Snapshot peer connected", "name", p.Name())
+func handle(backend Backend, peer *Peer) error {
 	for {
-		if err := handleMessage(p, rw); err != nil {
-			p.Log().Warn("Snapshot message handling failed", "err", err)
+		if err := handleMessage(backend, peer); err != nil {
+			peer.Log().Debug("Message handling failed in `snap`", "err", err)
 			return err
 		}
 	}
@@ -69,14 +89,14 @@ func handle(p *Peer, chain *core.BlockChain) error {
 // handleMessage is invoked whenever an inbound message is received from a
 // remote peer on the `spap` protocol. The remote connection is torn down upon
 // returning any error.
-func (pm *ProtocolManager) handleMessage(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+func handleMessage(backend Backend, peer *Peer) error {
 	// Read the next message from the remote peer, and ensure it's fully consumed
-	msg, err := rw.ReadMsg()
+	msg, err := peer.rw.ReadMsg()
 	if err != nil {
 		return err
 	}
 	if msg.Size > maxMessageSize {
-		return errResp(ErrMsgTooLarge, "%v > %v", msg.Size, maxMessageSize)
+		return fmt.Errorf("%w: %v > %v", errMsgTooLarge, msg.Size, maxMessageSize)
 	}
 	defer msg.Discard()
 
@@ -86,16 +106,16 @@ func (pm *ProtocolManager) handleMessage(p *p2p.Peer, rw p2p.MsgReadWriter) erro
 		// Decode the account retrieval request
 		var req getAccountRangeData
 		if err := msg.Decode(&req); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 		}
 		// Retrieve the requested state and bail out if non existent
-		state, err := pm.blockchain.StateAt(req.Root)
+		state, err := backend.Chain().StateAt(req.Root)
 		if err != nil {
-			return p2p.Send(rw, accountRangeMsg, &accountRangeData{ID: req.ID})
+			return p2p.Send(peer.rw, accountRangeMsg, &accountRangeData{ID: req.ID})
 		}
-		it, err := pm.blockchain.AccountIterator(req.Root, req.Origin)
+		it, err := backend.Chain().AccountIterator(req.Root, req.Origin)
 		if err != nil {
-			return p2p.Send(rw, accountRangeMsg, &accountRangeData{ID: req.ID})
+			return p2p.Send(peer.rw, accountRangeMsg, &accountRangeData{ID: req.ID})
 		}
 		defer it.Release()
 
@@ -122,21 +142,21 @@ func (pm *ProtocolManager) handleMessage(p *p2p.Peer, rw p2p.MsgReadWriter) erro
 			})
 		}
 		if first == (common.Hash{}) {
-			return p2p.Send(rw, accountRangeMsg, &accountRangeData{ID: req.ID})
+			return p2p.Send(peer.rw, accountRangeMsg, &accountRangeData{ID: req.ID})
 		}
 		// Generate the Merkle proofs for the first and last account
 		firstProof, err := state.GetProofByHash(first)
 		if err != nil {
 			log.Warn("Failed to prove account range", "first", first, "err", err)
-			return p2p.Send(rw, accountRangeMsg, &accountRangeData{ID: req.ID})
+			return p2p.Send(peer.rw, accountRangeMsg, &accountRangeData{ID: req.ID})
 		}
 		lastProof, err := state.GetProofByHash(last)
 		if err != nil {
 			log.Warn("Failed to prove account range", "last", last, "err", err)
-			return p2p.Send(rw, accountRangeMsg, &accountRangeData{ID: req.ID})
+			return p2p.Send(peer.rw, accountRangeMsg, &accountRangeData{ID: req.ID})
 		}
 		// Send back anything accumulated
-		return p2p.Send(rw, accountRangeMsg, &accountRangeData{
+		return p2p.Send(peer.rw, accountRangeMsg, &accountRangeData{
 			ID:       req.ID,
 			Accounts: accounts,
 			Proof:    append(firstProof, lastProof...),
@@ -146,13 +166,13 @@ func (pm *ProtocolManager) handleMessage(p *p2p.Peer, rw p2p.MsgReadWriter) erro
 		// Decode the storage retrieval request
 		var req getStorageRangeData
 		if err := msg.Decode(&req); err != nil {
-			return errResp(ErrDecode, "%v: %v", msg, err)
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 		}
 		// Not implemented, return an empty reply
-		return p2p.Send(rw, storageRangeMsg, &storageRangeData{ID: req.ID})
+		return p2p.Send(peer.rw, storageRangeMsg, &storageRangeData{ID: req.ID})
 
 	default:
-		return errResp(ErrInvalidMsgCode, "%v", msg.Code)
+		return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
 	}
 }
 

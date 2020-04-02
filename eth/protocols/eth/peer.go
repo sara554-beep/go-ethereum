@@ -20,12 +20,53 @@ import (
 	"math/big"
 	"sync"
 
+	mapset "github.com/deckarep/golang-set"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/rlp"
 )
+
+const (
+	// maxKnownTxs is the maximum transactions hashes to keep in the known list
+	// before starting to randomly evict them.
+	maxKnownTxs = 32768
+
+	// maxKnownBlocks is the maximum block hashes to keep in the known list
+	// before starting to randomly evict them.
+	maxKnownBlocks = 1024
+
+	// maxQueuedTxs is the maximum number of transactions to queue up before dropping
+	// older broadcasts.
+	maxQueuedTxs = 4096
+
+	// maxQueuedTxAnns is the maximum number of transaction announcements to queue up
+	// before dropping older announcements.
+	maxQueuedTxAnns = 4096
+
+	// maxQueuedBlocks is the maximum number of block propagations to queue up before
+	// dropping broadcasts. There's not much point in queueing stale blocks, so a few
+	// that might cover uncles should be enough.
+	maxQueuedBlocks = 4
+
+	// maxQueuedBlockAnns is the maximum number of block announcements to queue up before
+	// dropping broadcasts. Similarly to block propagations, there's no point to queue
+	// above some healthy uncle limit, so use that.
+	maxQueuedBlockAnns = 4
+)
+
+// max is a helper function which returns the larger of the two given integers.
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
 
 // Peer is a collection of relevant information we have about a `eth` peer.
 type Peer struct {
+	id string // Unique ID for the peer, cached
+
 	*p2p.Peer                   // The embedded P2P package peer
 	rw        p2p.MsgReadWriter // Input/output streams for snap
 	version   uint              // Protocol version negotiated
@@ -33,17 +74,51 @@ type Peer struct {
 	head common.Hash // Latest advertised head block hash
 	td   *big.Int    // Latest advertised head block total difficulty
 
-	lock sync.RWMutex // Mutex protecting the internal fields
+	knownBlocks     mapset.Set             // Set of block hashes known to be known by this peer
+	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
+	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer
+
+	knownTxs    mapset.Set                           // Set of transaction hashes known to be known by this peer
+	txBroadcast chan []common.Hash                   // Channel used to queue transaction propagation requests
+	txAnnounce  chan []common.Hash                   // Channel used to queue transaction announcement requests
+	getPooledTx func(common.Hash) *types.Transaction // Callback used to retrieve transaction from txpool
+
+	term chan struct{} // Termination channel to stop the broadcasters
+	lock sync.RWMutex  // Mutex protecting the internal fields
 }
 
-// NewPeer create a wrapper for a network connection and negotiated  protocol
+// newPeer create a wrapper for a network connection and negotiated  protocol
 // version.
-func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
+func newPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *Peer {
 	return &Peer{
-		Peer:    p,
-		rw:      rw,
-		version: version,
+		id:              p.ID().String(),
+		Peer:            p,
+		rw:              rw,
+		version:         version,
+		knownTxs:        mapset.NewSet(),
+		knownBlocks:     mapset.NewSet(),
+		queuedBlocks:    make(chan *blockPropagation, maxQueuedBlocks),
+		queuedBlockAnns: make(chan *types.Block, maxQueuedBlockAnns),
+		txBroadcast:     make(chan []common.Hash),
+		txAnnounce:      make(chan []common.Hash),
+		getPooledTx:     getPooledTx,
+		term:            make(chan struct{}),
 	}
+}
+
+// close signals the broadcast goroutine to terminate.
+func (p *Peer) close() {
+	close(p.term)
+}
+
+// ID retrieves the peer's unique identifier.
+func (p *Peer) ID() string {
+	return p.id
+}
+
+// Version retrieves the peer's negoatiated `eth` protocol version.
+func (p *Peer) Version() uint {
+	return p.version
 }
 
 // Head retrieves the current head hash and total difficulty of the peer.
@@ -64,21 +139,276 @@ func (p *Peer) SetHead(hash common.Hash, td *big.Int) {
 	p.td.Set(td)
 }
 
-// PeerInfo represents a short summary of the `eth` sub-protocol metadata known
-// about a connected peer.
-type PeerInfo struct {
-	Version    uint     `json:"version"`    // Ethereum protocol version negotiated
-	Difficulty *big.Int `json:"difficulty"` // Total difficulty of the peer's blockchain
-	Head       string   `json:"head"`       // Hex hash of the peer's best owned block
+// KnownBlock returns whether peer is known to already have a block.
+func (p *Peer) KnownBlock(hash common.Hash) bool {
+	return p.knownBlocks.Contains(hash)
 }
 
-// Info gathers and returns some `eth` protocol metadata known about a peer.
-func (p *Peer) Info() *PeerInfo {
-	hash, td := p.Head()
+// KnownTransaction returns whether peer is known to already have a transaction.
+func (p *Peer) KnownTransaction(hash common.Hash) bool {
+	return p.knownTxs.Contains(hash)
+}
 
-	return &PeerInfo{
-		Version:    p.version,
-		Difficulty: td,
-		Head:       hash.Hex(),
+// markBlock marks a block as known for the peer, ensuring that the block will
+// never be propagated to this particular peer.
+func (p *Peer) markBlock(hash common.Hash) {
+	// If we reached the memory allowance, drop a previously known block hash
+	for p.knownBlocks.Cardinality() >= maxKnownBlocks {
+		p.knownBlocks.Pop()
 	}
+	p.knownBlocks.Add(hash)
+}
+
+// markTransaction marks a transaction as known for the peer, ensuring that it
+// will never be propagated to this particular peer.
+func (p *Peer) markTransaction(hash common.Hash) {
+	// If we reached the memory allowance, drop a previously known transaction hash
+	for p.knownTxs.Cardinality() >= maxKnownTxs {
+		p.knownTxs.Pop()
+	}
+	p.knownTxs.Add(hash)
+}
+
+// SendTransactions64 sends transactions to the peer and includes the hashes
+// in its transaction hash set for future reference.
+//
+// This method is legacy support for initial transaction exchange in eth/64 and
+// prior. For eth/65 and higher use SendPooledTransactionHashes.
+func (p *Peer) SendTransactions64(txs types.Transactions) error {
+	return p.sendTransactions(txs)
+}
+
+// sendTransactions sends transactions to the peer and includes the hashes
+// in its transaction hash set for future reference.
+//
+// This method is a helper used by the async transaction sender. Don't call it
+// directly as the queueing (memory) and transmission (bandwidth) costs should
+// not be managed directly.
+func (p *Peer) sendTransactions(txs types.Transactions) error {
+	// Mark all the transactions as known, but ensure we don't overflow our limits
+	for p.knownTxs.Cardinality() > max(0, maxKnownTxs-len(txs)) {
+		p.knownTxs.Pop()
+	}
+	for _, tx := range txs {
+		p.knownTxs.Add(tx.Hash())
+	}
+	return p2p.Send(p.rw, transactionMsg, txs)
+}
+
+// AsyncSendTransactions queues a list of transactions (by hash) to eventually
+// propagate to a remote peer. The number of pending sends are capped (new ones
+// will force old sends to be dropped)
+func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
+	select {
+	case p.txBroadcast <- hashes:
+		// Mark all the transactions as known, but ensure we don't overflow our limits
+		for p.knownTxs.Cardinality() > max(0, maxKnownTxs-len(hashes)) {
+			p.knownTxs.Pop()
+		}
+		for _, hash := range hashes {
+			p.knownTxs.Add(hash)
+		}
+	case <-p.term:
+		p.Log().Debug("Dropping transaction propagation", "count", len(hashes))
+	}
+}
+
+// sendPooledTransactionHashes sends transaction hashes to the peer and includes
+// them in its transaction hash set for future reference.
+//
+// This method is a helper used by the async transaction announcer. Don't call it
+// directly as the queueing (memory) and transmission (bandwidth) costs should
+// not be managed directly.
+func (p *Peer) sendPooledTransactionHashes(hashes []common.Hash) error {
+	// Mark all the transactions as known, but ensure we don't overflow our limits
+	for p.knownTxs.Cardinality() > max(0, maxKnownTxs-len(hashes)) {
+		p.knownTxs.Pop()
+	}
+	for _, hash := range hashes {
+		p.knownTxs.Add(hash)
+	}
+	return p2p.Send(p.rw, newPooledTransactionHashesMsg, hashes)
+}
+
+// AsyncSendPooledTransactionHashes queues a list of transactions hashes to eventually
+// announce to a remote peer.  The number of pending sends are capped (new ones
+// will force old sends to be dropped)
+func (p *Peer) AsyncSendPooledTransactionHashes(hashes []common.Hash) {
+	select {
+	case p.txAnnounce <- hashes:
+		// Mark all the transactions as known, but ensure we don't overflow our limits
+		for p.knownTxs.Cardinality() > max(0, maxKnownTxs-len(hashes)) {
+			p.knownTxs.Pop()
+		}
+		for _, hash := range hashes {
+			p.knownTxs.Add(hash)
+		}
+	case <-p.term:
+		p.Log().Debug("Dropping transaction announcement", "count", len(hashes))
+	}
+}
+
+// SendPooledTransactionsRLP sends requested transactions to the peer and adds the
+// hashes in its transaction hash set for future reference.
+//
+// Note, the method assumes the hashes are correct and correspond to the list of
+// transactions being sent.
+func (p *Peer) SendPooledTransactionsRLP(hashes []common.Hash, txs []rlp.RawValue) error {
+	// Mark all the transactions as known, but ensure we don't overflow our limits
+	for p.knownTxs.Cardinality() > max(0, maxKnownTxs-len(hashes)) {
+		p.knownTxs.Pop()
+	}
+	for _, hash := range hashes {
+		p.knownTxs.Add(hash)
+	}
+	return p2p.Send(p.rw, pooledTransactionsMsg, txs)
+}
+
+// SendNewBlockHashes announces the availability of a number of blocks through
+// a hash notification.
+func (p *Peer) SendNewBlockHashes(hashes []common.Hash, numbers []uint64) error {
+	// Mark all the block hashes as known, but ensure we don't overflow our limits
+	for p.knownBlocks.Cardinality() > max(0, maxKnownBlocks-len(hashes)) {
+		p.knownBlocks.Pop()
+	}
+	for _, hash := range hashes {
+		p.knownBlocks.Add(hash)
+	}
+	request := make(newBlockHashesData, len(hashes))
+	for i := 0; i < len(hashes); i++ {
+		request[i].Hash = hashes[i]
+		request[i].Number = numbers[i]
+	}
+	return p2p.Send(p.rw, newBlockHashesMsg, request)
+}
+
+// AsyncSendNewBlockHash queues the availability of a block for propagation to a
+// remote peer. If the peer's broadcast queue is full, the event is silently
+// dropped.
+func (p *Peer) AsyncSendNewBlockHash(block *types.Block) {
+	select {
+	case p.queuedBlockAnns <- block:
+		// Mark all the block hash as known, but ensure we don't overflow our limits
+		for p.knownBlocks.Cardinality() >= maxKnownBlocks {
+			p.knownBlocks.Pop()
+		}
+		p.knownBlocks.Add(block.Hash())
+	default:
+		p.Log().Debug("Dropping block announcement", "number", block.NumberU64(), "hash", block.Hash())
+	}
+}
+
+// SendNewBlock propagates an entire block to a remote peer.
+func (p *Peer) SendNewBlock(block *types.Block, td *big.Int) error {
+	// Mark all the block hash as known, but ensure we don't overflow our limits
+	for p.knownBlocks.Cardinality() >= maxKnownBlocks {
+		p.knownBlocks.Pop()
+	}
+	p.knownBlocks.Add(block.Hash())
+	return p2p.Send(p.rw, newBlockMsg, []interface{}{block, td})
+}
+
+// AsyncSendNewBlock queues an entire block for propagation to a remote peer. If
+// the peer's broadcast queue is full, the event is silently dropped.
+func (p *Peer) AsyncSendNewBlock(block *types.Block, td *big.Int) {
+	select {
+	case p.queuedBlocks <- &blockPropagation{block: block, td: td}:
+		// Mark all the block hash as known, but ensure we don't overflow our limits
+		for p.knownBlocks.Cardinality() >= maxKnownBlocks {
+			p.knownBlocks.Pop()
+		}
+		p.knownBlocks.Add(block.Hash())
+	default:
+		p.Log().Debug("Dropping block propagation", "number", block.NumberU64(), "hash", block.Hash())
+	}
+}
+
+// SendBlockHeaders sends a batch of block headers to the remote peer.
+func (p *Peer) SendBlockHeaders(headers []*types.Header) error {
+	return p2p.Send(p.rw, blockHeadersMsg, headers)
+}
+
+// SendBlockBodies sends a batch of block contents to the remote peer.
+func (p *Peer) SendBlockBodies(bodies []*blockBody) error {
+	return p2p.Send(p.rw, blockBodiesMsg, blockBodiesData(bodies))
+}
+
+// SendBlockBodiesRLP sends a batch of block contents to the remote peer from
+// an already RLP encoded format.
+func (p *Peer) SendBlockBodiesRLP(bodies []rlp.RawValue) error {
+	return p2p.Send(p.rw, blockBodiesMsg, bodies)
+}
+
+// SendNodeDataRLP sends a batch of arbitrary internal data, corresponding to the
+// hashes requested.
+func (p *Peer) SendNodeData(data [][]byte) error {
+	return p2p.Send(p.rw, nodeDataMsg, data)
+}
+
+// SendReceiptsRLP sends a batch of transaction receipts, corresponding to the
+// ones requested from an already RLP encoded format.
+func (p *Peer) SendReceiptsRLP(receipts []rlp.RawValue) error {
+	return p2p.Send(p.rw, receiptsMsg, receipts)
+}
+
+// RequestOneHeader is a wrapper around the header query functions to fetch a
+// single header. It is used solely by the fetcher.
+func (p *Peer) RequestOneHeader(hash common.Hash) error {
+	p.Log().Debug("Fetching single header", "hash", hash)
+	return p2p.Send(p.rw, getBlockHeadersMsg, &getBlockHeadersData{
+		Origin:  hashOrNumber{Hash: hash},
+		Amount:  uint64(1),
+		Skip:    uint64(0),
+		Reverse: false,
+	})
+}
+
+// RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
+// specified header query, based on the hash of an origin block.
+func (p *Peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
+	p.Log().Debug("Fetching batch of headers", "count", amount, "fromhash", origin, "skip", skip, "reverse", reverse)
+	return p2p.Send(p.rw, getBlockHeadersMsg, &getBlockHeadersData{
+		Origin:  hashOrNumber{Hash: origin},
+		Amount:  uint64(amount),
+		Skip:    uint64(skip),
+		Reverse: reverse,
+	})
+}
+
+// RequestHeadersByNumber fetches a batch of blocks' headers corresponding to the
+// specified header query, based on the number of an origin block.
+func (p *Peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
+	p.Log().Debug("Fetching batch of headers", "count", amount, "fromnum", origin, "skip", skip, "reverse", reverse)
+	return p2p.Send(p.rw, getBlockHeadersMsg, &getBlockHeadersData{
+		Origin:  hashOrNumber{Number: origin},
+		Amount:  uint64(amount),
+		Skip:    uint64(skip),
+		Reverse: reverse,
+	})
+}
+
+// RequestBodies fetches a batch of blocks' bodies corresponding to the hashes
+// specified.
+func (p *Peer) RequestBodies(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
+	return p2p.Send(p.rw, getBlockBodiesMsg, hashes)
+}
+
+// RequestNodeData fetches a batch of arbitrary data from a node's known state
+// data, corresponding to the specified hashes.
+func (p *Peer) RequestNodeData(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
+	return p2p.Send(p.rw, getNodeDataMsg, hashes)
+}
+
+// RequestReceipts fetches a batch of transaction receipts from a remote node.
+func (p *Peer) RequestReceipts(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
+	return p2p.Send(p.rw, getReceiptsMsg, hashes)
+}
+
+// RequestTxs fetches a batch of transactions from a remote node.
+func (p *Peer) RequestTxs(hashes []common.Hash) error {
+	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
+	return p2p.Send(p.rw, getPooledTransactionsMsg, hashes)
 }

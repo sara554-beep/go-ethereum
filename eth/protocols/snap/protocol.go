@@ -17,6 +17,8 @@
 package snap
 
 import (
+	"errors"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -50,6 +52,12 @@ const (
 	codeMsg            = 0x05
 	getTrieNodesMsg    = 0x06
 	trieNodesMsg       = 0x07
+)
+
+var (
+	errMsgTooLarge    = errors.New("message too long")
+	errDecode         = errors.New("invalid message")
+	errInvalidMsgCode = errors.New("invalid message code")
 )
 
 // getAccountRangeData represents an account query.

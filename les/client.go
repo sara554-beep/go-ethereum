@@ -242,7 +242,7 @@ func (s *LightEthereum) Start(srvr *p2p.Server) error {
 	s.wg.Add(bloomServiceThreads)
 	s.startBloomHandlers(params.BloomBitsBlocksClient)
 
-	s.netRPCService = ethapi.NewPublicNetAPI(srvr, s.config.NetworkId)
+	s.netRPCService = ethapi.NewPublicNetAPI(srvr)
 
 	// clients are searching for the first advertised protocol in the list
 	protocolVersion := AdvertiseProtocolVersions[0]
