@@ -306,7 +306,34 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 	// Load any existing snapshot, regenerating it if loading failed
 	if bc.cacheConfig.SnapshotLimit > 0 {
-		bc.snaps = snapshot.New(bc.db, bc.stateCache.TrieDB(), bc.cacheConfig.SnapshotLimit, bc.CurrentBlock().Root(), !bc.cacheConfig.SnapshotWait)
+		bc.snaps = snapshot.New(bc.db, bc.stateCache.TrieDB(), bc.cacheConfig.SnapshotLimit, bc.CurrentBlock().Root(), true) // Gary's hack
+
+		// snapshot is reloaded or rebuilt
+		iter, err := bc.snaps.AccountIterator(bc.CurrentBlock().Root(), common.Hash{})
+		if err != nil {
+			log.Crit("Failed to iterate the snapshot", "error", err)
+		}
+		defer iter.Release()
+
+		var keys [][]byte
+		for iter.Next() {
+			keys = append(keys, iter.Hash().Bytes())
+			if len(keys) > 100 {
+				break
+			}
+		}
+		t, err := trie.New(bc.CurrentBlock().Root(), trie.NewDatabase(db))
+		if err != nil {
+			log.Crit("Failed to create tile", "error", err)
+		}
+		proof, err := t.MultiProve(keys)
+		if err != nil {
+			log.Crit("Failed to generate multiproof", "error", err)
+		}
+		if !trie.VerifyMultiProof(bc.CurrentBlock().Root(), proof) {
+			log.Crit("Failed to verify multiproof")
+		}
+		log.Info("Yeah! verified")
 	}
 	// Take ownership of this particular state
 	go bc.update()
