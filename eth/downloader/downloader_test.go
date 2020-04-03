@@ -1239,8 +1239,8 @@ func testForkedSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 
 	tester := newTester()
 	defer tester.terminate()
-	chainA := testChainForkLightA.shorten(testChainBase.len() + MaxHashFetch)
-	chainB := testChainForkLightB.shorten(testChainBase.len() + MaxHashFetch)
+	chainA := testChainForkLightA.shorten(testChainBase.len() + MaxHeaderFetch)
+	chainB := testChainForkLightB.shorten(testChainBase.len() + MaxHeaderFetch)
 
 	// Set a sync init hook to catch progress changes
 	starting := make(chan struct{})

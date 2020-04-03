@@ -79,7 +79,7 @@ func (p *Peer) broadcastTransactions() {
 				size   common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
-				if tx := p.getPooledTx(queue[i]); tx != nil {
+				if tx := p.txpool.Get(queue[i]); tx != nil {
 					txs = append(txs, tx)
 					size += tx.Size()
 				}
@@ -141,7 +141,7 @@ func (p *Peer) announceTransactions() {
 				size    common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
-				if p.getPooledTx(queue[i]) != nil {
+				if p.txpool.Get(queue[i]) != nil {
 					pending = append(pending, queue[i])
 					size += common.HashLength
 				}

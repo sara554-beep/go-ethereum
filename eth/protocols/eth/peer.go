@@ -78,10 +78,10 @@ type Peer struct {
 	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer
 
-	knownTxs    mapset.Set                           // Set of transaction hashes known to be known by this peer
-	txBroadcast chan []common.Hash                   // Channel used to queue transaction propagation requests
-	txAnnounce  chan []common.Hash                   // Channel used to queue transaction announcement requests
-	getPooledTx func(common.Hash) *types.Transaction // Callback used to retrieve transaction from txpool
+	txpool      TxPool             // Transaction pool used by the broadcasters for liveness checks
+	knownTxs    mapset.Set         // Set of transaction hashes known to be known by this peer
+	txBroadcast chan []common.Hash // Channel used to queue transaction propagation requests
+	txAnnounce  chan []common.Hash // Channel used to queue transaction announcement requests
 
 	term chan struct{} // Termination channel to stop the broadcasters
 	lock sync.RWMutex  // Mutex protecting the internal fields
@@ -89,7 +89,7 @@ type Peer struct {
 
 // newPeer create a wrapper for a network connection and negotiated  protocol
 // version.
-func newPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(hash common.Hash) *types.Transaction) *Peer {
+func newPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Peer {
 	return &Peer{
 		id:              p.ID().String(),
 		Peer:            p,
@@ -101,7 +101,7 @@ func newPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, getPooledTx func(h
 		queuedBlockAnns: make(chan *types.Block, maxQueuedBlockAnns),
 		txBroadcast:     make(chan []common.Hash),
 		txAnnounce:      make(chan []common.Hash),
-		getPooledTx:     getPooledTx,
+		txpool:          txpool,
 		term:            make(chan struct{}),
 	}
 }

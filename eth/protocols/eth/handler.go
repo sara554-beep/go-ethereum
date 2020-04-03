@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -39,6 +38,25 @@ const (
 
 	// estHeaderSize is the approximate size of an RLP encoded block header.
 	estHeaderSize = 500
+
+	// maxHeadersServe is the maximum number of block headers to serve. This number
+	// is there to limit the number of disk lookups.
+	maxHeadersServe = 1024
+
+	// maxBodiesServe is the maximum number of block bodies to serve. This number
+	// is mostly there to limit the number of disk lookups. With 24KB block sizes
+	// nowadays, the practical limit will always be softResponseLimit.
+	maxBodiesServe = 1024
+
+	// maxNodeDataServe is the maximum number of state trie nodes to serve. This
+	// number is there to limit the number of disk lookups.
+	maxNodeDataServe = 1024
+
+	// maxReceiptsServe is the maximum number of block receipts to serve. This
+	// number is mostly there to limit the number of disk lookups. With block
+	// containing 200+ transactions nowadays, the practical limit will always
+	// be softResponseLimit.
+	maxReceiptsServe = 1024
 )
 
 // Handler is a callback to invoke from an outside runner after the boilerplate
@@ -117,7 +135,7 @@ func MakeProtocols(backend Backend, network uint64, dnsdisc enode.Iterator) []p2
 			Version: version,
 			Length:  protocolLengths[version],
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-				return backend.RunPeer(newPeer(version, p, rw, backend.TxPool().Get), func(peer *Peer) error {
+				return backend.RunPeer(newPeer(version, p, rw, backend.TxPool()), func(peer *Peer) error {
 					return handle(backend, peer)
 				})
 			},
@@ -212,7 +230,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			headers []*types.Header
 			unknown bool
 		)
-		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit && len(headers) < downloader.MaxHeaderFetch {
+		for !unknown && len(headers) < int(query.Amount) && bytes < softResponseLimit && len(headers) < maxHeadersServe {
 			// Retrieve the next header satisfying the query
 			var origin *types.Header
 			if hashMode {
@@ -303,7 +321,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			bytes  int
 			bodies []rlp.RawValue
 		)
-		for bytes < softResponseLimit && len(bodies) < downloader.MaxBlockFetch {
+		for bytes < softResponseLimit && len(bodies) < maxBodiesServe {
 			// Retrieve the hash of the next block
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
@@ -334,7 +352,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return backend.OnBodies(peer, txs, uncles)
 
-	case peer.version >= 63 && msg.Code == getNodeDataMsg:
+	case msg.Code == getNodeDataMsg:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -346,7 +364,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			bytes int
 			data  [][]byte
 		)
-		for bytes < softResponseLimit && len(data) < downloader.MaxStateFetch {
+		for bytes < softResponseLimit && len(data) < maxNodeDataServe {
 			// Retrieve the hash of the next state entry
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
@@ -361,7 +379,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return peer.SendNodeData(data)
 
-	case peer.version >= 63 && msg.Code == nodeDataMsg:
+	case msg.Code == nodeDataMsg:
 		// A batch of node state data arrived to one of our previous requests
 		var nodes [][]byte
 		if err := msg.Decode(&nodes); err != nil {
@@ -369,7 +387,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return backend.OnNodeData(peer, nodes)
 
-	case peer.version >= 63 && msg.Code == getReceiptsMsg:
+	case msg.Code == getReceiptsMsg:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -381,7 +399,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 			bytes    int
 			receipts []rlp.RawValue
 		)
-		for bytes < softResponseLimit && len(receipts) < downloader.MaxReceiptFetch {
+		for bytes < softResponseLimit && len(receipts) < maxReceiptsServe {
 			// Retrieve the hash of the next block
 			if err := msgStream.Decode(&hash); err == rlp.EOL {
 				break
@@ -405,7 +423,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return peer.SendReceiptsRLP(receipts)
 
-	case peer.version >= 63 && msg.Code == receiptsMsg:
+	case msg.Code == receiptsMsg:
 		// A batch of receipts arrived to one of our previous requests
 		var receipts [][]*types.Receipt
 		if err := msg.Decode(&receipts); err != nil {
@@ -456,7 +474,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		peer.markBlock(request.Block.Hash())
 		return backend.OnBlockBroadcast(peer, request.Block, request.TD)
 
-	case msg.Code == newPooledTransactionHashesMsg && peer.version >= 65:
+	case msg.Code == newPooledTransactionHashesMsg && peer.version >= ETH65:
 		// New transaction announcement arrived, make sure we have
 		// a valid and fresh chain to handle them
 		if !backend.AcceptTxs() {
@@ -472,7 +490,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return backend.OnTxAnnounces(peer, hashes)
 
-	case msg.Code == getPooledTransactionsMsg && peer.version >= 65:
+	case msg.Code == getPooledTransactionsMsg && peer.version >= ETH65:
 		// Decode the retrieval message
 		msgStream := rlp.NewStream(msg.Payload, uint64(msg.Size))
 		if _, err := msgStream.List(); err != nil {
@@ -508,7 +526,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		}
 		return peer.SendPooledTransactionsRLP(hashes, txs)
 
-	case msg.Code == transactionMsg || (msg.Code == pooledTransactionsMsg && peer.version >= 65):
+	case msg.Code == transactionMsg || (msg.Code == pooledTransactionsMsg && peer.version >= ETH65):
 		// Transactions arrived, make sure we have a valid and fresh chain to handle them
 		if !backend.AcceptTxs() {
 			break

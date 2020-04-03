@@ -152,7 +152,7 @@ func (p *Peer) readStatus(network uint64, status *statusData, genesis common.Has
 		return fmt.Errorf("%w: %x (!= %x)", errGenesisMismatch, status.Genesis, genesis)
 	}
 	if err := forkFilter(status.ForkID); err != nil {
-		return fmt.Errorf("%w: %v", err, errForkIDRejected)
+		return fmt.Errorf("%w: %v", errForkIDRejected, err)
 	}
 	return nil
 }
