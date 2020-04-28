@@ -50,7 +50,7 @@ type tmplMethod struct {
 	Structured bool       // Whether the returns should be accumulated into a struct
 }
 
-// tmplEvent is a wrapper around an a
+// tmplEvent is a wrapper around an a contract event object.
 type tmplEvent struct {
 	Original   abi.Event // Original event as parsed by the abi package
 	Normalized abi.Event // Normalized version of the parsed fields
@@ -613,6 +613,13 @@ import java.util.*;
 		this(Geth.bindContract(address, ABI, client));
 	}
 
+	{{range .SortedStructs}}
+	// {{.Name}} is an auto generated low-level Java binding around an user-defined struct.
+	public class {{.Name}} { {{range $field := .Fields}}
+		public {{bindtype .SolKind $structs}} {{$field.Name}};{{end}}
+	}
+	{{end}}
+
 	{{range .Calls}}
 	{{if gt (len .Normalized.Outputs) 1}}
 	// {{capitalise .Normalized.Name}}Results is the output of a call to {{.Normalized.Name}}.
@@ -629,6 +636,16 @@ import java.util.*;
 		Interfaces args = Geth.newInterfaces({{(len .Normalized.Inputs)}});
 		{{range $index, $item := .Normalized.Inputs}}Interface arg{{$index}} = Geth.newInterface();arg{{$index}}.set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});args.set({{$index}},arg{{$index}});
 		{{end}}
+
+		// {{.Normalized.Name}} is a free data retrieval call binding the contract method 0x{{printf "%x" .Original.Id}}.
+		//
+		// Solidity: {{formatmethod .Original $structs}}
+		public {{if gt (len .Normalized.Outputs) 1}}{{capitalise .Normalized.Name}}Results{{else}}{{range .Normalized.Outputs}}{{bindtype .Type $structs}}{{end}}{{end}} {{.Normalized.Name}}(CallOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
+			Interfaces args = Geth.newInterfaces({{(len .Normalized.Inputs)}});
+			{{range $index, $item := .Normalized.Inputs}}
+			args.set({{$index}}, Geth.newInterface()); 
+			args.get({{$index}}).set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});
+			{{end}}
 
 		Interfaces results = Geth.newInterfaces({{(len .Normalized.Outputs)}});
 		{{range $index, $item := .Normalized.Outputs}}Interface result{{$index}} = Geth.newInterface(); result{{$index}}.setDefault{{namedtype (bindtype .Type $structs) .Type}}(); results.set({{$index}}, result{{$index}});
@@ -655,6 +672,16 @@ import java.util.*;
 	public Transaction {{.Normalized.Name}}(TransactOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
 		Interfaces args = Geth.newInterfaces({{(len .Normalized.Inputs)}});
 		{{range $index, $item := .Normalized.Inputs}}Interface arg{{$index}} = Geth.newInterface();arg{{$index}}.set{{namedtype (bindtype .Type $structs) .Type}}({{.Name}});args.set({{$index}},arg{{$index}});
+		{{range .Transacts}}
+		// {{.Normalized.Name}} is a paid mutator transaction binding the contract method 0x{{printf "%x" .Original.Id}}.
+		//
+		// Solidity: {{formatmethod .Original $structs}}
+		public Transaction {{.Normalized.Name}}(TransactOpts opts{{range .Normalized.Inputs}}, {{bindtype .Type $structs}} {{.Name}}{{end}}) throws Exception {
+			{{$inputs := bindjavaaccessor .Normalized.Inputs}}
+			{{range $input := $inputs}}{{$input}}
+			{{end}}
+			return this.Contract.transact(opts, "{{.Original.Name}}", args);
+		}
 		{{end}}
 		return this.Contract.transact(opts, "{{.Original.Name}}"	, args);
 	}

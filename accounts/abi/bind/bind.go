@@ -22,10 +22,10 @@ package bind
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"go/format"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"unicode"
@@ -165,10 +165,10 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 		if evmABI.HasReceive() {
 			receive = &tmplMethod{Original: evmABI.Receive}
 		}
-		// There is no easy way to pass arbitrary java objects to the Go side.
-		if len(structs) > 0 && lang == LangJava {
-			return "", errors.New("java binding for tuple arguments is not supported yet")
-		}
+		//// There is no easy way to pass java arbitrary objects to go side.
+		//if len(structs) > 0 && lang == LangJava {
+		//	return "", errors.New("java binding for tuple arguments is not supported yet")
+		//}
 
 		contracts[types[i]] = &tmplContract{
 			Type:        capitalise(types[i]),
@@ -201,6 +201,7 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 				}
 			}
 		}
+		fmt.Println("InputBIN", strings.TrimSpace(bytecodes[i]))
 	}
 	// Check if that type has already been identified as a library
 	for i := 0; i < len(types); i++ {
@@ -217,13 +218,14 @@ func Bind(types []string, abis []string, bytecodes []string, fsigs []map[string]
 	buffer := new(bytes.Buffer)
 
 	funcs := map[string]interface{}{
-		"bindtype":      bindType[lang],
-		"bindtopictype": bindTopicType[lang],
-		"namedtype":     namedType[lang],
-		"formatmethod":  formatMethod,
-		"formatevent":   formatEvent,
-		"capitalise":    capitalise,
-		"decapitalise":  decapitalise,
+		"bindtype":         bindType[lang],
+		"bindtopictype":    bindTopicType[lang],
+		"namedtype":        namedTypeJava,
+		"formatmethod":     formatMethod,
+		"formatevent":      formatEvent,
+		"bindjavaaccessor": bindJavaAccessor,
+		"capitalise":       capitalise,
+		"decapitalise":     decapitalise,
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).Parse(tmplSource[lang]))
 	if err := tmpl.Execute(buffer, data); err != nil {
@@ -291,8 +293,6 @@ func bindTypeGo(kind abi.Type, structs map[string]*tmplStruct) string {
 // bindBasicTypeJava converts basic solidity types(except array, slice and tuple) to Java one.
 func bindBasicTypeJava(kind abi.Type) string {
 	switch kind.T {
-	case abi.AddressTy:
-		return "Address"
 	case abi.IntTy, abi.UintTy:
 		// Note that uint and int (without digits) are also matched,
 		// these are size 256, and will translate to BigInt (the default).
@@ -324,6 +324,8 @@ func bindBasicTypeJava(kind abi.Type) string {
 		return "boolean"
 	case abi.StringTy:
 		return "String"
+	case abi.AddressTy:
+		return "Address"
 	case abi.FunctionTy:
 		return "byte[24]"
 	default:
@@ -361,47 +363,6 @@ func bindTypeJava(kind abi.Type, structs map[string]*tmplStruct) string {
 	default:
 		return bindBasicTypeJava(kind)
 	}
-}
-
-// bindTopicType is a set of type binders that convert Solidity types to some
-// supported programming language topic types.
-var bindTopicType = map[Lang]func(kind abi.Type, structs map[string]*tmplStruct) string{
-	LangGo:   bindTopicTypeGo,
-	LangJava: bindTopicTypeJava,
-}
-
-// bindTopicTypeGo converts a Solidity topic type to a Go one. It is almost the same
-// funcionality as for simple types, but dynamic types get converted to hashes.
-func bindTopicTypeGo(kind abi.Type, structs map[string]*tmplStruct) string {
-	bound := bindTypeGo(kind, structs)
-
-	// todo(rjl493456442) according solidity documentation, indexed event
-	// parameters that are not value types i.e. arrays and structs are not
-	// stored directly but instead a keccak256-hash of an encoding is stored.
-	//
-	// We only convert stringS and bytes to hash, still need to deal with
-	// array(both fixed-size and dynamic-size) and struct.
-	if bound == "string" || bound == "[]byte" {
-		bound = "common.Hash"
-	}
-	return bound
-}
-
-// bindTopicTypeJava converts a Solidity topic type to a Java one. It is almost the same
-// funcionality as for simple types, but dynamic types get converted to hashes.
-func bindTopicTypeJava(kind abi.Type, structs map[string]*tmplStruct) string {
-	bound := bindTypeJava(kind, structs)
-
-	// todo(rjl493456442) according solidity documentation, indexed event
-	// parameters that are not value types i.e. arrays and structs are not
-	// stored directly but instead a keccak256-hash of an encoding is stored.
-	//
-	// We only convert stringS and bytes to hash, still need to deal with
-	// array(both fixed-size and dynamic-size) and struct.
-	if bound == "String" || bound == "byte[]" {
-		bound = "Hash"
-	}
-	return bound
 }
 
 // bindStructType is a set of type binders that convert Solidity tuple types to some supported
@@ -494,6 +455,33 @@ var namedType = map[Lang]func(string, abi.Type) string{
 	LangJava: namedTypeJava,
 }
 
+// bindTopicType is a set of type binders that convert Solidity types to some
+// supported programming language topic types.
+var bindTopicType = map[Lang]func(kind abi.Type, structs map[string]*tmplStruct) string{
+	LangGo:   bindTopicTypeGo,
+	LangJava: bindTopicTypeJava,
+}
+
+// bindTypeGo converts a Solidity topic type to a Go one. It is almost the same
+// functionality as for simple types, but dynamic types get converted to hashes.
+func bindTopicTypeGo(kind abi.Type, structs map[string]*tmplStruct) string {
+	bound := bindTypeGo(kind, structs)
+	if bound == "string" || bound == "[]byte" {
+		bound = "common.Hash"
+	}
+	return bound
+}
+
+// bindTypeGo converts a Solidity topic type to a Java one. It is almost the same
+// functionality as for simple types, but dynamic types get converted to hashes.
+func bindTopicTypeJava(kind abi.Type, structs map[string]*tmplStruct) string {
+	bound := bindTypeJava(kind, structs)
+	if bound == "String" || bound == "Bytes" {
+		bound = "Hash"
+	}
+	return bound
+}
+
 // namedTypeJava converts some primitive data types to named variants that can
 // be used as parts of method names.
 func namedTypeJava(javaKind string, solKind abi.Type) string {
@@ -526,7 +514,45 @@ func alias(aliases map[string]string, n string) string {
 	if alias, exist := aliases[n]; exist {
 		return alias
 	}
-	return n
+	return ""
+}
+
+// bindArgAccessor returns a batch of java format getter/setter generation for
+// a solidity function.
+func bindJavaAccessor(inputs []abi.Argument) []string {
+	if len(inputs) == 0 {
+		return nil
+	}
+	var ret []string
+	ret = append(ret, fmt.Sprintf("Interfaces args = Geth.newInterfaces(%d);", len(inputs)))
+	for index, input := range inputs {
+		ret = append(ret, bindArgAccessor("args", index, fmt.Sprintf("arg_%d", index), 0, input.Name, input.Type)...)
+	}
+	return ret
+
+}
+
+func bindArgAccessor(upperName string, index int, embeddedName string, nestedCount int, paramName string, argType abi.Type) []string {
+	var ret []string
+	switch argType.T {
+	case abi.TupleTy:
+		if nestedCount > 0 {
+			// todo handle struct array
+		}
+		ret = append(ret, fmt.Sprintf("Interfaces %s = Geth.newInterfaces(%d);", embeddedName, len(argType.TupleElems)))
+		for index, field := range argType.TupleElems {
+			ret = append(ret, bindArgAccessor(embeddedName, index, embeddedName+"_"+strconv.Itoa(index), 0, paramName+"."+argType.TupleRawNames[index], *field)...)
+		}
+		ret = append(ret, fmt.Sprintf("%s.set(%d, Geth.newInterface()); %s.get(%d).setInterfaces(%s);", upperName, index, upperName, index, embeddedName))
+	case abi.SliceTy, abi.ArrayTy:
+		ret = append(ret, bindArgAccessor(upperName, index, embeddedName, nestedCount+1, paramName, *argType.Elem)...)
+	default:
+		// For primitives, generate getter/setter for arbitrary variables conversions
+		javaKind := bindBasicTypeJava(argType) + strings.Repeat("[]", nestedCount)
+		ret = append(ret, fmt.Sprintf("%s.set(%d, Geth.newInterface()); %s.get(%d).set%s(%s);",
+			upperName, index, upperName, index, namedTypeJava(javaKind, argType), paramName))
+	}
+	return ret
 }
 
 // methodNormalizer is a name transformer that modifies Solidity method names to

@@ -27,6 +27,8 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"fmt"
+	"reflect"
 )
 
 // Signer is an interface defining the callback when a contract requires a
@@ -190,6 +192,9 @@ func (c *BoundContract) Call(opts *CallOpts, out *Interfaces, method string, arg
 
 // Transact invokes the (paid) contract method with params as input values.
 func (c *BoundContract) Transact(opts *TransactOpts, method string, args *Interfaces) (tx *Transaction, _ error) {
+	for i, arg := range args.objects {
+		fmt.Println("arg", i, "type", reflect.ValueOf(arg).Type())
+	}
 	rawTx, err := c.contract.Transact(&opts.opts, method, args.objects...)
 	if err != nil {
 		return nil, err
