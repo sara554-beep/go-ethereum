@@ -280,6 +280,7 @@ func InspectDatabase(db ethdb.Database) error {
 		// Meta- and unaccounted data
 		metadata    common.StorageSize
 		unaccounted common.StorageSize
+		unacccouts  uint64
 	)
 	// Inspect key-value database first.
 	for it.Next() {
@@ -311,11 +312,17 @@ func InspectDatabase(db ethdb.Database) error {
 			preimageSize += size
 		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
 			bloomBitsSize += size
+		case bytes.HasPrefix(key, BloomBitsIndexPrefix):
+			bloomBitsSize += size
 		case bytes.HasPrefix(key, []byte("clique-")) && len(key) == 7+common.HashLength:
 			cliqueSnapsSize += size
-		case bytes.HasPrefix(key, []byte("cht-")) && len(key) == 4+common.HashLength:
+		case bytes.HasPrefix(key, []byte("cht-")) ||
+			bytes.HasPrefix(key, []byte("chtIndexV2-")) ||
+			bytes.HasPrefix(key, []byte("chtRootV2-")): // Canonical hash trie
 			chtTrieNodes += size
-		case bytes.HasPrefix(key, []byte("blt-")) && len(key) == 4+common.HashLength:
+		case bytes.HasPrefix(key, []byte("blt-")) ||
+			bytes.HasPrefix(key, []byte("bltIndex-")) ||
+			bytes.HasPrefix(key, []byte("bltRoot-")): // Bloomtrie sub
 			bloomTrieNodes += size
 		case bytes.HasPrefix(key, codePrefix) && len(key) == len(codePrefix)+common.HashLength:
 			codeSize += size
@@ -323,7 +330,10 @@ func InspectDatabase(db ethdb.Database) error {
 			trieSize += size
 		default:
 			var accounted bool
-			for _, meta := range [][]byte{databaseVerisionKey, headHeaderKey, headBlockKey, headFastBlockKey, fastTrieProgressKey} {
+			for _, meta := range [][]byte{
+				databaseVerisionKey, headHeaderKey, headBlockKey, headFastBlockKey,
+				fastTrieProgressKey, snapshotRootKey, snapshotJournalKey,
+			} {
 				if bytes.Equal(key, meta) {
 					metadata += size
 					accounted = true
@@ -332,6 +342,7 @@ func InspectDatabase(db ethdb.Database) error {
 			}
 			if !accounted {
 				unaccounted += size
+				unacccouts += 1
 			}
 		}
 		count += 1
@@ -380,7 +391,7 @@ func InspectDatabase(db ethdb.Database) error {
 	table.Render()
 
 	if unaccounted > 0 {
-		log.Error("Database contains unaccounted data", "size", unaccounted)
+		log.Error("Database contains unaccounted data", "size", unaccounted, "count", unacccouts)
 	}
 	return nil
 }
