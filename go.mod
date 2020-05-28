@@ -69,4 +69,4 @@ require (
 	gotest.tools v2.2.0+incompatible // indirect
 )
 
-replace github.com/syndtr/goleveldb => github.com/rjl493456442/goleveldb v0.0.0-20200528054212-1bee18ccef73
+replace github.com/syndtr/goleveldb => github.com/rjl493456442/goleveldb v0.0.0-20200529022907-10c2482408e9

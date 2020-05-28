@@ -166,6 +166,8 @@ github.com/rjl493456442/goleveldb v0.0.0-20200528050746-82428547339b h1:kff6gFtv
 github.com/rjl493456442/goleveldb v0.0.0-20200528050746-82428547339b/go.mod h1:9OrXJhf154huy1nPWmuSrkgjPUtUNhA+Zmy+6AESzuA=
 github.com/rjl493456442/goleveldb v0.0.0-20200528054212-1bee18ccef73 h1:07SH5mFoWA+KfReQlcTE9wQuubB16VEgGfWkAOTwFm0=
 github.com/rjl493456442/goleveldb v0.0.0-20200528054212-1bee18ccef73/go.mod h1:9OrXJhf154huy1nPWmuSrkgjPUtUNhA+Zmy+6AESzuA=
+github.com/rjl493456442/goleveldb v0.0.0-20200529022907-10c2482408e9 h1:mC9+yKro1dr0hUU/qBij9Uf1acCiyydfwH5vbQgPs4A=
+github.com/rjl493456442/goleveldb v0.0.0-20200529022907-10c2482408e9/go.mod h1:9OrXJhf154huy1nPWmuSrkgjPUtUNhA+Zmy+6AESzuA=
 github.com/rs/cors v0.0.0-20160617231935-a62a804a8a00 h1:8DPul/X0IT/1TNMIxoKLwdemEOBBHDC/K4EB16Cw5WE=
 github.com/rs/cors v0.0.0-20160617231935-a62a804a8a00/go.mod h1:gFx+x8UowdsKA9AchylcLynDq+nNFfI8FkUZdN/jGCU=
 github.com/rs/xhandler v0.0.0-20160618193221-ed27b6fd6521 h1:3hxavr+IHMsQBrYUPQM5v0CgENFktkkbg1sfpgM3h20=
