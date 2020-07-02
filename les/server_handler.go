@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
-	lps "github.com/ethereum/go-ethereum/les/lespay/server"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -142,7 +141,7 @@ func (h *serverHandler) handle(p *clientPeer) error {
 	p.activate = func() {
 		// Register the peer locally
 		if err := h.server.peers.register(p); err != nil {
-			h.server.clientPool.disconnect(p)
+			h.server.clientPool.Disconnect(p)
 			p.Log().Error("Light Ethereum peer registration failed", "err", err)
 			return
 		}
@@ -164,7 +163,7 @@ func (h *serverHandler) handle(p *clientPeer) error {
 		p.activate()
 	}
 
-	if capacity, err := h.server.clientPool.connect(p, 0); err != nil {
+	if capacity, err := h.server.clientPool.Connect(p, 0); err != nil {
 		// Disconnect the inbound peer if it's rejected by clientPool
 		p.Log().Debug("Light Ethereum peer registration failed", "err", err)
 		return err
@@ -176,14 +175,14 @@ func (h *serverHandler) handle(p *clientPeer) error {
 			p.updateCapacity(capacity)
 		}*/
 	}
-	p.balance, _ = h.server.clientPool.ns.GetField(p.Node(), h.server.clientPool.BalanceField).(*lps.NodeBalance)
-	if p.balance == nil {
-		return p2p.DiscRequested
-	}
+	//p.balance, _ = h.server.clientPool.ns.GetField(p.Node(), h.server.clientPool.BalanceField).(*lps.NodeBalance)
+	//if p.balance == nil {
+	//	return p2p.DiscRequested
+	//}
 
 	defer func() {
 		wg.Wait() // Ensure all background task routines have exited.
-		h.server.clientPool.disconnect(p)
+		h.server.clientPool.Disconnect(p)
 		p.responseLock.Lock()
 		if p.active {
 			p.deactivate()
@@ -249,7 +248,7 @@ func (h *serverHandler) handleMsg(p *clientPeer, wg *sync.WaitGroup) error {
 		maxCost = p.fcCosts.getMaxCost(msg.Code, reqCnt)
 		accepted, bufShort, priority := p.fcClient.AcceptRequest(reqID, responseCount, maxCost)
 		if !accepted {
-			p.freeze()
+			p.Freeze()
 			p.Log().Error("Request came too early", "remaining", common.PrettyDuration(time.Duration(bufShort*1000000/p.fcParams.MinRecharge)))
 			p.fcClient.OneTimeCost(inSizeCost)
 			return false

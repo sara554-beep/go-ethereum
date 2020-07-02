@@ -51,7 +51,7 @@ type LesServer struct {
 	costTracker  *costTracker
 	defParams    flowcontrol.ServerParams
 	servingQueue *servingQueue
-	clientPool   *clientPool
+	clientPool   *lps.ClientPool
 
 	minCapacity, maxCapacity, freeCapacity uint64
 	threadsIdle                            int // Request serving threads count when system is idle.
@@ -117,8 +117,8 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 		srv.maxCapacity = totalRecharge
 	}
 	srv.fcManager.SetCapacityLimits(srv.freeCapacity, srv.maxCapacity, srv.freeCapacity*2)
-	srv.clientPool = newClientPool(srv.chainDb, srv.minCapacity, srv.freeCapacity, activeBias, mclock.System{}, func(id enode.ID) { go srv.peers.disconnect(peerIdToString(id)) })
-	srv.clientPool.setDefaultFactors(lps.PriceFactors{0, 1, 1}, lps.PriceFactors{0, 1, 1})
+	srv.clientPool = lps.NewClientPool(srv.chainDb, srv.minCapacity, srv.freeCapacity, time.Second, mclock.System{}, func(id enode.ID) { go srv.peers.disconnect(peerIdToString(id)) })
+	srv.clientPool.SetDefaultFactors(lps.PriceFactors{0, 1, 1}, lps.PriceFactors{0, 1, 1})
 
 	checkpoint := srv.latestLocalCheckpoint()
 	if !checkpoint.Empty() {
@@ -130,26 +130,7 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 }
 
 func (s *LesServer) APIs() []rpc.API {
-	return []rpc.API{
-		{
-			Namespace: "les",
-			Version:   "1.0",
-			Service:   NewPrivateLightAPI(&s.lesCommons),
-			Public:    false,
-		},
-		{
-			Namespace: "les",
-			Version:   "1.0",
-			Service:   NewPrivateLightServerAPI(s),
-			Public:    false,
-		},
-		{
-			Namespace: "debug",
-			Version:   "1.0",
-			Service:   NewPrivateDebugAPI(s),
-			Public:    false,
-		},
-	}
+	return nil
 }
 
 func (s *LesServer) Protocols() []p2p.Protocol {
@@ -201,7 +182,7 @@ func (s *LesServer) Stop() {
 	s.fcManager.Stop()
 	s.costTracker.stop()
 	s.handler.stop()
-	s.clientPool.stop() // client pool should be closed after handler.
+	s.clientPool.Stop() // client pool should be closed after handler.
 	s.servingQueue.stop()
 
 	// Note, bloom trie indexer is closed by parent bloombits indexer.
@@ -237,7 +218,7 @@ func (s *LesServer) capacityManagement() {
 
 	totalCapacityCh := make(chan uint64, 100)
 	totalCapacity := s.fcManager.SubscribeTotalCapacity(totalCapacityCh)
-	s.clientPool.setLimits(s.config.LightPeers, totalCapacity)
+	s.clientPool.SetLimits(s.config.LightPeers, totalCapacity)
 
 	var (
 		busy         bool
@@ -274,7 +255,7 @@ func (s *LesServer) capacityManagement() {
 				log.Warn("Reduced free peer connections", "from", freePeers, "to", newFreePeers)
 			}
 			freePeers = newFreePeers
-			s.clientPool.setLimits(s.config.LightPeers, totalCapacity)
+			s.clientPool.SetLimits(s.config.LightPeers, totalCapacity)
 		case <-s.closeCh:
 			return
 		}

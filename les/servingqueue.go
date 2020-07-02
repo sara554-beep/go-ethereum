@@ -239,7 +239,7 @@ func (sq *servingQueue) freezePeers() {
 	drop := true
 	for _, tasks := range peerList {
 		if drop {
-			tasks.peer.freeze()
+			tasks.peer.Freeze()
 			tasks.peer.fcClient.Freeze()
 			sq.queuedTime -= tasks.sumTime
 			sqQueuedGauge.Update(int64(sq.queuedTime))

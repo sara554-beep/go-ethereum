@@ -237,11 +237,6 @@ func (s *LightEthereum) APIs() []rpc.API {
 			Service:   s.netRPCService,
 			Public:    true,
 		}, {
-			Namespace: "les",
-			Version:   "1.0",
-			Service:   NewPrivateLightAPI(&s.lesCommons),
-			Public:    false,
-		}, {
 			Namespace: "lespay",
 			Version:   "1.0",
 			Service:   lpc.NewPrivateClientAPI(s.valueTracker),

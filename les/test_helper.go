@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	server2 "github.com/ethereum/go-ethereum/les/lespay/server"
 	"math/big"
 	"sync/atomic"
 	"testing"
@@ -283,8 +284,8 @@ func newTestServerHandler(blocks int, indexers []*core.ChainIndexer, db ethdb.Da
 	}
 	server.costTracker, server.freeCapacity = newCostTracker(db, server.config)
 	server.costTracker.testCostList = testCostList(0) // Disable flow control mechanism.
-	server.clientPool = newClientPool(db, testBufRecharge, testBufRecharge, activeBias, clock, func(id enode.ID) {})
-	server.clientPool.setLimits(10000, 10000) // Assign enough capacity for clientpool
+	server.clientPool = server2.NewClientPool(db, testBufRecharge, testBufRecharge, time.Second, clock, func(id enode.ID) {})
+	server.clientPool.SetLimits(10000, 10000) // Assign enough capacity for clientpool
 	server.handler = newServerHandler(server, simulation.Blockchain(), db, txpool, func() bool { return true })
 	if server.oracle != nil {
 		server.oracle.Start(simulation)

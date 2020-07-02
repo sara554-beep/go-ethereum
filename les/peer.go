@@ -756,7 +756,7 @@ func newClientPeer(version int, network uint64, p *p2p.Peer, rw p2p.MsgReadWrite
 
 // freeClientId returns a string identifier for the peer. Multiple peers with
 // the same identifier can not be connected in free mode simultaneously.
-func (p *clientPeer) freeClientId() string {
+func (p *clientPeer) FreeClientId() string {
 	if addr, ok := p.RemoteAddr().(*net.TCPAddr); ok {
 		if addr.IP.IsLoopback() {
 			// using peer id instead of loopback ip address allows multiple free
@@ -783,7 +783,7 @@ func (p *clientPeer) sendResume(bv uint64) error {
 // and subsequent requests are dropped. Unfreezing happens automatically after a short
 // time if the client's buffer value is at least in the slightly positive region.
 // The client is also notified about being frozen/unfrozen with a Stop/Resume message.
-func (p *clientPeer) freeze() {
+func (p *clientPeer) Freeze() {
 	if p.version < lpv3 {
 		// if Stop/Resume is not supported then just drop the peer after setting
 		// its frozen status permanently
@@ -813,7 +813,7 @@ func (p *clientPeer) freeze() {
 }
 
 // allowInactive implements clientPoolPeer
-func (p *clientPeer) allowInactive() bool {
+func (p *clientPeer) AllowInactive() bool {
 	return false
 }
 
@@ -893,7 +893,7 @@ func (p *clientPeer) sendAnnounce(request announceData) error {
 
 // updateCapacity updates the request serving capacity assigned to a given client
 // and also sends an announcement about the updated flow control parameters
-func (p *clientPeer) updateCapacity(cap uint64) {
+func (p *clientPeer) UpdateCapacity(cap uint64) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
