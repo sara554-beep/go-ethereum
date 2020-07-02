@@ -18,6 +18,7 @@ package les
 
 import (
 	"crypto/ecdsa"
+	"github.com/ethereum/go-ethereum/les/lespay/server/clientpool"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -26,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/les/checkpointoracle"
 	"github.com/ethereum/go-ethereum/les/flowcontrol"
-	lps "github.com/ethereum/go-ethereum/les/lespay/server"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -51,7 +51,7 @@ type LesServer struct {
 	costTracker  *costTracker
 	defParams    flowcontrol.ServerParams
 	servingQueue *servingQueue
-	clientPool   *lps.ClientPool
+	clientPool   *clientpool.ClientPool
 
 	minCapacity, maxCapacity, freeCapacity uint64
 	threadsIdle                            int // Request serving threads count when system is idle.
@@ -117,8 +117,8 @@ func NewLesServer(e *eth.Ethereum, config *eth.Config) (*LesServer, error) {
 		srv.maxCapacity = totalRecharge
 	}
 	srv.fcManager.SetCapacityLimits(srv.freeCapacity, srv.maxCapacity, srv.freeCapacity*2)
-	srv.clientPool = lps.NewClientPool(srv.chainDb, srv.minCapacity, srv.freeCapacity, time.Second, mclock.System{}, func(id enode.ID) { go srv.peers.disconnect(peerIdToString(id)) })
-	srv.clientPool.SetDefaultFactors(lps.PriceFactors{0, 1, 1}, lps.PriceFactors{0, 1, 1})
+	srv.clientPool = clientpool.New(srv.chainDb, srv.minCapacity, srv.freeCapacity, time.Second, mclock.System{}, func(id enode.ID) { go srv.peers.disconnect(peerIdToString(id)) })
+	srv.clientPool.SetDefaultFactors(clientpool.PriceFactors{0, 1, 1}, clientpool.PriceFactors{0, 1, 1})
 
 	checkpoint := srv.latestLocalCheckpoint()
 	if !checkpoint.Empty() {

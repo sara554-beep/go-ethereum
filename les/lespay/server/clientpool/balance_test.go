@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package server
+package clientpool
 
 import (
 	"reflect"
@@ -30,13 +30,13 @@ import (
 )
 
 var (
-	testFlag    = testSetup.NewFlag("testFlag")
-	nbKeyField  = testSetup.NewField("nbKey", reflect.TypeOf(""))
-	btTestSetup = NewBalanceTrackerSetup(testSetup)
+	testFlag    = server.testSetup.NewFlag("testFlag")
+	nbKeyField  = server.testSetup.NewField("nbKey", reflect.TypeOf(""))
+	btTestSetup = newBalanceTrackerSetup(server.testSetup)
 )
 
 func init() {
-	btTestSetup.Connect(nbKeyField, ppTestSetup.CapacityField)
+	btTestSetup.Connect(nbKeyField, server.ppTestSetup.CapacityField)
 }
 
 type zeroExpirer struct{}
@@ -48,12 +48,12 @@ func (z zeroExpirer) LogOffset(now mclock.AbsTime) utils.Fixed64               {
 type balanceTestSetup struct {
 	clock *mclock.Simulated
 	ns    *nodestate.NodeStateMachine
-	bt    *BalanceTracker
+	bt    *balanceManager
 }
 
 func newBalanceTestSetup() *balanceTestSetup {
 	clock := &mclock.Simulated{}
-	ns := nodestate.NewNodeStateMachine(nil, nil, clock, testSetup)
+	ns := nodestate.NewNodeStateMachine(nil, nil, clock, server.testSetup)
 	db := memorydb.New()
 	bt := NewBalanceTracker(ns, btTestSetup, db, clock, zeroExpirer{}, zeroExpirer{})
 	ns.Start()
@@ -68,8 +68,8 @@ func (b *balanceTestSetup) newNode(capacity uint64) *NodeBalance {
 	node := enode.SignNull(&enr.Record{}, enode.ID{})
 	b.ns.SetState(node, testFlag, nodestate.Flags{}, 0)
 	b.ns.SetField(node, btTestSetup.negBalanceKeyField, "")
-	b.ns.SetField(node, ppTestSetup.CapacityField, capacity)
-	n, _ := b.ns.GetField(node, btTestSetup.BalanceField).(*NodeBalance)
+	b.ns.SetField(node, server.ppTestSetup.CapacityField, capacity)
+	n, _ := b.ns.GetField(node, btTestSetup.balanceField).(*NodeBalance)
 	return n
 }
 

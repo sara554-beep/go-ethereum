@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package server
+package clientpool
 
 import (
 	"math/rand"
@@ -31,7 +31,7 @@ var (
 	testSetup         = &nodestate.Setup{}
 	ppTestClientField = testSetup.NewField("ppTestClient", reflect.TypeOf(&ppTestClient{}))
 	ppUpdateFlag      = testSetup.NewFlag("ppUpdateFlag")
-	ppTestSetup       = NewPriorityPoolSetup(testSetup)
+	ppTestSetup       = newPriorityPoolSetup(testSetup)
 )
 
 func init() {
@@ -66,7 +66,7 @@ func TestPriorityPool(t *testing.T) {
 			c.cap = newValue.(uint64)
 		}
 	})
-	pp := NewPriorityPool(ns, ppTestSetup, clock, 100, 0, testCapacityStepDiv)
+	pp := newPriorityPool(ns, ppTestSetup, clock, 100, 0, testCapacityStepDiv)
 	ns.Start()
 	pp.SetLimits(100, 1000000)
 	clients := make([]*ppTestClient, 100)

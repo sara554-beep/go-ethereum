@@ -175,7 +175,7 @@ func (h *serverHandler) handle(p *clientPeer) error {
 			p.updateCapacity(capacity)
 		}*/
 	}
-	//p.balance, _ = h.server.clientPool.ns.GetField(p.Node(), h.server.clientPool.BalanceField).(*lps.NodeBalance)
+	//p.balance, _ = h.server.clientPool.ns.GetField(p.Node(), h.server.clientPool.balanceField).(*lps.NodeBalance)
 	//if p.balance == nil {
 	//	return p2p.DiscRequested
 	//}

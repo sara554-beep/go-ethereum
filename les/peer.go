@@ -19,6 +19,7 @@ package les
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/les/lespay/server/clientpool"
 	"math/big"
 	"math/rand"
 	"net"
@@ -33,7 +34,6 @@ import (
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/les/flowcontrol"
 	lpc "github.com/ethereum/go-ethereum/les/lespay/client"
-	lps "github.com/ethereum/go-ethereum/les/lespay/server"
 	"github.com/ethereum/go-ethereum/les/utils"
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/p2p"
@@ -726,7 +726,7 @@ type clientPeer struct {
 	peerCommons
 
 	activate, deactivate func()
-	balance              *lps.NodeBalance
+	balance              *clientpool.NodeBalance
 	//getBalance           func() uint64
 
 	// responseLock ensures that responses are queued in the same order as
@@ -756,7 +756,7 @@ func newClientPeer(version int, network uint64, p *p2p.Peer, rw p2p.MsgReadWrite
 
 // freeClientId returns a string identifier for the peer. Multiple peers with
 // the same identifier can not be connected in free mode simultaneously.
-func (p *clientPeer) FreeClientId() string {
+func (p *clientPeer) IPAddr() string {
 	if addr, ok := p.RemoteAddr().(*net.TCPAddr); ok {
 		if addr.IP.IsLoopback() {
 			// using peer id instead of loopback ip address allows multiple free
