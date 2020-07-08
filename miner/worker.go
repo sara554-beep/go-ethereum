@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -74,6 +75,18 @@ const (
 
 	// staleThreshold is the maximum depth of the acceptable stale block.
 	staleThreshold = 7
+)
+
+var (
+	accountReadTimer   = metrics.NewRegisteredTimer("miner/account/reads", nil)
+	accountHashTimer   = metrics.NewRegisteredTimer("miner/account/hashes", nil)
+	accountUpdateTimer = metrics.NewRegisteredTimer("miner/account/updates", nil)
+	accountCommitTimer = metrics.NewRegisteredTimer("miner/account/commits", nil)
+
+	storageReadTimer   = metrics.NewRegisteredTimer("miner/storage/reads", nil)
+	storageHashTimer   = metrics.NewRegisteredTimer("miner/storage/hashes", nil)
+	storageUpdateTimer = metrics.NewRegisteredTimer("miner/storage/updates", nil)
+	storageCommitTimer = metrics.NewRegisteredTimer("miner/storage/commits", nil)
 )
 
 // environment is the worker's current environment and holds all of the current state information.
@@ -617,6 +630,10 @@ func (w *worker) resultLoop() {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
 			}
+			// Update the metrics touched during block commit
+			accountCommitTimer.Update(task.state.AccountCommits) // Account commits are complete, we can mark them
+			storageCommitTimer.Update(task.state.StorageCommits) // Storage commits are complete, we can mark them
+
 			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
 
@@ -967,6 +984,10 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 			return
 		}
 	}
+	// Update the metrics touched during transaction execution
+	accountReadTimer.Update(w.current.state.AccountReads) // Account reads are complete, we can mark them
+	storageReadTimer.Update(w.current.state.StorageReads) // Storage reads are complete, we can mark them
+
 	w.commit(uncles, w.fullTaskHook, true, tstart)
 }
 
@@ -984,6 +1005,12 @@ func (w *worker) commit(uncles []*types.Header, interval func(), update bool, st
 	if err != nil {
 		return err
 	}
+	// Update the metrics touched during block finalization
+	accountHashTimer.Update(s.AccountHashes)    // Account hashes are complete, we can mark them
+	storageHashTimer.Update(s.StorageHashes)    // Storage hashes are complete, we can mark them
+	accountUpdateTimer.Update(s.AccountUpdates) // Account updates are complete, we can mark them
+	storageUpdateTimer.Update(s.StorageUpdates) // Storage updates are complete, we can mark them
+
 	if w.isRunning() {
 		if interval != nil {
 			interval()
