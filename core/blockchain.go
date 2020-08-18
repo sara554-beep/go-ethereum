@@ -445,10 +445,10 @@ func (bc *BlockChain) SetHead(head uint64) error {
 			if newHeadBlock == nil {
 				newHeadBlock = bc.genesisBlock
 			} else {
-				if _, err := state.New(newHeadBlock.Root(), bc.stateCache, bc.snaps); err != nil {
-					// Rewound state missing, rolled back to before pivot, reset to genesis
-					newHeadBlock = bc.genesisBlock
-				}
+				//if _, err := state.New(newHeadBlock.Root(), bc.stateCache, bc.snaps); err != nil {
+				//	// Rewound state missing, rolled back to before pivot, reset to genesis
+				//	newHeadBlock = bc.genesisBlock
+				//}
 			}
 			rawdb.WriteHeadBlockHash(db, newHeadBlock.Hash())
 
@@ -485,7 +485,7 @@ func (bc *BlockChain) SetHead(head uint64) error {
 		if num+1 <= frozen {
 			// Truncate all relative data(header, total difficulty, body, receipt
 			// and canonical hash) from ancient store.
-			if err := bc.db.TruncateAncients(num + 1); err != nil {
+			if err := bc.db.TruncateAncients(num); err != nil {
 				log.Crit("Failed to truncate ancient data", "number", num, "err", err)
 			}
 
