@@ -106,7 +106,7 @@ func CommitAndVerifyState(snaptree *Tree, root common.Hash, db, commitdb ethdb.D
 	}
 	defer acctIt.Release()
 
-	got, err := generateTrieRoot(commitdb, acctIt, common.Hash{}, stdGenerate, func(commitdb ethdb.Database, accountHash, codeHash common.Hash, stat *generateStats) (common.Hash, error) {
+	got, err := generateTrieRoot(commitdb, acctIt, common.Hash{}, stackTrieGenerate, func(commitdb ethdb.Database, accountHash, codeHash common.Hash, stat *generateStats) (common.Hash, error) {
 		// Migrate the code first, commit the contract code into the tmp db.
 		if codeHash != emptyCode {
 			// todo the notion of contract code should be integrated into snapshot.
@@ -128,7 +128,7 @@ func CommitAndVerifyState(snaptree *Tree, root common.Hash, db, commitdb ethdb.D
 		}
 		defer storageIt.Release()
 
-		hash, err := generateTrieRoot(commitdb, storageIt, accountHash, stdGenerate, nil, stat, false)
+		hash, err := generateTrieRoot(commitdb, storageIt, accountHash, stackTrieGenerate, nil, stat, false)
 		if err != nil {
 			return common.Hash{}, err
 		}
@@ -352,6 +352,21 @@ func stdGenerate(db ethdb.Database, in chan trieKV, out chan common.Hash) {
 		if err := triedb.Commit(root, false); err != nil {
 			panic(err)
 		}
+	}
+	out <- root
+}
+
+func stackTrieGenerate(db ethdb.Database, in chan trieKV, out chan common.Hash) {
+	commit := db != nil
+	t := trie.NewStackTrie(db)
+	for leaf := range in {
+		t.TryUpdate(leaf.key[:], leaf.value)
+	}
+	var root common.Hash
+	if !commit {
+		root = t.Hash()
+	} else {
+		root = t.Commit(db)
 	}
 	out <- root
 }
