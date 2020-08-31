@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -33,6 +34,13 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	cli "gopkg.in/urfave/cli.v1"
+)
+
+var (
+	pprofFlag = cli.BoolFlag{
+		Name:  "pprof",
+		Usage: "Enable CPU profiling during the runtime",
+	}
 )
 
 var (
@@ -74,6 +82,7 @@ will be deleted from the database.
 					utils.RinkebyFlag,
 					utils.GoerliFlag,
 					utils.LegacyTestnetFlag,
+					pprofFlag,
 				},
 				Description: `
 geth snapshot verify-state <state-root>
@@ -93,6 +102,7 @@ snapshot and recalculate the root hash of state for verification.
 					utils.RinkebyFlag,
 					utils.GoerliFlag,
 					utils.LegacyTestnetFlag,
+					pprofFlag,
 				},
 				Description: `
 geth snapshot traverse-state <state-root>
@@ -112,6 +122,7 @@ node is missing. This command can be used for trie integrity verification.
 					utils.RinkebyFlag,
 					utils.GoerliFlag,
 					utils.LegacyTestnetFlag,
+					pprofFlag,
 				},
 				Description: `
 geth snapshot traverse-rawstate <state-root>
@@ -168,6 +179,16 @@ func verifyState(ctx *cli.Context) error {
 	if ctx.NArg() == 1 {
 		root = common.HexToHash(ctx.Args()[0])
 	}
+	if ctx.GlobalIsSet(pprofFlag.Name) {
+		cpufile, err := os.Create(time.Now().Format("verify-state-2006-01-02-15:04:05") + ".cpu")
+		if err != nil {
+			return err
+		}
+		defer cpufile.Close()
+
+		pprof.StartCPUProfile(cpufile)
+		defer pprof.StopCPUProfile()
+	}
 	if err := snapshot.VerifyState(snaptree, root); err != nil {
 		fmt.Println("Failed to verify state", "error", err)
 	} else {
@@ -204,6 +225,16 @@ func traverseState(ctx *cli.Context) error {
 	var root = rawdb.ReadSnapshotRoot(chaindb)
 	if ctx.NArg() == 1 {
 		root = common.HexToHash(ctx.Args()[0])
+	}
+	if ctx.GlobalIsSet(pprofFlag.Name) {
+		cpufile, err := os.Create(time.Now().Format("traverse-state-2006-01-02-15:04:05") + ".cpu")
+		if err != nil {
+			return err
+		}
+		defer cpufile.Close()
+
+		pprof.StartCPUProfile(cpufile)
+		defer pprof.StopCPUProfile()
 	}
 	t, err := trie.NewSecure(root, trie.NewDatabase(chaindb))
 	if err != nil {
@@ -281,6 +312,16 @@ func traverseRawState(ctx *cli.Context) error {
 	var root = rawdb.ReadSnapshotRoot(chaindb)
 	if ctx.NArg() == 1 {
 		root = common.HexToHash(ctx.Args()[0])
+	}
+	if ctx.GlobalIsSet(pprofFlag.Name) {
+		cpufile, err := os.Create(time.Now().Format("traverse-rawstate-2006-01-02-15:04:05") + ".cpu")
+		if err != nil {
+			return err
+		}
+		defer cpufile.Close()
+
+		pprof.StartCPUProfile(cpufile)
+		defer pprof.StopCPUProfile()
 	}
 	t, err := trie.NewSecure(root, trie.NewDatabase(chaindb))
 	if err != nil {
