@@ -23,6 +23,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -50,10 +52,11 @@ type Pruner struct {
 	db, tmpdb ethdb.Database
 	homedir   string
 	snaptree  *snapshot.Tree
+	pprof     bool
 }
 
 // NewPruner creates the pruner instance.
-func NewPruner(db ethdb.Database, root common.Hash, homedir string) (*Pruner, error) {
+func NewPruner(db ethdb.Database, root common.Hash, homedir string, pprof bool) (*Pruner, error) {
 	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, root, false, false)
 	if err != nil {
 		return nil, err // The relevant snapshot(s) might not exist
@@ -67,7 +70,42 @@ func NewPruner(db ethdb.Database, root common.Hash, homedir string) (*Pruner, er
 		tmpdb:    tmpdb,
 		homedir:  homedir,
 		snaptree: snaptree,
+		pprof:    pprof,
 	}, nil
+}
+
+var (
+	cpuFile *os.File
+	memFile *os.File
+)
+
+func profile(name string, enable bool) {
+	if !enable {
+		return
+	}
+	var err error
+	cpuFile, err = os.Create(name + time.Now().Format("-2006-01-02-15:04:05") + ".cpu")
+	if err != nil {
+		panic(err)
+	}
+	pprof.StartCPUProfile(cpuFile)
+}
+
+func profileDone(name string, enable bool) {
+	if !enable {
+		return
+	}
+	pprof.StopCPUProfile()
+	cpuFile.Close()
+
+	var err error
+	memFile, err = os.Create(name + time.Now().Format("-2006-01-02-15:04:05") + ".mem")
+	if err != nil {
+		panic(err)
+	}
+	runtime.GC() // get up-to-date statistics
+	pprof.WriteHeapProfile(memFile)
+	memFile.Close()
 }
 
 // Prune deletes all historical state nodes except the nodes belong to the
@@ -84,6 +122,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 		}
 	}
 	start := time.Now()
+	profile("commit-and-verify", p.pprof)
 	// Traverse the target state, re-construct the whole state trie and
 	// commit to the given temporary database.
 	if err := snapshot.CommitAndVerifyState(p.snaptree, root, p.db, p.tmpdb); err != nil {
@@ -95,6 +134,8 @@ func (p *Pruner) Prune(root common.Hash) error {
 	if err := p.tmpdb.(commiter).Commit(); err != nil {
 		return err
 	}
+	profileDone("commit-and-verify", p.pprof)
+
 	// Extract all node refs belong to the genesis. We have to keep the
 	// genesis all the time.
 	marker, err := extractGenesis(p.db)
@@ -104,6 +145,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 	// Delete all old trie nodes in the disk(it's safe since we already commit
 	// a complete trie to the temporary db, any crash happens we can recover
 	// a complete state from it).
+	profile("deletion", p.pprof)
 	var (
 		count  int
 		size   common.StorageSize
@@ -162,19 +204,24 @@ func (p *Pruner) Prune(root common.Hash) error {
 	}
 	iter.Release() // Please release the iterator here, otherwise will block the compactor
 	log.Info("Pruned state data", "count", count, "size", size, "elapsed", common.PrettyDuration(time.Since(pstart)))
+	profileDone("deletion", p.pprof)
 
 	// Start compactions, will remove the deleted data from the disk immediately.
 	cstart := time.Now()
 	log.Info("Start compacting the database")
+	profile("compaction", p.pprof)
 	if err := p.db.Compact(rangestart, rangelimit); err != nil {
 		log.Error("Failed to compact the whole database", "error", err)
 	}
+	profileDone("compaction", p.pprof)
 	log.Info("Compacted the whole database", "elapsed", common.PrettyDuration(time.Since(cstart)))
 
 	// Migrate the state from the temporary db to main one.
+	profile("migration", p.pprof)
 	committed := migrateState(p.db, p.tmpdb, p.homedir)
 	wipeTemporaryDatabase(p.homedir, p.tmpdb)
 	log.Info("Successfully prune the state", "committed", committed, "pruned", size, "released", size-committed, "elasped", common.PrettyDuration(time.Since(start)))
+	profileDone("migration", p.pprof)
 	return nil
 }
 

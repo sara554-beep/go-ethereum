@@ -62,6 +62,7 @@ var (
 					utils.RinkebyFlag,
 					utils.GoerliFlag,
 					utils.LegacyTestnetFlag,
+					pprofFlag,
 				},
 				Description: `
 geth snapshot prune-state <state-root>
@@ -142,7 +143,11 @@ func pruneState(ctx *cli.Context) error {
 	chain, chaindb := utils.MakeChain(ctx, stack, true)
 	defer chaindb.Close()
 
-	pruner, err := pruner.NewPruner(chaindb, chain.CurrentBlock().Root(), stack.ResolvePath(""))
+	var pprof bool
+	if ctx.GlobalIsSet(pprofFlag.Name) {
+		pprof = true
+	}
+	pruner, err := pruner.NewPruner(chaindb, chain.CurrentBlock().Root(), stack.ResolvePath(""), pprof)
 	if err != nil {
 		utils.Fatalf("Failed to open snapshot tree %v", err)
 	}
