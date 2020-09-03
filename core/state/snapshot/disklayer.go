@@ -93,8 +93,14 @@ func (dl *diskLayer) AccountRLP(hash common.Hash) ([]byte, error) {
 	}
 	// If the layer is being generated, ensure the requested hash has already been
 	// covered by the generator.
-	if dl.genMarker != nil && bytes.Compare(hash[:], dl.genMarker) > 0 {
-		return nil, ErrNotCoveredYet
+	if dl.genMarker != nil {
+		account, _, err := decodeMarker(dl.genMarker)
+		if err != nil {
+			return nil, err
+		}
+		if account != nil && bytes.Compare(hash[:], account) > 0 {
+			return nil, ErrNotCoveredYet
+		}
 	}
 	// If we're in the disk layer, all diff layers missed
 	snapshotDirtyAccountMissMeter.Mark(1)
@@ -133,8 +139,14 @@ func (dl *diskLayer) Storage(accountHash, storageHash common.Hash) ([]byte, erro
 
 	// If the layer is being generated, ensure the requested hash has already been
 	// covered by the generator.
-	if dl.genMarker != nil && bytes.Compare(key, dl.genMarker) > 0 {
-		return nil, ErrNotCoveredYet
+	if dl.genMarker != nil {
+		covered, err := slotCoveredByMarker(accountHash.Bytes(), storageHash.Bytes(), dl.genMarker)
+		if err != nil {
+			return nil, err
+		}
+		if covered {
+			return nil, ErrNotCoveredYet
+		}
 	}
 	// If we're in the disk layer, all diff layers missed
 	snapshotDirtyStorageMissMeter.Mark(1)

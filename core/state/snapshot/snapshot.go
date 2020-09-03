@@ -435,10 +435,21 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 	base.stale = true
 	base.lock.Unlock()
 
+	var (
+		err            error
+		accMarker      []byte
+		storageMarkers [][]byte
+	)
+	if base.genMarker != nil {
+		accMarker, storageMarkers, err = decodeMarker(base.genMarker)
+		if err != nil {
+			log.Crit("Failed to decode generation marker", "error", err)
+		}
+	}
 	// Destroy all the destructed accounts from the database
 	for hash := range bottom.destructSet {
 		// Skip any account not covered yet by the snapshot
-		if base.genMarker != nil && bytes.Compare(hash[:], base.genMarker) > 0 {
+		if accMarker != nil && bytes.Compare(hash[:], accMarker) > 0 {
 			continue
 		}
 		// Remove all storage slots
@@ -459,7 +470,7 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 	// Push all updated accounts into the database
 	for hash, data := range bottom.accountData {
 		// Skip any account not covered yet by the snapshot
-		if base.genMarker != nil && bytes.Compare(hash[:], base.genMarker) > 0 {
+		if accMarker != nil && bytes.Compare(hash[:], accMarker) > 0 {
 			continue
 		}
 		// Push the account to disk
@@ -479,15 +490,13 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 	// Push all the storage slots into the database
 	for accountHash, storage := range bottom.storageData {
 		// Skip any account not covered yet by the snapshot
-		if base.genMarker != nil && bytes.Compare(accountHash[:], base.genMarker) > 0 {
+		if accMarker != nil && bytes.Compare(accountHash[:], accMarker) > 0 {
 			continue
 		}
 		// Generation might be mid-account, track that case too
-		midAccount := base.genMarker != nil && bytes.Equal(accountHash[:], base.genMarker[:common.HashLength])
-
 		for storageHash, data := range storage {
 			// Skip any slot not covered yet by the snapshot
-			if midAccount && bytes.Compare(storageHash[:], base.genMarker[common.HashLength:]) > 0 {
+			if slotCovered(accountHash.Bytes(), storageHash.Bytes(), accMarker, storageMarkers) {
 				continue
 			}
 			if len(data) > 0 {
