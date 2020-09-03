@@ -61,6 +61,84 @@ type journalStorage struct {
 	Vals [][]byte
 }
 
+const (
+	genMarkerVersion = byte(0) // Current snapshot generation marker version
+)
+
+// encodeMarker tries to encode the given generation progress marker into the
+// binary format.
+func encodeMarker(account []byte, storages [][]byte) ([]byte, error) {
+	if len(account) == 0 {
+		return nil, nil
+	}
+	var marker []byte
+	marker = append(marker, genMarkerVersion)
+
+	if len(account) != common.HashLength {
+		return nil, errors.New("invalid account marker")
+	}
+	marker = append(marker, account...)
+
+	for _, storage := range storages {
+		if len(storage) != 2*common.HashLength {
+			return nil, errors.New("invalid storage marker")
+		}
+		marker = append(marker, storage...)
+	}
+	return marker, nil
+}
+
+// decodeMarker tries to parse the generation marker in binary format.
+// There are two versions of marker:
+// (a) Legacy marker format:
+//     Account Hash (32 bytes) or Account Hash + Slot Hash(64 bytes)
+//     nil means no marker
+// (b) Versionized marker format:
+//     Verison(1 byte) + Account Hash (32 byte) + [Account_i Hash + Slot_i Hash ...](Optional)
+//     nil means no marker
+// The returned value includes:
+// (a) the last iterated account hash
+// (b) a list of last iterated storage marker.
+// (c) flag whether the marker is valid
+func decodeMarker(marker []byte) ([]byte, [][]byte, error) {
+	if len(marker) == 0 { // Nil or []byte{}
+		return nil, nil, nil // empty
+	}
+	// Parse the legacy marker
+	if len(marker) == common.HashLength {
+		return marker, nil, nil
+	}
+	if len(marker) == 2*common.HashLength {
+		return marker[:common.HashLength], [][]byte{marker}, nil
+	}
+	// Parse versionized marker
+	if len(marker) < 1 || (len(marker)-1)%common.HashLength != 0 {
+		return nil, nil, errors.New("invalid generation marker")
+	}
+	switch marker[0] {
+	case genMarkerVersion:
+		var (
+			account  []byte
+			storages [][]byte
+			remain   = marker[1:]
+		)
+		if len(remain) >= common.HashLength {
+			account = remain[:common.HashLength]
+			remain = remain[common.HashLength:]
+		}
+		if len(remain)%2*common.HashLength != 0 {
+			return nil, nil, errors.New("invalid generation marker 2")
+		}
+		for len(remain) > 0 {
+			storages = append(storages, remain[:2*common.HashLength])
+			remain = remain[2*common.HashLength:]
+		}
+		return account, storages, nil
+	default:
+		return nil, nil, errors.New("invalid generation marker(unknown verison)")
+	}
+}
+
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
 func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root common.Hash) (snapshot, error) {
 	// Retrieve the block number and hash of the snapshot, failing if no snapshot
