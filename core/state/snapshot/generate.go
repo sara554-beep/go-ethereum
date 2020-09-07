@@ -47,7 +47,7 @@ var (
 // generatorStats is a collection of statistics gathered by the snapshot generator
 // for logging purposes.
 type generatorStats struct {
-	lock     sync.RWMutex       // Lock to protect concurrency issue.
+	lock     sync.RWMutex       // Lock to protect concurrency sensitive fields.
 	wiping   chan struct{}      // Notification channel if wiping is in progress
 	origin   uint64             // Origin prefix where generation started
 	start    time.Time          // Timestamp when generation started
@@ -150,6 +150,44 @@ type storageGeneration struct {
 	stats   *generatorStats
 }
 
+// markerManager is used to manage all the storage markers submitted by the
+// storage generators.
+type markerManager struct {
+	lock     sync.RWMutex
+	storages map[common.Hash]common.Hash
+}
+
+func newMarkerManager() *markerManager {
+	return &markerManager{storages: make(map[common.Hash]common.Hash)}
+}
+
+func (m *markerManager) register(account common.Hash, marker []byte) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	// Event if the storage marker is empty, replace with the empty hash.
+	// It can also be used to update the marker during the generation.
+	m.storages[account] = common.BytesToHash(marker)
+}
+
+func (m *markerManager) unregister(account common.Hash) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	delete(m.storages, account)
+}
+
+func (m *markerManager) marker() [][]byte {
+	m.lock.RLock()
+	defer m.lock.RUnlock()
+
+	var result [][]byte
+	for account, slot := range m.storages {
+		result = append(result, append(account.Bytes(), slot.Bytes()...))
+	}
+	return result
+}
+
 // generateStorages is a helper function of generate. It accepts all derived
 // tasks for generating storage snapshot. This function will try to spin up
 // several go-routines for executing the accumulated tasks concurrently, but
@@ -158,19 +196,13 @@ type storageGeneration struct {
 // If the signal from stop channel is received, all running tasks will be aborted.
 // The execution progress markers will be sent back via out channel. Note we expect
 // the out channel has at least 1 slot available so that sending won't be blocked.
-func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]byte, stop chan chan struct{}) {
+func (dl *diskLayer) generateStorages(in chan *storageGeneration, stop chan bool, manager *markerManager) {
 	var (
 		running int
 		limit   = runtime.NumCPU()
 		done    = make(chan struct{})
 		stopRun = make(chan struct{})
-
-		markerLock sync.Mutex
-		markers    [][]byte
 	)
-	if cap(out) < 1 {
-		panic("require buffered channel")
-	}
 	run := func(task *storageGeneration, stop chan struct{}) {
 		defer func() {
 			done <- struct{}{}
@@ -182,7 +214,13 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 		}
 		log.Debug("Start running storage task", ctx)
 
-		iter, batch, marker := task.iter, task.batch, task.marker
+		var (
+			iter         = task.iter
+			batch        = task.batch
+			marker       = task.marker
+			iterated     uint64
+			iteratedSize common.StorageSize
+		)
 		for iter.Next() {
 			var abort bool
 			select {
@@ -192,6 +230,12 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 			}
 			if marker == nil || !bytes.Equal(marker, iter.Key) {
 				rawdb.WriteStorageSnapshot(batch, task.account, common.BytesToHash(iter.Key), iter.Value)
+				iterated += 1
+				iteratedSize += common.StorageSize(1 + 2*common.HashLength + len(iter.Value))
+				if iterated > 10000 {
+					task.stats.progress(0, iterated, iteratedSize)
+					iterated, iteratedSize = 0, 0
+				}
 			}
 			if batch.ValueSize() > ethdb.IdealBatchSize || abort {
 				if batch.ValueSize() > 0 {
@@ -199,10 +243,7 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 						log.Crit("Failed to write snapshot", "error", err)
 					}
 					batch.Reset()
-
-					markerLock.Lock()
-					markers = append(markers, append(task.account.Bytes(), iter.Key...))
-					markerLock.Unlock()
+					manager.register(task.account, iter.Key)
 				}
 				if abort {
 					log.Debug("Storage task aborted")
@@ -219,23 +260,16 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 			}
 			batch.Reset()
 		}
+		if iterated > 0 {
+			task.stats.progress(0, iterated, iteratedSize)
+			iterated, iteratedSize = 0, 0
+		}
+		manager.unregister(task.account)
 		log.Debug("Storage task finished")
 	}
 	for {
 		select {
 		case task := <-in:
-			// No more tasks, wait and exit
-			if task == nil {
-				for running > 0 {
-					<-done
-					running -= 1
-				}
-				if len(markers) != 0 {
-					log.Crit("Invalid generation markers, should finish all", "marker", markers)
-				}
-				out <- nil
-				return
-			}
 			// Try to schedule up one more go-rountine for new task.
 			running += 1
 			go run(task, stopRun)
@@ -247,14 +281,14 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 		case <-done:
 			running -= 1
 
-		case ch := <-stop:
-			close(stopRun)
+		case abort := <-stop:
+			if abort { // stop forcibly, abort all generators.
+				close(stopRun)
+			}
 			for running > 0 {
 				<-done
 				running -= 1
 			}
-			out <- markers
-			close(ch)
 			return
 		}
 	}
@@ -295,6 +329,7 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 	var (
 		accMarker    []byte
 		storeMarkers [][]byte
+		manager      = newMarkerManager()
 	)
 	if len(dl.genMarker) > 0 { // []byte{} is the start
 		accMarker, storeMarkers, err = decodeMarker(dl.genMarker)
@@ -305,11 +340,14 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 	// Setup the go-routine for processing storage tasks in the background
 	var (
 		taskIn   = make(chan *storageGeneration)
-		taskStop = make(chan chan struct{})
-		taskOut  = make(chan [][]byte, 1)
+		taskStop = make(chan bool, 1)
+		wg       sync.WaitGroup
 	)
-	go dl.generateStorages(taskIn, taskOut, taskStop)
-
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dl.generateStorages(taskIn, taskStop, manager)
+	}()
 	// If there are remaining storage tasks, resume them.
 	for _, marker := range storeMarkers {
 		acct, slot := marker[:common.HashLength], marker[common.HashLength:]
@@ -328,6 +366,7 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		if err != nil {
 			log.Crit("Storage trie inaccessible for snapshot generation", "err", err)
 		}
+		manager.register(common.BytesToHash(acct), slot)
 		taskIn <- &storageGeneration{
 			iter:    trie.NewIterator(storeTrie.NodeIterator(slot)),
 			account: common.BytesToHash(acct),
@@ -340,7 +379,11 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 	batch := dl.diskdb.NewBatch()
 
 	// Iterate from the previous marker and continue generating the state snapshot
-	logged := time.Now()
+	var (
+		iterated     uint64
+		iteratedSize common.StorageSize
+		logged       = time.Now()
+	)
 	for accIt.Next() {
 		// Retrieve the current account and flatten it into the internal format
 		accountHash := common.BytesToHash(accIt.Key)
@@ -359,7 +402,8 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		// If the account is not yet in-progress, write it out
 		if accMarker == nil || !bytes.Equal(accountHash[:], accMarker) {
 			rawdb.WriteAccountSnapshot(batch, accountHash, data)
-			stats.progress(1, 0, common.StorageSize(1+common.HashLength+len(data)))
+			iterated += 1
+			iteratedSize += common.StorageSize(1 + common.HashLength + len(data))
 		}
 		// If we've exceeded our batch allowance or termination was requested, flush to disk
 		var abort chan *generatorStats
@@ -378,12 +422,11 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 			if abort != nil {
 				stats.log("Aborting state snapshot generation", dl.root, accountHash[:])
 
-				ch := make(chan struct{})
-				taskStop <- ch
-				<-ch
+				taskStop <- true // Stop forcibly
+				wg.Wait()
 
 				dl.lock.Lock()
-				marker, err := encodeMarker(accountHash.Bytes(), <-taskOut)
+				marker, err := encodeMarker(accountHash.Bytes(), manager.marker())
 				if err != nil {
 					log.Crit("Failed to encode marker", "error", err)
 				}
@@ -411,6 +454,7 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 				if err != nil {
 					log.Crit("Storage trie inaccessible for snapshot generation", "err", err)
 				}
+				manager.register(accountHash, nil)
 				taskIn <- &storageGeneration{
 					iter:    trie.NewIterator(storeTrie.NodeIterator(nil)),
 					account: accountHash,
@@ -421,7 +465,13 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 			}
 		}
 		if time.Since(logged) > 8*time.Second {
-			stats.log("Generating state snapshot", dl.root, accIt.Key)
+			stats.progress(iterated, 0, iteratedSize)
+			iterated, iteratedSize = 0, 0
+			marker, err := encodeMarker(accIt.Key, manager.marker())
+			if err != nil {
+				log.Crit("Failed to encode marker", "error", err)
+			}
+			stats.log("Generating state snapshot", dl.root, marker)
 			logged = time.Now()
 		}
 		// Some account processed, unmark the marker
@@ -434,11 +484,11 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		}
 	}
 	// State trie is fully iterated, wait the storage generators
-	taskIn <- nil
-	<-taskOut
+	taskStop <- false
+	wg.Wait()
 
-	log.Info("Generated state snapshot", "accounts", stats.accounts, "slots", stats.slots,
-		"storage", stats.size, "elapsed", common.PrettyDuration(time.Since(stats.start)))
+	stats.progress(iterated, 0, iteratedSize)
+	stats.log("Generated state snapshot", dl.root, nil)
 
 	dl.lock.Lock()
 	dl.genMarker = nil
