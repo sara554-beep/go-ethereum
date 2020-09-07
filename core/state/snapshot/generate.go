@@ -172,12 +172,15 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 		panic("require buffered channel")
 	}
 	run := func(task *storageGeneration, stop chan struct{}) {
+		defer func() {
+			done <- struct{}{}
+		}()
 		var ctx []interface{}
 		ctx = append(ctx, []interface{}{"account", task.account}...)
 		if task.marker != nil {
-			ctx = append(ctx, []interface{}{"marker", common.Bytes2Hex(task.marker)}...)
+			ctx = append(ctx, []interface{}{"marker", common.BytesToHash(task.marker)}...)
 		}
-		log.Info("Start running storage task", ctx)
+		log.Debug("Start running storage task", ctx)
 
 		iter, batch, marker := task.iter, task.batch, task.marker
 		for iter.Next() {
@@ -202,6 +205,7 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 					markerLock.Unlock()
 				}
 				if abort {
+					log.Debug("Storage task aborted")
 					return
 				}
 			}
@@ -215,6 +219,7 @@ func (dl *diskLayer) generateStorages(in chan *storageGeneration, out chan [][]b
 			}
 			batch.Reset()
 		}
+		log.Debug("Storage task finished")
 	}
 	for {
 		select {
