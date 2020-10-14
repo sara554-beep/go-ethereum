@@ -198,6 +198,15 @@ func traverseState(ctx *cli.Context) error {
 	_, chaindb := utils.MakeChain(ctx, stack, true)
 	defer chaindb.Close()
 
+	blob, err := chaindb.Get(common.FromHex("0xe8c33b067b98c8916c623bd5de71bdb14e1a8d30e539ca3bf3948834651c4fb2"))
+	if err != nil {
+		log.Crit("Failed to read entry", "error", err)
+	}
+	if len(blob) > 0 {
+		fmt.Println("Blob", blob)
+		return nil
+	}
+
 	if ctx.NArg() > 1 {
 		log.Crit("Too many arguments given")
 	}
