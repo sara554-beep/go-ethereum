@@ -488,15 +488,15 @@ func traverseBrokenDB(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		flatdb.Commit()
-		flatdb.Close()
-	}()
+	defer flatdb.Close()
 
 	flatIter := flatdb.NewIterator(nil, nil)
-	defer flatIter.Release()
 
-	var stackTrie = trie.NewStackTrie(nil)
+	flatdb2, err := rawdb.NewFlatDatabase("debug.db.2", true)
+	if err != nil {
+		return err
+	}
+	var stackTrie = trie.NewStackTrie(flatdb2)
 
 	for flatIter.Next() {
 		key, val := flatIter.Key(), flatIter.Value()
@@ -510,9 +510,34 @@ func traverseBrokenDB(ctx *cli.Context) error {
 				log.Warn("Failed to read entry", "hash", common.BytesToHash(key), "error", err)
 			} else if !bytes.Equal(blob, val) {
 				log.Warn("Blob is different", "hash", common.BytesToHash(key), "want", val, "get", blob)
+			} else {
+				log.Info("Read entry", "hash", common.BytesToHash(key))
 			}
 		}
 	}
+	flatIter.Release()
+
 	fmt.Println(stackTrie.Hash().Hex())
+	stackTrie.Commit()
+	flatdb2.Commit()
+
+	//
+	flatIter = flatdb.NewIterator(nil, nil)
+	for flatIter.Next() {
+		key, val := flatIter.Key(), flatIter.Value()
+
+		if bytes.HasPrefix(key, []byte("leaf")) {
+		} else {
+			blob, err := flatdb2.Get(key)
+			if err != nil {
+				log.Warn("Failed to read entry[2]", "hash", common.BytesToHash(key), "error", err)
+			} else if !bytes.Equal(blob, val) {
+				log.Warn("Blob is different[2]", "hash", common.BytesToHash(key), "want", val, "get", blob)
+			} else {
+				log.Info("Read entry[2]", "hash", common.BytesToHash(key))
+			}
+		}
+	}
+	flatIter.Release()
 	return nil
 }
