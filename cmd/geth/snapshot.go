@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"math/big"
 	"os"
 	"time"
@@ -34,6 +35,11 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	cli "gopkg.in/urfave/cli.v1"
 )
+
+var outputFlag = cli.StringFlag{
+	Name:  "output",
+	Usage: "file name for dumping out the iterated entries",
+}
 
 var (
 	snapshotCommand = cli.Command{
@@ -120,6 +126,26 @@ node/code is missing. This command can be used for trie integrity verification.
 It's basically identical to traverse-state, but the check granularity is smaller.
 `,
 			},
+			{
+				Name:      "traverse-tree",
+				Usage:     "Traverse the specific trie with given root hash",
+				ArgsUsage: "<root>",
+				Action:    utils.MigrateFlags(traverseTree),
+				Category:  "MISCELLANEOUS COMMANDS",
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.RopstenFlag,
+					utils.RinkebyFlag,
+					utils.GoerliFlag,
+					utils.LegacyTestnetFlag,
+					outputFlag,
+				},
+				Description: `
+geth snapshot traverse-tree <state-root>
+will traverse the specific tree with the given root. If the --output is specified,
+all iterated entries will be recorded there line by line.
+`,
+			},
 		},
 	}
 )
@@ -197,15 +223,6 @@ func traverseState(ctx *cli.Context) error {
 
 	_, chaindb := utils.MakeChain(ctx, stack, true)
 	defer chaindb.Close()
-
-	blob, err := chaindb.Get(common.FromHex("0xe8c33b067b98c8916c623bd5de71bdb14e1a8d30e539ca3bf3948834651c4fb2"))
-	if err != nil {
-		log.Crit("Failed to read entry", "error", err)
-	}
-	if len(blob) > 0 {
-		fmt.Println("Blob", blob)
-		return nil
-	}
 
 	if ctx.NArg() > 1 {
 		log.Crit("Too many arguments given")
@@ -374,5 +391,85 @@ func traverseRawState(ctx *cli.Context) error {
 		log.Crit("Failed to traverse state trie", "root", root, "error", accIter.Error())
 	}
 	log.Info("State is complete", "nodes", nodes, "accounts", accounts, "slots", slots, "codes", codes, "elapsed", common.PrettyDuration(time.Since(start)))
+	return nil
+}
+
+func traverseTree(ctx *cli.Context) error {
+	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(true)))
+	glogger.Verbosity(log.LvlInfo)
+	log.Root().SetHandler(glogger)
+
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	_, chaindb := utils.MakeChain(ctx, stack, true)
+	defer chaindb.Close()
+
+	if ctx.NArg() != 1 {
+		log.Crit("Please set the tree root for iteration")
+	}
+	root := common.HexToHash(ctx.Args()[0])
+
+	var logger ethdb.Database
+	if ctx.GlobalIsSet(outputFlag.Name) {
+		flatdb, err := rawdb.NewFlatDatabase(ctx.GlobalString(outputFlag.Name), false)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			flatdb.Commit()
+			flatdb.Close()
+		}()
+		logger = flatdb
+	}
+	t, err := trie.NewSecure(root, trie.NewDatabase(chaindb))
+	if err != nil {
+		log.Crit("Failed to open trie", "root", root, "error", err)
+	}
+	log.Info("Opened the trie", "root", root)
+
+	var (
+		nodes      int
+		leaves     int
+		lastReport time.Time
+		start      = time.Now()
+	)
+	iter := t.NodeIterator(nil)
+	for iter.Next(true) {
+		nodes += 1
+		node := iter.Hash()
+
+		if node != (common.Hash{}) {
+			// Check the present for non-empty hash node(embeded node doesn't
+			// have their own hash).
+			blob := rawdb.ReadTrieNode(chaindb, node)
+			if len(blob) == 0 {
+				log.Crit("Missing trie node", "hash", node)
+			}
+			if logger != nil {
+				if err := logger.Put(iter.Hash().Bytes(), blob); err != nil {
+					log.Crit("Failed to store entry to logger", "hash", iter.Hash(), "error", err)
+				}
+			}
+		}
+		if iter.Leaf() {
+			leaves += 1
+			log.Info("Hit leaf", "key", iter.LeafKey(), "value", iter.LeafBlob())
+
+			if logger != nil {
+				if err := logger.Put(append([]byte("leaf"), iter.LeafKey()...), iter.LeafBlob()); err != nil {
+					log.Crit("Failed to store entry to logger", "error", err)
+				}
+			}
+		}
+		if time.Since(lastReport) > time.Second*8 {
+			log.Info("Traversing trie", "nodes", nodes, "leaves", leaves, "elapsed", common.PrettyDuration(time.Since(start)))
+			lastReport = time.Now()
+		}
+	}
+	if iter.Error() != nil {
+		log.Crit("Failed to traverse trie", "root", root, "error", iter.Error())
+	}
+	log.Info("Traversed trie", "nodes", nodes, "leaves", leaves, "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil
 }
