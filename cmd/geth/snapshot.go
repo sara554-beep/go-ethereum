@@ -492,7 +492,7 @@ func traverseBrokenDB(ctx *cli.Context) error {
 
 	flatIter := flatdb.NewIterator(nil, nil)
 
-	flatdb2, err := rawdb.NewFlatDatabase("debug.db.2", true)
+	flatdb2, err := rawdb.NewFlatDatabase("debug.db.2", false)
 	if err != nil {
 		return err
 	}
@@ -521,22 +521,10 @@ func traverseBrokenDB(ctx *cli.Context) error {
 	stackTrie.Commit()
 	flatdb2.Commit()
 
-	//
-	flatIter = flatdb.NewIterator(nil, nil)
+	flatIter = flatdb2.NewIterator(nil, nil)
 	for flatIter.Next() {
-		key, val := flatIter.Key(), flatIter.Value()
-
-		if bytes.HasPrefix(key, []byte("leaf")) {
-		} else {
-			blob, err := flatdb2.Get(key)
-			if err != nil {
-				log.Warn("Failed to read entry[2]", "hash", common.BytesToHash(key), "error", err)
-			} else if !bytes.Equal(blob, val) {
-				log.Warn("Blob is different[2]", "hash", common.BytesToHash(key), "want", val, "get", blob)
-			} else {
-				log.Info("Read entry[2]", "hash", common.BytesToHash(key))
-			}
-		}
+		key := flatIter.Key()
+		log.Info("Read entry[2]", "hash", common.BytesToHash(key))
 	}
 	flatIter.Release()
 	return nil
