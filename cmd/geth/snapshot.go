@@ -146,6 +146,21 @@ will traverse the specific tree with the given root. If the --output is specifie
 all iterated entries will be recorded there line by line.
 `,
 			},
+			{
+				Name:      "traverse-brokendb",
+				ArgsUsage: "<root>",
+				Action:    utils.MigrateFlags(traverseBrokenDB),
+				Category:  "MISCELLANEOUS COMMANDS",
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.RopstenFlag,
+					utils.RinkebyFlag,
+					utils.GoerliFlag,
+					utils.LegacyTestnetFlag,
+					outputFlag,
+				},
+				Description: ``,
+			},
 		},
 	}
 )
@@ -506,6 +521,13 @@ func traverseBrokenDB(ctx *cli.Context) error {
 		if bytes.HasPrefix(key, []byte("leaf")) {
 			userKey := key[len([]byte("leaf")):]
 			stackTrie.TryUpdate(userKey, val)
+		} else {
+			blob, err := chaindb.Get(key)
+			if err != nil {
+				log.Warn("Failed to read entry", "hash", common.BytesToHash(key), "error", err)
+			} else if !bytes.Equal(blob, val) {
+				log.Warn("Blob is different", "hash", common.BytesToHash(key), "want", val, "get", blob)
+			}
 		}
 	}
 	fmt.Println(stackTrie.Hash().Hex())
