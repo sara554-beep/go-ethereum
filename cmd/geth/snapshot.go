@@ -422,6 +422,7 @@ func traverseTree(ctx *cli.Context) error {
 		}()
 		logger = flatdb
 	}
+
 	t, err := trie.NewSecure(root, trie.NewDatabase(chaindb))
 	if err != nil {
 		log.Crit("Failed to open trie", "root", root, "error", err)
@@ -471,5 +472,42 @@ func traverseTree(ctx *cli.Context) error {
 		log.Crit("Failed to traverse trie", "root", root, "error", iter.Error())
 	}
 	log.Info("Traversed trie", "nodes", nodes, "leaves", leaves, "elapsed", common.PrettyDuration(time.Since(start)))
+	return nil
+}
+
+func traverseBrokenDB(ctx *cli.Context) error {
+	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(true)))
+	glogger.Verbosity(log.LvlInfo)
+	log.Root().SetHandler(glogger)
+
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	_, chaindb := utils.MakeChain(ctx, stack, true)
+	defer chaindb.Close()
+
+	if !ctx.GlobalIsSet(outputFlag.Name) {
+		log.Crit("Please specify the debug db via --output")
+	}
+	flatdb, err := rawdb.NewFlatDatabase(ctx.GlobalString(outputFlag.Name), true)
+	if err != nil {
+		return err
+	}
+	defer flatdb.Close()
+
+	flatIter := flatdb.NewIterator(nil, nil)
+	defer flatIter.Release()
+
+	var stackTrie = trie.NewStackTrie(nil)
+
+	for flatIter.Next() {
+		key, val := flatIter.Key(), flatIter.Value()
+
+		if bytes.HasPrefix(key, []byte("leaf")) {
+			userKey := key[len([]byte("leaf")):]
+			stackTrie.TryUpdate(userKey, val)
+		}
+	}
+	fmt.Println(stackTrie.Hash().Hex())
 	return nil
 }
