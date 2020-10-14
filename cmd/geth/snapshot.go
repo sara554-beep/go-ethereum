@@ -19,7 +19,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"math/big"
 	"os"
 	"time"
@@ -35,11 +34,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	cli "gopkg.in/urfave/cli.v1"
 )
-
-var outputFlag = cli.StringFlag{
-	Name:  "output",
-	Usage: "file name for dumping out the iterated entries",
-}
 
 var (
 	snapshotCommand = cli.Command{
@@ -138,7 +132,6 @@ It's basically identical to traverse-state, but the check granularity is smaller
 					utils.RinkebyFlag,
 					utils.GoerliFlag,
 					utils.LegacyTestnetFlag,
-					outputFlag,
 				},
 				Description: `
 geth snapshot traverse-tree <state-root>
@@ -157,9 +150,7 @@ all iterated entries will be recorded there line by line.
 					utils.RinkebyFlag,
 					utils.GoerliFlag,
 					utils.LegacyTestnetFlag,
-					outputFlag,
 				},
-				Description: ``,
 			},
 		},
 	}
@@ -425,18 +416,14 @@ func traverseTree(ctx *cli.Context) error {
 	}
 	root := common.HexToHash(ctx.Args()[0])
 
-	var logger ethdb.Database
-	if ctx.GlobalIsSet(outputFlag.Name) {
-		flatdb, err := rawdb.NewFlatDatabase(ctx.GlobalString(outputFlag.Name), false)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			flatdb.Commit()
-			flatdb.Close()
-		}()
-		logger = flatdb
+	flatdb, err := rawdb.NewFlatDatabase("debug.db", false)
+	if err != nil {
+		return err
 	}
+	defer func() {
+		flatdb.Commit()
+		flatdb.Close()
+	}()
 
 	t, err := trie.NewSecure(root, trie.NewDatabase(chaindb))
 	if err != nil {
@@ -462,20 +449,16 @@ func traverseTree(ctx *cli.Context) error {
 			if len(blob) == 0 {
 				log.Crit("Missing trie node", "hash", node)
 			}
-			if logger != nil {
-				if err := logger.Put(iter.Hash().Bytes(), blob); err != nil {
-					log.Crit("Failed to store entry to logger", "hash", iter.Hash(), "error", err)
-				}
+			if err := flatdb.Put(iter.Hash().Bytes(), blob); err != nil {
+				log.Crit("Failed to store entry to logger", "hash", iter.Hash(), "error", err)
 			}
 		}
 		if iter.Leaf() {
 			leaves += 1
 			log.Info("Hit leaf", "key", iter.LeafKey(), "value", iter.LeafBlob())
 
-			if logger != nil {
-				if err := logger.Put(append([]byte("leaf"), iter.LeafKey()...), iter.LeafBlob()); err != nil {
-					log.Crit("Failed to store entry to logger", "error", err)
-				}
+			if err := flatdb.Put(append([]byte("leaf"), iter.LeafKey()...), iter.LeafBlob()); err != nil {
+				log.Crit("Failed to store entry to logger", "error", err)
 			}
 		}
 		if time.Since(lastReport) > time.Second*8 {
@@ -501,14 +484,14 @@ func traverseBrokenDB(ctx *cli.Context) error {
 	_, chaindb := utils.MakeChain(ctx, stack, true)
 	defer chaindb.Close()
 
-	if !ctx.GlobalIsSet(outputFlag.Name) {
-		log.Crit("Please specify the debug db via --output")
-	}
-	flatdb, err := rawdb.NewFlatDatabase(ctx.GlobalString(outputFlag.Name), true)
+	flatdb, err := rawdb.NewFlatDatabase("debug.db", true)
 	if err != nil {
 		return err
 	}
-	defer flatdb.Close()
+	defer func() {
+		flatdb.Commit()
+		flatdb.Close()
+	}()
 
 	flatIter := flatdb.NewIterator(nil, nil)
 	defer flatIter.Release()
