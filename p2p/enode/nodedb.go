@@ -27,12 +27,12 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/errors"
-	"github.com/syndtr/goleveldb/leveldb/iterator"
-	"github.com/syndtr/goleveldb/leveldb/opt"
-	"github.com/syndtr/goleveldb/leveldb/storage"
-	"github.com/syndtr/goleveldb/leveldb/util"
+	"github.com/go-leveldb/goleveldb/leveldb"
+	"github.com/go-leveldb/goleveldb/leveldb/errors"
+	"github.com/go-leveldb/goleveldb/leveldb/iterator"
+	"github.com/go-leveldb/goleveldb/leveldb/opt"
+	"github.com/go-leveldb/goleveldb/leveldb/storage"
+	"github.com/go-leveldb/goleveldb/leveldb/util"
 )
 
 // Keys in the node database.

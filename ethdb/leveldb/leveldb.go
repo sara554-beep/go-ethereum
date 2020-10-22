@@ -30,11 +30,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/errors"
-	"github.com/syndtr/goleveldb/leveldb/filter"
-	"github.com/syndtr/goleveldb/leveldb/opt"
-	"github.com/syndtr/goleveldb/leveldb/util"
+	"github.com/go-leveldb/goleveldb/leveldb"
+	"github.com/go-leveldb/goleveldb/leveldb/errors"
+	"github.com/go-leveldb/goleveldb/leveldb/filter"
+	"github.com/go-leveldb/goleveldb/leveldb/opt"
+	"github.com/go-leveldb/goleveldb/leveldb/util"
 )
 
 const (
