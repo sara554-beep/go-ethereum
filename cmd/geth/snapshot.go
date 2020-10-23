@@ -127,6 +127,21 @@ to traverse-state, but the check granularity is smaller.
 It's also usable without snapshot enabled.
 `,
 			},
+			{
+				Name:      "compact",
+				Usage:     "",
+				ArgsUsage: "",
+				Action:    utils.MigrateFlags(rangeCompaction),
+				Category:  "MISCELLANEOUS COMMANDS",
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.RopstenFlag,
+					utils.RinkebyFlag,
+					utils.GoerliFlag,
+					utils.LegacyTestnetFlag,
+				},
+				Description: ``,
+			},
 		},
 	}
 )
@@ -390,5 +405,19 @@ func traverseRawState(ctx *cli.Context) error {
 		log.Crit("Failed to traverse state trie", "root", root, "error", accIter.Error())
 	}
 	log.Info("State is complete", "nodes", nodes, "accounts", accounts, "slots", slots, "codes", codes, "elapsed", common.PrettyDuration(time.Since(start)))
+	return nil
+}
+
+func rangeCompaction(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	_, chaindb := utils.MakeChain(ctx, stack, true)
+	defer chaindb.Close()
+
+	start := time.Now()
+	log.Info("Start range compaction")
+	chaindb.Compact(nil, nil)
+	log.Info("Range compaction finished", "elasped", common.PrettyDuration(time.Since(start)))
 	return nil
 }
