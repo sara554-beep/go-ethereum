@@ -300,7 +300,7 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 					log.Warn("Missing storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
 					continue
 				}
-				if bytes.Equal(blob, storageIter.Value) {
+				if !bytes.Equal(blob, storageIter.Value) {
 					log.Warn("Wrong storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key), "want", storageIter.Value, "got", blob)
 					continue
 				}
