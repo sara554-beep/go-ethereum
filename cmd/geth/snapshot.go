@@ -297,11 +297,14 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 			for storageIter.Next() {
 				blob := rawdb.ReadStorageSnapshot(chaindb, accountHash, common.BytesToHash(storageIter.Key))
 				if len(blob) == 0 {
-					log.Crit("Missing storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
+					log.Warn("Missing storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
+					continue
 				}
 				if bytes.Equal(blob, storageIter.Value) {
-					log.Crit("Wrong storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
+					log.Warn("Wrong storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key), "want", storageIter.Value, "got", blob)
+					continue
 				}
+				log.Info("Correct storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
 			}
 			if storageIter.Err != nil {
 				log.Crit("Failed to traverse storage trie", "root", acc.Root, "error", storageIter.Err)
