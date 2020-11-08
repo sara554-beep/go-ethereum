@@ -732,9 +732,10 @@ func (t *Tree) StorageIterator(root common.Hash, account common.Hash, seek commo
 	return newFastStorageIterator(t, root, account, seek)
 }
 
-// Verify iterates the whole state(all the accounts as well as the corresponding storages)
-// with the specific root and compares the re-computed hash with the original one.
-func (t *Tree) Verify(root common.Hash) error {
+// VerifySnapshot iterates the whole state(all the accounts as well as the
+// corresponding storages) with the specific root and compares the re-computed
+// hash with the original one.
+func (t *Tree) VerifySnapshot(root common.Hash) error {
 	acctIt, err := t.AccountIterator(root, common.Hash{})
 	if err != nil {
 		return err

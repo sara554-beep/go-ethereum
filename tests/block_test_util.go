@@ -146,7 +146,7 @@ func (t *BlockTest) Run(snapshotter bool) error {
 	}
 	// Cross-check the snapshot-to-hash against the trie hash
 	if snapshotter {
-		if err := chain.Snapshot().Verify(chain.CurrentBlock().Root()); err != nil {
+		if err := chain.Snapshot().VerifySnapshot(chain.CurrentBlock().Root()); err != nil {
 			return err
 		}
 	}

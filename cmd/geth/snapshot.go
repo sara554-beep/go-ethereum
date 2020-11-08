@@ -79,7 +79,7 @@ the trie clean cache with default directory will be deleted.
 `,
 			},
 			{
-				Name:      "verify-state",
+				Name:      "verify-snapshot",
 				Usage:     "Recalculate state hash based on the snapshot for verification",
 				ArgsUsage: "<root>",
 				Action:    utils.MigrateFlags(verifyState),
@@ -92,12 +92,55 @@ the trie clean cache with default directory will be deleted.
 					utils.LegacyTestnetFlag,
 				},
 				Description: `
-geth snapshot verify-state <state-root>
+geth snapshot verify-snapshot <state-root>
 will traverse the whole accounts and storages set based on the specified
-snapshot and recalculate the root hash of state for verification.
-In other words, this command does the snapshot to trie conversion.
+snapshot and recalculate the root hash of state for verification. 
+The snapshot can be proved to be complete if and only if the recalculated
+hash is consistent with the given root.
 `,
 			},
+			{
+				Name:      "check-snapshot",
+				Usage:     "Recalculate state hash based on the snapshot for verification",
+				ArgsUsage: "<root> [option <account_root>]",
+				Action:    utils.MigrateFlags(verifySnapshotIntegrity),
+				Category:  "MISCELLANEOUS COMMANDS",
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.RopstenFlag,
+					utils.RinkebyFlag,
+					utils.GoerliFlag,
+					utils.LegacyTestnetFlag,
+				},
+				Description: `
+geth snapshot verify-snapshot <state-root>
+will traverse the whole accounts and storages set based on the specified
+snapshot and recalculate the root hash of state for verification. 
+The snapshot can be proved to be complete if and only if the recalculated
+hash is consistent with the given root.
+`,
+			},
+			//			{
+			//				Name:      "generate-snapshot",
+			//				Usage:     "Generate snapshot offline",
+			//				ArgsUsage: "<root>",
+			//				Action:    utils.MigrateFlags(verifyState),
+			//				Category:  "MISCELLANEOUS COMMANDS",
+			//				Flags: []cli.Flag{
+			//					utils.DataDirFlag,
+			//					utils.RopstenFlag,
+			//					utils.RinkebyFlag,
+			//					utils.GoerliFlag,
+			//					utils.LegacyTestnetFlag,
+			//				},
+			//				Description: `
+			//geth snapshot verify-snapshot <state-root>
+			//will traverse the whole accounts and storages set based on the specified
+			//snapshot and recalculate the root hash of state for verification.
+			//The snapshot can be proved to be complete if and only if the recalculated
+			//hash is consistent with the given root.
+			//`,
+			//			},
 			{
 				Name:      "traverse-state",
 				Usage:     "Traverse the state with given root hash for verification",
@@ -195,10 +238,76 @@ func verifyState(ctx *cli.Context) error {
 			utils.Fatalf("Failed to resolve state root %v", err)
 		}
 	}
-	if err := snaptree.Verify(root); err != nil {
+	if err := snaptree.VerifySnapshot(root); err != nil {
 		log.Crit("Failed to verfiy state", "error", err)
 	} else {
 		log.Info("Verified the state")
+	}
+	return nil
+}
+
+func verifySnapshotIntegrity(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	chain, chaindb := utils.MakeChain(ctx, stack, true)
+	defer chaindb.Close()
+
+	if ctx.NArg() > 1 {
+		log.Crit("Too many arguments given")
+	}
+	// Use the HEAD root as the default
+	head := chain.CurrentBlock()
+	if head == nil {
+		log.Crit("Head block is missing")
+	}
+	root := head.Root()
+
+	var (
+		account      common.Hash
+		accountBytes []byte
+		err          error
+	)
+	if ctx.NArg() >= 1 {
+		account, err = parseRoot(ctx.Args()[0])
+		if err != nil {
+			utils.Fatalf("Failed to resolve state root %v", err)
+		}
+		accountBytes = account.Bytes()
+		log.Info("Start with account", "account", account, "root", root)
+	}
+	triedb := trie.NewDatabase(chaindb)
+	t, err := trie.NewSecure(root, triedb)
+	if err != nil {
+		log.Crit("Failed to open trie", "root", root, "error", err)
+	}
+	accIter := trie.NewIterator(t.NodeIterator(accountBytes))
+	for accIter.Next() {
+		var acc state.Account
+		if err := rlp.DecodeBytes(accIter.Value, &acc); err != nil {
+			log.Crit("Invalid account encountered during traversal", "error", err)
+		}
+		if bytes.Equal(accIter.Key, accountBytes) {
+			accountHash := common.BytesToHash(accIter.Key)
+			storageTrie, err := trie.NewSecure(acc.Root, triedb)
+			if err != nil {
+				log.Crit("Failed to open storage trie", "root", acc.Root, "error", err)
+			}
+			storageIter := trie.NewIterator(storageTrie.NodeIterator(nil))
+			for storageIter.Next() {
+				blob := rawdb.ReadStorageSnapshot(chaindb, accountHash, common.BytesToHash(storageIter.Key))
+				if len(blob) == 0 {
+					log.Crit("Missing storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
+				}
+				if bytes.Equal(blob, storageIter.Value) {
+					log.Crit("Wrong storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
+				}
+			}
+			if storageIter.Err != nil {
+				log.Crit("Failed to traverse storage trie", "root", acc.Root, "error", storageIter.Err)
+			}
+			return nil
+		}
 	}
 	return nil
 }
