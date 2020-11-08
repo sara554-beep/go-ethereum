@@ -298,8 +298,11 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 				log.Crit("Failed to open storage trie", "root", acc.Root, "error", err)
 			}
 			hashset := make(map[common.Hash]struct{})
+
+			ttotal := 0
 			storageIter := trie.NewIterator(storageTrie.NodeIterator(nil))
 			for storageIter.Next() {
+				ttotal += 1
 				blob := rawdb.ReadStorageSnapshot(chaindb, accountHash, common.BytesToHash(storageIter.Key))
 				if len(blob) == 0 {
 					log.Warn("Missing storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
@@ -320,12 +323,15 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 			if err != nil {
 				log.Crit("Failed to create snapshot iterator", "error", err)
 			}
+			var stotal int
 			for storageSnapIter.Next() {
 				slotHash := storageSnapIter.Hash()
 				if _, ok := hashset[slotHash]; !ok {
 					log.Warn("Extra slot", "hash", slotHash)
 				}
+				stotal += 1
 			}
+			log.Info("Total slots found", "in-tree", ttotal, "in-snapshot", stotal)
 			return nil
 		}
 	}
