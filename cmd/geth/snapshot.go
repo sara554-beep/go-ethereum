@@ -263,10 +263,14 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 	}
 	root := head.Root()
 
+	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), 256, root, false, false, false)
+	if err != nil {
+		log.Crit("Failed to open the snapshot tree", "error", err)
+	}
+
 	var (
 		account      common.Hash
 		accountBytes []byte
-		err          error
 	)
 	if ctx.NArg() >= 1 {
 		account, err = parseRoot(ctx.Args()[0])
@@ -293,6 +297,7 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 			if err != nil {
 				log.Crit("Failed to open storage trie", "root", acc.Root, "error", err)
 			}
+			hashset := make(map[common.Hash]struct{})
 			storageIter := trie.NewIterator(storageTrie.NodeIterator(nil))
 			for storageIter.Next() {
 				blob := rawdb.ReadStorageSnapshot(chaindb, accountHash, common.BytesToHash(storageIter.Key))
@@ -304,10 +309,22 @@ func verifySnapshotIntegrity(ctx *cli.Context) error {
 					log.Warn("Wrong storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key), "want", storageIter.Value, "got", blob)
 					continue
 				}
+				hashset[common.BytesToHash(storageIter.Key)] = struct{}{}
 				log.Info("Correct storage", "account", accountHash, "storage", common.BytesToHash(storageIter.Key))
 			}
 			if storageIter.Err != nil {
 				log.Crit("Failed to traverse storage trie", "root", acc.Root, "error", storageIter.Err)
+			}
+			// Iterate snapshot
+			storageSnapIter, err := snaptree.StorageIterator(root, accountHash, common.Hash{})
+			if err != nil {
+				log.Crit("Failed to create snapshot iterator", "error", err)
+			}
+			for storageSnapIter.Next() {
+				slotHash := storageSnapIter.Hash()
+				if _, ok := hashset[slotHash]; !ok {
+					log.Warn("Extra slot", "hash", slotHash)
+				}
 			}
 			return nil
 		}
