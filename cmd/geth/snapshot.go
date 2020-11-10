@@ -99,6 +99,26 @@ In other words, this command does the snapshot to trie conversion.
 `,
 			},
 			{
+				Name:      "repair-state",
+				Usage:     "Repair the broken state based on the snapshot",
+				ArgsUsage: "<path> <root> [accounthash]",
+				Action:    utils.MigrateFlags(repairState),
+				Category:  "MISCELLANEOUS COMMANDS",
+				Flags: []cli.Flag{
+					utils.DataDirFlag,
+					utils.RopstenFlag,
+					utils.RinkebyFlag,
+					utils.GoerliFlag,
+					utils.LegacyTestnetFlag,
+				},
+				Description: `
+geth snapshot repair-state <path> <state-root> [account-hash]
+will repair the broken state with the speific path by regenerating the missing
+state. The assumption is held that the snapshot data is not broken, otherwise 
+there is no guarantee the regenerated states are correct.
+`,
+			},
+			{
 				Name:      "traverse-state",
 				Usage:     "Traverse the state with given root hash for verification",
 				ArgsUsage: "<root>",
@@ -205,6 +225,153 @@ func verifyState(ctx *cli.Context) error {
 	} else {
 		log.Info("Verified the state")
 	}
+	return nil
+}
+
+// getStateRange retrieves a batch of states(accounts or slots) with the
+// target key range.
+func getStateRange(snaptree *snapshot.Tree, root common.Hash, accountHash common.Hash, start, limit []byte) ([][]byte, [][]byte, error) {
+	var (
+		err        error
+		iterator   snapshot.Iterator
+		keys, vals [][]byte
+	)
+	if accountHash != (common.Hash{}) {
+		iterator, err = snaptree.StorageIterator(root, accountHash, common.Hash{})
+		if err != nil {
+			return nil, nil, err
+		}
+		for iterator.Next() {
+			keys = append(keys, common.CopyBytes(iterator.Hash().Bytes()))
+			vals = append(vals, common.CopyBytes(iterator.(snapshot.StorageIterator).Slot()))
+		}
+	} else {
+		iterator, err = snaptree.AccountIterator(root, common.Hash{})
+		if err != nil {
+			return nil, nil, err
+		}
+		for iterator.Next() {
+			keys = append(keys, common.CopyBytes(iterator.Hash().Bytes()))
+			vals = append(vals, common.CopyBytes(iterator.(snapshot.AccountIterator).Account()))
+		}
+	}
+	return keys, vals, nil
+}
+
+// pathNeighbors calculates the neighbors of the specific path.
+func pathNeighbors(path []byte, minPrefix int) ([]byte, []byte) {
+	var (
+		prev []byte
+		next []byte
+	)
+	// Calculate the predecessor
+	prefix := 0
+	for i, c := range path {
+		if prefix < minPrefix {
+			prefix += 1
+			continue
+		}
+		if c != 0x0 {
+			prev = append(prev, path[:i+1]...)
+			prev[len(prev)-1]--
+			break
+		}
+	}
+	// Calculate the successor
+	prefix = 0
+	for i, c := range path {
+		if prefix < minPrefix {
+			prefix += 1
+			continue
+		}
+		if c != 0xff {
+			next = append(next, path[:i+1]...)
+			next[len(next)-1]++
+			break
+		}
+	}
+	return prev, next
+}
+
+func repairState(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	chain, chaindb := utils.MakeChain(ctx, stack, true)
+	defer chaindb.Close()
+
+	// Initialize the snapshot tree in recovery mode. The state database
+	// may already be broken. So it's totally fine to heal the state from
+	// the existent snapshot even they are not exactly paired.
+	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), chain.CurrentBlock().Root(), snapshot.Config{
+		Recovery:   true,
+		AsyncBuild: false,
+		NoBuild:    true,
+		Cache:      256,
+	})
+	if err != nil {
+		log.Crit("Failed to open the snapshot tree", "error", err)
+	}
+	var (
+		path        []byte
+		root        common.Hash
+		accountHash common.Hash
+		stateRoot   common.Hash
+	)
+	if ctx.NArg() < 2 {
+		log.Crit("At least two arguments are expected")
+	}
+	path = common.FromHex(ctx.Args()[0])
+	root, err = parseRoot(ctx.Args()[1])
+	if err != nil {
+		utils.Fatalf("Failed to resolve state root %v", err)
+	}
+	if len(ctx.Args()) > 2 {
+		accountHash, err = parseRoot(ctx.Args()[2])
+		if err != nil {
+			utils.Fatalf("Failed to resolve account hash %v", err)
+		}
+	}
+	triedb := trie.NewDatabase(chaindb)
+	t, err := trie.NewSecure(root, triedb)
+	if err != nil {
+		log.Crit("Failed to open trie", "root", root, "error", err)
+	}
+	stateRoot = root
+	if accountHash != (common.Hash{}) {
+		blob := t.Get(accountHash.Bytes())
+		if len(blob) == 0 {
+			log.Crit("Failed to load the target account")
+		}
+		var acc state.Account
+		if err := rlp.DecodeBytes(blob, &acc); err != nil {
+			log.Crit("Failed to decode the account", "error", err)
+		}
+		t, err = trie.NewSecure(acc.Root, triedb)
+		if err != nil {
+			log.Crit("Failed to open storage trie", "root", root, "account", accountHash, "error", err)
+		}
+		stateRoot = acc.Root
+	}
+	// Derive the neighbors of the target path, calculate the edge proofs.
+	// The non-existent proofs are also valid.
+	prev, next := pathNeighbors(path, len(path)-1)
+	proofdb := rawdb.NewMemoryDatabase()
+	if err := t.Prove(prev, 0, proofdb); err != nil {
+		log.Crit("Failed to generate edge proof", "error", err)
+	}
+	if err := t.Prove(next, 0, proofdb); err != nil {
+		log.Crit("Failed to generate edge proof", "error", err)
+	}
+	keys, vals, err := getStateRange(snaptree, root, accountHash, prev, next)
+	if err != nil {
+		log.Crit("Failed to get state range", "error", err)
+	}
+	_, _, _, err = trie.VerifyRangeProof(stateRoot, prev, next, keys, vals, proofdb)
+	if err != nil {
+		log.Crit("Failed to verify range proof", "error", err)
+	}
+	// todo commit all entries in the returned db
 	return nil
 }
 
