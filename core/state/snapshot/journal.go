@@ -188,7 +188,7 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, root common
 		log.Warn("Snapshot is not continuous with chain", "snaproot", head, "chainroot", root)
 	}
 	// Everything loaded correctly, resume any suspended operations
-	if !generator.Done {
+	if !generator.Done && !config.NoBuild {
 		// If the generator was still wiping, restart one from scratch (fine for
 		// now as it's rare and the wiper deletes the stuff it touches anyway, so
 		// restarting won't incur a lot of extra database hops.
