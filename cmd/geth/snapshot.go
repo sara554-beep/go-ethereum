@@ -181,7 +181,12 @@ func verifyState(ctx *cli.Context) error {
 	chain, chaindb := utils.MakeChain(ctx, stack, true)
 	defer chaindb.Close()
 
-	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), 256, chain.CurrentBlock().Root(), false, false, false)
+	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), chain.CurrentBlock().Root(), snapshot.Config{
+		Recovery:   false,
+		AsyncBuild: false,
+		NoBuild:    true,
+		Cache:      256,
+	})
 	if err != nil {
 		log.Crit("Failed to open the snapshot tree", "error", err)
 	}
