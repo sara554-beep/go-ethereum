@@ -80,7 +80,12 @@ type Pruner struct {
 
 // NewPruner creates the pruner instance.
 func NewPruner(db ethdb.Database, headHeader *types.Header, datadir, trieCachePath string, bloomSize uint64) (*Pruner, error) {
-	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, headHeader.Root, false, false, false)
+	snaptree, err := snapshot.New(db, trie.NewDatabase(db), headHeader.Root, snapshot.Config{
+		Recovery:   false,
+		AsyncBuild: false,
+		NoBuild:    true,
+		Cache:      256,
+	})
 	if err != nil {
 		return nil, err // The relevant snapshot(s) might not exist
 	}
@@ -334,7 +339,12 @@ func RecoverPruning(datadir string, db ethdb.Database, trieCachePath string) err
 	// - The state HEAD is rewound already because of multiple incomplete `prune-state`
 	// In this case, even the state HEAD is not exactly matched with snapshot, it
 	// still feasible to recover the pruning correctly.
-	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, headHeader.Root, false, false, true)
+	snaptree, err := snapshot.New(db, trie.NewDatabase(db), headHeader.Root, snapshot.Config{
+		Recovery:   true,
+		AsyncBuild: false,
+		NoBuild:    true,
+		Cache:      256,
+	})
 	if err != nil {
 		return err // The relevant snapshot(s) might not exist
 	}
