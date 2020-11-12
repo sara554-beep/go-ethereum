@@ -18,7 +18,6 @@ package main
 
 import (
 	"bytes"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"time"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -28,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state/pruner"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -242,24 +242,38 @@ func getStateRange(snaptree *snapshot.Tree, root common.Hash, accountHash common
 		err        error
 		iterator   snapshot.Iterator
 		keys, vals [][]byte
+		startHash  = common.BytesToHash(common.RightPadBytes(start, common.HashLength))
+		limitHash  = common.BytesToHash(common.RightPadBytes(limit, common.HashLength))
 	)
 	if accountHash != (common.Hash{}) {
-		iterator, err = snaptree.StorageIterator(root, accountHash, common.Hash{})
+		iterator, err = snaptree.StorageIterator(root, accountHash, startHash)
 		if err != nil {
 			return nil, nil, err
 		}
 		for iterator.Next() {
+			if bytes.Compare(iterator.Hash().Bytes(), limitHash.Bytes()) > 0 {
+				break
+			}
 			keys = append(keys, common.CopyBytes(iterator.Hash().Bytes()))
 			vals = append(vals, common.CopyBytes(iterator.(snapshot.StorageIterator).Slot()))
 		}
 	} else {
-		iterator, err = snaptree.AccountIterator(root, common.Hash{})
+		iterator, err = snaptree.AccountIterator(root, startHash)
 		if err != nil {
 			return nil, nil, err
 		}
 		for iterator.Next() {
+			if bytes.Compare(iterator.Hash().Bytes(), limitHash.Bytes()) > 0 {
+				break
+			}
 			keys = append(keys, common.CopyBytes(iterator.Hash().Bytes()))
-			vals = append(vals, common.CopyBytes(iterator.(snapshot.AccountIterator).Account()))
+
+			// Convert the slim format to full format
+			blob, err := snapshot.FullAccountRLP(common.CopyBytes(iterator.(snapshot.AccountIterator).Account()))
+			if err != nil {
+				return nil, nil, err
+			}
+			vals = append(vals, blob)
 		}
 	}
 	log.Info("Retrieved the state in the specific range", "entries", len(keys))

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"sort"
 	"time"
 
@@ -549,6 +550,16 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 				data.Root = emptyRoot
 			}
 		}
+		enc, err := s.trie.TryGet(addr.Bytes())
+		if err != nil {
+			s.setError(fmt.Errorf("getDeleteStateObject (%x) error: %v", addr.Bytes(), err))
+			return nil
+		}
+		if len(enc) == 0 {
+			return nil
+		}
+		log.Info("Retrieve account", "state", s.trie.Hash().Hex())
+		os.Exit(1)
 	}
 	// If snapshot unavailable or reading from it failed, load from the database
 	if s.snap == nil || err != nil {
@@ -563,6 +574,8 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 		if len(enc) == 0 {
 			return nil
 		}
+		log.Info("Retrieve account", "state", s.trie.Hash().Hex())
+		os.Exit(1)
 		data = new(Account)
 		if err := rlp.DecodeBytes(enc, data); err != nil {
 			log.Error("Failed to decode state object", "addr", addr, "err", err)
