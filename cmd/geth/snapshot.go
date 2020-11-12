@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"time"
 
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -116,6 +117,10 @@ geth snapshot repair-state <path> <state-root> [account-hash]
 will repair the broken state with the speific path by regenerating the missing
 state. The assumption is held that the snapshot data is not broken, otherwise 
 there is no guarantee the regenerated states are correct.
+
+In order to make sure the snapshot is still usable, please run the 
+"geth snapshot verify-state [target_state_root]" first to see if any corruption
+is detected.
 `,
 			},
 			{
@@ -230,6 +235,8 @@ func verifyState(ctx *cli.Context) error {
 
 // getStateRange retrieves a batch of states(accounts or slots) with the
 // target key range.
+//
+// TODO(rjl493456442) we have to limit the range, otherwise the OOM will happen.
 func getStateRange(snaptree *snapshot.Tree, root common.Hash, accountHash common.Hash, start, limit []byte) ([][]byte, [][]byte, error) {
 	var (
 		err        error
@@ -255,6 +262,7 @@ func getStateRange(snaptree *snapshot.Tree, root common.Hash, accountHash common
 			vals = append(vals, common.CopyBytes(iterator.(snapshot.AccountIterator).Account()))
 		}
 	}
+	log.Info("Retrieved the state in the specific range", "entries", len(keys))
 	return keys, vals, nil
 }
 
@@ -290,7 +298,28 @@ func pathNeighbors(path []byte, minPrefix int) ([]byte, []byte) {
 			break
 		}
 	}
+	log.Info("Resolved the path neighbors", "path", path, "prev", prev, "next", next)
 	return prev, next
+}
+
+func commitFixedState(fixdb ethdb.KeyValueStore, maindb ethdb.Database) int {
+	var committed int
+	fixBatch := maindb.NewBatch()
+	fixIter := fixdb.NewIterator(nil, nil)
+	for fixIter.Next() {
+		fixBatch.Put(fixIter.Key(), fixIter.Value())
+		if fixBatch.ValueSize() > ethdb.IdealBatchSize {
+			fixBatch.Write()
+			fixBatch.Reset()
+		}
+		committed += 1
+	}
+	if fixBatch.ValueSize() > 0 {
+		fixBatch.Write()
+		fixBatch.Reset()
+	}
+	fixIter.Release()
+	return committed
 }
 
 func repairState(ctx *cli.Context) error {
@@ -332,13 +361,21 @@ func repairState(ctx *cli.Context) error {
 			utils.Fatalf("Failed to resolve account hash %v", err)
 		}
 	}
+	// Open the specific state trie for repairing by default.
 	triedb := trie.NewDatabase(chaindb)
+
+	// TODO what if the root is missing(rjl493456442). Regenerate the
+	// entire tree by snapshot?
 	t, err := trie.NewSecure(root, triedb)
 	if err != nil {
 		log.Crit("Failed to open trie", "root", root, "error", err)
 	}
 	stateRoot = root
+
+	// If the storage trie is specified, switch to the storage trie
+	// for repairing.
 	if accountHash != (common.Hash{}) {
+		// TODO what if the sepcifed account is unaceesable(rjl493456442)?
 		blob := t.Get(accountHash.Bytes())
 		if len(blob) == 0 {
 			log.Crit("Failed to load the target account")
@@ -347,6 +384,8 @@ func repairState(ctx *cli.Context) error {
 		if err := rlp.DecodeBytes(blob, &acc); err != nil {
 			log.Crit("Failed to decode the account", "error", err)
 		}
+		// TODO what if the root is missing(rjl493456442). Regenerate the
+		// entire tree by snapshot?
 		t, err = trie.NewSecure(acc.Root, triedb)
 		if err != nil {
 			log.Crit("Failed to open storage trie", "root", root, "account", accountHash, "error", err)
@@ -367,11 +406,12 @@ func repairState(ctx *cli.Context) error {
 	if err != nil {
 		log.Crit("Failed to get state range", "error", err)
 	}
-	_, _, _, err = trie.VerifyRangeProof(stateRoot, prev, next, keys, vals, proofdb)
+	fixdb, _, _, err := trie.VerifyRangeProof(stateRoot, prev, next, keys, vals, proofdb)
 	if err != nil {
 		log.Crit("Failed to verify range proof", "error", err)
 	}
-	// todo commit all entries in the returned db
+	committed := commitFixedState(fixdb, chaindb)
+	log.Info("Corrupted database is fixed", "committed", committed)
 	return nil
 }
 
