@@ -704,6 +704,10 @@ func (t *Tree) Verify(root common.Hash) error {
 	}
 	defer acctIt.Release()
 
+	tr, err := trie.New(root, t.triedb)
+	if err != nil {
+		return err
+	}
 	got, err := generateTrieRoot(nil, acctIt, common.Hash{}, stackTrieGenerate, func(db ethdb.KeyValueWriter, accountHash, codeHash common.Hash, stat *generateStats) (common.Hash, error) {
 		storageIt, err := t.StorageIterator(root, accountHash, common.Hash{})
 		if err != nil {
@@ -711,11 +715,17 @@ func (t *Tree) Verify(root common.Hash) error {
 		}
 		defer storageIt.Release()
 
-		hash, err := generateTrieRoot(nil, storageIt, accountHash, stackTrieGenerate, nil, stat, false)
+		hash, err := generateTrieRoot(nil, storageIt, accountHash, stackTrieGenerate, nil, nil, stat, false)
 		if err != nil {
 			return common.Hash{}, err
 		}
 		return hash, nil
+	}, func(key []byte, val []byte) bool {
+		blob, err := tr.TryGet(key)
+		if err != nil {
+			return false
+		}
+		return bytes.Equal(blob, val)
 	}, newGenerateStats(), true)
 
 	if err != nil {
