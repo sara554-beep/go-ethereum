@@ -721,11 +721,18 @@ func (t *Tree) Verify(root common.Hash) error {
 		}
 		return hash, nil
 	}, func(key []byte, val []byte) bool {
-		blob, err := tr.TryGet(key)
-		if err != nil {
-			return false
+		if val == nil {
+			blob, err := tr.TryGet(key)
+			if err != nil {
+				return false
+			}
+			return bytes.Equal(blob, val)
 		}
-		return bytes.Equal(blob, val)
+		it := trie.NewIterator(tr.NodeIterator(key))
+		for it.Next() {
+			log.Error("Extra data", "key", common.BytesToHash(it.Key).Hex())
+		}
+		return false
 	}, newGenerateStats(), true)
 
 	if err != nil {

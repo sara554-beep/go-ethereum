@@ -289,10 +289,12 @@ func generateTrieRoot(db ethdb.KeyValueWriter, it Iterator, account common.Hash,
 	var (
 		logged    = time.Now()
 		processed = uint64(0)
+		last      common.Hash
 		leaf      trieKV
 	)
 	// Start to feed leaves
 	for it.Next() {
+		last = it.Hash()
 		if account == (common.Hash{}) {
 			var (
 				err      error
@@ -352,6 +354,11 @@ func generateTrieRoot(db ethdb.KeyValueWriter, it Iterator, account common.Hash,
 				stats.progressContract(account, it.Hash(), processed)
 			}
 			logged, processed = time.Now(), 0
+		}
+	}
+	if onNode != nil {
+		if !onNode(last.Bytes(), nil) {
+			log.Error("Failed on extra checks")
 		}
 	}
 	// Commit the last part statistic.
