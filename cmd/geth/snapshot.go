@@ -273,6 +273,12 @@ func traverseState(ctx *cli.Context) error {
 		}
 		fullRLP, err := snapshot.FullAccountRLP(snapRLP)
 		if err != nil {
+			log.Error("Detected bad account",
+				"hash", common.BytesToHash(accIter.Key).Hex(),
+				"nonce", snapAcc.Nonce,
+				"balance", snapAcc.Balance,
+				"root", common.BytesToHash(snapAcc.Root),
+				"code", common.BytesToHash(snapAcc.CodeHash))
 			log.Error("Failed to convert account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
 			continue
 		}
