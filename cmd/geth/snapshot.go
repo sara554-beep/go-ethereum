@@ -266,6 +266,10 @@ func traverseState(ctx *cli.Context) error {
 			log.Error("Failed to retrieve account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
 			continue
 		}
+		if snapAcc == nil {
+			log.Error("Failed to retrieve account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
+			continue
+		}
 		snapRLP, err := rlp.EncodeToBytes(snapAcc)
 		if err != nil {
 			log.Error("Failed to encode account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
