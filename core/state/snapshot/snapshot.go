@@ -166,6 +166,7 @@ type Tree struct {
 	triedb *trie.Database           // In-memory cache to access the trie through
 	cache  int                      // Megabytes permitted to use for read caches
 	layers map[common.Hash]snapshot // Collection of all known layers
+	head   snapshot
 	lock   sync.RWMutex
 }
 
@@ -199,6 +200,7 @@ func New(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root comm
 		}
 		return nil, err // Bail out the error, don't rebuild automatically.
 	}
+	snap.head = head
 	// Existing snapshot loaded, seed all the layers
 	for head != nil {
 		snap.layers[head.Root()] = head
@@ -268,6 +270,10 @@ func (t *Tree) Snapshots(root common.Hash, limits int, nodisk bool) []Snapshot {
 		layer = parent
 	}
 	return ret
+}
+
+func (t *Tree) Head() Snapshot {
+	return t.head
 }
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing

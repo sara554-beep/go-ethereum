@@ -217,6 +217,11 @@ func traverseState(ctx *cli.Context) error {
 	chain, chaindb := utils.MakeChain(ctx, stack, true)
 	defer chaindb.Close()
 
+	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), 256, chain.CurrentBlock().Root(), false, false, false)
+	if err != nil {
+		log.Error("Failed to open snapshot tree", "error", err)
+		return err
+	}
 	if ctx.NArg() > 1 {
 		log.Error("Too many arguments given")
 		return errors.New("too many arguments")
@@ -229,7 +234,6 @@ func traverseState(ctx *cli.Context) error {
 	}
 	var (
 		root common.Hash
-		err  error
 	)
 	if ctx.NArg() == 1 {
 		root, err = parseRoot(ctx.Args()[0])
@@ -257,6 +261,25 @@ func traverseState(ctx *cli.Context) error {
 	)
 	accIter := trie.NewIterator(t.NodeIterator(nil))
 	for accIter.Next() {
+		snapAcc, err := snaptree.Head().Account(common.BytesToHash(accIter.Key))
+		if err != nil {
+			log.Error("Failed to retrieve account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
+			continue
+		}
+		snapRLP, err := rlp.EncodeToBytes(snapAcc)
+		if err != nil {
+			log.Error("Failed to encode account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
+			continue
+		}
+		fullRLP, err := snapshot.FullAccountRLP(snapRLP)
+		if err != nil {
+			log.Error("Failed to convert account", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
+			continue
+		}
+		if !bytes.Equal(fullRLP, accIter.Value) {
+			log.Error("Account mismatch", "hash", common.BytesToHash(accIter.Key).Hex(), "error", err)
+			continue
+		}
 		accounts += 1
 		var acc state.Account
 		if err := rlp.DecodeBytes(accIter.Value, &acc); err != nil {
