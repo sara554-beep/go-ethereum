@@ -736,7 +736,7 @@ func (t *Tree) Verify(root common.Hash) error {
 			found = true
 		}
 		if found {
-			log.Error("Begin key", key, common.BytesToHash(key).Hex())
+			log.Error("Begin key", "key", common.BytesToHash(key).Hex())
 		}
 		return !found
 	}, newGenerateStats(), true)
