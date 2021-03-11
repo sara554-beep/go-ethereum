@@ -721,7 +721,7 @@ func (t *Tree) Verify(root common.Hash) error {
 		}
 		return hash, nil
 	}, func(key []byte, val []byte) bool {
-		if val == nil {
+		if val != nil {
 			blob, err := tr.TryGet(key)
 			if err != nil {
 				return false
