@@ -180,7 +180,7 @@ func (sche *storageSnapScheduer) loop() {
 			sche.entries, sche.list = nil, nil
 			close(sche.closed)
 			close(signal)
-			log.Trace("Generated storage snapshot", "read", common.StorageSize(totalRead), "write", common.StorageSize(totalWrite), "accounts", totalAccounts, "failures", totalFailures, "dropped", totalDropped)
+			log.Info("Generated storage snapshot", "read", common.StorageSize(totalRead), "write", common.StorageSize(totalWrite), "accounts", totalAccounts, "failures", totalFailures, "dropped", totalDropped)
 			return
 		}
 	}

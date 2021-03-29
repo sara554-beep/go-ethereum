@@ -442,6 +442,10 @@ type Syncer struct {
 	storageHealed      uint64             // Number of storage slots downloaded during the healing stage
 	storageHealedBytes common.StorageSize // Number of raw storage bytes persisted to disk during the healing stage
 
+	// Handler for regenerating duplicated storages which is only
+	// created/reset in the single sync cycle.
+	storageScheduer *storageSnapScheduer
+
 	startTime time.Time // Time instance when snapshot sync started
 	logTime   time.Time // Time instance when status was last reported
 
@@ -556,6 +560,10 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 		codeTasks: make(map[common.Hash]struct{}),
 	}
 	s.statelessPeers = make(map[string]struct{})
+
+	// Grant a small memory allowance to scheduler
+	// for caching the duplicated storage tries.
+	s.storageScheduer = newStorageSnapScheduler(trie.NewDatabaseWithConfig(s.db, &trie.Config{Cache: 16}), s.db)
 	s.lock.Unlock()
 
 	if s.startTime == (time.Time{}) {
@@ -573,6 +581,10 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 		}
 		s.cleanAccountTasks()
 		s.saveSyncStatus()
+
+		// Generate all the duplicate storage tries forcibly.
+		s.storageScheduer.close()
+		s.storageScheduer = nil
 	}()
 
 	log.Debug("Starting snapshot sync cycle", "root", root)
@@ -1609,7 +1621,11 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 		}
 		// Check if the account is a contract with an unknown storage trie
 		if account.Root != emptyRoot {
-			if node, err := s.db.Get(account.Root[:]); err != nil || node == nil {
+			if node, err := s.db.Get(account.Root[:]); err == nil && node != nil {
+				// The storage trie is already retrieved, create the request
+				// to generate storage snaps.
+				s.storageScheduer.tryAdd(account.Root, res.hashes[i])
+			} else {
 				// If there was a previous large state retrieval in progress,
 				// don't restart it from scratch. This happens if a sync cycle
 				// is interrupted and resumed later. However, *do* update the
