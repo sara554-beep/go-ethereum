@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
@@ -40,6 +41,10 @@ type diskLayer struct {
 	genMarker  []byte                    // Marker for the state that's indexed during initial layer generation
 	genPending chan struct{}             // Notification channel when generation is done (test synchronicity)
 	genAbort   chan chan *generatorStats // Notification channel to abort generating the snapshot in this layer
+
+	// tinytrieCache is the cache used for caching tiny storage
+	// tries. It should only be used in the generation stage.
+	tinytrieCache *lru.Cache
 
 	lock sync.RWMutex
 }

@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 var (
@@ -55,6 +56,11 @@ var (
 	// value is too large, the failure rate of range prove will increase. Otherwise
 	// the the value is too small, the efficiency of the state recovery will decrease.
 	storageCheckRange = 1024
+
+	// tinyCacheSize is the cache size for tiny storage trie cache. There are lots
+	// of duplicated tiny storage tries in the ethereum state. Most of them need to
+	// be iterated for generating storage snaps. Use the cache for reusing the trie.
+	tinyCacheSize = 4096
 )
 
 // Metrics in generation
@@ -69,6 +75,8 @@ var (
 	snapMissallStorageMeter       = metrics.NewRegisteredMeter("state/snapshot/generation/storage/missall", nil)
 	snapSuccessfulRangeProofMeter = metrics.NewRegisteredMeter("state/snapshot/generation/proof/success", nil)
 	snapFailedRangeProofMeter     = metrics.NewRegisteredMeter("state/snapshot/generation/proof/failure", nil)
+	snapTinyTrieCacheHitMeter     = metrics.NewRegisteredMeter("state/snapshot/generation/tinycache/hit", nil)
+	snapTinyTrieCacheMissMeter    = metrics.NewRegisteredMeter("state/snapshot/generation/tinycache/miss", nil)
 
 	snapAccountProveTimer    = metrics.NewRegisteredGauge("state/snapshot/generation/duration/account/prove", nil)
 	snapAccountTrieReadTimer = metrics.NewRegisteredGauge("state/snapshot/generation/duration/account/trieread", nil)
@@ -155,14 +163,16 @@ func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache i
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write initialized state marker", "err", err)
 	}
+	trieCache, _ := lru.New(tinyCacheSize)
 	base := &diskLayer{
-		diskdb:     diskdb,
-		triedb:     triedb,
-		root:       root,
-		cache:      fastcache.New(cache * 1024 * 1024),
-		genMarker:  genMarker,
-		genPending: make(chan struct{}),
-		genAbort:   make(chan chan *generatorStats),
+		diskdb:        diskdb,
+		triedb:        triedb,
+		root:          root,
+		cache:         fastcache.New(cache * 1024 * 1024),
+		genMarker:     genMarker,
+		genPending:    make(chan struct{}),
+		genAbort:      make(chan chan *generatorStats),
+		tinytrieCache: trieCache,
 	}
 	go base.generate(stats)
 	log.Debug("Start snapshot generation", "root", root)
@@ -392,23 +402,35 @@ func (dl *diskLayer) generateRange(root common.Hash, prefix []byte, kind string,
 	logger.Trace("Detected outdated state range", "last", hexutil.Encode(last), "err", result.proofErr)
 	snapFailedRangeProofMeter.Mark(1)
 
+	tr := result.tr
+	if tr == nil {
+		tr, err = trie.New(root, dl.triedb)
+		if err != nil {
+			return false, nil, err
+		}
+	}
 	// Special case, the entire trie is missing. In the original trie scheme,
 	// all the duplicated subtries will be filter out(only one copy of data
 	// will be stored). While in the snapshot model, all the storage tries
 	// belong to different contracts will be kept even they are duplicated.
 	// Track it to a certain extent remove the noise data used for statistics.
+	var loadCache bool
 	if origin == nil && last == nil {
 		meter := snapMissallAccountMeter
 		if kind == "storage" {
 			meter = snapMissallStorageMeter
 		}
 		meter.Mark(1)
-	}
-	tr := result.tr
-	if tr == nil {
-		tr, err = trie.New(root, dl.triedb)
-		if err != nil {
-			return false, nil, err
+
+		// Use the cached (tiny) storage trie to avoid
+		// unnecessary disk reads.
+		if dl.tinytrieCache != nil {
+			if val, ok := dl.tinytrieCache.Get(root); ok {
+				tr, loadCache = val.(*trie.Trie), true
+				snapTinyTrieCacheHitMeter.Mark(1)
+			} else {
+				snapTinyTrieCacheMissMeter.Mark(1)
+			}
 		}
 	}
 	var (
@@ -492,6 +514,12 @@ func (dl *diskLayer) generateRange(root common.Hash, prefix []byte, kind string,
 	logger.Debug("Regenerated state range", "root", root, "last", hexutil.Encode(last),
 		"count", count, "created", created, "updated", updated, "untouched", untouched, "deleted", deleted)
 
+	// Cache the tiny trie for further processing. The total contained
+	// entries shouldn't be too many, otherwise the duplication possibility
+	// will be very low.
+	if origin == nil && !trieMore && count < 16 && !loadCache && dl.tinytrieCache != nil {
+		dl.tinytrieCache.Add(root, tr)
+	}
 	// If there are either more trie items, or there are more snap items
 	// (in the next segment), then we need to keep working
 	return !trieMore && !result.diskMore, last, nil
@@ -704,6 +732,7 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		return
 	}
 	batch.Reset()
+	dl.tinytrieCache = nil
 
 	log.Info("Generated state snapshot", "accounts", stats.accounts, "slots", stats.slots,
 		"storage", stats.storage, "elapsed", common.PrettyDuration(time.Since(stats.start)))

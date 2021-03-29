@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 const journalVersion uint64 = 0
@@ -203,6 +204,10 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, 
 		}
 		base.genPending = make(chan struct{})
 		base.genAbort = make(chan chan *generatorStats)
+
+		// Allocate cache for tiny storage tries.
+		cache, _ := lru.New(tinyCacheSize)
+		base.tinytrieCache = cache
 
 		var origin uint64
 		if len(generator.Marker) >= 8 {
