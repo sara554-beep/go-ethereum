@@ -93,6 +93,48 @@ type BlockContext struct {
 	BlockNumber *big.Int       // Provides information for NUMBER
 	Time        *big.Int       // Provides information for TIME
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
+
+	// Accessed state information(todo in the slot level)
+	ReadAccounts                 map[common.Address][]int
+	ReadAccountsByTransaction    map[int][]common.Address
+	WrittenAccounts              map[common.Address][]int
+	WrittenAccountsByTransaction map[int][]common.Address
+}
+
+func (context *BlockContext) AddAccessedAccounts(readAccounts, writtenAccounts []common.Address, index int) {
+	for _, account := range readAccounts {
+		context.ReadAccounts[account] = append(context.ReadAccounts[account], index)
+	}
+	var read []common.Address
+	copy(read, readAccounts)
+	context.ReadAccountsByTransaction[index] = read
+
+	for _, account := range writtenAccounts {
+		context.WrittenAccounts[account] = append(context.WrittenAccounts[account], index)
+	}
+	var written []common.Address
+	copy(written, writtenAccounts)
+	context.WrittenAccountsByTransaction[index] = written
+}
+
+func (context *BlockContext) CollisionAnalysis() (int, int) {
+	var collision int
+	for index, accounts := range context.ReadAccountsByTransaction {
+		var find bool
+		for _, account := range accounts {
+			if len(context.WrittenAccounts[account]) > 1 {
+				find = true
+				break
+			} else if len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index {
+				find = true
+				break
+			}
+		}
+		if find {
+			collision++
+		}
+	}
+	return len(context.ReadAccountsByTransaction), collision
 }
 
 // TxContext provides the EVM with information about a transaction.

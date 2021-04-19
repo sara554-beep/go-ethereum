@@ -45,14 +45,18 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		beneficiary = *author
 	}
 	return vm.BlockContext{
-		CanTransfer: CanTransfer,
-		Transfer:    Transfer,
-		GetHash:     GetHashFn(header, chain),
-		Coinbase:    beneficiary,
-		BlockNumber: new(big.Int).Set(header.Number),
-		Time:        new(big.Int).SetUint64(header.Time),
-		Difficulty:  new(big.Int).Set(header.Difficulty),
-		GasLimit:    header.GasLimit,
+		CanTransfer:                  CanTransfer,
+		Transfer:                     Transfer,
+		GetHash:                      GetHashFn(header, chain),
+		Coinbase:                     beneficiary,
+		BlockNumber:                  new(big.Int).Set(header.Number),
+		Time:                         new(big.Int).SetUint64(header.Time),
+		Difficulty:                   new(big.Int).Set(header.Difficulty),
+		GasLimit:                     header.GasLimit,
+		ReadAccounts:                 make(map[common.Address][]int),
+		ReadAccountsByTransaction:    make(map[int][]common.Address),
+		WrittenAccounts:              make(map[common.Address][]int),
+		WrittenAccountsByTransaction: make(map[int][]common.Address),
 	}
 }
 

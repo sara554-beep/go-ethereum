@@ -105,6 +105,15 @@ func (al accessList) accessList() types.AccessList {
 	return acl
 }
 
+// accesslist converts the accesslist to a types.AccessList.
+func (al accessList) accounts() []common.Address {
+	var ret []common.Address
+	for addr := range al {
+		ret = append(ret, addr)
+	}
+	return ret
+}
+
 // AccessListTracer is a tracer that accumulates touched accounts and storage
 // slots into an internal set.
 type AccessListTracer struct {
@@ -174,4 +183,58 @@ func (a *AccessListTracer) AccessList() types.AccessList {
 // Equal returns if the content of two access list traces are equal.
 func (a *AccessListTracer) Equal(other *AccessListTracer) bool {
 	return a.list.equal(other.list)
+}
+
+// AccessStateTracer is a tracer that accumulates touched accounts and storage
+// slots into an internal set which differentiates read and write.
+type AccessStateTracer struct {
+	count     int           // The number of transactions have been traced.
+	readList  accessList    // Set of accounts and storage slots read in the transaction scope
+	writeList accessList    // Set of accounts and storage slots written in the transaction scope
+	context   *BlockContext // The destination to report the tracing result
+}
+
+func NewAccessStateTracer(context *BlockContext) *AccessStateTracer {
+	return &AccessStateTracer{context: context}
+}
+
+func (a *AccessStateTracer) CaptureStart(env *EVM, from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) {
+	a.readList = newAccessList()
+	a.writeList = newAccessList()
+}
+
+// CaptureState captures all opcodes that touch storage or addresses and adds them to the accesslist.
+func (a *AccessStateTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, scope *ScopeContext, rData []byte, depth int, err error) {
+	stack := scope.Stack
+	if op == SLOAD && stack.len() >= 1 {
+		slot := common.Hash(stack.data[stack.len()-1].Bytes32())
+		a.readList.addSlot(scope.Contract.Address(), slot)
+	}
+	if op == SSTORE && stack.len() >= 1 {
+		slot := common.Hash(stack.data[stack.len()-1].Bytes32())
+		a.writeList.addSlot(scope.Contract.Address(), slot)
+	}
+	if (op == EXTCODECOPY || op == EXTCODEHASH || op == EXTCODESIZE || op == BALANCE) && stack.len() >= 1 {
+		addr := common.Address(stack.data[stack.len()-1].Bytes20())
+		a.readList.addAddress(addr)
+	}
+	if op == SELFDESTRUCT && stack.len() >= 1 {
+		addr := common.Address(stack.data[stack.len()-1].Bytes20())
+		a.writeList.addAddress(scope.Contract.Address())
+		a.writeList.addAddress(addr)
+	}
+	if (op == DELEGATECALL || op == CALL || op == STATICCALL || op == CALLCODE) && stack.len() >= 5 {
+		addr := common.Address(stack.data[stack.len()-2].Bytes20())
+		a.readList.addAddress(addr)
+	}
+}
+
+func (*AccessStateTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, scope *ScopeContext, depth int, err error) {
+}
+
+func (a *AccessStateTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) {
+	a.context.AddAccessedAccounts(a.readList.accounts(), a.writeList.accounts(), a.count)
+	a.readList = nil
+	a.writeList = nil
+	a.count++
 }
