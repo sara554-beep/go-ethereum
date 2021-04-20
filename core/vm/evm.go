@@ -19,7 +19,6 @@ package vm
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/types"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -108,43 +107,39 @@ type BlockContext struct {
 	WrittenSlotsByTransaction    map[int][]string
 }
 
-func (context *BlockContext) AddAccessedAccounts(readList, writeList types.AccessList, index int) {
-	var readAccounts []string
-	for _, tuple := range readList {
-		account := tuple.Address.String()
-		readAccounts = append(readAccounts, account)
+func (context *BlockContext) AddAccessedAccount(readList, writeList []string, index int) {
+	for _, account := range readList {
 		context.ReadAccounts[account] = append(context.ReadAccounts[account], index)
-
-		var readSlots []string
-		for _, key := range tuple.StorageKeys {
-			slot := fmt.Sprintf("%s-%s", account, key.String())
-			readSlots = append(readSlots, slot)
-			context.ReadSlots[slot] = append(context.ReadSlots[slot], index)
-		}
-		context.ReadSlotsByTransaction[index] = append(context.ReadSlotsByTransaction[index], readSlots...)
 	}
-	context.ReadAccountsByTransaction[index] = readAccounts
+	context.ReadAccountsByTransaction[index] = readList
 
-	var writtenAccounts []string
-	for _, tuple := range writeList {
-		account := tuple.Address.String()
-		writtenAccounts = append(writtenAccounts, account)
+	for _, account := range writeList {
 		context.WrittenAccounts[account] = append(context.WrittenAccounts[account], index)
-
-		var writtenSlots []string
-		for _, key := range tuple.StorageKeys {
-			slot := fmt.Sprintf("%s-%s", account, key.String())
-			writtenSlots = append(writtenSlots, slot)
-			context.WrittenSlots[slot] = append(context.WrittenSlots[slot], index)
-		}
-		context.WrittenSlotsByTransaction[index] = append(context.WrittenSlotsByTransaction[index], writtenSlots...)
 	}
-	context.WrittenAccountsByTransaction[index] = writtenAccounts
+	context.WrittenAccountsByTransaction[index] = writeList
+}
+
+func (context *BlockContext) AddAccessedSlot(readList, writeList []string, index int) {
+	for _, slot := range readList {
+		context.ReadSlots[slot] = append(context.ReadSlots[slot], index)
+	}
+	context.ReadSlotsByTransaction[index] = readList
+
+	for _, slot := range writeList {
+		context.WrittenSlots[slot] = append(context.WrittenSlots[slot], index)
+	}
+	context.WrittenAccountsByTransaction[index] = writeList
 }
 
 type AnalysisResult struct {
-	Total           int
-	Collision       int
+	Total int
+
+	AccountCollision    int
+	SlotCollision       int
+	ReadWriteCollision  int
+	WriteWriteCollision int
+	Collision           int
+
 	ReadAccounts    int
 	ReadSlots       int
 	WrittenAccounts int
@@ -152,41 +147,96 @@ type AnalysisResult struct {
 }
 
 func (result AnalysisResult) String() string {
-	return fmt.Sprintf("total: %d, collision %d, r.account %d, w.account %d, r.slot %d, w.slot %d",
-		result.Total, result.Collision, result.ReadAccounts, result.WrittenAccounts, result.ReadSlots, result.WrittenSlots)
+	return fmt.Sprintf("total: %d, collision %d(account %d, slot %d)(read-write %d, write-write %d), r.account %d, w.account %d, r.slot %d, w.slot %d",
+		result.Total, result.Collision, result.AccountCollision, result.SlotCollision, result.ReadWriteCollision, result.WriteWriteCollision, result.ReadAccounts, result.WrittenAccounts, result.ReadSlots, result.WrittenSlots)
 }
 
 func (context *BlockContext) CollisionAnalysis() AnalysisResult {
-	var collision int
+	var (
+		collision           int
+		accountCollision    int
+		slotCollision       int
+		readWriteCollision  int
+		writeWriteCollision int
+	)
 	for index, accounts := range context.ReadAccountsByTransaction {
-		// Check the collision in the account level
-		var find bool
+		var (
+			find       bool
+			inAccount  bool
+			inSlot     bool
+			readWrite  bool
+			writeWrite bool
+		)
+		// READ-WRITE collision in account level
 		for _, account := range accounts {
 			if len(context.WrittenAccounts[account]) > 1 || (len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index) {
 				find = true
+				inAccount = true
+				readWrite = true
 				break
 			}
 		}
-		// Check the collision in the slot level
+		// READ-WRITE collision in slot level
 		if !find {
 			for _, slot := range context.ReadSlotsByTransaction[index] {
 				if len(context.WrittenSlots[slot]) > 1 || (len(context.WrittenSlots[slot]) == 1 && context.WrittenSlots[slot][0] != index) {
 					find = true
+					inSlot = true
+					readWrite = true
 					break
 				}
 			}
 		}
+		// WRITE-WRITE collision in the account level
+		if !find {
+			for _, account := range context.WrittenAccountsByTransaction[index] {
+				if len(context.WrittenAccounts[account]) > 1 || (len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index) {
+					find = true
+					inAccount = true
+					writeWrite = true
+					break
+				}
+			}
+		}
+		// WRITE-WRITE collision in the slot level
+		if !find {
+			for _, slot := range context.WrittenSlotsByTransaction[index] {
+				if len(context.WrittenSlots[slot]) > 1 || (len(context.WrittenSlots[slot]) == 1 && context.WrittenSlots[slot][0] != index) {
+					find = true
+					inSlot = true
+					writeWrite = true
+					break
+				}
+			}
+		}
+		// Sum up the result
 		if find {
 			collision++
+			if inAccount {
+				accountCollision++
+			}
+			if inSlot {
+				slotCollision++
+			}
+			if readWrite {
+				readWriteCollision++
+			}
+			if writeWrite {
+				writeWriteCollision++
+			}
 		}
 	}
 	return AnalysisResult{
-		Total:           len(context.ReadAccountsByTransaction),
-		Collision:       collision,
-		ReadAccounts:    len(context.ReadAccounts),
-		WrittenAccounts: len(context.WrittenAccounts),
-		ReadSlots:       len(context.ReadSlots),
-		WrittenSlots:    len(context.WrittenSlots),
+		Total:               len(context.ReadAccountsByTransaction),
+		AccountCollision:    accountCollision,
+		SlotCollision:       slotCollision,
+		ReadWriteCollision:  readWriteCollision,
+		WriteWriteCollision: writeWriteCollision,
+		Collision:           collision,
+		ReadAccounts:        len(context.ReadAccounts),
+		WrittenAccounts:     len(context.WrittenAccounts),
+		ReadSlots:           len(context.ReadSlots),
+		WrittenSlots:        len(context.WrittenSlots),
 	}
 }
 
