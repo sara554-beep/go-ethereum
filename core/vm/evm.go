@@ -18,6 +18,8 @@ package vm
 
 import (
 	"errors"
+	"fmt"
+	"github.com/ethereum/go-ethereum/core/types"
 	"math/big"
 	"sync/atomic"
 	"time"
@@ -94,47 +96,98 @@ type BlockContext struct {
 	Time        *big.Int       // Provides information for TIME
 	Difficulty  *big.Int       // Provides information for DIFFICULTY
 
-	// Accessed state information(todo in the slot level)
-	ReadAccounts                 map[common.Address][]int
-	ReadAccountsByTransaction    map[int][]common.Address
-	WrittenAccounts              map[common.Address][]int
-	WrittenAccountsByTransaction map[int][]common.Address
+	// Access information
+	ReadAccounts              map[string][]int
+	ReadAccountsByTransaction map[int][]string
+	ReadSlots                 map[string][]int
+	ReadSlotsByTransaction    map[int][]string
+
+	WrittenAccounts              map[string][]int
+	WrittenAccountsByTransaction map[int][]string
+	WrittenSlots                 map[string][]int
+	WrittenSlotsByTransaction    map[int][]string
 }
 
-func (context *BlockContext) AddAccessedAccounts(readAccounts, writtenAccounts []common.Address, index int) {
-	for _, account := range readAccounts {
+func (context *BlockContext) AddAccessedAccounts(readList, writeList types.AccessList, index int) {
+	var readAccounts []string
+	for _, tuple := range readList {
+		account := tuple.Address.String()
+		readAccounts = append(readAccounts, account)
 		context.ReadAccounts[account] = append(context.ReadAccounts[account], index)
-	}
-	var read []common.Address
-	copy(read, readAccounts)
-	context.ReadAccountsByTransaction[index] = read
 
-	for _, account := range writtenAccounts {
-		context.WrittenAccounts[account] = append(context.WrittenAccounts[account], index)
+		var readSlots []string
+		for _, key := range tuple.StorageKeys {
+			slot := fmt.Sprintf("%s-%s", account, key.String())
+			readSlots = append(readSlots, slot)
+			context.ReadSlots[slot] = append(context.ReadSlots[slot], index)
+		}
+		context.ReadSlotsByTransaction[index] = append(context.ReadSlotsByTransaction[index], readSlots...)
 	}
-	var written []common.Address
-	copy(written, writtenAccounts)
-	context.WrittenAccountsByTransaction[index] = written
+	context.ReadAccountsByTransaction[index] = readAccounts
+
+	var writtenAccounts []string
+	for _, tuple := range writeList {
+		account := tuple.Address.String()
+		writtenAccounts = append(writtenAccounts, account)
+		context.WrittenAccounts[account] = append(context.WrittenAccounts[account], index)
+
+		var writtenSlots []string
+		for _, key := range tuple.StorageKeys {
+			slot := fmt.Sprintf("%s-%s", account, key.String())
+			writtenSlots = append(writtenSlots, slot)
+			context.WrittenSlots[slot] = append(context.WrittenSlots[slot], index)
+		}
+		context.WrittenSlotsByTransaction[index] = append(context.WrittenSlotsByTransaction[index], writtenSlots...)
+	}
+	context.WrittenAccountsByTransaction[index] = writtenAccounts
 }
 
-func (context *BlockContext) CollisionAnalysis() (int, int) {
+type AnalysisResult struct {
+	Total           int
+	Collision       int
+	ReadAccounts    int
+	ReadSlots       int
+	WrittenAccounts int
+	WrittenSlots    int
+}
+
+func (result AnalysisResult) String() string {
+	return fmt.Sprintf("total: %d, collision %d, r.account %d, w.account %d, r.slot %d, w.slot %d",
+		result.Total, result.Collision, result.ReadAccounts, result.WrittenAccounts, result.ReadSlots, result.WrittenSlots)
+}
+
+func (context *BlockContext) CollisionAnalysis() AnalysisResult {
 	var collision int
 	for index, accounts := range context.ReadAccountsByTransaction {
+		// Check the collision in the account level
 		var find bool
 		for _, account := range accounts {
-			if len(context.WrittenAccounts[account]) > 1 {
+			if len(context.WrittenAccounts[account]) > 1 || (len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index) {
 				find = true
 				break
-			} else if len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index {
-				find = true
-				break
+			}
+		}
+		// Check the collision in the slot level
+		if !find {
+			for _, slot := range context.ReadSlotsByTransaction[index] {
+				if len(context.WrittenSlots[slot]) > 1 || (len(context.WrittenSlots[slot]) == 1 && context.WrittenSlots[slot][0] != index) {
+					find = true
+					break
+				}
 			}
 		}
 		if find {
 			collision++
 		}
 	}
-	return len(context.ReadAccountsByTransaction), collision
+	return AnalysisResult{
+		Total:           len(context.ReadAccountsByTransaction),
+		Collision:       collision,
+		ReadAccounts:    len(context.ReadAccounts),
+		WrittenAccounts: len(context.WrittenAccounts),
+		ReadSlots:       len(context.ReadSlots),
+		WrittenSlots:    len(context.WrittenSlots),
+	}
 }
 
 // TxContext provides the EVM with information about a transaction.

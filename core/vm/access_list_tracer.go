@@ -233,7 +233,7 @@ func (*AccessStateTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost
 }
 
 func (a *AccessStateTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) {
-	a.context.AddAccessedAccounts(a.readList.accounts(), a.writeList.accounts(), a.count)
+	a.context.AddAccessedAccounts(a.readList.accessList(), a.writeList.accessList(), a.count)
 	a.readList = nil
 	a.writeList = nil
 	a.count++

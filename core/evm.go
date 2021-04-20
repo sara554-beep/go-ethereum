@@ -53,10 +53,14 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		Time:                         new(big.Int).SetUint64(header.Time),
 		Difficulty:                   new(big.Int).Set(header.Difficulty),
 		GasLimit:                     header.GasLimit,
-		ReadAccounts:                 make(map[common.Address][]int),
-		ReadAccountsByTransaction:    make(map[int][]common.Address),
-		WrittenAccounts:              make(map[common.Address][]int),
-		WrittenAccountsByTransaction: make(map[int][]common.Address),
+		ReadAccounts:                 make(map[string][]int),
+		ReadAccountsByTransaction:    make(map[int][]string),
+		ReadSlots:                    make(map[string][]int),
+		ReadSlotsByTransaction:       make(map[int][]string),
+		WrittenAccounts:              make(map[string][]int),
+		WrittenAccountsByTransaction: make(map[int][]string),
+		WrittenSlots:                 make(map[string][]int),
+		WrittenSlotsByTransaction:    make(map[int][]string),
 	}
 }
 

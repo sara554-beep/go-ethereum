@@ -92,8 +92,8 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles())
 
-	total, collision := blockContext.CollisionAnalysis()
-	log.Info("Print concurrency analysis", "number", block.NumberU64(), "hash", block.Hash().Hex(), "total", total, "collision", collision)
+	result := blockContext.CollisionAnalysis()
+	log.Info("Print concurrency analysis", "number", block.NumberU64(), "hash", block.Hash().Hex(), "result", result.String())
 
 	return receipts, allLogs, *usedGas, nil
 }
