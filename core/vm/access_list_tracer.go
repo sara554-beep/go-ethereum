@@ -46,7 +46,7 @@ func (al accessList) addAddress(address common.Address) {
 }
 
 // addSlot adds a storage slot to the accesslist.
-func (al accessList) addSlot(address common.Address, slot common.Hash) {
+func (al accessList) addSlot(address common.Address, slot common.Hash, addAddress bool) {
 	// Set address if not previously present
 	al.addAddress(address)
 
@@ -137,7 +137,7 @@ func NewAccessListTracer(acl types.AccessList, from, to common.Address, precompi
 			list.addAddress(al.Address)
 		}
 		for _, slot := range al.StorageKeys {
-			list.addSlot(al.Address, slot)
+			list.addSlot(al.Address, slot, true)
 		}
 	}
 	return &AccessListTracer{
@@ -154,7 +154,7 @@ func (a *AccessListTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cos
 	stack := scope.Stack
 	if (op == SLOAD || op == SSTORE) && stack.len() >= 1 {
 		slot := common.Hash(stack.data[stack.len()-1].Bytes32())
-		a.list.addSlot(scope.Contract.Address(), slot)
+		a.list.addSlot(scope.Contract.Address(), slot, true)
 	}
 	if (op == EXTCODECOPY || op == EXTCODEHASH || op == EXTCODESIZE || op == BALANCE || op == SELFDESTRUCT) && stack.len() >= 1 {
 		addr := common.Address(stack.data[stack.len()-1].Bytes20())
@@ -208,11 +208,11 @@ func (a *AccessStateTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, co
 	stack := scope.Stack
 	if op == SLOAD && stack.len() >= 1 {
 		slot := common.Hash(stack.data[stack.len()-1].Bytes32())
-		a.readList.addSlot(scope.Contract.Address(), slot)
+		a.readList.addSlot(scope.Contract.Address(), slot, false) // Address is not recorded for READ
 	}
 	if op == SSTORE && stack.len() >= 1 {
 		slot := common.Hash(stack.data[stack.len()-1].Bytes32())
-		a.writeList.addSlot(scope.Contract.Address(), slot)
+		a.writeList.addSlot(scope.Contract.Address(), slot, false) // Address is not recorded for WRITE
 	}
 	if (op == EXTCODECOPY || op == EXTCODEHASH || op == EXTCODESIZE || op == BALANCE) && stack.len() >= 1 {
 		addr := common.Address(stack.data[stack.len()-1].Bytes20())
@@ -223,10 +223,13 @@ func (a *AccessStateTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, co
 		a.writeList.addAddress(scope.Contract.Address())
 		a.writeList.addAddress(addr)
 	}
-	if (op == DELEGATECALL || op == CALL || op == STATICCALL || op == CALLCODE) && stack.len() >= 5 {
-		addr := common.Address(stack.data[stack.len()-2].Bytes20())
-		a.readList.addAddress(addr)
+	if (op == CREATE || op == CREATE2) && stack.len() >= 1 {
+		a.writeList.addAddress(scope.Contract.Address()) // Nonce is changed
 	}
+	//if (op == DELEGATECALL || op == CALL || op == STATICCALL || op == CALLCODE) && stack.len() >= 5 {
+	//	addr := common.Address(stack.data[stack.len()-2].Bytes20())
+	//	a.readList.addAddress(addr) // Not sure it's needed...
+	//}
 }
 
 func (*AccessStateTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, scope *ScopeContext, depth int, err error) {
