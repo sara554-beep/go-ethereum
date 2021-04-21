@@ -449,6 +449,47 @@ func TestTraceBlock(t *testing.T) {
 	}
 }
 
+func TestTraceBlockToFile(t *testing.T) {
+	t.Parallel()
+
+	// Initialize test accounts
+	accounts := newAccounts(3)
+	genesis := &core.Genesis{Alloc: core.GenesisAlloc{
+		accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+		accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+		accounts[2].addr: {Balance: big.NewInt(params.Ether)},
+	}}
+	genBlocks := 10
+	signer := types.HomesteadSigner{}
+	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
+		// Transfer from account[0] to account[1]
+		//    value: 1000 wei
+		//    fee:   0 wei
+		tx, _ := types.SignTx(types.NewTransaction(uint64(i), accounts[1].addr, big.NewInt(1000), params.TxGas, big.NewInt(0), nil), signer, accounts[0].key)
+		b.AddTx(tx)
+	}))
+
+	// Trace the block
+	for i := uint64(1); i <= uint64(genBlocks); i++ {
+		block, err := api.blockByNumber(context.Background(), rpc.BlockNumber(i))
+		if err != nil {
+			t.Fatalf("Failed to retrieve block %v", err)
+		}
+		ret, err := api.StandardTraceBlockToFile(context.Background(), block.Hash(), &StdTraceConfig{
+			LogConfig: vm.LogConfig{
+				DisableMemory:     true,
+				DisableStack:      true,
+				DisableStorage:    true,
+				DisableReturnData: true,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Failed to trace block(%d) %v", i, err)
+		}
+		fmt.Println(ret)
+	}
+}
+
 type Account struct {
 	key  *ecdsa.PrivateKey
 	addr common.Address

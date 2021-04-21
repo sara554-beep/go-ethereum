@@ -93,7 +93,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles())
 
 	result := blockContext.CollisionAnalysis()
-	log.Info("Print concurrency analysis", "number", block.NumberU64(), "hash", block.Hash().Hex(), "result", result.String())
+	log.Info("Concurrency analysis", "number", block.NumberU64(), "hash", block.Hash().Hex(), "result", result.String())
 
 	return receipts, allLogs, *usedGas, nil
 }

@@ -128,7 +128,7 @@ func (context *BlockContext) AddAccessedSlot(readList, writeList []string, index
 	for _, slot := range writeList {
 		context.WrittenSlots[slot] = append(context.WrittenSlots[slot], index)
 	}
-	context.WrittenAccountsByTransaction[index] = writeList
+	context.WrittenSlotsByTransaction[index] = writeList
 }
 
 type AnalysisResult struct {
@@ -147,7 +147,7 @@ type AnalysisResult struct {
 }
 
 func (result AnalysisResult) String() string {
-	return fmt.Sprintf("total: %d, collision %d(account %d, slot %d)(read-write %d, write-write %d), r.account %d, w.account %d, r.slot %d, w.slot %d",
+	return fmt.Sprintf("t: %d, c %d(a %d, s %d)(rw %d, ww %d), r.a %d, w.a %d, r.s %d, w.s %d",
 		result.Total, result.Collision, result.AccountCollision, result.SlotCollision, result.ReadWriteCollision, result.WriteWriteCollision, result.ReadAccounts, result.WrittenAccounts, result.ReadSlots, result.WrittenSlots)
 }
 
@@ -170,9 +170,7 @@ func (context *BlockContext) CollisionAnalysis() AnalysisResult {
 		// READ-WRITE collision in account level
 		for _, account := range accounts {
 			if len(context.WrittenAccounts[account]) > 1 || (len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index) {
-				find = true
-				inAccount = true
-				readWrite = true
+				find, inAccount, readWrite = true, true, true
 				break
 			}
 		}
@@ -180,9 +178,7 @@ func (context *BlockContext) CollisionAnalysis() AnalysisResult {
 		if !find {
 			for _, slot := range context.ReadSlotsByTransaction[index] {
 				if len(context.WrittenSlots[slot]) > 1 || (len(context.WrittenSlots[slot]) == 1 && context.WrittenSlots[slot][0] != index) {
-					find = true
-					inSlot = true
-					readWrite = true
+					find, inSlot, readWrite = true, true, true
 					break
 				}
 			}
@@ -191,9 +187,7 @@ func (context *BlockContext) CollisionAnalysis() AnalysisResult {
 		if !find {
 			for _, account := range context.WrittenAccountsByTransaction[index] {
 				if len(context.WrittenAccounts[account]) > 1 || (len(context.WrittenAccounts[account]) == 1 && context.WrittenAccounts[account][0] != index) {
-					find = true
-					inAccount = true
-					writeWrite = true
+					find, inAccount, writeWrite = true, true, true
 					break
 				}
 			}
@@ -202,9 +196,7 @@ func (context *BlockContext) CollisionAnalysis() AnalysisResult {
 		if !find {
 			for _, slot := range context.WrittenSlotsByTransaction[index] {
 				if len(context.WrittenSlots[slot]) > 1 || (len(context.WrittenSlots[slot]) == 1 && context.WrittenSlots[slot][0] != index) {
-					find = true
-					inSlot = true
-					writeWrite = true
+					find, inSlot, writeWrite = true, true, true
 					break
 				}
 			}
