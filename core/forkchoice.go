@@ -21,7 +21,7 @@ import (
 	"errors"
 	"math/big"
 	mrand "math/rand"
-	"sync/atomic"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -46,10 +46,11 @@ type ForkChoice struct {
 	chain ChainReader
 	rand  *mrand.Rand
 
-	// transitioned is the flag whether the chain has finished the
-	// ethash -> transition. It's triggered by receiving the first
-	// "NewBlock" message from the external consensus engine.
-	transitioned uint32
+	// transitioned is the flag whether the chain has started(or finished)
+	// the transition. It's triggered by receiving the first "NewHead" message
+	// from the external consensus engine.
+	transitioned bool
+	lock         sync.RWMutex
 
 	// preserve is a helper function used in td fork choice.
 	// Miners will prefer to choose the local mined block if the
@@ -64,26 +65,26 @@ func NewForkChoice(chainReader ChainReader, transitioned bool, preserve func(hea
 	if err != nil {
 		log.Crit("Failed to initialize random seed", "err", err)
 	}
-	forker := &ForkChoice{
-		chain:    chainReader,
-		rand:     mrand.New(mrand.NewSource(seed.Int64())),
-		preserve: preserve,
+	return &ForkChoice{
+		chain:        chainReader,
+		rand:         mrand.New(mrand.NewSource(seed.Int64())),
+		transitioned: transitioned,
+		preserve:     preserve,
 	}
-	if transitioned {
-		forker.SetTransitioned()
-	}
-	return forker
 }
 
 // Reorg returns the result whether the reorg should be applied
 // based on the given external header and local canonical chain.
 // In the td mode, the new head is chosen if the corresponding
-// total difficulty is higher.
-func (f *ForkChoice) Reorg(current *types.Header, header *types.Header) (bool, error) {
-	// If the chain is already transitioned into the casper phase,
-	// always return true because the head is already decided by
-	// the external fork choicer.
-	if f.IsTransitioned() {
+// total difficulty is higher. In the extern mode, the trusted
+// header is always selected as the head.
+func (f *ForkChoice) Reorg(current *types.Header, header *types.Header, trusted bool) (bool, error) {
+	f.lock.RLock()
+	defer f.lock.RUnlock()
+
+	// Run the reorg if the header comes from the trusted consensus-layer
+	// if the blockchain has started or completed the transition.
+	if f.transitioned {
 		return true, nil
 	}
 	var (
@@ -112,12 +113,10 @@ func (f *ForkChoice) Reorg(current *types.Header, header *types.Header) (bool, e
 	return reorg, nil
 }
 
-// SetTransitioned marks the transition has been done.
-func (f *ForkChoice) SetTransitioned() {
-	atomic.StoreUint32(&f.transitioned, 1)
-}
+// MarkTransitioned marks the transition has started.
+func (f *ForkChoice) MarkTransitioned() {
+	f.lock.Lock()
+	defer f.lock.Unlock()
 
-// IsTransitioned reports whether the transition has finished.
-func (f *ForkChoice) IsTransitioned() bool {
-	return atomic.LoadUint32(&f.transitioned) == 1
+	f.transitioned = true
 }

@@ -284,7 +284,7 @@ func (hc *HeaderChain) writeHeaders(headers []*types.Header, forker *ForkChoice)
 		log.Crit("Failed to write headers", "error", err)
 	}
 	// Ask the fork choicer if the reorg is necessary
-	reorg, err := forker.Reorg(hc.CurrentHeader(), lastHeader)
+	reorg, err := forker.Reorg(hc.CurrentHeader(), lastHeader, false) // TODO
 	if err != nil {
 		return nil, err
 	}

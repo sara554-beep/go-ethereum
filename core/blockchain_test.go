@@ -2164,27 +2164,27 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 	var (
 		db        = rawdb.NewMemoryDatabase()
 		genesis   = new(Genesis).MustCommit(db)
-		runEngine = beacon.New(ethash.NewFaker(), nil)
-		genEngine = beacon.New(ethash.NewFaker(), nil)
+		runEngine = beacon.New(ethash.NewFaker(), false)
+		genEngine = beacon.New(ethash.NewFaker(), false)
 	)
-	applyMerge := func(engine *beacon.Beacon, forker *ForkChoice, block *big.Int) {
+	applyMerge := func(engine *beacon.Beacon, forker *ForkChoice) {
 		if engine != nil {
-			engine.SetTransitionBlock(block)
+			engine.MarkTransitioned()
 		}
 		if forker != nil {
-			forker.SetTransitioned()
+			forker.MarkTransitioned()
 		}
 	}
 
 	// Apply merging since genesis
 	if mergeHeight == 0 {
-		applyMerge(genEngine, nil, big.NewInt(0))
+		applyMerge(genEngine, nil)
 	}
 	blocks, receipts := GenerateChain(params.TestChainConfig, genesis, genEngine, db, 32, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{1}) })
 
 	// Apply merging after the first segment
 	if mergeHeight == 1 {
-		applyMerge(genEngine, nil, blocks[len(blocks)-1].Number())
+		applyMerge(genEngine, nil)
 	}
 	// Longer chain and shorter chain
 	blocks2, receipts2 := GenerateChain(params.TestChainConfig, blocks[len(blocks)-1], genEngine, db, 65, func(i int, b *BlockGen) { b.SetCoinbase(common.Address{1}) })

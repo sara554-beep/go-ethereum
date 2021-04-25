@@ -213,7 +213,12 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
 			return 0, nil
 		}
-		n, err := h.chain.InsertChain(blocks)
+		// The blocks from the p2p network is regarded as untrusted
+		// after the transition. In theory block gossip should be disabled
+		// entirely whenever the transition is started. But in order to
+		// handle the transition boundary reorg in the consensus-layer,
+		// the legacy blocks are still accepted but marked as untrusted.
+		n, err := h.chain.InsertChain(blocks, false)
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}

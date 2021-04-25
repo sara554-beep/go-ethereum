@@ -17,7 +17,6 @@
 package core
 
 import (
-	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -26,21 +25,21 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-// transitionStatus describes the status of eth1/2 merging. This switch
+// transitionStatus describes the status of eth1/2 transition. This switch
 // between modes is a one-way action which is triggered by corresponding
 // consensus-layer message.
 type transitionStatus struct {
-	LeftPoW        bool     // The flag is set when the first NewHead message received
-	FinalisedBlock *big.Int // The block number of the first FinalisedBlock message received
+	LeftPoW    bool // The flag is set when the first NewHead message received
+	EnteredPoS bool // The flag is set when the first FinalisedBlock message received
 }
 
-// Merger is an internal help structure used to track the eth1/2 merging status.
+// Merger is an internal help structure used to track the eth1/2 transition status.
 // It's a common structure can be used in both full node and light client.
 type Merger struct {
 	db            ethdb.KeyValueStore
 	status        transitionStatus
 	leavePoWCalls []func()
-	enterPoSCalls []func(number *big.Int)
+	enterPoSCalls []func()
 	lock          sync.Mutex
 }
 
@@ -69,7 +68,7 @@ func (m *Merger) SubscribeLeavePoW(callback func()) {
 
 // SubscribeEnterPoS registers callback so that if the chain leaves
 // from the 'transition' stage and enters the PoS stage it can be invoked.
-func (m *Merger) SubscribeEnterPoS(callback func(number *big.Int)) {
+func (m *Merger) SubscribeEnterPoS(callback func()) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
@@ -98,21 +97,21 @@ func (m *Merger) LeavePoW() {
 
 // EnterPoS is called whenever the first FinalisedBlock message received
 // from the consensus-layer.
-func (m *Merger) EnterPoS(block *big.Int) {
+func (m *Merger) EnterPoS() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if m.status.FinalisedBlock != nil {
+	if m.status.EnteredPoS {
 		return
 	}
-	m.status = transitionStatus{LeftPoW: true, FinalisedBlock: block}
+	m.status = transitionStatus{LeftPoW: true, EnteredPoS: true}
 	blob, err := rlp.EncodeToBytes(m.status)
 	if err != nil {
 		log.Crit("Failed to encode the transition status", "err", err)
 	}
 	rawdb.WriteTransitionStatus(m.db, blob)
 	for _, call := range m.enterPoSCalls {
-		call(block)
+		call()
 	}
 }
 
@@ -125,9 +124,9 @@ func (m *Merger) LeftPoW() bool {
 }
 
 // EnteredPoS reports whether the chain has entered the PoS stage.
-func (m *Merger) FinalisedBlock() *big.Int {
+func (m *Merger) EnteredPoS() bool {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	return m.status.FinalisedBlock
+	return m.status.EnteredPoS
 }

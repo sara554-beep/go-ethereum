@@ -242,7 +242,7 @@ func (api *PrivateAdminAPI) ImportChain(file string) (bool, error) {
 			continue
 		}
 		// Import the batch and reset the buffer
-		if _, err := api.eth.BlockChain().InsertChain(blocks); err != nil {
+		if _, err := api.eth.BlockChain().InsertChain(blocks, true); err != nil {
 			return false, fmt.Errorf("batch %d: failed to insert: %v", batch, err)
 		}
 		blocks = blocks[:0]

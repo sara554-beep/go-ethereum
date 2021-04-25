@@ -95,7 +95,7 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 	}
 	bc.forker = core.NewForkChoice(bc, merger.LeftPoW(), nil)
 	merger.SubscribeLeavePoW(func() {
-		bc.forker.SetTransitioned()
+		bc.forker.MarkTransitioned()
 	})
 	var err error
 	bc.hc, err = core.NewHeaderChain(odr.Database(), config, bc.engine, bc.getProcInterrupt)

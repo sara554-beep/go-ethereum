@@ -236,9 +236,9 @@ func CreateConsensusEngine(stack *node.Node, chainConfig *params.ChainConfig, co
 	if merger == nil {
 		return engine
 	}
-	engine = beacon.New(engine, merger.FinalisedBlock())
-	merger.SubscribeEnterPoS(func(block *big.Int) {
-		engine.(*beacon.Beacon).SetTransitionBlock(block)
+	engine = beacon.New(engine, merger.LeftPoW())
+	merger.SubscribeLeavePoW(func() {
+		engine.(*beacon.Beacon).MarkTransitioned()
 	})
 	return engine
 }
