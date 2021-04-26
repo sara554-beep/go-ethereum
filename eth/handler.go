@@ -218,7 +218,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// entirely whenever the transition is started. But in order to
 		// handle the transition boundary reorg in the consensus-layer,
 		// the legacy blocks are still accepted but marked as untrusted.
-		n, err := h.chain.InsertChain(blocks, false)
+		n, err := h.chain.InsertChain(blocks)
 		if err == nil {
 			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
 		}

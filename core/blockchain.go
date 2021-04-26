@@ -20,6 +20,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"io"
 	"math/big"
 	"sort"
@@ -244,7 +245,16 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:        engine,
 		vmConfig:      vmConfig,
 	}
-	bc.forker = NewForkChoice(bc, merger.LeftPoW(), shouldPreserve)
+	// Construct the fork choice based on the transition status.
+	// For non-ethereum chain, the legacy fork choice is kept to
+	// keep the full compatibility.
+	var trustedHeader func(header *types.Header) bool
+	if beaconEngine, ok := engine.(*beacon.Beacon); ok {
+		trustedHeader = func(header *types.Header) bool {
+			return beaconEngine.IsPoSHeader(header)
+		}
+	}
+	bc.forker = NewForkChoice(bc, merger.LeftPoW(), shouldPreserve, trustedHeader)
 	merger.SubscribeLeavePoW(func() {
 		bc.forker.MarkTransitioned()
 	})
@@ -1073,7 +1083,7 @@ func (bc *BlockChain) procFutureBlocks() {
 		})
 		// Insert one by one as chain insertion needs contiguous ancestry between blocks
 		for i := range blocks {
-			bc.InsertChain(blocks[i:i+1], false) // TODO
+			bc.InsertChain(blocks[i : i+1])
 		}
 	}
 }
@@ -1167,8 +1177,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 
 		// Rewind may have occurred, skip in that case.
 		if bc.CurrentHeader().Number.Cmp(head.Number()) >= 0 {
-			// The headers are always trusted if we are in the PoS-stage.
-			reorg, err := bc.forker.Reorg(bc.CurrentFastBlock().Header(), head.Header(), true)
+			reorg, err := bc.forker.Reorg(bc.CurrentFastBlock().Header(), head.Header())
 			if err != nil || !reorg {
 				return false
 			}
@@ -1443,14 +1452,12 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 	bc.chainmu.Lock()
 	defer bc.chainmu.Unlock()
 
-	// The blocks from the miner is regarded as untrusted after the transition.
-	// The entire mining mechanism is considered as disabled.
-	return bc.writeBlockWithState(block, receipts, logs, state, emitHeadEvent, false)
+	return bc.writeBlockWithState(block, receipts, logs, state, emitHeadEvent)
 }
 
 // writeBlockWithState writes the block and all associated state to the database,
 // but is expects the chain mutex to be held.
-func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool, trusted bool) (status WriteStatus, err error) {
+func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (status WriteStatus, err error) {
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
@@ -1534,7 +1541,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 			}
 		}
 	}
-	reorg, err := bc.forker.Reorg(currentBlock.Header(), block.Header(), trusted)
+	reorg, err := bc.forker.Reorg(currentBlock.Header(), block.Header())
 	if err != nil {
 		return status, err
 	}
@@ -1589,10 +1596,8 @@ func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 // InsertChain attempts to insert the given batch of blocks in to the canonical
 // chain or, otherwise, create a fork. If an error is returned it will return
 // the index number of the failing block as well an error describing what went
-// wrong.
-//
-// After insertion is done, all accumulated events will be fired.
-func (bc *BlockChain) InsertChain(chain types.Blocks, trusted bool) (int, error) {
+// wrong. After insertion is done, all accumulated events will be fired.
+func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	// Sanity check that we have something meaningful to import
 	if len(chain) == 0 {
 		return 0, nil
@@ -1621,7 +1626,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks, trusted bool) (int, error)
 	// Pre-checks passed, start the full block imports
 	bc.wg.Add(1)
 	bc.chainmu.Lock()
-	n, err := bc.insertChain(chain, true, trusted)
+	n, err := bc.insertChain(chain, true)
 	bc.chainmu.Unlock()
 	bc.wg.Done()
 
@@ -1638,7 +1643,7 @@ func (bc *BlockChain) InsertChainFromConsensusLayer(block *types.Block) (int, er
 
 	bc.wg.Add(1)
 	bc.chainmu.Lock()
-	n, err := bc.insertChain(types.Blocks([]*types.Block{block}), false, true)
+	n, err := bc.insertChain(types.Blocks([]*types.Block{block}), false)
 	bc.chainmu.Unlock()
 	bc.wg.Done()
 
@@ -1653,7 +1658,7 @@ func (bc *BlockChain) InsertChainFromConsensusLayer(block *types.Block) (int, er
 // racey behaviour. If a sidechain import is in progress, and the historic state
 // is imported, but then new canon-head is added before the actual sidechain
 // completes, then the historic state could be pruned again
-func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool, trusted bool) (int, error) {
+func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, error) {
 	// If the chain is terminating, don't even bother starting up
 	if atomic.LoadInt32(&bc.procInterrupt) == 1 {
 		return 0, nil
@@ -1699,7 +1704,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool, trusted 
 			current = bc.CurrentBlock()
 		)
 		for block != nil && err == ErrKnownBlock {
-			reorg, err = bc.forker.Reorg(current.Header(), block.Header(), trusted)
+			reorg, err = bc.forker.Reorg(current.Header(), block.Header())
 			if err != nil {
 				return it.index, err
 			}
@@ -1741,7 +1746,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool, trusted 
 	// First block is pruned, insert as sidechain and reorg only if TD grows enough
 	case errors.Is(err, consensus.ErrPrunedAncestor):
 		log.Debug("Pruned ancestor, inserting as sidechain", "number", block.Number(), "hash", block.Hash())
-		return bc.insertSideChain(block, it, trusted)
+		return bc.insertSideChain(block, it)
 
 	// First block is future, shove it (and all children) to the future queue (unknown ancestor)
 	case errors.Is(err, consensus.ErrFutureBlock) || (errors.Is(err, consensus.ErrUnknownAncestor) && bc.futureBlocks.Contains(it.first().ParentHash())):
@@ -1896,7 +1901,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool, trusted 
 
 		// Write the block to the chain and get the status.
 		substart = time.Now()
-		status, err := bc.writeBlockWithState(block, receipts, logs, statedb, false, trusted)
+		status, err := bc.writeBlockWithState(block, receipts, logs, statedb, false)
 		atomic.StoreUint32(&followupInterrupt, 1)
 		if err != nil {
 			return it.index, err
@@ -1966,7 +1971,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool, trusted 
 //
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
-func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, trusted bool) (int, error) {
+func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (int, error) {
 	var (
 		externTd  *big.Int
 		lastBlock = block
@@ -2029,7 +2034,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, tr
 	//
 	// If the externTd was larger than our local TD, we now need to reimport the previous
 	// blocks to regenerate the required state
-	reorg, err := bc.forker.Reorg(current.Header(), lastBlock.Header(), trusted)
+	reorg, err := bc.forker.Reorg(current.Header(), lastBlock.Header())
 	if err != nil {
 		return it.index, err
 	}
@@ -2070,7 +2075,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, tr
 		// memory here.
 		if len(blocks) >= 2048 || memory > 64*1024*1024 {
 			log.Info("Importing heavy sidechain segment", "blocks", len(blocks), "start", blocks[0].NumberU64(), "end", block.NumberU64())
-			if _, err := bc.insertChain(blocks, false, trusted); err != nil {
+			if _, err := bc.insertChain(blocks, false); err != nil {
 				return 0, err
 			}
 			blocks, memory = blocks[:0], 0
@@ -2084,7 +2089,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator, tr
 	}
 	if len(blocks) > 0 {
 		log.Info("Importing sidechain segment", "start", blocks[0].NumberU64(), "end", blocks[len(blocks)-1].NumberU64())
-		return bc.insertChain(blocks, false, trusted)
+		return bc.insertChain(blocks, false)
 	}
 	return 0, nil
 }

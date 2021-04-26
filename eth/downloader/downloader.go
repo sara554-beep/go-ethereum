@@ -211,7 +211,7 @@ type BlockChain interface {
 	FastSyncCommitHead(common.Hash) error
 
 	// InsertChain inserts a batch of blocks into the local chain.
-	InsertChain(types.Blocks, bool) (int, error)
+	InsertChain(types.Blocks) (int, error)
 
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	InsertReceiptChain(types.Blocks, []types.Receipts, uint64) (int, error)
@@ -1745,7 +1745,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	// Downloaded blocks are always regarded as trusted after the
 	// transition. Because the downloaded chain is guided by the
 	// consensus-layer.
-	if index, err := d.blockchain.InsertChain(blocks, true); err != nil {
+	if index, err := d.blockchain.InsertChain(blocks); err != nil {
 		if index < len(results) {
 			log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		} else {

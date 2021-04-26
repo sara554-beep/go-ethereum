@@ -57,19 +57,26 @@ type ForkChoice struct {
 	// local td is equal to the extern one. It can nil for light
 	// client
 	preserve func(header *types.Header) bool
+
+	// trustedHeader reports that the given header belongs to pos-stage or not.
+	// It's determined by a few special fields in the header. This funcition
+	// assumes the header should come from the trusted consensus layer, the
+	// untrusted pos-ish header from the p2p network shouldn't be accpeted.
+	trustedHeader func(header *types.Header) bool
 }
 
-func NewForkChoice(chainReader ChainReader, transitioned bool, preserve func(header *types.Header) bool) *ForkChoice {
+func NewForkChoice(chainReader ChainReader, transitioned bool, preserve func(header *types.Header) bool, trustedHeader func(header *types.Header) bool) *ForkChoice {
 	// Seed a fast but crypto originating random generator
 	seed, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
 		log.Crit("Failed to initialize random seed", "err", err)
 	}
 	return &ForkChoice{
-		chain:        chainReader,
-		rand:         mrand.New(mrand.NewSource(seed.Int64())),
-		transitioned: transitioned,
-		preserve:     preserve,
+		chain:         chainReader,
+		rand:          mrand.New(mrand.NewSource(seed.Int64())),
+		transitioned:  transitioned,
+		preserve:      preserve,
+		trustedHeader: trustedHeader,
 	}
 }
 
@@ -78,14 +85,17 @@ func NewForkChoice(chainReader ChainReader, transitioned bool, preserve func(hea
 // In the td mode, the new head is chosen if the corresponding
 // total difficulty is higher. In the extern mode, the trusted
 // header is always selected as the head.
-func (f *ForkChoice) Reorg(current *types.Header, header *types.Header, trusted bool) (bool, error) {
+func (f *ForkChoice) Reorg(current *types.Header, header *types.Header) (bool, error) {
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 
 	// Run the reorg if the header comes from the trusted consensus-layer
 	// if the blockchain has started or completed the transition.
 	if f.transitioned {
-		return true, nil
+		if f.trustedHeader == nil {
+			return true, nil
+		}
+		return f.trustedHeader(header), nil
 	}
 	var (
 		localTD  = f.chain.GetTd(current.Hash(), current.Number.Uint64())

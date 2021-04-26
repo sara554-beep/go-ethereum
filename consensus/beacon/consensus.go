@@ -58,11 +58,11 @@ var (
 // used for necessary consensus checks. The classic consensus engine can be any engine
 // implements the consensus interface(except the beacon itself).
 type Beacon struct {
-	ethone consensus.Engine // Classic consensus engine used in the ethereum 1
+	ethone consensus.Engine // Classic consensus engine used in the eth1, ethash or clique
 
-	// transitioned is the flag whether the chain has started(or finished)
-	// the transition. It's triggered by receiving the first "NewHead" message
-	// from the external consensus engine.
+	// transitioned is the flag whether the transition has started(or finished)
+	// It's triggered by receiving the first "NewHead" message from the external
+	// consensus engine.
 	transitioned bool
 	lock         sync.RWMutex
 }
@@ -358,26 +358,32 @@ func (beacon *Beacon) isLegacy(header *types.Header) bool {
 	if !beacon.transitioned {
 		return true
 	}
+	return !beacon.IsPoSHeader(header)
+}
+
+// IsPoSHeader reports the header belongs to the PoS-stage with some special fields.
+func (beacon *Beacon) IsPoSHeader(header *types.Header) bool {
 	// These fields can be used to filter out ethash block
 	if header.Difficulty.Cmp(beaconDifficulty) != 0 {
-		return true
+		return false
 	}
 	if header.MixDigest != (common.Hash{}) {
-		return true
+		return false
 	}
 	if header.Nonce != beaconNonce {
-		return true
+		return false
 	}
 	if header.UncleHash != types.EmptyUncleHash {
-		return true
+		return false
 	}
 	// Extra field can be used to filter out clique block
 	if len(header.Extra) != 0 {
-		return true
+		return false
 	}
-	return false
+	return true
 }
 
+// MarkTransitioned sets the transitioned flag.
 func (beacon *Beacon) MarkTransitioned() {
 	beacon.lock.Lock()
 	defer beacon.lock.Unlock()
