@@ -249,9 +249,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	// For non-ethereum chain, the legacy fork choice is kept to
 	// keep the full compatibility.
 	var trustedHeader func(header *types.Header) bool
-	if beaconEngine, ok := engine.(*beacon.Beacon); ok {
+	if b, ok := engine.(*beacon.Beacon); ok {
 		trustedHeader = func(header *types.Header) bool {
-			return beaconEngine.IsPoSHeader(header)
+			return b.IsPoSHeader(header)
 		}
 	}
 	bc.forker = NewForkChoice(bc, merger.LeftPoW(), shouldPreserve, trustedHeader)
@@ -1627,23 +1627,6 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	bc.wg.Add(1)
 	bc.chainmu.Lock()
 	n, err := bc.insertChain(chain, true)
-	bc.chainmu.Unlock()
-	bc.wg.Done()
-
-	return n, err
-}
-
-// InsertChainFromConsensusLayer inserts a block from the consensus layer.
-// It should only happens after the eth1/2 transition is completed. The
-// given block is regarded as trusted and will always be set as the new
-// head of the chain.
-func (bc *BlockChain) InsertChainFromConsensusLayer(block *types.Block) (int, error) {
-	bc.blockProcFeed.Send(true)
-	defer bc.blockProcFeed.Send(false)
-
-	bc.wg.Add(1)
-	bc.chainmu.Lock()
-	n, err := bc.insertChain(types.Blocks([]*types.Block{block}), false)
 	bc.chainmu.Unlock()
 	bc.wg.Done()
 

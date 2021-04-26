@@ -78,7 +78,7 @@ func New(ethone consensus.Engine, transitioned bool) *Beacon {
 // Author implements consensus.Engine, returning the header's coinbase as the
 // verified author of the block.
 func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
-	if beacon.isLegacy(header) {
+	if beacon.verifyLegacy(header) {
 		return beacon.ethone.Author(header)
 	}
 	return header.Coinbase, nil
@@ -87,7 +87,7 @@ func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
 // VerifyHeader checks whether a header conforms to the consensus rules of the
 // stock Ethereum consensus engine.
 func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
-	if beacon.isLegacy(header) {
+	if beacon.verifyLegacy(header) {
 		return beacon.ethone.VerifyHeader(chain, header, seal)
 	}
 	// Short circuit if the header is known, or its parent not
@@ -107,7 +107,7 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 // concurrently. The method returns a quit channel to abort the operations and
 // a results channel to retrieve the async verifications.
 func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
-	if beacon.isLegacy(headers[len(headers)-1]) {
+	if beacon.verifyLegacy(headers[len(headers)-1]) {
 		return beacon.ethone.VerifyHeaders(chain, headers, seals)
 	}
 	var (
@@ -116,7 +116,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 		preSeals   []bool
 	)
 	for index, header := range headers {
-		if !beacon.isLegacy(header) {
+		if !beacon.verifyLegacy(header) {
 			preHeaders = headers[:index]
 			posHeaders = headers[index:]
 			preSeals = seals[:index]
@@ -168,7 +168,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 // VerifyUncles verifies that the given block's uncles conform to the consensus
 // rules of the stock Ethereum consensus engine.
 func (beacon *Beacon) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
-	if beacon.isLegacy(block.Header()) {
+	if beacon.verifyLegacy(block.Header()) {
 		return beacon.ethone.VerifyUncles(chain, block)
 	}
 	// Verify that there is no uncle block. It's explicitly disabled in the beacon
@@ -270,7 +270,10 @@ func (beacon *Beacon) verifyHeaders(chain consensus.ChainHeaderReader, headers [
 // Prepare implements consensus.Engine, initializing the difficulty field of a
 // header to conform to the beacon protocol. The changes are done inline.
 func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
-	if beacon.isLegacy(header) {
+	beacon.lock.RLock()
+	defer beacon.lock.RUnlock()
+
+	if !beacon.transitioned {
 		return beacon.ethone.Prepare(chain, header)
 	}
 	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
@@ -283,7 +286,10 @@ func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.H
 
 // Finalize implements consensus.Engine, setting the final state on the header
 func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header) {
-	if beacon.isLegacy(header) {
+	beacon.lock.RLock()
+	defer beacon.lock.RUnlock()
+
+	if !beacon.transitioned {
 		beacon.ethone.Finalize(chain, header, state, txs, uncles)
 		return
 	}
@@ -295,7 +301,10 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 // FinalizeAndAssemble implements consensus.Engine, setting the final state and
 // assembling the block.
 func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
-	if beacon.isLegacy(header) {
+	beacon.lock.RLock()
+	defer beacon.lock.RUnlock()
+
+	if !beacon.transitioned {
 		return beacon.ethone.FinalizeAndAssemble(chain, header, state, txs, uncles, receipts)
 	}
 	// Finalize and assemble the block
@@ -309,7 +318,10 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 // Note, the method returns immediately and will send the result async. More
 // than one result may also be returned depending on the consensus algorithm.
 func (beacon *Beacon) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
-	if beacon.isLegacy(block.Header()) {
+	beacon.lock.RLock()
+	defer beacon.lock.RUnlock()
+
+	if !beacon.transitioned {
 		return beacon.ethone.Seal(chain, block, results, stop)
 	}
 	// The seal verification is done by the external consensus engine,
@@ -347,11 +359,11 @@ func (beacon *Beacon) Close() error {
 	return beacon.ethone.Close()
 }
 
-// isLegacy returns the indicator that the header is legacy header or not.
+// verifyLegacy returns the indicator that the header is legacy header or not.
 // If the consensus engine still stays in the legacy mode, then the header
 // is regarded as the legacy header blindly. Otherwise it's determined by
 // some special fields.
-func (beacon *Beacon) isLegacy(header *types.Header) bool {
+func (beacon *Beacon) verifyLegacy(header *types.Header) bool {
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 

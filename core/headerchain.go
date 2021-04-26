@@ -289,8 +289,12 @@ func (hc *HeaderChain) writeHeaders(headers []*types.Header, forker *ForkChoice)
 		return nil, err
 	}
 	if !reorg {
+		status := SideStatTy
+		if len(inserted) == 0 {
+			status = NonStatTy
+		}
 		return &headerWriteResult{
-			status:     SideStatTy,
+			status:     status,
 			ignored:    len(headers) - len(inserted),
 			imported:   len(inserted),
 			lastHash:   lastHash,

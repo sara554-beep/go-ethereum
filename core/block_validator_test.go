@@ -110,7 +110,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		copy(genspec.ExtraData[32:], addr[:])
 		genesis := genspec.MustCommit(testdb)
 
-		genEngine := beacon.New(engine, nil)
+		genEngine := beacon.New(engine, false)
 		preBlocks, _ = GenerateChain(params.AllCliqueProtocolChanges, genesis, genEngine, testdb, 8, nil)
 		for i, block := range preBlocks {
 			header := block.Header()
@@ -124,21 +124,21 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 			copy(header.Extra[len(header.Extra)-crypto.SignatureLength:], sig)
 			preBlocks[i] = block.WithSeal(header)
 		}
-		genEngine.SetTransitionBlock(preBlocks[len(preBlocks)-1].Number())
+		genEngine.MarkTransitioned()
 		postBlocks, _ = GenerateChain(params.AllCliqueProtocolChanges, preBlocks[len(preBlocks)-1], genEngine, testdb, 8, nil)
 		chainConfig = params.AllCliqueProtocolChanges
-		runEngine = beacon.New(engine, nil)
+		runEngine = beacon.New(engine, false)
 	} else {
 		gspec := &Genesis{Config: params.TestChainConfig}
 		genesis := gspec.MustCommit(testdb)
-		engine := beacon.New(ethash.NewFaker(), nil)
+		engine := beacon.New(ethash.NewFaker(), false)
 
 		preBlocks, _ = GenerateChain(params.TestChainConfig, genesis, engine, testdb, 8, nil)
-		engine.SetTransitionBlock(preBlocks[len(preBlocks)-1].Number())
+		engine.MarkTransitioned()
 		postBlocks, _ = GenerateChain(params.TestChainConfig, preBlocks[len(preBlocks)-1], engine, testdb, 8, nil)
 
 		chainConfig = params.TestChainConfig
-		runEngine = beacon.New(ethash.NewFaker(), nil)
+		runEngine = beacon.New(ethash.NewFaker(), false)
 	}
 
 	preHeaders := make([]*types.Header, len(preBlocks))
@@ -158,8 +158,8 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
 	merger := NewMerger(rawdb.NewMemoryDatabase())
-	merger.SubscribeEnterPoS(func(number *big.Int) {
-		runEngine.(*beacon.Beacon).SetTransitionBlock(number)
+	merger.SubscribeLeavePoW(func() {
+		runEngine.(*beacon.Beacon).MarkTransitioned()
 	})
 	chain, _ := NewBlockChain(testdb, nil, chainConfig, runEngine, vm.Config{}, nil, nil, merger)
 	defer chain.Stop()
@@ -187,7 +187,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 
 	// Make the transition
 	merger.LeavePoW()
-	merger.EnterPoS(preBlocks[len(preBlocks)-1].Number())
+	merger.EnterPoS()
 
 	// Verify the blocks after the merging
 	for i := 0; i < len(postBlocks); i++ {

@@ -283,7 +283,7 @@ func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, err
 		return nil, err
 	}
 
-	_, err = api.eth.BlockChain().InsertChainFromConsensusLayer(block)
+	_, err = api.eth.BlockChain().InsertChain(block)
 	return &newBlockResponse{err == nil}, err
 }
 

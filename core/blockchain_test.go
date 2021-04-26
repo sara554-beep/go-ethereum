@@ -227,7 +227,7 @@ func testInsertAfterMerge(t *testing.T, blockchain *BlockChain, i, n int, full b
 	}
 
 	// Trigger the transition explicitly
-	blockchain2.forker.SetTransitioned()
+	blockchain2.forker.MarkTransitioned()
 
 	// Extend the newly created chain
 	if full {
@@ -1890,8 +1890,8 @@ func TestLowDiffLongChain(t *testing.T) {
 func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommonAncestorAndPruneblock int, mergePoint int) {
 	// Generate a canonical chain to act as the main dataset
 	var (
-		genEngine = beacon.New(ethash.NewFaker(), nil)
-		runEngine = beacon.New(ethash.NewFaker(), nil)
+		genEngine = beacon.New(ethash.NewFaker(), false)
+		runEngine = beacon.New(ethash.NewFaker(), false)
 		db        = rawdb.NewMemoryDatabase()
 
 		key, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -1914,9 +1914,9 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 	}
 	// Activate the transition since genesis if required
 	if mergePoint == 0 {
-		genEngine.SetTransitionBlock(big.NewInt(0))
-		runEngine.SetTransitionBlock(big.NewInt(0))
-		chain.forker.SetTransitioned()
+		genEngine.MarkTransitioned()
+		runEngine.MarkTransitioned()
+		chain.forker.MarkTransitioned()
 	}
 	blocks, _ := GenerateChain(params.TestChainConfig, genesis, genEngine, db, 2*TriesInMemory, func(i int, gen *BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(nonce, common.HexToAddress("deadbeef"), big.NewInt(100), 21000, big.NewInt(int64(i+1)*params.GWei), nil), signer, key)
@@ -1945,9 +1945,9 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 
 	// Activate the transition in the middle of the chain
 	if mergePoint == 1 {
-		genEngine.SetTransitionBlock(blocks[len(blocks)-1].Number())
-		runEngine.SetTransitionBlock(blocks[len(blocks)-1].Number())
-		chain.forker.SetTransitioned()
+		genEngine.MarkTransitioned()
+		runEngine.MarkTransitioned()
+		chain.forker.MarkTransitioned()
 	}
 
 	// Generate the sidechain
@@ -2260,7 +2260,7 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 
 	// Apply merging since genesis if required
 	if mergeHeight == 0 {
-		applyMerge(runEngine, chain.forker, big.NewInt(0))
+		applyMerge(runEngine, chain.forker)
 	}
 	if err := inserter(blocks, receipts); err != nil {
 		t.Fatalf("failed to insert chain data: %v", err)
@@ -2283,7 +2283,7 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 
 	// Apply merging after the first segment
 	if mergeHeight == 1 {
-		applyMerge(runEngine, chain.forker, blocks[len(blocks)-1].Number())
+		applyMerge(runEngine, chain.forker)
 	}
 
 	// Import a longer chain with some known data as prefix.
