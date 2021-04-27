@@ -18,6 +18,7 @@ package eth
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"math"
 	"math/big"
 	"sync"
@@ -79,6 +80,7 @@ type handlerConfig struct {
 	Database   ethdb.Database            // Database for direct sync insertions
 	Chain      *core.BlockChain          // Blockchain to serve data from
 	TxPool     txPool                    // Transaction pool to propagate from
+	Merger     *core.Merger              // The manager for eth1/2 transition
 	Network    uint64                    // Network identifier to adfvertise
 	Sync       downloader.SyncMode       // Whether to fast or full sync
 	BloomCache uint64                    // Megabytes to alloc for fast sync bloom
@@ -108,6 +110,7 @@ type handler struct {
 	blockFetcher *fetcher.BlockFetcher
 	txFetcher    *fetcher.TxFetcher
 	peers        *peerSet
+	merger       *core.Merger
 
 	eventMux      *event.TypeMux
 	txsCh         chan core.NewTxsEvent
@@ -139,6 +142,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		txpool:     config.TxPool,
 		chain:      config.Chain,
 		peers:      newPeerSet(),
+		merger:     config.Merger,
 		whitelist:  config.Whitelist,
 		txsyncCh:   make(chan *txsync),
 		quitSync:   make(chan struct{}),
@@ -188,6 +192,15 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
+		// Reject all the PoS style headers in the first place. No matter
+		// the chain has finished the transition or not, the PoS headers
+		// should only come from the trusted consensus layer instead of
+		// p2p network.
+		if beacon, ok := h.chain.Engine().(*beacon.Beacon); ok {
+			if beacon.IsPoSHeader(header) {
+				return errors.New("unexpected post-merge header")
+			}
+		}
 		return h.chain.Engine().VerifyHeader(h.chain, header, true)
 	}
 	heighter := func() uint64 {
@@ -435,6 +448,11 @@ func (h *handler) Stop() {
 // BroadcastBlock will either propagate a block to a subset of its peers, or
 // will only announce its availability (depending what's requested).
 func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
+	// Disable the block gossip if the chain has already entered the PoS
+	// stage. The block propagation is delegated to the consensus layer.
+	if h.merger.EnteredPoS() {
+		return
+	}
 	hash := block.Hash()
 	peers := h.peers.peersWithoutBlock(hash)
 

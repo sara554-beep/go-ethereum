@@ -60,9 +60,9 @@ var (
 type Beacon struct {
 	ethone consensus.Engine // Classic consensus engine used in the eth1, ethash or clique
 
-	// transitioned is the flag whether the transition has triggered.
-	// It's triggered by receiving the first "NewHead" message from
-	// the external consensus engine.
+	// transitioned is the flag whether the transition has been triggered.
+	// It's triggered by receiving the first "NewHead" message from the
+	// external consensus engine.
 	transitioned bool
 	lock         sync.RWMutex
 }
@@ -111,14 +111,14 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 		return beacon.ethone.VerifyHeaders(chain, headers, seals)
 	}
 	var (
-		preHeaders []*types.Header
-		posHeaders []*types.Header
-		preSeals   []bool
+		preHeaders  []*types.Header
+		postHeaders []*types.Header
+		preSeals    []bool
 	)
 	for index, header := range headers {
 		if !beacon.legacyHeader(header) {
 			preHeaders = headers[:index]
-			posHeaders = headers[index:]
+			postHeaders = headers[index:]
 			preSeals = seals[:index]
 			break
 		}
@@ -139,7 +139,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 			errors             = make([]error, len(headers))
 			done               = make([]bool, len(headers))
 			oldDone, oldResult = beacon.ethone.VerifyHeaders(chain, preHeaders, preSeals)
-			newDone, newResult = beacon.verifyHeaders(chain, posHeaders, preHeaders[len(preHeaders)-1])
+			newDone, newResult = beacon.verifyHeaders(chain, postHeaders, preHeaders[len(preHeaders)-1])
 		)
 		for {
 			for ; done[out]; out++ {
@@ -214,7 +214,7 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	if diff := new(big.Int).Sub(header.Number, parent.Number); diff.Cmp(big.NewInt(1)) != 0 {
 		return consensus.ErrInvalidNumber
 	}
-	// Verify the seal parts. Ensure the mixhash and nonce is the expected value.
+	// Verify the seal parts. Ensure the mixhash, nonce and uncle hash are the expected value.
 	if header.MixDigest != (common.Hash{}) {
 		return errInvalidMixDigest
 	}
@@ -273,6 +273,7 @@ func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.H
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
+	// Transition isn't triggered yet, use the legacy rules for preparation.
 	if !beacon.transitioned {
 		return beacon.ethone.Prepare(chain, header)
 	}
@@ -289,6 +290,8 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
+	// Finalize is different with Prepare, it can be used in both block generation
+	// and verification. So determine the consensus rules by header type.
 	if beacon.legacyHeader(header) {
 		beacon.ethone.Finalize(chain, header, state, txs, uncles)
 		return
@@ -304,6 +307,8 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
+	// FinalizeAndAssemble is different with Prepare, it can be used in both block
+	// generation and verification. So determine the consensus rules by header type.
 	if beacon.legacyHeader(header) {
 		return beacon.ethone.FinalizeAndAssemble(chain, header, state, txs, uncles, receipts)
 	}
@@ -321,6 +326,7 @@ func (beacon *Beacon) Seal(chain consensus.ChainHeaderReader, block *types.Block
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
+	// Transition isn't triggered yet, use the legacy rules for sealing
 	if !beacon.transitioned {
 		return beacon.ethone.Seal(chain, block, results, stop)
 	}
@@ -343,6 +349,7 @@ func (beacon *Beacon) CalcDifficulty(chain consensus.ChainHeaderReader, time uin
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
+	// Transition isn't triggered yet, use the legacy rules for calculation
 	if !beacon.transitioned {
 		return beacon.ethone.CalcDifficulty(chain, time, parent)
 	}
@@ -367,6 +374,7 @@ func (beacon *Beacon) legacyHeader(header *types.Header) bool {
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
+	// Short circuit if the transition is not triggered yet.
 	if !beacon.transitioned {
 		return true
 	}

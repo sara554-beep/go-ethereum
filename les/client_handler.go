@@ -206,6 +206,9 @@ func (h *clientHandler) handleMsg(p *serverPeer) error {
 			}
 			p.Log().Trace("Announce message content", "number", req.Number, "hash", req.Hash, "td", req.Td, "reorg", req.ReorgDepth)
 
+			// TODO the announcement from the p2p network should be rejected
+			// after the eth1/2 transition.
+
 			// Update peer head information first and then notify the announcement
 			p.updateHead(req.Hash, req.Number, req.Td)
 			h.fetcher.announce(p, &req)

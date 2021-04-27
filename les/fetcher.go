@@ -17,6 +17,8 @@
 package les
 
 import (
+	"errors"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -162,6 +164,15 @@ type lightFetcher struct {
 func newLightFetcher(chain *light.LightChain, engine consensus.Engine, peers *serverPeerSet, ulc *ulc, chaindb ethdb.Database, reqDist *requestDistributor, syncFn func(p *serverPeer)) *lightFetcher {
 	// Construct the fetcher by offering all necessary APIs
 	validator := func(header *types.Header) error {
+		// Reject all the PoS style header in the first place. No matter
+		// the chain has finished the transition or not, the PoS header
+		// should only come from the trusted consensus layer instead of
+		// p2p network.
+		if beacon, ok := engine.(*beacon.Beacon); ok {
+			if beacon.IsPoSHeader(header) {
+				return errors.New("unexpected header")
+			}
+		}
 		// Disable seal verification explicitly if we are running in ulc mode.
 		return engine.VerifyHeader(chain, header, ulc == nil)
 	}
