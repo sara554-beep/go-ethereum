@@ -60,9 +60,9 @@ var (
 type Beacon struct {
 	ethone consensus.Engine // Classic consensus engine used in the eth1, ethash or clique
 
-	// transitioned is the flag whether the transition has started(or finished)
-	// It's triggered by receiving the first "NewHead" message from the external
-	// consensus engine.
+	// transitioned is the flag whether the transition has triggered.
+	// It's triggered by receiving the first "NewHead" message from
+	// the external consensus engine.
 	transitioned bool
 	lock         sync.RWMutex
 }
@@ -78,7 +78,7 @@ func New(ethone consensus.Engine, transitioned bool) *Beacon {
 // Author implements consensus.Engine, returning the header's coinbase as the
 // verified author of the block.
 func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
-	if beacon.verifyLegacy(header) {
+	if beacon.legacyHeader(header) {
 		return beacon.ethone.Author(header)
 	}
 	return header.Coinbase, nil
@@ -87,7 +87,7 @@ func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
 // VerifyHeader checks whether a header conforms to the consensus rules of the
 // stock Ethereum consensus engine.
 func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
-	if beacon.verifyLegacy(header) {
+	if beacon.legacyHeader(header) {
 		return beacon.ethone.VerifyHeader(chain, header, seal)
 	}
 	// Short circuit if the header is known, or its parent not
@@ -107,7 +107,7 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 // concurrently. The method returns a quit channel to abort the operations and
 // a results channel to retrieve the async verifications.
 func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
-	if beacon.verifyLegacy(headers[len(headers)-1]) {
+	if beacon.legacyHeader(headers[len(headers)-1]) {
 		return beacon.ethone.VerifyHeaders(chain, headers, seals)
 	}
 	var (
@@ -116,7 +116,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 		preSeals   []bool
 	)
 	for index, header := range headers {
-		if !beacon.verifyLegacy(header) {
+		if !beacon.legacyHeader(header) {
 			preHeaders = headers[:index]
 			posHeaders = headers[index:]
 			preSeals = seals[:index]
@@ -168,7 +168,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 // VerifyUncles verifies that the given block's uncles conform to the consensus
 // rules of the stock Ethereum consensus engine.
 func (beacon *Beacon) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
-	if beacon.verifyLegacy(block.Header()) {
+	if beacon.legacyHeader(block.Header()) {
 		return beacon.ethone.VerifyUncles(chain, block)
 	}
 	// Verify that there is no uncle block. It's explicitly disabled in the beacon
@@ -289,7 +289,7 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
-	if !beacon.transitioned {
+	if beacon.legacyHeader(header) {
 		beacon.ethone.Finalize(chain, header, state, txs, uncles)
 		return
 	}
@@ -304,7 +304,7 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
-	if !beacon.transitioned {
+	if beacon.legacyHeader(header) {
 		return beacon.ethone.FinalizeAndAssemble(chain, header, state, txs, uncles, receipts)
 	}
 	// Finalize and assemble the block
@@ -359,11 +359,11 @@ func (beacon *Beacon) Close() error {
 	return beacon.ethone.Close()
 }
 
-// verifyLegacy returns the indicator that the header is legacy header or not.
+// legacyHeader returns the indicator that the header is legacy header or not.
 // If the consensus engine still stays in the legacy mode, then the header
 // is regarded as the legacy header blindly. Otherwise it's determined by
 // some special fields.
-func (beacon *Beacon) verifyLegacy(header *types.Header) bool {
+func (beacon *Beacon) legacyHeader(header *types.Header) bool {
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
@@ -385,9 +385,6 @@ func (beacon *Beacon) IsPoSHeader(header *types.Header) bool {
 	if header.Nonce != beaconNonce {
 		return false
 	}
-	if header.UncleHash != types.EmptyUncleHash {
-		return false
-	}
 	// Extra field can be used to filter out clique block
 	if len(header.Extra) != 0 {
 		return false
@@ -401,4 +398,9 @@ func (beacon *Beacon) MarkTransitioned() {
 	defer beacon.lock.Unlock()
 
 	beacon.transitioned = true
+}
+
+// InnerEngine returns the embedded eth1 consensus engine.
+func (beacon *Beacon) InnerEngine() consensus.Engine {
+	return beacon.ethone
 }

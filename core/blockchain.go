@@ -246,8 +246,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		vmConfig:      vmConfig,
 	}
 	// Construct the fork choice based on the transition status.
-	// For non-ethereum chain, the legacy fork choice is kept to
-	// keep the full compatibility.
+	// Before the transition, the legacy fork choice is used;
+	// after the transition, only the trusted PoS header from
+	// the consensus layer can be picked as the new chain head.
 	var trustedHeader func(header *types.Header) bool
 	if b, ok := engine.(*beacon.Beacon); ok {
 		trustedHeader = func(header *types.Header) bool {
