@@ -20,6 +20,8 @@ package catalyst
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"math/big"
 	"time"
 
@@ -57,11 +59,17 @@ func Register(stack *node.Node, backend *eth.Ethereum) error {
 }
 
 type consensusAPI struct {
-	eth *eth.Ethereum
+	eth *eth.Ethereum // Ethereum main object
+
+	// Engine is the post-merge consensus engine and used for creating new exection
+	// blocks. The post-merge consensus rules are always chosen here for execution
+	// block generation.
+	engine consensus.Engine
 }
 
 func newConsensusAPI(eth *eth.Ethereum) *consensusAPI {
-	return &consensusAPI{eth: eth}
+	engine := beacon.New(eth.Engine(), true)
+	return &consensusAPI{eth: eth, engine: engine}
 }
 
 // blockExecutionEnv gathers all the data required to execute
@@ -143,7 +151,7 @@ func (api *consensusAPI) AssembleBlock(params assembleBlockParams) (*executableD
 		Extra:      []byte{},
 		Time:       params.Timestamp,
 	}
-	err = api.eth.Engine().Prepare(bc, header)
+	err = api.engine.Prepare(bc, header)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +213,7 @@ func (api *consensusAPI) AssembleBlock(params assembleBlockParams) (*executableD
 	}
 
 	// Create the block.
-	block, err := api.eth.Engine().FinalizeAndAssemble(bc, header, env.state, transactions, nil /* uncles */, env.receipts)
+	block, err := api.engine.FinalizeAndAssemble(bc, header, env.state, transactions, nil /* uncles */, env.receipts)
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +282,10 @@ func insertBlockParamsToBlock(params executableData) (*types.Block, error) {
 // or false + an error. This is a bit redundant for go, but simplifies things on the
 // eth2 side.
 func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, error) {
+	// Trigger the transition if it's the first `NewHead` event.
+	if !api.eth.Merger().LeftPoW() {
+		api.eth.Merger().LeavePoW()
+	}
 	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
 	if parent == nil {
 		return &newBlockResponse{false}, fmt.Errorf("could not find parent %x", params.ParentHash)
@@ -282,7 +294,6 @@ func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, err
 	if err != nil {
 		return nil, err
 	}
-
 	_, err = api.eth.BlockChain().InsertChain([]*types.Block{block})
 	return &newBlockResponse{err == nil}, err
 }
@@ -298,10 +309,25 @@ func (api *consensusAPI) addBlockTxs(block *types.Block) error {
 // FinalizeBlock is called to mark a block as synchronized, so
 // that data that is no longer needed can be removed.
 func (api *consensusAPI) FinalizeBlock(blockHash common.Hash) (*genericResponse, error) {
+	if !api.eth.Merger().EnteredPoS() {
+		api.eth.Merger().EnterPoS()
+	}
 	return &genericResponse{true}, nil
 }
 
 // SetHead is called to perform a force choice.
 func (api *consensusAPI) SetHead(newHead common.Hash) (*genericResponse, error) {
+	headBlock := api.eth.BlockChain().CurrentBlock()
+	if headBlock.Hash() == newHead {
+		return &genericResponse{true}, nil
+	}
+	// New head block is assumed to be existent
+	newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
+	if newHeadBlock == nil {
+		return &genericResponse{false}, nil
+	}
+	if err := api.eth.BlockChain().Reorg(newHeadBlock); err != nil {
+		return &genericResponse{false}, nil
+	}
 	return &genericResponse{true}, nil
 }
