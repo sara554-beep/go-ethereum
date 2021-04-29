@@ -288,7 +288,9 @@ func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, err
 	}
 	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
 	if parent == nil {
-		return &newBlockResponse{false}, fmt.Errorf("could not find parent %x", params.ParentHash)
+		// Parent is not existent, the local chain is out of date.
+		// Notify the downloader for syncing.
+		return &newBlockResponse{true}, nil
 	}
 	block, err := insertBlockParamsToBlock(params)
 	if err != nil {
