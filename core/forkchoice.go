@@ -57,26 +57,19 @@ type ForkChoice struct {
 	// local td is equal to the extern one. It can nil for light
 	// client
 	preserve func(header *types.Header) bool
-
-	// trustedHeader reports that the given header belongs to pos-stage or not.
-	// It's determined by a few special fields in the header. This funcition
-	// assumes the header should come from the trusted consensus layer, the
-	// untrusted pos-ish header from the p2p network shouldn't be accpeted.
-	trustedHeader func(header *types.Header) bool
 }
 
-func NewForkChoice(chainReader ChainReader, transitioned bool, preserve func(header *types.Header) bool, trustedHeader func(header *types.Header) bool) *ForkChoice {
+func NewForkChoice(chainReader ChainReader, transitioned bool, preserve func(header *types.Header) bool) *ForkChoice {
 	// Seed a fast but crypto originating random generator
 	seed, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
 		log.Crit("Failed to initialize random seed", "err", err)
 	}
 	return &ForkChoice{
-		chain:         chainReader,
-		rand:          mrand.New(mrand.NewSource(seed.Int64())),
-		transitioned:  transitioned,
-		preserve:      preserve,
-		trustedHeader: trustedHeader,
+		chain:        chainReader,
+		rand:         mrand.New(mrand.NewSource(seed.Int64())),
+		transitioned: transitioned,
+		preserve:     preserve,
 	}
 }
 
@@ -89,13 +82,11 @@ func (f *ForkChoice) Reorg(current *types.Header, header *types.Header) (bool, e
 	f.lock.RLock()
 	defer f.lock.RUnlock()
 
-	// Run the reorg if the header comes from the trusted consensus-layer
-	// if the blockchain has started or completed the transition.
+	// Accept the new header as the chain head if the transition
+	// is already triggered. We assume all the headers after the
+	// transition come from the trusted consensus layer.
 	if f.transitioned {
-		if f.trustedHeader == nil {
-			return true, nil
-		}
-		return f.trustedHeader(header), nil
+		return true, nil
 	}
 	var (
 		localTD  = f.chain.GetTd(current.Hash(), current.Number.Uint64())

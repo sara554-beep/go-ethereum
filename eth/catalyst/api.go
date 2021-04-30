@@ -20,12 +20,12 @@ package catalyst
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -59,11 +59,10 @@ func Register(stack *node.Node, backend *eth.Ethereum) error {
 }
 
 type consensusAPI struct {
-	eth *eth.Ethereum // Ethereum main object
+	eth *eth.Ethereum
 
-	// Engine is the post-merge consensus engine and used for creating new exection
-	// blocks. The post-merge consensus rules are always chosen here for execution
-	// block generation.
+	// Engine is the post-merge consensus engine and used
+	// for execution block verification and creation.
 	engine consensus.Engine
 }
 
@@ -282,10 +281,6 @@ func insertBlockParamsToBlock(params executableData) (*types.Block, error) {
 // or false + an error. This is a bit redundant for go, but simplifies things on the
 // eth2 side.
 func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, error) {
-	// Trigger the transition if it's the first `NewHead` event.
-	if !api.eth.Merger().LeftPoW() {
-		api.eth.Merger().LeavePoW()
-	}
 	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
 	if parent == nil {
 		// Parent is not existent, the local chain is out of date.
@@ -296,7 +291,7 @@ func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, err
 	if err != nil {
 		return nil, err
 	}
-	_, err = api.eth.BlockChain().InsertChain([]*types.Block{block})
+	err = api.eth.BlockChain().ExecuteBlock(block, api.engine)
 	return &newBlockResponse{err == nil}, err
 }
 
@@ -311,6 +306,7 @@ func (api *consensusAPI) addBlockTxs(block *types.Block) error {
 // FinalizeBlock is called to mark a block as synchronized, so
 // that data that is no longer needed can be removed.
 func (api *consensusAPI) FinalizeBlock(blockHash common.Hash) (*genericResponse, error) {
+	// Finalize the transition if it's the first `FinalisedBlock` event.
 	if !api.eth.Merger().EnteredPoS() {
 		api.eth.Merger().EnterPoS()
 	}
@@ -319,6 +315,10 @@ func (api *consensusAPI) FinalizeBlock(blockHash common.Hash) (*genericResponse,
 
 // SetHead is called to perform a force choice.
 func (api *consensusAPI) SetHead(newHead common.Hash) (*genericResponse, error) {
+	// Trigger the transition if it's the first `NewHead` event.
+	if !api.eth.Merger().LeftPoW() {
+		api.eth.Merger().LeavePoW()
+	}
 	headBlock := api.eth.BlockChain().CurrentBlock()
 	if headBlock.Hash() == newHead {
 		return &genericResponse{true}, nil
@@ -328,7 +328,7 @@ func (api *consensusAPI) SetHead(newHead common.Hash) (*genericResponse, error) 
 	if newHeadBlock == nil {
 		return &genericResponse{false}, nil
 	}
-	if err := api.eth.BlockChain().Reorg(newHeadBlock); err != nil {
+	if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
 		return &genericResponse{false}, nil
 	}
 	return &genericResponse{true}, nil

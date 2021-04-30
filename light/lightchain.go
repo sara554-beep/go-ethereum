@@ -21,7 +21,6 @@ package light
 import (
 	"context"
 	"errors"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -94,17 +93,7 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 		blockCache:    blockCache,
 		engine:        engine,
 	}
-	// Construct the fork choice based on the transition status.
-	// Before the transition, the legacy fork choice is used;
-	// after the transition, only the trusted PoS header from
-	// the consensus layer can be picked as the new chain head.
-	var trustedHeader func(header *types.Header) bool
-	if beaconEngine, ok := engine.(*beacon.Beacon); ok {
-		trustedHeader = func(header *types.Header) bool {
-			return beaconEngine.IsPoSHeader(header)
-		}
-	}
-	bc.forker = core.NewForkChoice(bc, merger.LeftPoW(), nil, trustedHeader)
+	bc.forker = core.NewForkChoice(bc, merger.LeftPoW(), nil)
 	merger.SubscribeLeavePoW(func() {
 		bc.forker.MarkTransitioned()
 	})
