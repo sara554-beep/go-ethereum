@@ -1354,7 +1354,6 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	if len(chain) == 0 {
 		return 0, nil
 	}
-
 	bc.blockProcFeed.Send(true)
 	defer bc.blockProcFeed.Send(false)
 
@@ -1381,7 +1380,6 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 	n, err := bc.insertChain(chain, true)
 	bc.chainmu.Unlock()
 	bc.wg.Done()
-
 	return n, err
 }
 
@@ -1448,7 +1446,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, er
 				// and also the block is not on the canonical chain.
 				// In eth2 the forker always returns True for reorg desision(blindly trust
 				// the external consensus engine), but in order to prevent the unnecessary
-				/// reorgs when importing known blocks, the special case is handled here.
+				// reorgs when importing known blocks, the special case is handled here.
 				if bc.GetCanonicalHash(block.NumberU64()) != block.Hash() || block.NumberU64() > current.NumberU64() {
 					break
 				}
@@ -1842,6 +1840,12 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engi
 		hashes = append(hashes, parent.Hash())
 		numbers = append(numbers, parent.NumberU64())
 		parent = bc.GetBlock(parent.ParentHash(), parent.NumberU64()-1)
+
+		// If the chain is terminating, stop iteration
+		if bc.insertStopped() {
+			log.Debug("Abort during blocks iteration")
+			return nil // TODO it should be handled explicitly
+		}
 	}
 	if parent == nil {
 		return errors.New("missing parent")
@@ -1855,7 +1859,7 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engi
 		}
 		// Append the next block to our batch
 		block := bc.GetBlock(hashes[i], numbers[i])
-		if err := bc.ExecuteBlock(block, engine); err != nil {
+		if err := bc.executeBlock(block, engine); err != nil {
 			return err
 		}
 	}
@@ -1923,7 +1927,12 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 		for ; oldBlock != nil && oldBlock.NumberU64() != newBlock.NumberU64(); oldBlock = bc.GetBlock(oldBlock.ParentHash(), oldBlock.NumberU64()-1) {
 			oldChain = append(oldChain, oldBlock)
 			deletedTxs = append(deletedTxs, oldBlock.Transactions()...)
-			deletedLogs = append(deletedLogs, bc.collectLogs(oldBlock.Hash(), true))
+
+			// Collect deleted logs for notification
+			logs := bc.collectLogs(oldBlock.Hash(), true)
+			if len(logs) > 0 {
+				deletedLogs = append(deletedLogs, logs)
+			}
 		}
 	} else {
 		// New chain is longer, stash all blocks away for subsequent insertion
@@ -1948,8 +1957,12 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 		// Remove an old block as well as stash away a new block
 		oldChain = append(oldChain, oldBlock)
 		deletedTxs = append(deletedTxs, oldBlock.Transactions()...)
-		deletedLogs = append(deletedLogs, bc.collectLogs(oldBlock.Hash(), true))
 
+		// Collect deleted logs for notification
+		logs := bc.collectLogs(oldBlock.Hash(), true)
+		if len(logs) > 0 {
+			deletedLogs = append(deletedLogs, logs)
+		}
 		newChain = append(newChain, newBlock)
 
 		// Step back with both chains
@@ -1985,8 +1998,10 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 		bc.writeHeadBlock(newChain[i])
 
 		// Collect reborn logs due to chain reorg
-		rebirthLogs = append(rebirthLogs, bc.collectLogs(newChain[i].Hash(), false))
-
+		logs := bc.collectLogs(newChain[i].Hash(), false)
+		if len(logs) > 0 {
+			rebirthLogs = append(rebirthLogs, logs)
+		}
 		// Collect the new added transactions.
 		addedTxs = append(addedTxs, newChain[i].Transactions()...)
 	}
@@ -2034,10 +2049,16 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 // procedure.
 func (bc *BlockChain) ExecuteBlock(block *types.Block, engine consensus.Engine) error {
 	bc.wg.Add(1)
-	bc.chainmu.Lock()
 	defer bc.wg.Done()
+
+	bc.chainmu.Lock()
 	defer bc.chainmu.Unlock()
 
+	return bc.executeBlock(block, engine)
+}
+
+// executeBlock is the inner version of ExecuteBlock without holding the lock.
+func (bc *BlockChain) executeBlock(block *types.Block, engine consensus.Engine) error {
 	// If the chain is terminating, don't even bother starting up
 	if bc.insertStopped() {
 		return errors.New("blockchain stopped")

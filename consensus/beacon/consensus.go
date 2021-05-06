@@ -50,13 +50,13 @@ var (
 )
 
 // Beacon is a consensus engine combines the ethereum 1 consensus and proof-of-stake
-// algorithm. There is a special flag inside to decide whether to use classic consensus
-// rules or beacon rules. The transition rule is described in the eth1/2 merge spec.
+// algorithm. There is a special flag inside to decide whether to use legacy consensus
+// rules or new rules. The transition rule is described in the eth1/2 merge spec.
 // https://hackmd.io/@n0ble/ethereum_consensus_upgrade_mainnet_perspective#Transition-process
 //
-// The beacon here is a tailored consensus engine with partial functions which is only
-// used for necessary consensus checks. The classic consensus engine can be any engine
-// implements the consensus interface(except the beacon itself).
+// The beacon here is a half-functional consensus engine with partial functions which
+// is only used for necessary consensus checks. The legacy consensus engine can be any
+// engine implements the consensus interface(except the beacon itself).
 type Beacon struct {
 	ethone consensus.Engine // Classic consensus engine used in the eth1, ethash or clique
 
@@ -375,9 +375,11 @@ func (beacon *Beacon) legacyHeader(header *types.Header) bool {
 	defer beacon.lock.RUnlock()
 
 	// Short circuit if the transition is not triggered yet.
-	if !beacon.transitioned {
-		return true
-	}
+	// TODO(rjl493456442) is it really needed? Check special
+	// fields is super cheap(all CPU operations).
+	//if !beacon.transitioned {
+	//	return true
+	//}
 	return !beacon.IsPoSHeader(header)
 }
 
