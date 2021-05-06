@@ -20,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
@@ -56,7 +57,7 @@ func generatePreMergeChain(n int) (*core.Genesis, []*types.Block) {
 		g.OffsetTime(5)
 		g.SetExtra([]byte("test"))
 
-		tx, _ := types.SignTx(types.NewTransaction(testNonce, testAddr, big.NewInt(0), params.TxGas, nil, nil), types.LatestSigner(config), testKey)
+		tx, _ := types.SignTx(types.NewTransaction(testNonce, common.HexToAddress("0x9a9070028361F7AAbeB3f2F2Dc07F82C4a98A02a"), big.NewInt(1), params.TxGas, big.NewInt(1), nil), types.LatestSigner(config), testKey)
 		g.AddTx(tx)
 		testNonce++
 	}
@@ -223,6 +224,49 @@ func TestEth2NewBlock(t *testing.T) {
 	}
 }
 
+func TestEth2DeepReorg(t *testing.T) {
+	t.Skip("")
+	genesis, preMergeBlocks := generatePreMergeChain(core.TriesInMemory * 2)
+	n, ethservice := startEthService(t, genesis, preMergeBlocks)
+	defer n.Close()
+
+	var (
+		api    = newConsensusAPI(ethservice)
+		parent = preMergeBlocks[len(preMergeBlocks)-core.TriesInMemory-1]
+	)
+	if ethservice.BlockChain().HasBlockAndState(parent.Hash(), parent.NumberU64()) {
+		t.Errorf("Block %d not pruned", parent.NumberU64())
+	}
+	for i := 0; i < 10; i++ {
+		execData, err := api.AssembleBlock(assembleBlockParams{
+			ParentHash: parent.Hash(),
+			Timestamp:  parent.Time() + 5,
+		})
+		if err != nil {
+			t.Fatalf("Failed to create the executable data %v", err)
+		}
+		block, err := insertBlockParamsToBlock(*execData)
+		if err != nil {
+			t.Fatalf("Failed to convert executable data to block %v", err)
+		}
+		newResp, err := api.NewBlock(*execData)
+		if err != nil || !newResp.Valid {
+			t.Fatalf("Failed to insert block: %v", err)
+		}
+		if ethservice.BlockChain().CurrentBlock().NumberU64() != block.NumberU64()-1 {
+			t.Fatalf("Chain head shouldn't be updated")
+		}
+		setResp, err := api.SetHead(block.Hash())
+		if err != nil || !setResp.Success {
+			t.Fatalf("Failed to insert block: %v", err)
+		}
+		if ethservice.BlockChain().CurrentBlock().NumberU64() != block.NumberU64() {
+			t.Fatalf("Chain head should be updated")
+		}
+		parent = block
+	}
+}
+
 // startEthService creates a full node instance for testing.
 func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block) (*node.Node, *eth.Ethereum) {
 	t.Helper()
@@ -232,7 +276,7 @@ func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block)
 		t.Fatal("can't create node:", err)
 	}
 
-	ethcfg := &ethconfig.Config{Genesis: genesis, Ethash: ethash.Config{PowMode: ethash.ModeFake}}
+	ethcfg := &ethconfig.Config{Genesis: genesis, Ethash: ethash.Config{PowMode: ethash.ModeFake}, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256}
 	ethservice, err := eth.New(n, ethcfg)
 	if err != nil {
 		t.Fatal("can't create eth service:", err)

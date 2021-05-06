@@ -1842,7 +1842,7 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engi
 		// If the chain is terminating, stop iteration
 		if bc.insertStopped() {
 			log.Debug("Abort during blocks iteration")
-			return nil // TODO it should be handled explicitly
+			return errInsertionInterrupted
 		}
 	}
 	if parent == nil {
@@ -1853,7 +1853,7 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engi
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
 			log.Debug("Abort during blocks processing")
-			return nil // TODO it should be handled explicitly
+			return errInsertionInterrupted
 		}
 		// Append the next block to our batch
 		block := bc.GetBlock(hashes[i], numbers[i])
@@ -2059,7 +2059,7 @@ func (bc *BlockChain) ExecuteBlock(block *types.Block, engine consensus.Engine) 
 func (bc *BlockChain) executeBlock(block *types.Block, engine consensus.Engine) error {
 	// If the chain is terminating, don't even bother starting up
 	if bc.insertStopped() {
-		return errors.New("blockchain stopped")
+		return errInsertionInterrupted
 	}
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
 	senderCacher.recoverFromBlocks(types.MakeSigner(bc.chainConfig, block.Number()), []*types.Block{block})
