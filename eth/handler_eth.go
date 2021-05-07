@@ -182,7 +182,6 @@ func (h *ethHandler) handleBodies(peer *eth.Peer, txs [][]*types.Transaction, un
 func (h *ethHandler) handleBlockAnnounces(peer *eth.Peer, hashes []common.Hash, numbers []uint64) error {
 	// Drop all incoming block announces from the p2p network if
 	// the chain already entered the pos stage.
-	//
 	// TODO perhaps we should return the error here to disconnect
 	// the legacy node.
 	if h.merger.EnteredPoS() {
@@ -210,7 +209,6 @@ func (h *ethHandler) handleBlockAnnounces(peer *eth.Peer, hashes []common.Hash, 
 func (h *ethHandler) handleBlockBroadcast(peer *eth.Peer, block *types.Block, td *big.Int) error {
 	// Drop all incoming blocks from the p2p network if the chain already
 	// entered the pos stage.
-	//
 	// TODO perhaps we should return the error here to disconnect
 	// the legacy node.
 	if h.merger.EnteredPoS() {

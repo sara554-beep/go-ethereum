@@ -149,6 +149,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Database:   db,
 		Chain:      chain,
 		TxPool:     txpool,
+		Merger:     core.NewMerger(rawdb.NewMemoryDatabase()),
 		Network:    1,
 		Sync:       downloader.FastSync,
 		BloomCache: 1,

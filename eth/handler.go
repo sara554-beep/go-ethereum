@@ -192,6 +192,12 @@ func newHandler(config *handlerConfig) (*handler, error) {
 
 	// Construct the fetcher (short sync)
 	validator := func(header *types.Header) error {
+		// All the block fetcher activities should be disabled
+		// after the transition. Print the warning log.
+		if h.merger.EnteredPoS() {
+			log.Warn("Unexpected validation activity", "hash", header.Hash(), "number", header.Number)
+			return errors.New("unexpected behavior after transition")
+		}
 		// Reject all the PoS style headers in the first place. No matter
 		// the chain has finished the transition or not, the PoS headers
 		// should only come from the trusted consensus layer instead of
@@ -207,6 +213,20 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return h.chain.CurrentBlock().NumberU64()
 	}
 	inserter := func(blocks types.Blocks) (int, error) {
+		// All the block fetcher activities should be disabled
+		// after the transition. Print the warning log.
+		if h.merger.EnteredPoS() {
+			var ctx []interface{}
+			ctx = append(ctx, "blocks", len(blocks))
+			if len(blocks) > 0 {
+				ctx = append(ctx, "firsthash", blocks[0].Hash())
+				ctx = append(ctx, "firstnumber", blocks[0].Number())
+				ctx = append(ctx, "lasthash", blocks[len(blocks)-1].Hash())
+				ctx = append(ctx, "lastnumber", blocks[len(blocks)-1].Number())
+			}
+			log.Warn("Unexpected insertion activity", ctx...)
+			return 0, errors.New("unexpected behavior after transition")
+		}
 		// If sync hasn't reached the checkpoint yet, deny importing weird blocks.
 		//
 		// Ideally we would also compare the head block's timestamp and similarly reject
@@ -226,16 +246,25 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			log.Warn("Fast syncing, discarded propagated block", "number", blocks[0].Number(), "hash", blocks[0].Hash())
 			return 0, nil
 		}
-		// The blocks from the p2p network is regarded as untrusted
-		// after the transition. In theory block gossip should be disabled
-		// entirely whenever the transition is started. But in order to
-		// handle the transition boundary reorg in the consensus-layer,
-		// the legacy blocks are still accepted but marked as untrusted.
-		n, err := h.chain.InsertChain(blocks)
-		if err == nil {
-			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
+		if h.merger.LeftPoW() {
+			// The blocks from the p2p network is regarded as untrusted
+			// after the transition. In theory block gossip should be disabled
+			// entirely whenever the transition is started. But in order to
+			// handle the transition boundary reorg in the consensus-layer,
+			// the legacy blocks are still accepted but marked as untrusted.
+			for i, block := range blocks {
+				if err := h.chain.ExecuteBlock(block, h.chain.Engine()); err != nil {
+					return i, err
+				}
+			}
+			return 0, nil
+		} else {
+			n, err := h.chain.InsertChain(blocks)
+			if err == nil {
+				atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
+			}
+			return n, err
 		}
-		return n, err
 	}
 	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, h.BroadcastBlock, heighter, nil, inserter, h.removePeer)
 
