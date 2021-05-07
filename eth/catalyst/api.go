@@ -56,11 +56,18 @@ type consensusAPI struct {
 	// Engine is the post-merge consensus engine and used
 	// for execution block verification and creation.
 	engine consensus.Engine
+
+	// syncer is responsible for triggering chain sync.
+	syncer *syncer
 }
 
 func newConsensusAPI(eth *eth.Ethereum) *consensusAPI {
 	engine := beacon.New(eth.Engine(), true)
-	return &consensusAPI{eth: eth, engine: engine}
+	return &consensusAPI{
+		eth:    eth,
+		engine: engine,
+		syncer: newSyncer(),
+	}
 }
 
 // blockExecutionEnv gathers all the data required to execute
@@ -100,6 +107,9 @@ func (api *consensusAPI) makeEnv(parent *types.Block, header *types.Header) (*bl
 	if api.eth.BlockChain().HasState(parent.Root()) {
 		state, err = api.eth.BlockChain().StateAt(parent.Root())
 	} else {
+		// The maximum acceptable reorg depth can be limited by the
+		// finalised block somehow. TODO(rjl493456442) fix the hard-
+		// coded number here later.
 		state, err = api.eth.StateAtBlock(parent, 1000, nil, false)
 	}
 	if err != nil {
@@ -285,15 +295,16 @@ func insertBlockParamsToBlock(params executableData) (*types.Block, error) {
 // or false + an error. This is a bit redundant for go, but simplifies things on the
 // eth2 side.
 func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, error) {
-	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
-	if parent == nil {
-		// Parent is not existent, the local chain is out of date.
-		// Notify the downloader for syncing.
-		return &newBlockResponse{true}, nil
-	}
 	block, err := insertBlockParamsToBlock(params)
 	if err != nil {
 		return nil, err
+	}
+	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
+	if parent == nil {
+		// Parent is not existent, the local chain is out of date.
+		// Notify the syncer.
+		api.syncer.onNewBlock(block)
+		return &newBlockResponse{true}, nil
 	}
 	err = api.eth.BlockChain().ExecuteBlock(block, api.engine)
 	return &newBlockResponse{err == nil}, err
@@ -325,6 +336,10 @@ func (api *consensusAPI) SetHead(newHead common.Hash) (*genericResponse, error) 
 	}
 	headBlock := api.eth.BlockChain().CurrentBlock()
 	if headBlock.Hash() == newHead {
+		return &genericResponse{true}, nil
+	}
+	if api.syncer.hasBlock(newHead) {
+		api.syncer.onNewHead(newHead)
 		return &genericResponse{true}, nil
 	}
 	// New head block is assumed to be existent
