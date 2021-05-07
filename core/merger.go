@@ -93,6 +93,7 @@ func (m *Merger) LeavePoW() {
 	for _, call := range m.leavePoWCalls {
 		call()
 	}
+	log.Info("Left PoW stage")
 }
 
 // EnterPoS is called whenever the first FinalisedBlock message received
@@ -113,6 +114,7 @@ func (m *Merger) EnterPoS() {
 	for _, call := range m.enterPoSCalls {
 		call()
 	}
+	log.Info("Entered PoS stage")
 }
 
 // LeftPoW reports whether the chain has left the PoW stage.

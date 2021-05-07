@@ -18,7 +18,6 @@ package eth
 
 import (
 	"errors"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"math"
 	"math/big"
 	"sync"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -251,7 +251,8 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			// after the transition. In theory block gossip should be disabled
 			// entirely whenever the transition is started. But in order to
 			// handle the transition boundary reorg in the consensus-layer,
-			// the legacy blocks are still accepted but marked as untrusted.
+			// the legacy blocks are still accepted but the chain head won't
+			// be updated.
 			for i, block := range blocks {
 				if err := h.chain.ExecuteBlock(block, h.chain.Engine()); err != nil {
 					return i, err

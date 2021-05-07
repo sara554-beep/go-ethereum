@@ -100,7 +100,7 @@ func (api *consensusAPI) makeEnv(parent *types.Block, header *types.Header) (*bl
 	if api.eth.BlockChain().HasState(parent.Root()) {
 		state, err = api.eth.BlockChain().StateAt(parent.Root())
 	} else {
-		state, err = api.eth.StateAtBlock(parent, 1000, nil, true)
+		state, err = api.eth.StateAtBlock(parent, 1000, nil, false)
 	}
 	if err != nil {
 		return nil, err
