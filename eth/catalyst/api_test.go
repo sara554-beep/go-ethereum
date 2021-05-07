@@ -225,7 +225,6 @@ func TestEth2NewBlock(t *testing.T) {
 }
 
 func TestEth2DeepReorg(t *testing.T) {
-	t.Skip("")
 	genesis, preMergeBlocks := generatePreMergeChain(core.TriesInMemory * 2)
 	n, ethservice := startEthService(t, genesis, preMergeBlocks)
 	defer n.Close()
@@ -233,6 +232,7 @@ func TestEth2DeepReorg(t *testing.T) {
 	var (
 		api    = newConsensusAPI(ethservice)
 		parent = preMergeBlocks[len(preMergeBlocks)-core.TriesInMemory-1]
+		head   = ethservice.BlockChain().CurrentBlock().NumberU64()
 	)
 	if ethservice.BlockChain().HasBlockAndState(parent.Hash(), parent.NumberU64()) {
 		t.Errorf("Block %d not pruned", parent.NumberU64())
@@ -253,7 +253,7 @@ func TestEth2DeepReorg(t *testing.T) {
 		if err != nil || !newResp.Valid {
 			t.Fatalf("Failed to insert block: %v", err)
 		}
-		if ethservice.BlockChain().CurrentBlock().NumberU64() != block.NumberU64()-1 {
+		if ethservice.BlockChain().CurrentBlock().NumberU64() != head {
 			t.Fatalf("Chain head shouldn't be updated")
 		}
 		setResp, err := api.SetHead(block.Hash())
@@ -263,7 +263,7 @@ func TestEth2DeepReorg(t *testing.T) {
 		if ethservice.BlockChain().CurrentBlock().NumberU64() != block.NumberU64() {
 			t.Fatalf("Chain head should be updated")
 		}
-		parent = block
+		parent, head = block, block.NumberU64()
 	}
 }
 

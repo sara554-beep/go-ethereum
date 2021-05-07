@@ -1855,9 +1855,13 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engi
 			log.Debug("Abort during blocks processing")
 			return errInsertionInterrupted
 		}
-		// Append the next block to our batch
-		block := bc.GetBlock(hashes[i], numbers[i])
-		if err := bc.executeBlock(block, engine); err != nil {
+		var b *types.Block
+		if i == 0 {
+			b = block
+		} else {
+			b = bc.GetBlock(hashes[i], numbers[i])
+		}
+		if err := bc.executeBlock(b, engine); err != nil {
 			return err
 		}
 	}

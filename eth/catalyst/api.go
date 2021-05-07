@@ -88,7 +88,20 @@ func (env *blockExecutionEnv) commitTransaction(tx *types.Transaction, coinbase 
 }
 
 func (api *consensusAPI) makeEnv(parent *types.Block, header *types.Header) (*blockExecutionEnv, error) {
-	state, err := api.eth.BlockChain().StateAt(parent.Root())
+	// The parent state might be missing. It can be the special scenario
+	// that consensus layer tries to build a new block based on the very
+	// old side chain block and the relevant state is already pruned. So
+	// try to retrieve the live state from the chain, if it's not existent,
+	// do the necessary recovery work.
+	var (
+		err   error
+		state *state.StateDB
+	)
+	if api.eth.BlockChain().HasState(parent.Root()) {
+		state, err = api.eth.BlockChain().StateAt(parent.Root())
+	} else {
+		state, err = api.eth.StateAtBlock(parent, 1000, nil, true)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +126,6 @@ func (api *consensusAPI) AssembleBlock(params assembleBlockParams) (*executableD
 		return nil, fmt.Errorf("cannot assemble block with unknown parent %s", params.ParentHash)
 	}
 
-	pool := api.eth.TxPool()
-
 	if parent.Time() >= params.Timestamp {
 		return nil, fmt.Errorf("child timestamp lower than parent's: %d >= %d", parent.Time(), params.Timestamp)
 	}
@@ -124,6 +135,7 @@ func (api *consensusAPI) AssembleBlock(params assembleBlockParams) (*executableD
 		time.Sleep(wait)
 	}
 
+	pool := api.eth.TxPool()
 	pending, err := pool.Pending()
 	if err != nil {
 		return nil, err
