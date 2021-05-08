@@ -304,6 +304,8 @@ func (api *consensusAPI) NewBlock(params executableData) (*newBlockResponse, err
 		// Parent is not existent, the local chain is out of date.
 		// Notify the syncer.
 		api.syncer.onNewBlock(block)
+
+		// TODO(rjl493456442) return "in-sync" response
 		return &newBlockResponse{true}, nil
 	}
 	err = api.eth.BlockChain().ExecuteBlock(block, api.engine)
@@ -340,6 +342,8 @@ func (api *consensusAPI) SetHead(newHead common.Hash) (*genericResponse, error) 
 	}
 	if api.syncer.hasBlock(newHead) {
 		api.syncer.onNewHead(newHead)
+
+		// TODO(rjl493456442) return "in-sync" response
 		return &genericResponse{true}, nil
 	}
 	// New head block is assumed to be existent
