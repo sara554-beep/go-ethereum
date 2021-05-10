@@ -414,3 +414,14 @@ func (beacon *Beacon) MarkTransitioned() {
 func (beacon *Beacon) InnerEngine() consensus.Engine {
 	return beacon.ethone
 }
+
+// SetThreads updates the mining threads. Delegate the call
+// to the eth1 engine if it's threaded.
+func (beacon *Beacon) SetThreads(threads int) {
+	type threaded interface {
+		SetThreads(threads int)
+	}
+	if th, ok := beacon.ethone.(threaded); ok {
+		th.SetThreads(threads)
+	}
+}

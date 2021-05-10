@@ -72,14 +72,14 @@ func TestEth2AssembleBlock(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks)
 	defer n.Close()
 
-	api := newConsensusAPI(ethservice)
+	api := NewConsensusAPI(ethservice)
 	signer := types.NewEIP155Signer(ethservice.BlockChain().Config().ChainID)
 	tx, err := types.SignTx(types.NewTransaction(uint64(10), blocks[9].Coinbase(), big.NewInt(1000), params.TxGas, nil, nil), signer, testKey)
 	if err != nil {
 		t.Fatalf("error signing transaction, err=%v", err)
 	}
 	ethservice.TxPool().AddLocal(tx)
-	blockParams := assembleBlockParams{
+	blockParams := AssembleBlockParams{
 		ParentHash: blocks[9].Hash(),
 		Timestamp:  blocks[9].Time() + 5,
 	}
@@ -97,11 +97,11 @@ func TestEth2AssembleBlockWithAnotherBlocksTxs(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks[:9])
 	defer n.Close()
 
-	api := newConsensusAPI(ethservice)
+	api := NewConsensusAPI(ethservice)
 
 	// Put the 10th block's tx in the pool and produce a new block
 	api.addBlockTxs(blocks[9])
-	blockParams := assembleBlockParams{
+	blockParams := AssembleBlockParams{
 		ParentHash: blocks[8].Hash(),
 		Timestamp:  blocks[8].Time() + 5,
 	}
@@ -138,7 +138,7 @@ func TestEth2NewBlock(t *testing.T) {
 	defer n.Close()
 
 	var (
-		api    = newConsensusAPI(ethservice)
+		api    = NewConsensusAPI(ethservice)
 		parent = preMergeBlocks[len(preMergeBlocks)-1]
 
 		// This EVM code generates a log when the contract is created.
@@ -156,14 +156,14 @@ func TestEth2NewBlock(t *testing.T) {
 		tx, err := types.SignTx(types.NewContractCreation(nonce, new(big.Int), 1000000, new(big.Int), logCode), types.LatestSigner(ethservice.BlockChain().Config()), testKey)
 		ethservice.TxPool().AddLocal(tx)
 
-		execData, err := api.AssembleBlock(assembleBlockParams{
+		execData, err := api.AssembleBlock(AssembleBlockParams{
 			ParentHash: parent.Hash(),
 			Timestamp:  parent.Time() + 5,
 		})
 		if err != nil {
 			t.Fatalf("Failed to create the executable data %v", err)
 		}
-		block, err := insertBlockParamsToBlock(*execData)
+		block, err := InsertBlockParamsToBlock(*execData)
 		if err != nil {
 			t.Fatalf("Failed to convert executable data to block %v", err)
 		}
@@ -194,14 +194,14 @@ func TestEth2NewBlock(t *testing.T) {
 	)
 	parent = preMergeBlocks[len(preMergeBlocks)-1]
 	for i := 0; i < 10; i++ {
-		execData, err := api.AssembleBlock(assembleBlockParams{
+		execData, err := api.AssembleBlock(AssembleBlockParams{
 			ParentHash: parent.Hash(),
 			Timestamp:  parent.Time() + 6,
 		})
 		if err != nil {
 			t.Fatalf("Failed to create the executable data %v", err)
 		}
-		block, err := insertBlockParamsToBlock(*execData)
+		block, err := InsertBlockParamsToBlock(*execData)
 		if err != nil {
 			t.Fatalf("Failed to convert executable data to block %v", err)
 		}
@@ -230,7 +230,7 @@ func TestEth2DeepReorg(t *testing.T) {
 	defer n.Close()
 
 	var (
-		api    = newConsensusAPI(ethservice)
+		api    = NewConsensusAPI(ethservice)
 		parent = preMergeBlocks[len(preMergeBlocks)-core.TriesInMemory-1]
 		head   = ethservice.BlockChain().CurrentBlock().NumberU64()
 	)
@@ -238,14 +238,14 @@ func TestEth2DeepReorg(t *testing.T) {
 		t.Errorf("Block %d not pruned", parent.NumberU64())
 	}
 	for i := 0; i < 10; i++ {
-		execData, err := api.AssembleBlock(assembleBlockParams{
+		execData, err := api.AssembleBlock(AssembleBlockParams{
 			ParentHash: parent.Hash(),
 			Timestamp:  parent.Time() + 5,
 		})
 		if err != nil {
 			t.Fatalf("Failed to create the executable data %v", err)
 		}
-		block, err := insertBlockParamsToBlock(*execData)
+		block, err := InsertBlockParamsToBlock(*execData)
 		if err != nil {
 			t.Fatalf("Failed to convert executable data to block %v", err)
 		}
