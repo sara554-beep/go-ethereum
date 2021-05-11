@@ -309,7 +309,7 @@ func (api *ConsensusAPI) NewBlock(params ExecutableData) (*NewBlockResponse, err
 		//// TODO(rjl493456442) return "in-sync" response
 		//return &NewBlockResponse{true}, nil
 	}
-	err = api.eth.BlockChain().ExecuteBlock(block, api.engine)
+	err = api.eth.BlockChain().InsertBlock(block, api.engine)
 	return &NewBlockResponse{err == nil}, err
 }
 

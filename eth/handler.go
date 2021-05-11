@@ -254,7 +254,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			// the legacy blocks are still accepted but the chain head won't
 			// be updated.
 			for i, block := range blocks {
-				if err := h.chain.ExecuteBlock(block, h.chain.Engine()); err != nil {
+				if err := h.chain.InsertBlock(block, h.chain.Engine()); err != nil {
 					return i, err
 				}
 			}
