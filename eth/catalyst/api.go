@@ -301,7 +301,7 @@ func (api *ConsensusAPI) NewBlock(params ExecutableData) (*NewBlockResponse, err
 	}
 	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
 	if parent == nil {
-		return &NewBlockResponse{false}, nil
+		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", params.ParentHash)
 		//// Parent is not existent, the local chain is out of date.
 		//// Notify the syncer.
 		//api.syncer.onNewBlock(block)
@@ -355,5 +355,6 @@ func (api *ConsensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) 
 	if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
 		return &GenericResponse{false}, nil
 	}
+	api.eth.SetSynced()
 	return &GenericResponse{true}, nil
 }

@@ -380,11 +380,11 @@ func (beacon *Beacon) legacyHeader(header *types.Header) bool {
 	//if !beacon.transitioned {
 	//	return true
 	//}
-	return !beacon.IsPoSHeader(header)
+	return !beacon.IsPostMergeHeader(header)
 }
 
-// IsPoSHeader reports the header belongs to the PoS-stage with some special fields.
-func (beacon *Beacon) IsPoSHeader(header *types.Header) bool {
+// IsPostMergeHeader reports the header belongs to the PoS-stage with some special fields.
+func (beacon *Beacon) IsPostMergeHeader(header *types.Header) bool {
 	// These fields can be used to filter out ethash block
 	if header.Difficulty.Cmp(beaconDifficulty) != 0 {
 		return false

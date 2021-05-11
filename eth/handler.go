@@ -203,7 +203,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		// should only come from the trusted consensus layer instead of
 		// p2p network.
 		if beacon, ok := h.chain.Engine().(*beacon.Beacon); ok {
-			if beacon.IsPoSHeader(header) {
+			if beacon.IsPostMergeHeader(header) {
 				return errors.New("unexpected post-merge header")
 			}
 		}
@@ -478,10 +478,16 @@ func (h *handler) Stop() {
 // BroadcastBlock will either propagate a block to a subset of its peers, or
 // will only announce its availability (depending what's requested).
 func (h *handler) BroadcastBlock(block *types.Block, propagate bool) {
-	// Disable the block gossip if the chain has already entered the PoS
+	// Disable the block propagation if the chain has already entered the PoS
 	// stage. The block propagation is delegated to the consensus layer.
 	if h.merger.EnteredPoS() {
 		return
+	}
+	// Disable the block propagation if it's the post-merge block.
+	if beacon, ok := h.chain.Engine().(*beacon.Beacon); ok {
+		if beacon.IsPostMergeHeader(block.Header()) {
+			return
+		}
 	}
 	hash := block.Hash()
 	peers := h.peers.peersWithoutBlock(hash)

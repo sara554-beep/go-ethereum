@@ -169,7 +169,7 @@ func newLightFetcher(chain *light.LightChain, engine consensus.Engine, peers *se
 		// should only come from the trusted consensus layer instead of
 		// p2p network.
 		if beacon, ok := engine.(*beacon.Beacon); ok {
-			if beacon.IsPoSHeader(header) {
+			if beacon.IsPostMergeHeader(header) {
 				return errors.New("unexpected header")
 			}
 		}
