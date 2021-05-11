@@ -301,12 +301,13 @@ func (api *ConsensusAPI) NewBlock(params ExecutableData) (*NewBlockResponse, err
 	}
 	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
 	if parent == nil {
-		// Parent is not existent, the local chain is out of date.
-		// Notify the syncer.
-		api.syncer.onNewBlock(block)
-
-		// TODO(rjl493456442) return "in-sync" response
-		return &NewBlockResponse{true}, nil
+		return &NewBlockResponse{false}, nil
+		//// Parent is not existent, the local chain is out of date.
+		//// Notify the syncer.
+		//api.syncer.onNewBlock(block)
+		//
+		//// TODO(rjl493456442) return "in-sync" response
+		//return &NewBlockResponse{true}, nil
 	}
 	err = api.eth.BlockChain().ExecuteBlock(block, api.engine)
 	return &NewBlockResponse{err == nil}, err
@@ -340,12 +341,12 @@ func (api *ConsensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) 
 	if headBlock.Hash() == newHead {
 		return &GenericResponse{true}, nil
 	}
-	if api.syncer.hasBlock(newHead) {
-		api.syncer.onNewHead(newHead)
-
-		// TODO(rjl493456442) return "in-sync" response
-		return &GenericResponse{true}, nil
-	}
+	//if api.syncer.hasBlock(newHead) {
+	//	api.syncer.onNewHead(newHead)
+	//
+	//	// TODO(rjl493456442) return "in-sync" response
+	//	return &GenericResponse{true}, nil
+	//}
 	// New head block is assumed to be existent
 	newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
 	if newHeadBlock == nil {
