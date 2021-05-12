@@ -69,6 +69,9 @@ type Beacon struct {
 
 // New creates a consensus engine with the given embedded ethereum 1 engine.
 func New(ethone consensus.Engine, transitioned bool) *Beacon {
+	if _, ok := ethone.(*Beacon); ok {
+		panic("nested consensus engine")
+	}
 	return &Beacon{
 		ethone:       ethone,
 		transitioned: transitioned,

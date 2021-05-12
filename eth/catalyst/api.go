@@ -62,7 +62,15 @@ type ConsensusAPI struct {
 }
 
 func NewConsensusAPI(eth *eth.Ethereum) *ConsensusAPI {
-	engine := beacon.New(eth.Engine(), true)
+	// Construct a local consensus engine with transition
+	// enabled by default. It's used to create and verify
+	// the blocks with post-merge rules.
+	var engine consensus.Engine
+	if b, ok := eth.Engine().(*beacon.Beacon); ok {
+		engine = beacon.New(b.InnerEngine(), true)
+	} else {
+		engine = beacon.New(eth.Engine(), true)
+	}
 	return &ConsensusAPI{
 		eth:    eth,
 		engine: engine,
