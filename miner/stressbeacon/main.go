@@ -199,12 +199,36 @@ func (mgr *nodeManager) run() {
 	var (
 		transitioned bool
 		parentBlock  *types.Block
+		waitFinalise []*types.Block
 	)
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	<-timer.C // discard the initial tick
 
+	checkFinalise := func() {
+		if parentBlock == nil {
+			return
+		}
+		if len(waitFinalise) == 0 {
+			return
+		}
+		oldest := waitFinalise[0]
+		if oldest.NumberU64() > parentBlock.NumberU64() {
+			return
+		}
+		distance := parentBlock.NumberU64() - oldest.NumberU64()
+		if distance < 10 {
+			return
+		}
+		for _, node := range append(mgr.getNodes(eth2MiningNode), mgr.getNodes(eth2NormalNode)...) {
+			node.api.FinalizeBlock(oldest.Hash())
+		}
+		log.Info("Finalised eth2 block", "number", oldest.NumberU64(), "hash", oldest.Hash())
+		waitFinalise = waitFinalise[1:]
+	}
+
 	for {
+		checkFinalise()
 		select {
 		case <-mgr.close:
 			return
@@ -239,6 +263,7 @@ func (mgr *nodeManager) run() {
 			}
 			log.Info("Create and insert eth2 block", "number", ed.Number)
 			parentBlock = block
+			waitFinalise = append(waitFinalise, block)
 			timer.Reset(time.Second * 3)
 		}
 	}
