@@ -57,7 +57,14 @@ const (
 
 var (
 	// transitionDifficulty is the target total difficulty for transition
-	transitionDifficulty = new(big.Int).Mul(big.NewInt(15), params.MinimumDifficulty)
+	transitionDifficulty = new(big.Int).Mul(big.NewInt(0), params.MinimumDifficulty)
+
+	// blockInterval is the time interval for creating a new eth2 block
+	blockInterval    = time.Second * 3
+	blockIntervalInt = 3
+
+	// finalizationDist is the block distance for finalizing block
+	finalizationDist = 10
 )
 
 type ethNode struct {
@@ -103,7 +110,7 @@ func (n *ethNode) assembleBlock(parentHash common.Hash, parentTimestamp uint64) 
 	}
 	return n.api.AssembleBlock(catalyst.AssembleBlockParams{
 		ParentHash: parentHash,
-		Timestamp:  parentTimestamp + 3, // hardcode here
+		Timestamp:  uint64(time.Now().Unix()),
 	})
 }
 
@@ -143,16 +150,18 @@ func (n *ethNode) insertBlockAndSetHead(ed catalyst.ExecutableData) error {
 }
 
 type nodeManager struct {
-	genesis *core.Genesis
-	nodes   []*ethNode
-	enodes  []*enode.Node
-	close   chan struct{}
+	genesis      *core.Genesis
+	genesisBlock *types.Block
+	nodes        []*ethNode
+	enodes       []*enode.Node
+	close        chan struct{}
 }
 
 func newNodeManager(genesis *core.Genesis) *nodeManager {
 	return &nodeManager{
-		close:   make(chan struct{}),
-		genesis: genesis,
+		close:        make(chan struct{}),
+		genesis:      genesis,
+		genesisBlock: genesis.ToBlock(nil),
 	}
 }
 
@@ -205,6 +214,15 @@ func (mgr *nodeManager) run() {
 	defer timer.Stop()
 	<-timer.C // discard the initial tick
 
+	// Handle the by default transition.
+	if transitionDifficulty.Sign() == 0 {
+		transitioned = true
+		parentBlock = mgr.genesisBlock
+		timer.Reset(blockInterval)
+		log.Info("Enable the transition by default")
+	}
+
+	// Handle the block finalization.
 	checkFinalise := func() {
 		if parentBlock == nil {
 			return
@@ -217,7 +235,7 @@ func (mgr *nodeManager) run() {
 			return
 		}
 		distance := parentBlock.NumberU64() - oldest.NumberU64()
-		if distance < 10 {
+		if int(distance) < finalizationDist {
 			return
 		}
 		for _, node := range append(mgr.getNodes(eth2MiningNode), mgr.getNodes(eth2NormalNode)...) {
@@ -242,7 +260,7 @@ func (mgr *nodeManager) run() {
 				continue
 			}
 			transitioned, parentBlock = true, ev.Block
-			timer.Reset(time.Second * 3)
+			timer.Reset(blockInterval)
 			log.Info("Transition difficulty reached", "td", td, "target", transitionDifficulty)
 
 		case <-timer.C:
@@ -250,7 +268,11 @@ func (mgr *nodeManager) run() {
 			if len(producers) == 0 {
 				continue
 			}
-			ed, err := producers[0].assembleBlock(parentBlock.Hash(), parentBlock.Time())
+			hash, timestamp := parentBlock.Hash(), parentBlock.Time()
+			if parentBlock.NumberU64() == 0 {
+				timestamp = uint64(time.Now().Unix()) - uint64(blockIntervalInt)
+			}
+			ed, err := producers[0].assembleBlock(hash, timestamp)
 			if err != nil {
 				log.Error("Failed to assemble the block", "err", err)
 				continue
@@ -264,7 +286,7 @@ func (mgr *nodeManager) run() {
 			log.Info("Create and insert eth2 block", "number", ed.Number)
 			parentBlock = block
 			waitFinalise = append(waitFinalise, block)
-			timer.Reset(time.Second * 3)
+			timer.Reset(blockInterval)
 		}
 	}
 }
@@ -293,7 +315,9 @@ func main() {
 
 	// Iterate over all the nodes and start mining
 	time.Sleep(3 * time.Second)
-	manager.startMining()
+	if transitionDifficulty.Sign() != 0 {
+		manager.startMining()
+	}
 	go manager.run()
 
 	// Start injecting transactions from the faucets like crazy
@@ -375,7 +399,7 @@ func makeMiner(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.Cons
 			GasFloor: genesis.GasLimit * 9 / 10,
 			GasCeil:  genesis.GasLimit * 11 / 10,
 			GasPrice: big.NewInt(1),
-			Recommit: 3 * time.Second,
+			Recommit: 10 * time.Second, // Disable the recommit
 		},
 	})
 	if err != nil {
