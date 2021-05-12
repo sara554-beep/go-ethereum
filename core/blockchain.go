@@ -2148,7 +2148,7 @@ func (bc *BlockChain) insertBlock(block *types.Block, engine consensus.Engine) e
 
 	blockWriteTimer.Update(time.Since(substart) - statedb.AccountCommits - statedb.StorageCommits - statedb.SnapshotCommits)
 	blockInsertTimer.UpdateSince(start)
-	log.Info("Inserted block", "number", block.Number(), "hash", block.Hash(), "txs", len(block.Transactions()))
+	log.Info("Inserted block", "number", block.Number(), "hash", block.Hash(), "txs", len(block.Transactions()), "elasped", common.PrettyDuration(time.Since(start)))
 	return nil
 }
 
