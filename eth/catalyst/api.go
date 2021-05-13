@@ -18,6 +18,7 @@
 package catalyst
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/les"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
 	chainParams "github.com/ethereum/go-ethereum/params"
@@ -36,14 +38,28 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 )
 
-// Register adds catalyst APIs to the node.
+// Register adds catalyst APIs to the full node.
 func Register(stack *node.Node, backend *eth.Ethereum) error {
-	log.Warn("Catalyst mode enabled")
+	log.Warn("Catalyst mode enabled", "proto", "eth")
 	stack.RegisterAPIs([]rpc.API{
 		{
 			Namespace: "consensus",
 			Version:   "1.0",
-			Service:   NewConsensusAPI(backend),
+			Service:   NewConsensusAPI(backend, nil),
+			Public:    true,
+		},
+	})
+	return nil
+}
+
+// RegisterLight adds catalyst APIs to the light client.
+func RegisterLight(stack *node.Node, backend *les.LightEthereum) error {
+	log.Warn("Catalyst mode enabled", "proto", "les")
+	stack.RegisterAPIs([]rpc.API{
+		{
+			Namespace: "consensus",
+			Version:   "1.0",
+			Service:   NewConsensusAPI(nil, backend),
 			Public:    true,
 		},
 	})
@@ -51,28 +67,33 @@ func Register(stack *node.Node, backend *eth.Ethereum) error {
 }
 
 type ConsensusAPI struct {
-	eth *eth.Ethereum
+	light bool
+	eth   *eth.Ethereum
+	les   *les.LightEthereum
 
-	// Engine is the post-merge consensus engine and used
-	// for execution block verification and creation.
-	engine consensus.Engine
-
-	// syncer is responsible for triggering chain sync.
-	syncer *syncer
+	engine consensus.Engine // engine is the post-merge consensus engine
+	syncer *syncer          // syncer is responsible for triggering chain sync
 }
 
-func NewConsensusAPI(eth *eth.Ethereum) *ConsensusAPI {
-	// Construct a local consensus engine with transition
-	// enabled by default. It's used to create and verify
-	// the blocks with post-merge rules.
+func NewConsensusAPI(eth *eth.Ethereum, les *les.LightEthereum) *ConsensusAPI {
 	var engine consensus.Engine
-	if b, ok := eth.Engine().(*beacon.Beacon); ok {
-		engine = beacon.New(b.InnerEngine(), true)
+	if eth == nil {
+		if b, ok := les.Engine().(*beacon.Beacon); ok {
+			engine = beacon.New(b.InnerEngine(), true)
+		} else {
+			engine = beacon.New(les.Engine(), true)
+		}
 	} else {
-		engine = beacon.New(eth.Engine(), true)
+		if b, ok := eth.Engine().(*beacon.Beacon); ok {
+			engine = beacon.New(b.InnerEngine(), true)
+		} else {
+			engine = beacon.New(eth.Engine(), true)
+		}
 	}
 	return &ConsensusAPI{
+		light:  eth == nil,
 		eth:    eth,
+		les:    les,
 		engine: engine,
 		syncer: newSyncer(),
 	}
@@ -135,6 +156,9 @@ func (api *ConsensusAPI) makeEnv(parent *types.Block, header *types.Header) (*bl
 // AssembleBlock creates a new block, inserts it into the chain, and returns the "execution
 // data" required for eth2 clients to process the new block.
 func (api *ConsensusAPI) AssembleBlock(params AssembleBlockParams) (*ExecutableData, error) {
+	if api.light {
+		return nil, errors.New("not supported")
+	}
 	log.Info("Producing block", "parentHash", params.ParentHash)
 
 	bc := api.eth.BlockChain()
@@ -307,15 +331,17 @@ func (api *ConsensusAPI) NewBlock(params ExecutableData) (*NewBlockResponse, err
 	if err != nil {
 		return nil, err
 	}
-	parent := api.eth.BlockChain().GetBlockByHash(params.ParentHash)
+	if api.light {
+		parent := api.les.BlockChain().GetHeaderByHash(block.ParentHash())
+		if parent == nil {
+			return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", block.ParentHash())
+		}
+		err = api.les.BlockChain().InsertHeader(block.Header(), api.engine)
+		return &NewBlockResponse{err == nil}, err
+	}
+	parent := api.eth.BlockChain().GetBlockByHash(block.ParentHash())
 	if parent == nil {
-		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", params.ParentHash)
-		//// Parent is not existent, the local chain is out of date.
-		//// Notify the syncer.
-		//api.syncer.onNewBlock(block)
-		//
-		//// TODO(rjl493456442) return "in-sync" response
-		//return &NewBlockResponse{true}, nil
+		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", block.ParentHash())
 	}
 	err = api.eth.BlockChain().InsertBlock(block, api.engine)
 	return &NewBlockResponse{err == nil}, err
@@ -333,8 +359,9 @@ func (api *ConsensusAPI) addBlockTxs(block *types.Block) error {
 // that data that is no longer needed can be removed.
 func (api *ConsensusAPI) FinalizeBlock(blockHash common.Hash) (*GenericResponse, error) {
 	// Finalize the transition if it's the first `FinalisedBlock` event.
-	if !api.eth.Merger().EnteredPoS() {
-		api.eth.Merger().EnterPoS()
+	merger := api.merger()
+	if !merger.EnteredPoS() {
+		merger.EnterPoS()
 	}
 	return &GenericResponse{true}, nil
 }
@@ -342,27 +369,45 @@ func (api *ConsensusAPI) FinalizeBlock(blockHash common.Hash) (*GenericResponse,
 // SetHead is called to perform a force choice.
 func (api *ConsensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) {
 	// Trigger the transition if it's the first `NewHead` event.
-	if !api.eth.Merger().LeftPoW() {
-		api.eth.Merger().LeavePoW()
+	merger := api.merger()
+	if !merger.LeftPoW() {
+		merger.LeavePoW()
 	}
-	headBlock := api.eth.BlockChain().CurrentBlock()
-	if headBlock.Hash() == newHead {
+	if api.light {
+		headHeader := api.les.BlockChain().CurrentHeader()
+		if headHeader.Hash() == newHead {
+			return &GenericResponse{true}, nil
+		}
+		newHeadHeader := api.les.BlockChain().GetHeaderByHash(newHead)
+		if newHeadHeader == nil {
+			return &GenericResponse{false}, nil
+		}
+		if err := api.les.BlockChain().SetChainHead(newHeadHeader); err != nil {
+			return &GenericResponse{false}, nil
+		}
+		return &GenericResponse{true}, nil
+
+	} else {
+		headBlock := api.eth.BlockChain().CurrentBlock()
+		if headBlock.Hash() == newHead {
+			return &GenericResponse{true}, nil
+		}
+		newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
+		if newHeadBlock == nil {
+			return &GenericResponse{false}, nil
+		}
+		if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
+			return &GenericResponse{false}, nil
+		}
+		api.eth.SetSynced()
 		return &GenericResponse{true}, nil
 	}
-	//if api.syncer.hasBlock(newHead) {
-	//	api.syncer.onNewHead(newHead)
-	//
-	//	// TODO(rjl493456442) return "in-sync" response
-	//	return &GenericResponse{true}, nil
-	//}
-	// New head block is assumed to be existent
-	newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
-	if newHeadBlock == nil {
-		return &GenericResponse{false}, nil
+}
+
+// Helper function, return the merger instance.
+func (api *ConsensusAPI) merger() *core.Merger {
+	if api.light {
+		return api.les.Merger()
 	}
-	if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
-		return &GenericResponse{false}, nil
-	}
-	api.eth.SetSynced()
-	return &GenericResponse{true}, nil
+	return api.eth.Merger()
 }

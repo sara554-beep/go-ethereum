@@ -374,6 +374,41 @@ func (lc *LightChain) postChainEvents(events []interface{}) {
 	}
 }
 
+func (lc *LightChain) InsertHeader(header *types.Header, engine consensus.Engine) error {
+	// Verify the header first before obtaing the lock
+	headers := []*types.Header{header}
+	if _, err := lc.hc.ValidateHeaderChain(headers, 100, engine); err != nil {
+		return err
+	}
+	// Make sure only one thread manipulates the chain at once
+	lc.chainmu.Lock()
+	defer lc.chainmu.Unlock()
+
+	lc.wg.Add(1)
+	defer lc.wg.Done()
+
+	_, err := lc.hc.WriteHeaders(headers)
+	log.Info("Inserted header", "number", header.Number, "hash", header.Hash())
+	return err
+}
+
+func (lc *LightChain) SetChainHead(header *types.Header) error {
+	lc.wg.Add(1)
+	defer lc.wg.Done()
+
+	lc.chainmu.Lock()
+	defer lc.chainmu.Unlock()
+
+	lc.hc.Reorg([]*types.Header{header})
+
+	// Emit events
+	block := types.NewBlockWithHeader(header)
+	lc.chainFeed.Send(core.ChainEvent{Block: block, Hash: block.Hash()})
+	lc.chainHeadFeed.Send(core.ChainHeadEvent{Block: block})
+	log.Info("Set the chain head", "number", block.Number(), "hash", block.Hash())
+	return nil
+}
+
 // InsertHeaderChain attempts to insert the given header chain in to the local
 // chain, possibly creating a reorg. If an error is returned, it will return the
 // index number of the failing header as well an error describing what went wrong.
@@ -390,7 +425,7 @@ func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 		checkFreq = 0
 	}
 	start := time.Now()
-	if i, err := lc.hc.ValidateHeaderChain(chain, checkFreq); err != nil {
+	if i, err := lc.hc.ValidateHeaderChain(chain, checkFreq, lc.engine); err != nil {
 		return i, err
 	}
 
