@@ -168,6 +168,10 @@ func (hc *HeaderChain) Reorg(headers []*types.Header) {
 		)
 		for rawdb.ReadCanonicalHash(hc.chainDb, headNumber) != headHash {
 			rawdb.WriteCanonicalHash(batch, headHash, headNumber)
+
+			if headNumber == 0 {
+				break // It shouldn't be reached
+			}
 			headHash = header.ParentHash
 			headNumber = header.Number.Uint64() - 1
 			header = hc.GetHeader(headHash, headNumber)
@@ -267,11 +271,9 @@ func (hc *HeaderChain) writeHeadersAndSetHead(headers []*types.Header, forker *F
 		}
 	)
 	// Ask the fork choicer if the reorg is necessary
-	reorg, err := forker.Reorg(hc.CurrentHeader(), lastHeader)
-	if err != nil {
+	if reorg, err := forker.Reorg(hc.CurrentHeader(), lastHeader); err != nil {
 		return nil, err
-	}
-	if !reorg {
+	} else if !reorg {
 		if inserted != 0 {
 			result.status = SideStatTy
 		}

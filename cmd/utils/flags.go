@@ -20,6 +20,7 @@ package utils
 import (
 	"crypto/ecdsa"
 	"fmt"
+	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"io"
 	"io/ioutil"
 	"math"
@@ -1697,13 +1698,18 @@ func SetDNSDiscoveryDefaults(cfg *ethconfig.Config, genesis common.Hash) {
 // RegisterEthService adds an Ethereum client to the stack.
 // The second return value is the full node instance, which may be nil if the
 // node is running as a light client.
-func RegisterEthService(stack *node.Node, cfg *ethconfig.Config) (ethapi.Backend, *eth.Ethereum) {
+func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, isCatalyst bool) (ethapi.Backend, *eth.Ethereum) {
 	if cfg.SyncMode == downloader.LightSync {
 		backend, err := les.New(stack, cfg)
 		if err != nil {
 			Fatalf("Failed to register the Ethereum service: %v", err)
 		}
 		stack.RegisterAPIs(tracers.APIs(backend.ApiBackend))
+		if isCatalyst {
+			if err := catalyst.RegisterLight(stack, backend); err != nil {
+				Fatalf("Failed to register the catalyst service: %v", err)
+			}
+		}
 		return backend.ApiBackend, nil
 	}
 	backend, err := eth.New(stack, cfg)
@@ -1714,6 +1720,11 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config) (ethapi.Backend
 		_, err := les.NewLesServer(stack, backend, cfg)
 		if err != nil {
 			Fatalf("Failed to create the LES server: %v", err)
+		}
+	}
+	if isCatalyst {
+		if err := catalyst.Register(stack, backend); err != nil {
+			Fatalf("Failed to register the catalyst service: %v", err)
 		}
 	}
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))

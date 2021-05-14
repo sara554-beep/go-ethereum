@@ -449,9 +449,10 @@ func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	)
 	switch status {
 	case core.CanonStatTy:
-		events = append(events, core.ChainEvent{Block: block, Hash: block.Hash()})
+		lc.chainFeed.Send(core.ChainEvent{Block: block, Hash: block.Hash()})
+		lc.chainHeadFeed.Send(core.ChainHeadEvent{Block: block})
 	case core.SideStatTy:
-		events = append(events, core.ChainSideEvent{Block: block})
+		lc.chainSideFeed.Send(core.ChainSideEvent{Block: block})
 	}
 	lc.postChainEvents(events)
 
