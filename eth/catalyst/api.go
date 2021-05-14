@@ -334,14 +334,14 @@ func (api *ConsensusAPI) NewBlock(params ExecutableData) (*NewBlockResponse, err
 	if api.light {
 		parent := api.les.BlockChain().GetHeaderByHash(block.ParentHash())
 		if parent == nil {
-			return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", block.ParentHash())
+			return &NewBlockResponse{false}, fmt.Errorf("could not find parent %d %x", block.NumberU64(), block.ParentHash())
 		}
 		err = api.les.BlockChain().InsertHeader(block.Header(), api.engine)
 		return &NewBlockResponse{err == nil}, err
 	}
 	parent := api.eth.BlockChain().GetBlockByHash(block.ParentHash())
 	if parent == nil {
-		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %x", block.ParentHash())
+		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %d %x", block.NumberU64(), block.ParentHash())
 	}
 	err = api.eth.BlockChain().InsertBlock(block, api.engine)
 	return &NewBlockResponse{err == nil}, err
