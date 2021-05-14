@@ -376,32 +376,34 @@ func (api *ConsensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) 
 	if api.light {
 		headHeader := api.les.BlockChain().CurrentHeader()
 		if headHeader.Hash() == newHead {
+			log.Info("Duplicated set head event", "head", newHead)
 			return &GenericResponse{true}, nil
 		}
 		newHeadHeader := api.les.BlockChain().GetHeaderByHash(newHead)
 		if newHeadHeader == nil {
+			log.Info("Invalid set head event", "head", newHead)
 			return &GenericResponse{false}, nil
 		}
 		if err := api.les.BlockChain().SetChainHead(newHeadHeader); err != nil {
 			return &GenericResponse{false}, nil
 		}
 		return &GenericResponse{true}, nil
-
-	} else {
-		headBlock := api.eth.BlockChain().CurrentBlock()
-		if headBlock.Hash() == newHead {
-			return &GenericResponse{true}, nil
-		}
-		newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
-		if newHeadBlock == nil {
-			return &GenericResponse{false}, nil
-		}
-		if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
-			return &GenericResponse{false}, nil
-		}
-		api.eth.SetSynced()
+	}
+	headBlock := api.eth.BlockChain().CurrentBlock()
+	if headBlock.Hash() == newHead {
+		log.Info("Duplicated set head event", "head", newHead)
 		return &GenericResponse{true}, nil
 	}
+	newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
+	if newHeadBlock == nil {
+		log.Info("Invalid set head event", "head", newHead)
+		return &GenericResponse{false}, nil
+	}
+	if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
+		return &GenericResponse{false}, nil
+	}
+	api.eth.SetSynced()
+	return &GenericResponse{true}, nil
 }
 
 // Helper function, return the merger instance.
