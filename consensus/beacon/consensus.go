@@ -329,7 +329,7 @@ func (beacon *Beacon) Seal(chain consensus.ChainHeaderReader, block *types.Block
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
-	if !beacon.IsPostMergeHeader(header) {
+	if !beacon.IsPostMergeHeader(block.Header()) {
 		return beacon.ethone.Seal(chain, block, results, stop)
 	}
 	// The seal verification is done by the external consensus engine,
