@@ -81,7 +81,7 @@ func New(ethone consensus.Engine, transitioned bool) *Beacon {
 // Author implements consensus.Engine, returning the header's coinbase as the
 // verified author of the block.
 func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
-	if beacon.legacyHeader(header) {
+	if !beacon.IsPostMergeHeader(header) {
 		return beacon.ethone.Author(header)
 	}
 	return header.Coinbase, nil
@@ -90,7 +90,7 @@ func (beacon *Beacon) Author(header *types.Header) (common.Address, error) {
 // VerifyHeader checks whether a header conforms to the consensus rules of the
 // stock Ethereum consensus engine.
 func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
-	if beacon.legacyHeader(header) {
+	if !beacon.IsPostMergeHeader(header) {
 		return beacon.ethone.VerifyHeader(chain, header, seal)
 	}
 	// Short circuit if the header is known, or its parent not
@@ -110,7 +110,7 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 // concurrently. The method returns a quit channel to abort the operations and
 // a results channel to retrieve the async verifications.
 func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
-	if beacon.legacyHeader(headers[len(headers)-1]) {
+	if !beacon.IsPostMergeHeader(headers[len(headers)-1]) {
 		return beacon.ethone.VerifyHeaders(chain, headers, seals)
 	}
 	var (
@@ -119,7 +119,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 		preSeals    []bool
 	)
 	for index, header := range headers {
-		if !beacon.legacyHeader(header) {
+		if beacon.IsPostMergeHeader(header) {
 			preHeaders = headers[:index]
 			postHeaders = headers[index:]
 			preSeals = seals[:index]
@@ -171,7 +171,7 @@ func (beacon *Beacon) VerifyHeaders(chain consensus.ChainHeaderReader, headers [
 // VerifyUncles verifies that the given block's uncles conform to the consensus
 // rules of the stock Ethereum consensus engine.
 func (beacon *Beacon) VerifyUncles(chain consensus.ChainReader, block *types.Block) error {
-	if beacon.legacyHeader(block.Header()) {
+	if !beacon.IsPostMergeHeader(block.Header()) {
 		return beacon.ethone.VerifyUncles(chain, block)
 	}
 	// Verify that there is no uncle block. It's explicitly disabled in the beacon
@@ -295,7 +295,7 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 
 	// Finalize is different with Prepare, it can be used in both block generation
 	// and verification. So determine the consensus rules by header type.
-	if beacon.legacyHeader(header) {
+	if !beacon.IsPostMergeHeader(header) {
 		beacon.ethone.Finalize(chain, header, state, txs, uncles)
 		return
 	}
@@ -312,7 +312,7 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 
 	// FinalizeAndAssemble is different with Prepare, it can be used in both block
 	// generation and verification. So determine the consensus rules by header type.
-	if beacon.legacyHeader(header) {
+	if !beacon.IsPostMergeHeader(header) {
 		return beacon.ethone.FinalizeAndAssemble(chain, header, state, txs, uncles, receipts)
 	}
 	// Finalize and assemble the block
@@ -329,8 +329,7 @@ func (beacon *Beacon) Seal(chain consensus.ChainHeaderReader, block *types.Block
 	beacon.lock.RLock()
 	defer beacon.lock.RUnlock()
 
-	// Transition isn't triggered yet, use the legacy rules for sealing
-	if !beacon.transitioned {
+	if !beacon.IsPostMergeHeader(header) {
 		return beacon.ethone.Seal(chain, block, results, stop)
 	}
 	// The seal verification is done by the external consensus engine,
@@ -369,24 +368,9 @@ func (beacon *Beacon) Close() error {
 	return beacon.ethone.Close()
 }
 
-// legacyHeader returns the indicator that the header is legacy header or not.
-// If the consensus engine still stays in the legacy mode, then the header
-// is regarded as the legacy header blindly. Otherwise it's determined by
-// some special fields.
-func (beacon *Beacon) legacyHeader(header *types.Header) bool {
-	beacon.lock.RLock()
-	defer beacon.lock.RUnlock()
-
-	// Short circuit if the transition is not triggered yet.
-	// TODO(rjl493456442) is it really needed? Check special
-	// fields is super cheap(all CPU operations).
-	//if !beacon.transitioned {
-	//	return true
-	//}
-	return !beacon.IsPostMergeHeader(header)
-}
-
 // IsPostMergeHeader reports the header belongs to the PoS-stage with some special fields.
+// This function is not suitable for a part of APIs like Prepare or CalcDifficulty because
+// the header difficulty is not set yet.
 func (beacon *Beacon) IsPostMergeHeader(header *types.Header) bool {
 	// These fields can be used to filter out ethash block
 	if header.Difficulty.Cmp(beaconDifficulty) != 0 {

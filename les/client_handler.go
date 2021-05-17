@@ -144,7 +144,7 @@ func (h *clientHandler) handle(p *serverPeer) error {
 	}()
 
 	// Discard all the announces after the transition
-	if h.backend.merger.LeftPoW() {
+	if !h.backend.merger.LeftPoW() {
 		h.fetcher.announce(p, &announceData{Hash: p.headInfo.Hash, Number: p.headInfo.Number, Td: p.headInfo.Td})
 	}
 

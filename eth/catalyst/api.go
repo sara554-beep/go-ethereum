@@ -40,7 +40,7 @@ import (
 
 // Register adds catalyst APIs to the full node.
 func Register(stack *node.Node, backend *eth.Ethereum) error {
-	log.Warn("Catalyst mode enabled", "proto", "eth")
+	log.Warn("Catalyst mode enabled", "protocol", "eth")
 	stack.RegisterAPIs([]rpc.API{
 		{
 			Namespace: "consensus",
@@ -54,7 +54,7 @@ func Register(stack *node.Node, backend *eth.Ethereum) error {
 
 // RegisterLight adds catalyst APIs to the light client.
 func RegisterLight(stack *node.Node, backend *les.LightEthereum) error {
-	log.Warn("Catalyst mode enabled", "proto", "les")
+	log.Warn("Catalyst mode enabled", "protocol", "les")
 	stack.RegisterAPIs([]rpc.API{
 		{
 			Namespace: "consensus",
