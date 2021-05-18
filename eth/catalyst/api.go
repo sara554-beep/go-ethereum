@@ -70,7 +70,7 @@ type ConsensusAPI struct {
 	light  bool
 	eth    *eth.Ethereum
 	les    *les.LightEthereum
-	engine consensus.Engine // engine is the post-merge consensus engine
+	engine consensus.Engine // engine is the post-merge consensus engine, only for block creation
 	syncer *syncer          // syncer is responsible for triggering chain sync
 }
 
@@ -334,14 +334,14 @@ func (api *ConsensusAPI) NewBlock(params ExecutableData) (*NewBlockResponse, err
 		if parent == nil {
 			return &NewBlockResponse{false}, fmt.Errorf("could not find parent %d %x", block.NumberU64(), block.ParentHash())
 		}
-		err = api.les.BlockChain().InsertHeader(block.Header(), api.engine)
+		err = api.les.BlockChain().InsertHeader(block.Header())
 		return &NewBlockResponse{err == nil}, err
 	}
 	parent := api.eth.BlockChain().GetBlockByHash(block.ParentHash())
 	if parent == nil {
 		return &NewBlockResponse{false}, fmt.Errorf("could not find parent %d %x", block.NumberU64(), block.ParentHash())
 	}
-	err = api.eth.BlockChain().InsertBlock(block, api.engine)
+	err = api.eth.BlockChain().InsertBlock(block)
 	return &NewBlockResponse{err == nil}, err
 }
 

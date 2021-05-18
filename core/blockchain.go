@@ -1827,7 +1827,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 
 // recoverAncestors finds the closest ancestor with available state and re-execute
 // all the ancestor blocks since that.
-func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engine) error {
+func (bc *BlockChain) recoverAncestors(block *types.Block) error {
 	// Gather all the sidechain hashes (full blocks may be memory heavy)
 	var (
 		hashes  []common.Hash
@@ -1861,7 +1861,7 @@ func (bc *BlockChain) recoverAncestors(block *types.Block, engine consensus.Engi
 		} else {
 			b = bc.GetBlock(hashes[i], numbers[i])
 		}
-		if err := bc.insertBlock(b, engine); err != nil {
+		if err := bc.insertBlock(b); err != nil {
 			return err
 		}
 	}
@@ -2056,18 +2056,18 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 // The key difference between the InsertChain is it won't do the canonical chain
 // udpating. It relays on the additional SetChainHead call to finalize the entire
 // procedure.
-func (bc *BlockChain) InsertBlock(block *types.Block, engine consensus.Engine) error {
+func (bc *BlockChain) InsertBlock(block *types.Block) error {
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
 	bc.chainmu.Lock()
 	defer bc.chainmu.Unlock()
 
-	return bc.insertBlock(block, engine)
+	return bc.insertBlock(block)
 }
 
 // insertBlock is the inner version of InsertBlock without holding the lock.
-func (bc *BlockChain) insertBlock(block *types.Block, engine consensus.Engine) error {
+func (bc *BlockChain) insertBlock(block *types.Block) error {
 	// If the chain is terminating, don't even bother starting up
 	if bc.insertStopped() {
 		return errInsertionInterrupted
@@ -2076,7 +2076,7 @@ func (bc *BlockChain) insertBlock(block *types.Block, engine consensus.Engine) e
 	senderCacher.recoverFromBlocks(types.MakeSigner(bc.chainConfig, block.Number()), []*types.Block{block})
 
 	// Verify the header with the given consensus engine.
-	if err := engine.VerifyHeader(bc, block.Header(), true); err != nil {
+	if err := bc.engine.VerifyHeader(bc, block.Header(), true); err != nil {
 		return err
 	}
 	// Verify the block body then.
@@ -2091,7 +2091,7 @@ func (bc *BlockChain) insertBlock(block *types.Block, engine consensus.Engine) e
 	// The parent is pruned, try to recover the parent state
 	case errors.Is(err, consensus.ErrPrunedAncestor):
 		log.Debug("Pruned ancestor", "number", block.Number(), "hash", block.Hash())
-		return bc.recoverAncestors(block, engine)
+		return bc.recoverAncestors(block)
 
 	// Some other error occurred(include the future block), abort
 	case err != nil:
@@ -2321,7 +2321,7 @@ Error: %v
 // because nonces can be verified sparsely, not needing to check each.
 func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
 	start := time.Now()
-	if i, err := bc.hc.ValidateHeaderChain(chain, checkFreq, bc.Engine()); err != nil {
+	if i, err := bc.hc.ValidateHeaderChain(chain, checkFreq); err != nil {
 		return i, err
 	}
 

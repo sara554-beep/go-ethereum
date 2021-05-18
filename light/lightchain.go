@@ -374,10 +374,10 @@ func (lc *LightChain) postChainEvents(events []interface{}) {
 	}
 }
 
-func (lc *LightChain) InsertHeader(header *types.Header, engine consensus.Engine) error {
+func (lc *LightChain) InsertHeader(header *types.Header) error {
 	// Verify the header first before obtaing the lock
 	headers := []*types.Header{header}
-	if _, err := lc.hc.ValidateHeaderChain(headers, 100, engine); err != nil {
+	if _, err := lc.hc.ValidateHeaderChain(headers, 100); err != nil {
 		return err
 	}
 	// Make sure only one thread manipulates the chain at once
@@ -425,7 +425,7 @@ func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 		checkFreq = 0
 	}
 	start := time.Now()
-	if i, err := lc.hc.ValidateHeaderChain(chain, checkFreq, lc.engine); err != nil {
+	if i, err := lc.hc.ValidateHeaderChain(chain, checkFreq); err != nil {
 		return i, err
 	}
 
