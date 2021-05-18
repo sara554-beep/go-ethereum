@@ -569,9 +569,6 @@ func (w *worker) taskLoop() {
 			w.pendingTasks[sealHash] = task
 			w.pendingMu.Unlock()
 
-			// Note, if the eth1/2 transition has been triggered, the engine won't
-			// return any response into the result channel so the entire worker
-			// is just noneffective.
 			if err := w.engine.Seal(w.chain, task.block, w.resultCh, stopCh); err != nil {
 				log.Warn("Block sealing failed", "err", err)
 			}

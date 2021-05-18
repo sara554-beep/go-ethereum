@@ -17,7 +17,6 @@
 package les
 
 import (
-	"errors"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -129,8 +127,6 @@ func (fp *fetcherPeer) forwardAnno(td *big.Int) []*announce {
 // lightFetcher implements retrieval of newly announced headers. It reuses
 // the eth.BlockFetcher as the underlying fetcher but adding more additional
 // rules: e.g. evict "timeout" peers.
-// After the eth1/2 transition, the announces from the network will still be
-// handled here but the blockchain mutation is disallowed.
 type lightFetcher struct {
 	// Various handlers
 	ulc     *ulc
@@ -139,7 +135,6 @@ type lightFetcher struct {
 	peerset *serverPeerSet        // The global peerset of light client which shared by all components
 	chain   *light.LightChain     // The local light chain which maintains the canonical header chain.
 	fetcher *fetcher.BlockFetcher // The underlying fetcher which takes care block header retrieval.
-	merger  *core.Merger
 
 	// Peerset maintained by fetcher
 	plock sync.RWMutex
@@ -167,15 +162,6 @@ type lightFetcher struct {
 func newLightFetcher(chain *light.LightChain, engine consensus.Engine, peers *serverPeerSet, ulc *ulc, chaindb ethdb.Database, reqDist *requestDistributor, syncFn func(p *serverPeer)) *lightFetcher {
 	// Construct the fetcher by offering all necessary APIs
 	validator := func(header *types.Header) error {
-		// Reject all the PoS style header in the first place. No matter
-		// the chain has finished the transition or not, the PoS header
-		// should only come from the trusted consensus layer instead of
-		// p2p network.
-		if beacon, ok := engine.(*beacon.Beacon); ok {
-			if beacon.IsPostMergeHeader(header) {
-				return errors.New("unexpected header")
-			}
-		}
 		// Disable seal verification explicitly if we are running in ulc mode.
 		return engine.VerifyHeader(chain, header, ulc == nil)
 	}

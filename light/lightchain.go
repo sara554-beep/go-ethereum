@@ -454,8 +454,6 @@ func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 	case core.SideStatTy:
 		lc.chainSideFeed.Send(core.ChainSideEvent{Block: block})
 	}
-	lc.postChainEvents(events)
-
 	return 0, err
 }
 
