@@ -443,7 +443,6 @@ func (lc *LightChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (i
 
 	// Create chain event for the new head block of this insertion.
 	var (
-		events     = make([]interface{}, 0, 1)
 		lastHeader = chain[len(chain)-1]
 		block      = types.NewBlockWithHeader(lastHeader)
 	)
