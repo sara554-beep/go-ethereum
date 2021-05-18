@@ -67,10 +67,9 @@ func RegisterLight(stack *node.Node, backend *les.LightEthereum) error {
 }
 
 type ConsensusAPI struct {
-	light bool
-	eth   *eth.Ethereum
-	les   *les.LightEthereum
-
+	light  bool
+	eth    *eth.Ethereum
+	les    *les.LightEthereum
 	engine consensus.Engine // engine is the post-merge consensus engine
 	syncer *syncer          // syncer is responsible for triggering chain sync
 }
@@ -302,7 +301,6 @@ func InsertBlockParamsToBlock(params ExecutableData) (*types.Block, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	number := big.NewInt(0)
 	number.SetUint64(params.Number)
 	header := &types.Header{
@@ -376,12 +374,10 @@ func (api *ConsensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) 
 	if api.light {
 		headHeader := api.les.BlockChain().CurrentHeader()
 		if headHeader.Hash() == newHead {
-			log.Info("Duplicated set head event", "head", newHead)
 			return &GenericResponse{true}, nil
 		}
 		newHeadHeader := api.les.BlockChain().GetHeaderByHash(newHead)
 		if newHeadHeader == nil {
-			log.Info("Invalid set head event", "head", newHead)
 			return &GenericResponse{false}, nil
 		}
 		if err := api.les.BlockChain().SetChainHead(newHeadHeader); err != nil {
@@ -391,12 +387,10 @@ func (api *ConsensusAPI) SetHead(newHead common.Hash) (*GenericResponse, error) 
 	}
 	headBlock := api.eth.BlockChain().CurrentBlock()
 	if headBlock.Hash() == newHead {
-		log.Info("Duplicated set head event", "head", newHead)
 		return &GenericResponse{true}, nil
 	}
 	newHeadBlock := api.eth.BlockChain().GetBlockByHash(newHead)
 	if newHeadBlock == nil {
-		log.Info("Invalid set head event", "head", newHead)
 		return &GenericResponse{false}, nil
 	}
 	if err := api.eth.BlockChain().SetChainHead(newHeadBlock); err != nil {
