@@ -72,7 +72,7 @@ func TestEth2AssembleBlock(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks)
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice)
+	api := NewConsensusAPI(ethservice, nil)
 	signer := types.NewEIP155Signer(ethservice.BlockChain().Config().ChainID)
 	tx, err := types.SignTx(types.NewTransaction(uint64(10), blocks[9].Coinbase(), big.NewInt(1000), params.TxGas, nil, nil), signer, testKey)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestEth2AssembleBlockWithAnotherBlocksTxs(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks[:9])
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice)
+	api := NewConsensusAPI(ethservice, nil)
 
 	// Put the 10th block's tx in the pool and produce a new block
 	api.addBlockTxs(blocks[9])
@@ -138,7 +138,7 @@ func TestEth2NewBlock(t *testing.T) {
 	defer n.Close()
 
 	var (
-		api    = NewConsensusAPI(ethservice)
+		api    = NewConsensusAPI(ethservice, nil)
 		parent = preMergeBlocks[len(preMergeBlocks)-1]
 
 		// This EVM code generates a log when the contract is created.
@@ -230,7 +230,7 @@ func TestEth2DeepReorg(t *testing.T) {
 	defer n.Close()
 
 	var (
-		api    = NewConsensusAPI(ethservice)
+		api    = NewConsensusAPI(ethservice, nil)
 		parent = preMergeBlocks[len(preMergeBlocks)-core.TriesInMemory-1]
 		head   = ethservice.BlockChain().CurrentBlock().NumberU64()
 	)

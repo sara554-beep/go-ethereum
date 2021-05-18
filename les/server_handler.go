@@ -414,7 +414,6 @@ func (h *serverHandler) broadcastLoop() {
 	for {
 		select {
 		case ev := <-headCh:
-			// todo broadcast should be disabled after the transition.
 			header := ev.Block.Header()
 			hash, number := header.Hash(), header.Number.Uint64()
 			td := h.blockchain.GetTd(hash, number)

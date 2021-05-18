@@ -142,7 +142,11 @@ func (h *clientHandler) handle(p *serverPeer) error {
 		connectionTimer.Update(time.Duration(mclock.Now() - connectedAt))
 		serverConnectionGauge.Update(int64(h.backend.peers.len()))
 	}()
-	h.fetcher.announce(p, &announceData{Hash: p.headInfo.Hash, Number: p.headInfo.Number, Td: p.headInfo.Td})
+
+	// Discard all the announces after the transition
+	if !h.backend.merger.LeftPoW() {
+		h.fetcher.announce(p, &announceData{Hash: p.headInfo.Hash, Number: p.headInfo.Number, Td: p.headInfo.Td})
+	}
 
 	// Mark the peer starts to be served.
 	atomic.StoreUint32(&p.serving, 1)
@@ -206,12 +210,13 @@ func (h *clientHandler) handleMsg(p *serverPeer) error {
 			}
 			p.Log().Trace("Announce message content", "number", req.Number, "hash", req.Hash, "td", req.Td, "reorg", req.ReorgDepth)
 
-			// TODO the announcement from the p2p network should be rejected
-			// after the eth1/2 transition.
-
 			// Update peer head information first and then notify the announcement
 			p.updateHead(req.Hash, req.Number, req.Td)
-			h.fetcher.announce(p, &req)
+
+			// Discard all the announces after the transition
+			if !h.backend.merger.LeftPoW() {
+				h.fetcher.announce(p, &req)
+			}
 		}
 	case msg.Code == BlockHeadersMsg:
 		p.Log().Trace("Received block header response message")

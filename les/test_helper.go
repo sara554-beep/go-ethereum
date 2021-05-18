@@ -238,6 +238,7 @@ func newTestClientHandler(backend *backends.SimulatedBackend, odr *LesOdr, index
 		engine:     engine,
 		blockchain: chain,
 		eventMux:   evmux,
+		merger:     core.NewMerger(rawdb.NewMemoryDatabase()),
 	}
 	client.handler = newClientHandler(ulcServers, ulcFraction, nil, client)
 

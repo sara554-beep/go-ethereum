@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/les"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/node"
@@ -53,6 +54,7 @@ const (
 	legacyNormalNode
 	eth2MiningNode
 	eth2NormalNode
+	eth2LightClient
 )
 
 var (
@@ -68,16 +70,28 @@ var (
 )
 
 type ethNode struct {
-	typ     nodetype
-	api     *catalyst.ConsensusAPI
-	backend *eth.Ethereum
-	stack   *node.Node
-	enode   *enode.Node
+	typ        nodetype
+	api        *catalyst.ConsensusAPI
+	ethBackend *eth.Ethereum
+	lesBackend *les.LightEthereum
+	stack      *node.Node
+	enode      *enode.Node
 }
 
 func newNode(typ nodetype, genesis *core.Genesis, enodes []*enode.Node) *ethNode {
+	var (
+		err        error
+		api        *catalyst.ConsensusAPI
+		stack      *node.Node
+		ethBackend *eth.Ethereum
+		lesBackend *les.LightEthereum
+	)
 	// Start the node and wait until it's up
-	stack, ethBackend, api, err := makeMiner(genesis)
+	if typ == eth2LightClient {
+		stack, lesBackend, api, err = makeLightNode(genesis)
+	} else {
+		stack, ethBackend, api, err = makeFullNode(genesis)
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -96,11 +110,12 @@ func newNode(typ nodetype, genesis *core.Genesis, enodes []*enode.Node) *ethNode
 		panic(err)
 	}
 	return &ethNode{
-		typ:     typ,
-		api:     api,
-		backend: ethBackend,
-		stack:   stack,
-		enode:   enode,
+		typ:        typ,
+		api:        api,
+		ethBackend: ethBackend,
+		lesBackend: lesBackend,
+		stack:      stack,
+		enode:      enode,
 	}
 }
 
@@ -115,7 +130,7 @@ func (n *ethNode) assembleBlock(parentHash common.Hash, parentTimestamp uint64) 
 }
 
 func (n *ethNode) insertBlock(eb catalyst.ExecutableData) error {
-	if n.typ != eth2MiningNode && n.typ != eth2NormalNode {
+	if !eth2types(n.typ) {
 		return errors.New("invalid node type")
 	}
 	response, err := n.api.NewBlock(eb)
@@ -129,7 +144,7 @@ func (n *ethNode) insertBlock(eb catalyst.ExecutableData) error {
 }
 
 func (n *ethNode) insertBlockAndSetHead(ed catalyst.ExecutableData) error {
-	if n.typ != eth2MiningNode && n.typ != eth2NormalNode {
+	if !eth2types(n.typ) {
 		return errors.New("invalid node type")
 	}
 	if err := n.insertBlock(ed); err != nil {
@@ -183,7 +198,7 @@ func (mgr *nodeManager) getNodes(typ nodetype) []*ethNode {
 
 func (mgr *nodeManager) startMining() {
 	for _, node := range append(mgr.getNodes(eth2MiningNode), mgr.getNodes(legacyMiningNode)...) {
-		if err := node.backend.StartMining(1); err != nil {
+		if err := node.ethBackend.StartMining(1); err != nil {
 			panic(err)
 		}
 	}
@@ -200,7 +215,7 @@ func (mgr *nodeManager) run() {
 	if len(mgr.nodes) == 0 {
 		return
 	}
-	chain := mgr.nodes[0].backend.BlockChain()
+	chain := mgr.nodes[0].ethBackend.BlockChain()
 	sink := make(chan core.ChainHeadEvent, 1024)
 	sub := chain.SubscribeChainHeadEvent(sink)
 	defer sub.Unsubscribe()
@@ -238,7 +253,10 @@ func (mgr *nodeManager) run() {
 		if int(distance) < finalizationDist {
 			return
 		}
-		for _, node := range append(mgr.getNodes(eth2MiningNode), mgr.getNodes(eth2NormalNode)...) {
+		nodes := mgr.getNodes(eth2MiningNode)
+		nodes = append(nodes, mgr.getNodes(eth2NormalNode)...)
+		nodes = append(nodes, mgr.getNodes(eth2LightClient)...)
+		for _, node := range append(nodes) {
 			node.api.FinalizeBlock(oldest.Hash())
 		}
 		log.Info("Finalised eth2 block", "number", oldest.NumberU64(), "hash", oldest.Hash())
@@ -278,7 +296,12 @@ func (mgr *nodeManager) run() {
 				continue
 			}
 			block, _ := catalyst.InsertBlockParamsToBlock(*ed)
-			for _, node := range append(mgr.getNodes(eth2MiningNode), mgr.getNodes(eth2NormalNode)...) {
+
+			nodes := mgr.getNodes(eth2MiningNode)
+			nodes = append(nodes, mgr.getNodes(eth2NormalNode)...)
+			nodes = append(nodes, mgr.getNodes(eth2LightClient)...)
+
+			for _, node := range nodes {
 				if err := node.insertBlockAndSetHead(*ed); err != nil {
 					log.Error("Failed to insert block", "err", err)
 				}
@@ -312,6 +335,7 @@ func main() {
 	manager.createNode(eth2MiningNode)
 	manager.createNode(legacyMiningNode)
 	manager.createNode(legacyNormalNode)
+	manager.createNode(eth2LightClient)
 
 	// Iterate over all the nodes and start mining
 	time.Sleep(3 * time.Second)
@@ -335,13 +359,13 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		if err := node.backend.TxPool().AddLocal(tx); err != nil {
+		if err := node.ethBackend.TxPool().AddLocal(tx); err != nil {
 			panic(err)
 		}
 		nonces[index]++
 
 		// Wait if we're too saturated
-		if pend, _ := node.backend.TxPool().Stats(); pend > 2048 {
+		if pend, _ := node.ethBackend.TxPool().Stats(); pend > 2048 {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
@@ -366,7 +390,7 @@ func makeGenesis(faucets []*ecdsa.PrivateKey) *core.Genesis {
 	return genesis
 }
 
-func makeMiner(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.ConsensusAPI, error) {
+func makeFullNode(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.ConsensusAPI, error) {
 	// Define the basic configurations for the Ethereum node
 	datadir, _ := ioutil.TempDir("", "")
 
@@ -401,10 +425,58 @@ func makeMiner(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *catalyst.Cons
 			GasPrice: big.NewInt(1),
 			Recommit: 10 * time.Second, // Disable the recommit
 		},
+		LightServ:        100,
+		LightPeers:       10,
+		LightNoSyncServe: true,
 	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	err = stack.Start()
-	return stack, ethBackend, catalyst.NewConsensusAPI(ethBackend), err
+	return stack, ethBackend, catalyst.NewConsensusAPI(ethBackend, nil), err
+}
+
+func makeLightNode(genesis *core.Genesis) (*node.Node, *les.LightEthereum, *catalyst.ConsensusAPI, error) {
+	// Define the basic configurations for the Ethereum node
+	datadir, _ := ioutil.TempDir("", "")
+
+	config := &node.Config{
+		Name:    "geth",
+		Version: params.Version,
+		DataDir: datadir,
+		P2P: p2p.Config{
+			ListenAddr:  "0.0.0.0:0",
+			NoDiscovery: true,
+			MaxPeers:    25,
+		},
+		UseLightweightKDF: true,
+	}
+	// Create the node and configure a full Ethereum node on it
+	stack, err := node.New(config)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	lesBackend, err := les.New(stack, &ethconfig.Config{
+		Genesis:         genesis,
+		NetworkId:       genesis.Config.ChainID.Uint64(),
+		SyncMode:        downloader.LightSync,
+		DatabaseCache:   256,
+		DatabaseHandles: 256,
+		TxPool:          core.DefaultTxPoolConfig,
+		GPO:             ethconfig.Defaults.GPO,
+		Ethash:          ethconfig.Defaults.Ethash,
+		LightPeers:      10,
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	err = stack.Start()
+	return stack, lesBackend, catalyst.NewConsensusAPI(nil, lesBackend), err
+}
+
+func eth2types(typ nodetype) bool {
+	if typ == eth2LightClient || typ == eth2NormalNode || typ == eth2MiningNode {
+		return true
+	}
+	return false
 }
