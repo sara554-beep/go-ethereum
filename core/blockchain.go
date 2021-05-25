@@ -1223,10 +1223,10 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 
 			// Flush the ancient batch if the cached data reachs the threshold
 			if aBatch.ValueSize() > ethdb.IdealAncientBatchSize {
-				if err := aBatch.Write(); err != nil {
+				err := aBatch.Write(ethdb.IdealAncientReserved)
+				if err != nil {
 					return i, err
 				}
-				aBatch.Reset()
 			}
 			// Write tx indices if any condition is satisfied:
 			// * If user requires to reserve all tx indices(txlookuplimit=0)
@@ -1248,10 +1248,9 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		}
 		// Flush the last ancient batch
 		if aBatch.ValueSize() > 0 {
-			if err := aBatch.Write(); err != nil {
+			if err := aBatch.Write(0); err != nil {
 				return 0, err
 			}
-			aBatch.Reset()
 		}
 		// Flush all tx-lookup index data.
 		size += batch.ValueSize()

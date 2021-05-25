@@ -23,7 +23,10 @@ const (
 
 	// IdealAncientBatchSize defines the size of the data batches should ideally add
 	// in one write.
-	IdealAncientBatchSize = 2 * 1024 * 1024
+	IdealAncientBatchSize = 16 * 1024 * 1024
+
+	// IdealAncientReserved defines the size of the data batch is allowed to reverse.
+	IdealAncientReserved = 256 * 1024
 )
 
 // Batch is a write-only database that commits changes to its host database
@@ -53,10 +56,7 @@ type AncientBatch interface {
 	ValueSize() int
 
 	// Write flushes any accumulated data to disk.
-	Write() error
-
-	// Reset resets the batch for reuse.
-	Reset()
+	Write(int) error
 }
 
 // Batcher wraps the NewBatch method of a backing data store.

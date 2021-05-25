@@ -19,7 +19,6 @@ package rawdb
 import (
 	"bytes"
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common/math"
@@ -197,7 +196,6 @@ func (batch *freezerTableBatch) Size() int {
 // freezerBatch is a write-only database that commits changes to the associated
 // ancient store when Write is called. A freezerBatch cannot be used concurrently.
 type freezerBatch struct {
-	lock    sync.RWMutex
 	f       *freezer
 	batches map[string]*freezerTableBatch // List of table batches
 	size    int
@@ -205,9 +203,6 @@ type freezerBatch struct {
 
 // AppendAncient injects all binary blobs belong to block into the batch.
 func (batch *freezerBatch) AppendAncient(number uint64, hash, header, body, receipt, td []byte) error {
-	batch.lock.RLock()
-	defer batch.lock.RUnlock()
-
 	if err := batch.batches[freezerHeaderTable].Append(number, header); err != nil {
 		return err
 	}
@@ -236,11 +231,9 @@ func (batch *freezerBatch) Sync() error {
 	return errNotSupported
 }
 
-// ValueSize retrieves the amount of data queued up for writing.
+// valueSize retrieves the amount of data queued up for writing.
+// It's the internal version without holding the lock.
 func (batch *freezerBatch) ValueSize() int {
-	batch.lock.RLock()
-	defer batch.lock.RUnlock()
-
 	var size int
 	for _, batch := range batch.batches {
 		size += batch.Size()
@@ -249,37 +242,25 @@ func (batch *freezerBatch) ValueSize() int {
 }
 
 // Write flushes any accumulated data to ancient store.
-func (batch *freezerBatch) Write() error {
+func (batch *freezerBatch) Write(maxReserved int) error {
 	if batch.f.readonly {
 		return errReadOnly
 	}
-	batch.lock.RLock()
-	defer batch.lock.RUnlock()
-
-	if err := batch.batches[freezerHeaderTable].Write(); err != nil {
-		return err
-	}
-	if err := batch.batches[freezerHashTable].Write(); err != nil {
-		return err
-	}
-	if err := batch.batches[freezerBodiesTable].Write(); err != nil {
-		return err
-	}
-	if err := batch.batches[freezerReceiptTable].Write(); err != nil {
-		return err
-	}
-	if err := batch.batches[freezerDifficultyTable].Write(); err != nil {
-		return err
+	// The flush order is a bit special here. Considering the large difference
+	// in data size of different data types in freezer, the bigger data is
+	// flushed first to that the tiny data can be kept in the batch in order to
+	// save syscalls.
+	total := batch.ValueSize()
+	for _, tableBatch := range []*freezerTableBatch{batch.batches[freezerReceiptTable], batch.batches[freezerBodiesTable],
+		batch.batches[freezerHeaderTable], batch.batches[freezerHashTable], batch.batches[freezerDifficultyTable]} {
+		if total < maxReserved {
+			return nil
+		}
+		size := tableBatch.Size()
+		if err := tableBatch.Write(); err != nil {
+			return err
+		}
+		total -= size
 	}
 	return nil
-}
-
-// Reset resets the batch for reuse.
-func (batch *freezerBatch) Reset() {
-	batch.lock.Lock()
-	defer batch.lock.Unlock()
-
-	for name, table := range batch.f.tables {
-		batch.batches[name] = table.NewBatch()
-	}
 }
