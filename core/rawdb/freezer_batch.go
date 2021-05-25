@@ -198,7 +198,6 @@ func (batch *freezerTableBatch) Size() int {
 type freezerBatch struct {
 	f       *freezer
 	batches map[string]*freezerTableBatch // List of table batches
-	size    int
 }
 
 // AppendAncient injects all binary blobs belong to block into the batch.
