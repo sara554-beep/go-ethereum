@@ -92,6 +92,12 @@ func (t *table) Sync() error {
 	return t.db.Sync()
 }
 
+// Sync is a noop passthrough that just forwards the request to the underlying
+// database.
+func (t *table) NewAncientBatch() ethdb.AncientBatch {
+	return t.db.NewAncientBatch()
+}
+
 // Put inserts the given value into the database at a prefixed version of the
 // provided key.
 func (t *table) Put(key []byte, value []byte) error {

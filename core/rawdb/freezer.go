@@ -274,6 +274,19 @@ func (f *freezer) Sync() error {
 	return nil
 }
 
+// NewBatch creates a write-only database that buffers changes to the ancient
+// store until a final write is called.
+func (f *freezer) NewAncientBatch() ethdb.AncientBatch {
+	batches := make(map[string]*freezerTableBatch)
+	for name, table := range f.tables {
+		batches[name] = table.NewBatch()
+	}
+	return &freezerBatch{
+		f:       f,
+		batches: batches,
+	}
+}
+
 // freeze is a background thread that periodically checks the blockchain for any
 // import progress and moves ancient data from the fast database into the freezer.
 //

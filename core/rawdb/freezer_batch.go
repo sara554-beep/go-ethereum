@@ -19,14 +19,15 @@ package rawdb
 import (
 	"bytes"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/rlp"
-	"sync/atomic"
 )
 
-// freezerBatch is a batch for a freezer table.
-type freezerBatch struct {
+// freezerTableBatch is a batch for a freezer table.
+type freezerTableBatch struct {
 	t   *freezerTable
 	buf bytes.Buffer
 	sb  *BufferedSnapWriter
@@ -34,13 +35,14 @@ type freezerBatch struct {
 	firstIdx uint64
 	count    uint64
 	sizes    []uint32
+	total    int
 
 	headBytes uint32
 }
 
 // NewBatch creates a new batch for the freezer table.
-func (t *freezerTable) NewBatch() *freezerBatch {
-	batch := &freezerBatch{
+func (t *freezerTable) NewBatch() *freezerTableBatch {
+	batch := &freezerTableBatch{
 		t:        t,
 		firstIdx: math.MaxUint64,
 	}
@@ -53,7 +55,7 @@ func (t *freezerTable) NewBatch() *freezerBatch {
 // AppendRLP rlp-encodes and adds data at the end of the freezer table. The item number
 // is a precautionary parameter to ensure data correctness, but the table will
 // reject already existing data.
-func (batch *freezerBatch) AppendRLP(item uint64, data interface{}) error {
+func (batch *freezerTableBatch) AppendRLP(item uint64, data interface{}) error {
 	if batch.firstIdx == math.MaxUint64 {
 		batch.firstIdx = item
 	}
@@ -70,15 +72,17 @@ func (batch *freezerBatch) AppendRLP(item uint64, data interface{}) error {
 		rlp.Encode(&batch.buf, data)
 	}
 	s1 := batch.buf.Len()
-	batch.sizes = append(batch.sizes, uint32(s1-s0))
+	size := s1 - s0
+	batch.sizes = append(batch.sizes, uint32(size))
 	batch.count++
+	batch.total += size
 	return nil
 }
 
 // Append injects a binary blob at the end of the freezer table. The item number
 // is a precautionary parameter to ensure data correctness, but the table will
 // reject already existing data.
-func (batch *freezerBatch) Append(item uint64, blob []byte) error {
+func (batch *freezerTableBatch) Append(item uint64, blob []byte) error {
 	if batch.firstIdx == math.MaxUint64 {
 		batch.firstIdx = item
 	}
@@ -92,13 +96,15 @@ func (batch *freezerBatch) Append(item uint64, blob []byte) error {
 		batch.buf.Write(blob)
 	}
 	s1 := batch.buf.Len()
-	batch.sizes = append(batch.sizes, uint32(s1-s0))
+	size := s1 - s0
+	batch.sizes = append(batch.sizes, uint32(size))
 	batch.count++
+	batch.total += size
 	return nil
 }
 
 // Write writes the batched items to the backing freezerTable.
-func (batch *freezerBatch) Write() error {
+func (batch *freezerTableBatch) Write() error {
 	var (
 		retry = false
 		err   error
@@ -118,7 +124,7 @@ func (batch *freezerBatch) Write() error {
 // table. It will only ever write as many items as fits into one table: if
 // the backing table needs to open a new file, this method will return with a
 // (true, nil), to signify that it needs to be invoked again.
-func (batch *freezerBatch) write(newHead bool) (bool, error) {
+func (batch *freezerTableBatch) write(newHead bool) (bool, error) {
 	if !newHead {
 		batch.t.lock.RLock()
 		defer batch.t.lock.RUnlock()
@@ -182,13 +188,108 @@ func (batch *freezerBatch) write(newHead bool) (bool, error) {
 	if batch.count > 0 {
 		// Some data left to write on a retry.
 		batch.sizes = batch.sizes[count:]
+		batch.total = 0
+		for _, size := range batch.sizes {
+			batch.total += int(size)
+		}
 		return true, nil
 	}
 	// All data written. We can simply truncate and keep using the buffer
 	batch.sizes = batch.sizes[:0]
+	batch.total = 0
 	return false, nil
 }
 
-func (batch *freezerBatch) Size() int {
-	return batch.buf.Len()
+func (batch *freezerTableBatch) Size() int {
+	return batch.total
+}
+
+// freezerBatch is a write-only database that commits changes to the associated
+// ancient store when Write is called. A freezerBatch cannot be used concurrently.
+type freezerBatch struct {
+	lock    sync.RWMutex
+	f       *freezer
+	batches map[string]*freezerTableBatch // List of table batches
+	size    int
+}
+
+// AppendAncient injects all binary blobs belong to block into the batch.
+func (batch *freezerBatch) AppendAncient(number uint64, hash, header, body, receipt, td []byte) error {
+	batch.lock.RLock()
+	defer batch.lock.RUnlock()
+
+	if err := batch.batches[freezerHeaderTable].Append(number, header); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerHashTable].Append(number, hash); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerBodiesTable].Append(number, body); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerReceiptTable].Append(number, receipt); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerDifficultyTable].Append(number, td); err != nil {
+		return err
+	}
+	return nil
+}
+
+// TruncateAncients discards all but the first n ancient data from the ancient store.
+func (batch *freezerBatch) TruncateAncients(n uint64) error {
+	return errNotSupported
+}
+
+// Sync flushes all in-memory ancient store data to disk.
+func (batch *freezerBatch) Sync() error {
+	return errNotSupported
+}
+
+// ValueSize retrieves the amount of data queued up for writing.
+func (batch *freezerBatch) ValueSize() int {
+	batch.lock.RLock()
+	defer batch.lock.RUnlock()
+
+	var size int
+	for _, batch := range batch.batches {
+		size += batch.Size()
+	}
+	return size
+}
+
+// Write flushes any accumulated data to ancient store.
+func (batch *freezerBatch) Write() error {
+	if batch.f.readonly {
+		return errReadOnly
+	}
+	batch.lock.RLock()
+	defer batch.lock.RUnlock()
+
+	if err := batch.batches[freezerHeaderTable].Write(); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerHashTable].Write(); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerBodiesTable].Write(); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerReceiptTable].Write(); err != nil {
+		return err
+	}
+	if err := batch.batches[freezerDifficultyTable].Write(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Reset resets the batch for reuse.
+func (batch *freezerBatch) Reset() {
+	batch.lock.Lock()
+	defer batch.lock.Unlock()
+
+	for name, table := range batch.f.tables {
+		batch.batches[name] = table.NewBatch()
+	}
 }

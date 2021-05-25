@@ -114,6 +114,11 @@ func (db *nofreezedb) Sync() error {
 	return errNotSupported
 }
 
+// Sync returns an error as we don't have a backing chain freezer.
+func (db *nofreezedb) NewAncientBatch() ethdb.AncientBatch {
+	panic(errNotSupported)
+}
+
 // NewDatabase creates a high level database on top of a given key-value data
 // store without a freezer moving immutable chain segments into cold storage.
 func NewDatabase(db ethdb.KeyValueStore) ethdb.Database {

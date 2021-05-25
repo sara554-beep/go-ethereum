@@ -1182,8 +1182,10 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	// eventually.
 	writeAncient := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
 		var (
+			deleted  []*numberHash
 			previous = bc.CurrentFastBlock()
 			batch    = bc.db.NewBatch()
+			aBatch   = bc.db.NewAncientBatch()
 		)
 		// If any error occurs before updating the head or we are inserting a side chain,
 		// all the data written this time wll be rolled back.
@@ -1194,7 +1196,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				}
 			}
 		}()
-		var deleted []*numberHash
 		for i, block := range blockChain {
 			// Short circuit insertion if shutting down or processing failed
 			if bc.insertStopped() {
@@ -1213,13 +1214,20 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				if frozen, _ := bc.db.Ancients(); frozen == 0 {
 					h := rawdb.ReadCanonicalHash(bc.db, 0)
 					b := rawdb.ReadBlock(bc.db, h, 0)
-					size += rawdb.WriteAncientBlock(bc.db, b, rawdb.ReadReceipts(bc.db, h, 0, bc.chainConfig), rawdb.ReadTd(bc.db, h, 0))
+					size += rawdb.WriteAncientBlock(aBatch, b, rawdb.ReadReceipts(bc.db, h, 0, bc.chainConfig), rawdb.ReadTd(bc.db, h, 0))
 					log.Info("Wrote genesis to ancients")
 				}
 			}
-			// Flush data into ancient database.
-			size += rawdb.WriteAncientBlock(bc.db, block, receiptChain[i], bc.GetTd(block.Hash(), block.NumberU64()))
+			// Cache the ancient data into batch
+			size += rawdb.WriteAncientBlock(aBatch, block, receiptChain[i], bc.GetTd(block.Hash(), block.NumberU64()))
 
+			// Flush the ancient batch if the cached data reachs the threshold
+			if aBatch.ValueSize() > ethdb.IdealAncientBatchSize {
+				if err := aBatch.Write(); err != nil {
+					return i, err
+				}
+				aBatch.Reset()
+			}
 			// Write tx indices if any condition is satisfied:
 			// * If user requires to reserve all tx indices(txlookuplimit=0)
 			// * If all ancient tx indices are required to be reserved(txlookuplimit is even higher than ancientlimit)
@@ -1237,6 +1245,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 				rawdb.WriteTxLookupEntriesByBlock(batch, block)
 			}
 			stats.processed++
+		}
+		// Flush the last ancient batch
+		if aBatch.ValueSize() > 0 {
+			if err := aBatch.Write(); err != nil {
+				return 0, err
+			}
+			aBatch.Reset()
 		}
 		// Flush all tx-lookup index data.
 		size += batch.ValueSize()

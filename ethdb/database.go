@@ -115,6 +115,7 @@ type Writer interface {
 type AncientStore interface {
 	AncientReader
 	AncientWriter
+	AncientBatcher
 	io.Closer
 }
 
@@ -124,6 +125,7 @@ type Database interface {
 	Reader
 	Writer
 	Batcher
+	AncientBatcher
 	Iteratee
 	Stater
 	Compacter
