@@ -35,7 +35,6 @@ type freezerTableBatch struct {
 	firstIdx uint64
 	count    uint64
 	sizes    []uint32
-	total    int
 
 	headBytes uint32
 }
@@ -72,10 +71,8 @@ func (batch *freezerTableBatch) AppendRLP(item uint64, data interface{}) error {
 		rlp.Encode(&batch.buf, data)
 	}
 	s1 := batch.buf.Len()
-	size := s1 - s0
-	batch.sizes = append(batch.sizes, uint32(size))
+	batch.sizes = append(batch.sizes, uint32(s1-s0))
 	batch.count++
-	batch.total += size
 	return nil
 }
 
@@ -96,10 +93,8 @@ func (batch *freezerTableBatch) Append(item uint64, blob []byte) error {
 		batch.buf.Write(blob)
 	}
 	s1 := batch.buf.Len()
-	size := s1 - s0
-	batch.sizes = append(batch.sizes, uint32(size))
+	batch.sizes = append(batch.sizes, uint32(s1-s0))
 	batch.count++
-	batch.total += size
 	return nil
 }
 
@@ -188,20 +183,15 @@ func (batch *freezerTableBatch) write(newHead bool) (bool, error) {
 	if batch.count > 0 {
 		// Some data left to write on a retry.
 		batch.sizes = batch.sizes[count:]
-		batch.total = 0
-		for _, size := range batch.sizes {
-			batch.total += int(size)
-		}
 		return true, nil
 	}
 	// All data written. We can simply truncate and keep using the buffer
 	batch.sizes = batch.sizes[:0]
-	batch.total = 0
 	return false, nil
 }
 
 func (batch *freezerTableBatch) Size() int {
-	return batch.total
+	return batch.buf.Len()
 }
 
 // freezerBatch is a write-only database that commits changes to the associated
