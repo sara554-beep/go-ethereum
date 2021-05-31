@@ -30,7 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-const sampleNumber = 3 // Number of txs sampled in a block
+const sampleNumber = 3 // Number of transactions sampled in a block
 
 var (
 	DefaultMaxPrice    = big.NewInt(500 * params.GWei)
@@ -151,7 +151,7 @@ func (gpo *Oracle) SuggestPrice(ctx context.Context) (*big.Int, error) {
 		exp--
 		// Nothing returned. There are two special cases here:
 		// - The block is empty
-		// - All the txs included are sent by the miner itself.
+		// - All the transactions included are sent by the miner itself.
 		// In these cases, use the latest calculated price for samping.
 		if len(res.values) == 0 {
 			res.values = []*big.Int{lastPrice}
@@ -213,7 +213,7 @@ func (s *txSorter) Less(i, j int) bool {
 }
 
 // getBlockPrices calculates the lowest transaction gas price in a given block
-// and sends it to the result channel. If the block is empty or all txs
+// and sends it to the result channel. If the block is empty or all transactions
 // are sent by the miner itself(it doesn't make any sense to include this kind of
 // transaction prices for sampling), nil gasprice is returned.
 func (gpo *Oracle) getBlockValues(ctx context.Context, signer types.Signer, blockNum uint64, limit int, ignoreUnder *big.Int, result chan results, quit chan struct{}) {
