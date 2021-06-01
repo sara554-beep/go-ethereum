@@ -18,9 +18,14 @@
 package catalyst
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/big"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -29,7 +34,10 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/les"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
@@ -111,14 +119,28 @@ type blockExecutionEnv struct {
 	receipts []*types.Receipt
 }
 
-func (env *blockExecutionEnv) commitTransaction(tx *types.Transaction, coinbase common.Address) error {
+func (env *blockExecutionEnv) commitTransaction(sender common.Address, tx *types.Transaction, coinbase common.Address) error {
+	// Inject tracer for debugging purpose.
+	tracer, err := makeTracer("", 0, sender, tx.GasPrice(), vm.LogConfig{DisableMemory: true, DisableReturnData: true, DisableStack: true, DisableStorage: true})
+	if err != nil {
+		log.Warn("Failed to create tracer", "err", err)
+		return err
+	}
 	vmconfig := *env.chain.GetVMConfig()
+	vmconfig.Tracer = tracer
+	vmconfig.Debug = true
+
 	receipt, err := core.ApplyTransaction(env.chain.Config(), env.chain, &coinbase, env.gasPool, env.state, env.header, tx, &env.header.GasUsed, vmconfig)
 	if err != nil {
 		return err
 	}
 	env.txs = append(env.txs, tx)
 	env.receipts = append(env.receipts, receipt)
+
+	err = saveTraceResult(tracer, receipt.GasUsed, receipt.Status == 0, "", tx.Hash()) // TODO can't get the return
+	if err != nil {
+		log.Warn("Failed to retrieve trace result", "err", err)
+	}
 	return nil
 }
 
@@ -150,6 +172,79 @@ func (api *ConsensusAPI) makeEnv(parent *types.Block, header *types.Header) (*bl
 		gasPool: new(core.GasPool).AddGas(header.GasLimit),
 	}
 	return env, nil
+}
+
+func makeTracer(traceName string, timeout time.Duration, origin common.Address, gasPrice *big.Int, config vm.LogConfig) (vm.Tracer, error) {
+	// Assemble the structured logger or the JavaScript tracer
+	var (
+		tracer vm.Tracer
+		err    error
+	)
+	switch {
+	case traceName != "":
+		// Define a meaningful timeout of a single transaction trace
+		if timeout < time.Second {
+			timeout = time.Second
+		}
+		// Constuct the JavaScript tracer to execute with
+		txContext := vm.TxContext{
+			Origin:   origin,
+			GasPrice: gasPrice,
+		}
+		if tracer, err = tracers.New(traceName, txContext); err != nil {
+			return nil, err
+		}
+		// Handle timeouts and RPC cancellations
+		deadlineCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		go func() {
+			<-deadlineCtx.Done()
+			if deadlineCtx.Err() == context.DeadlineExceeded {
+				tracer.(*tracers.Tracer).Stop(errors.New("execution timeout"))
+			}
+		}()
+		defer cancel()
+
+	default:
+		tracer = vm.NewStructLogger(&config)
+	}
+	return tracer, nil
+}
+
+func saveTraceResult(tracer vm.Tracer, useGas uint64, failed bool, ret string, hash common.Hash) error {
+	var (
+		blob []byte
+		err  error
+	)
+	switch tracer := tracer.(type) {
+	case *vm.StructLogger:
+		ret := &ethapi.ExecutionResult{
+			Gas:         useGas,
+			Failed:      failed,
+			ReturnValue: ret,
+			StructLogs:  ethapi.FormatLogs(tracer.StructLogs()),
+		}
+		blob, err = json.Marshal(ret)
+		if err != nil {
+			return err
+		}
+	case *tracers.Tracer:
+		ret, err := tracer.GetResult()
+		if err != nil {
+			return err
+		}
+		blob, err = ret.MarshalJSON()
+		if err != nil {
+			return err
+		}
+	default:
+		panic(fmt.Sprintf("bad tracer type %T", tracer))
+	}
+	// Generate a unique temporary file to dump it into
+	prefix := fmt.Sprintf("assemble_tx_%#x", hash.Bytes()[:4])
+	filename := filepath.Join(os.TempDir(), prefix)
+	ioutil.WriteFile(filename, blob, 0666)
+	log.Info("Dumped trace", "file", filename, "hash", hash)
+	return nil
 }
 
 // AssembleBlock creates a new block, inserts it into the chain, and returns the "execution
@@ -225,7 +320,7 @@ func (api *ConsensusAPI) AssembleBlock(params AssembleBlockParams) (*ExecutableD
 
 		// Execute the transaction
 		env.state.Prepare(tx.Hash(), common.Hash{}, env.tcount)
-		err = env.commitTransaction(tx, coinbase)
+		err = env.commitTransaction(from, tx, coinbase)
 		switch err {
 		case core.ErrGasLimitReached:
 			// Pop the current out-of-gas transaction without shifting in the next from the account
