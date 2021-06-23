@@ -47,6 +47,50 @@ func TestHexCompact(t *testing.T) {
 	}
 }
 
+func TestHexReverseCompact(t *testing.T) {
+	tests := []struct{ hex, compact []byte }{
+		// empty keys, with and without terminator.
+		{hex: []byte{}, compact: []byte{0x00}},
+		{hex: []byte{16}, compact: []byte{0x02}},
+		// odd length, no terminator
+		{hex: []byte{1, 2, 3, 4, 5}, compact: []byte{0x12, 0x34, 0x51}},
+		// even length, no terminator
+		{hex: []byte{0, 1, 2, 3, 4, 5}, compact: []byte{0x01, 0x23, 0x45, 0x00}},
+		// odd length, terminator
+		{hex: []byte{15, 1, 12, 11, 8, 16 /*term*/}, compact: []byte{0xf1, 0xcb, 0x83}},
+		// even length, terminator
+		{hex: []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}, compact: []byte{0x0f, 0x1c, 0xb8, 0x02}},
+	}
+	for _, test := range tests {
+		if c := hexToReverseCompact(test.hex); !bytes.Equal(c, test.compact) {
+			t.Errorf("hexToReverseCompact(%x) -> %x, want %x", test.hex, c, test.compact)
+		}
+		if h := reverseCompactToHex(test.compact); !bytes.Equal(h, test.hex) {
+			t.Errorf("reverseCompactToHex(%x) -> %x, want %x", test.compact, h, test.hex)
+		}
+	}
+}
+
+func TestHexSimpleCompact(t *testing.T) {
+	tests := []struct{ hex, compact []byte }{
+		// empty keys, without terminator.
+		{hex: []byte{}, compact: []byte{0x00, 0x00, 0x00, 0x00}},
+		// odd length, no terminator
+		{hex: []byte{1, 2, 3, 4, 5}, compact: []byte{0x12, 0x34, 0x50, 0x00}},
+		// even length, no terminator
+		{hex: []byte{0, 1, 2, 3, 4, 5}, compact: []byte{0x01, 0x23, 0x45, 0x00}},
+	}
+	for _, test := range tests {
+		c, length := hexToSimpleCompact(test.hex, 4)
+		if !bytes.Equal(c, test.compact) {
+			t.Errorf("hexToSimpleCompact(%x) -> %x, want %x", test.hex, c, test.compact)
+		}
+		if h := simpleCompactToHex(test.compact, length); !bytes.Equal(h, test.hex) {
+			t.Errorf("simpleCompactToHex(%x) -> %x, want %x", test.compact, h, test.hex)
+		}
+	}
+}
+
 func TestHexKeybytes(t *testing.T) {
 	tests := []struct{ key, hexIn, hexOut []byte }{
 		{key: []byte{}, hexIn: []byte{16}, hexOut: []byte{16}},
@@ -71,8 +115,8 @@ func TestHexKeybytes(t *testing.T) {
 		if h := keybytesToHex(test.key); !bytes.Equal(h, test.hexOut) {
 			t.Errorf("keybytesToHex(%x) -> %x, want %x", test.key, h, test.hexOut)
 		}
-		if k := hexToKeybytes(test.hexIn); !bytes.Equal(k, test.key) {
-			t.Errorf("hexToKeybytes(%x) -> %x, want %x", test.hexIn, k, test.key)
+		if k := HexToKeybytes(test.hexIn); !bytes.Equal(k, test.key) {
+			t.Errorf("HexToKeybytes(%x) -> %x, want %x", test.hexIn, k, test.key)
 		}
 	}
 }
@@ -135,6 +179,6 @@ func BenchmarkKeybytesToHex(b *testing.B) {
 func BenchmarkHexToKeybytes(b *testing.B) {
 	testBytes := []byte{7, 6, 6, 5, 7, 2, 6, 2, 16}
 	for i := 0; i < b.N; i++ {
-		hexToKeybytes(testBytes)
+		HexToKeybytes(testBytes)
 	}
 }

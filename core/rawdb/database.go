@@ -289,20 +289,24 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		logged = time.Now()
 
 		// Key-value store statistics
-		headers         stat
-		bodies          stat
-		receipts        stat
-		tds             stat
-		numHashPairings stat
-		hashNumPairings stat
-		tries           stat
-		codes           stat
-		txLookups       stat
-		accountSnaps    stat
-		storageSnaps    stat
-		preimages       stat
-		bloomBits       stat
-		cliqueSnaps     stat
+		headers              stat
+		bodies               stat
+		receipts             stat
+		tds                  stat
+		numHashPairings      stat
+		hashNumPairings      stat
+		accountTrie          stat
+		storageTries         stat
+		codes                stat
+		txLookups            stat
+		accountSnaps         stat
+		storageSnaps         stat
+		preimages            stat
+		bloomBits            stat
+		cliqueSnaps          stat
+		commitRecords        stat
+		deletedCommitRecords stat
+		resurrectionMarkers  stat
 
 		// Ancient store statistics
 		ancientHeadersSize  common.StorageSize
@@ -342,8 +346,10 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			numHashPairings.Add(size)
 		case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
 			hashNumPairings.Add(size)
-		case len(key) == common.HashLength:
-			tries.Add(size)
+		case bytes.HasPrefix(key, accountTrieNodePrefix) && len(key) == (len(accountTrieNodePrefix)+2*common.HashLength+1):
+			accountTrie.Add(size)
+		case bytes.HasPrefix(key, storageTrieNodePrefix) && len(key) == (len(storageTrieNodePrefix)+3*common.HashLength+1):
+			storageTries.Add(size)
 		case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
 			codes.Add(size)
 		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
@@ -356,6 +362,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			preimages.Add(size)
 		case bytes.HasPrefix(key, configPrefix) && len(key) == (len(configPrefix)+common.HashLength):
 			metadata.Add(size)
+		case bytes.HasPrefix(key, commitRecordPrefix) && len(key) == (len(commitRecordPrefix)+8+common.HashLength):
+			commitRecords.Add(size)
 		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
 			bloomBits.Add(size)
 		case bytes.HasPrefix(key, BloomBitsIndexPrefix):
@@ -418,7 +426,11 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Transaction index", txLookups.Size(), txLookups.Count()},
 		{"Key-Value store", "Bloombit index", bloomBits.Size(), bloomBits.Count()},
 		{"Key-Value store", "Contract codes", codes.Size(), codes.Count()},
-		{"Key-Value store", "Trie nodes", tries.Size(), tries.Count()},
+		{"Key-Value store", "Account Trie nodes", accountTrie.Size(), accountTrie.Count()},
+		{"Key-Value store", "Storage Trie nodes", storageTries.Size(), storageTries.Count()},
+		{"Key-Value store", "Commit records", commitRecords.Size(), commitRecords.Count()},
+		{"Key-Value store", "Deleted commit records", deletedCommitRecords.Size(), deletedCommitRecords.Count()},
+		{"Key-Value store", "Resurrection markers", resurrectionMarkers.Size(), resurrectionMarkers.Count()},
 		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
 		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},
 		{"Key-Value store", "Storage snapshot", storageSnaps.Size(), storageSnaps.Count()},

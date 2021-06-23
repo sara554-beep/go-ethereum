@@ -113,7 +113,7 @@ func NewPruner(db ethdb.Database, datadir, trieCachePath string, bloomSize uint6
 	}, nil
 }
 
-func prune(snaptree *snapshot.Tree, root common.Hash, maindb ethdb.Database, stateBloom *stateBloom, bloomPath string, middleStateRoots map[common.Hash]struct{}, start time.Time) error {
+func prune(snaptree *snapshot.Tree, root common.Hash, maindb ethdb.Database, stateBloom *stateBloom, bloomPath string, middleStateRoots map[common.Hash]bool, start time.Time) error {
 	// Delete all stale trie nodes in the disk. With the help of state bloom
 	// the trie nodes(and codes) belong to the active state will be filtered
 	// out. A very small part of stale tries will also be filtered because of
@@ -134,21 +134,27 @@ func prune(snaptree *snapshot.Tree, root common.Hash, maindb ethdb.Database, sta
 
 		// All state entries don't belong to specific state and genesis are deleted here
 		// - trie node
-		// - legacy contract code
-		// - new-scheme contract code
+		// - contract code
+		var checkKey []byte
 		isCode, codeKey := rawdb.IsCodeKey(key)
-		if len(key) == common.HashLength || isCode {
-			checkKey := key
-			if isCode {
-				checkKey = codeKey
-			}
-			if _, exist := middleStateRoots[common.BytesToHash(checkKey)]; exist {
-				log.Debug("Forcibly delete the middle state roots", "hash", common.BytesToHash(checkKey))
-			} else {
-				if ok, err := stateBloom.Contain(checkKey); err != nil {
-					return err
-				} else if ok {
-					continue
+		if isCode {
+			checkKey = codeKey
+		}
+		isNode, nodeKey := rawdb.IsStateTrieNodeKey(key)
+		if isNode {
+			checkKey = nodeKey
+		}
+		if checkKey != nil {
+			if isNode {
+				owner, _, hash := trie.DecodeNodeKey(checkKey)
+				if owner == (common.Hash{}) && middleStateRoots[hash] {
+					log.Debug("Forcibly delete the middle state roots", "hash", common.BytesToHash(checkKey))
+				} else {
+					if ok, err := stateBloom.Contain(checkKey); err != nil {
+						return err
+					} else if ok {
+						continue
+					}
 				}
 			}
 			count += 1
@@ -266,7 +272,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 	// Ensure the root is really present. The weak assumption
 	// is the presence of root can indicate the presence of the
 	// entire trie.
-	if blob := rawdb.ReadTrieNode(p.db, root); len(blob) == 0 {
+	if blob := rawdb.ReadTrieNode(p.db, trie.TrieRootKey(common.Hash{}, root)); len(blob) == 0 {
 		// The special case is for clique based networks(rinkeby, goerli
 		// and some other private networks), it's possible that two
 		// consecutive blocks will have same root. In this case snapshot
@@ -280,7 +286,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 		// as the pruning target.
 		var found bool
 		for i := len(layers) - 2; i >= 2; i-- {
-			if blob := rawdb.ReadTrieNode(p.db, layers[i].Root()); len(blob) != 0 {
+			if blob := rawdb.ReadTrieNode(p.db, trie.TrieRootKey(common.Hash{}, root)); len(blob) != 0 {
 				root = layers[i].Root()
 				found = true
 				log.Info("Selecting middle-layer as the pruning target", "root", root, "depth", i)
@@ -308,12 +314,12 @@ func (p *Pruner) Prune(root common.Hash) error {
 
 	// All the state roots of the middle layer should be forcibly pruned,
 	// otherwise the dangling state will be left.
-	middleRoots := make(map[common.Hash]struct{})
+	middleRoots := make(map[common.Hash]bool)
 	for _, layer := range layers {
 		if layer.Root() == root {
 			break
 		}
-		middleRoots[layer.Root()] = struct{}{}
+		middleRoots[layer.Root()] = true
 	}
 	// Traverse the target state, re-construct the whole state trie and
 	// commit to the given bloom filter.
@@ -323,7 +329,9 @@ func (p *Pruner) Prune(root common.Hash) error {
 	}
 	// Traverse the genesis, put all genesis state entries into the
 	// bloom filter too.
-	if err := extractGenesis(p.db, p.stateBloom); err != nil {
+	if err := ExtractGenesis(p.db, func(key []byte) {
+		p.stateBloom.Put(key, nil)
+	}); err != nil {
 		return err
 	}
 	filterName := bloomFilterName(p.datadir, root)
@@ -384,14 +392,14 @@ func RecoverPruning(datadir string, db ethdb.Database, trieCachePath string) err
 	var (
 		found       bool
 		layers      = snaptree.Snapshots(headBlock.Root(), 128, true)
-		middleRoots = make(map[common.Hash]struct{})
+		middleRoots = make(map[common.Hash]bool)
 	)
 	for _, layer := range layers {
 		if layer.Root() == stateBloomRoot {
 			found = true
 			break
 		}
-		middleRoots[layer.Root()] = struct{}{}
+		middleRoots[layer.Root()] = true
 	}
 	if !found {
 		log.Error("Pruning target state is not existent")
@@ -400,9 +408,9 @@ func RecoverPruning(datadir string, db ethdb.Database, trieCachePath string) err
 	return prune(snaptree, stateBloomRoot, db, stateBloom, stateBloomPath, middleRoots, time.Now())
 }
 
-// extractGenesis loads the genesis state and commits all the state entries
+// ExtractGenesis loads the genesis state and commits all the state entries
 // into the given bloomfilter.
-func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
+func ExtractGenesis(db ethdb.Database, write func([]byte)) error {
 	genesisHash := rawdb.ReadCanonicalHash(db, 0)
 	if genesisHash == (common.Hash{}) {
 		return errors.New("missing genesis hash")
@@ -421,7 +429,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 
 		// Embedded nodes don't have hash.
 		if hash != (common.Hash{}) {
-			stateBloom.Put(hash.Bytes(), nil)
+			write(accIter.ComposedKey())
 		}
 		// If it's a leaf node, yes we are touching an account,
 		// dig into the storage trie further.
@@ -431,7 +439,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 				return err
 			}
 			if acc.Root != emptyRoot {
-				storageTrie, err := trie.NewSecure(acc.Root, trie.NewDatabase(db))
+				storageTrie, err := trie.NewSecureWithOwner(common.BytesToHash(accIter.LeafKey()), acc.Root, trie.NewDatabase(db))
 				if err != nil {
 					return err
 				}
@@ -439,7 +447,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 				for storageIter.Next(true) {
 					hash := storageIter.Hash()
 					if hash != (common.Hash{}) {
-						stateBloom.Put(hash.Bytes(), nil)
+						write(storageIter.ComposedKey())
 					}
 				}
 				if storageIter.Error() != nil {
@@ -447,7 +455,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 				}
 			}
 			if !bytes.Equal(acc.CodeHash, emptyCode) {
-				stateBloom.Put(acc.CodeHash, nil)
+				write(acc.CodeHash)
 			}
 		}
 	}

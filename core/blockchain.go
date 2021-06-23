@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/state/pruner"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -226,15 +227,10 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	futureBlocks, _ := lru.New(maxFutureBlocks)
 
 	bc := &BlockChain{
-		chainConfig: chainConfig,
-		cacheConfig: cacheConfig,
-		db:          db,
-		triegc:      prque.New(nil),
-		stateCache: state.NewDatabaseWithConfig(db, &trie.Config{
-			Cache:     cacheConfig.TrieCleanLimit,
-			Journal:   cacheConfig.TrieCleanJournal,
-			Preimages: cacheConfig.Preimages,
-		}),
+		chainConfig:    chainConfig,
+		cacheConfig:    cacheConfig,
+		db:             db,
+		triegc:         prque.New(nil),
 		quit:           make(chan struct{}),
 		shouldPreserve: shouldPreserve,
 		bodyCache:      bodyCache,
@@ -246,6 +242,45 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:         engine,
 		vmConfig:       vmConfig,
 	}
+
+	var genesisSet = make(map[string]struct{})
+	pruner.ExtractGenesis(db, func(key []byte) {
+		genesisSet[string(key)] = struct{}{}
+	})
+	log.Info("Genesis extracted", "size", len(genesisSet))
+
+	var headCh = make(chan ChainHeadEvent, 1024)
+	var signal = make(chan uint64, 1024)
+	sub := bc.SubscribeChainHeadEvent(headCh)
+	go func() {
+		for {
+			select {
+			case ev := <-headCh:
+				log.Info("Received block head event", "number", ev.Block.NumberU64())
+				signal <- ev.Block.NumberU64()
+			case <-sub.Err():
+				return
+			}
+		}
+	}()
+
+	bc.stateCache = state.NewDatabaseWithConfig(db, &trie.Config{
+		Cache:     cacheConfig.TrieCleanLimit,
+		Journal:   cacheConfig.TrieCleanJournal,
+		Preimages: cacheConfig.Preimages,
+		Pruner: trie.PrunerConfig{
+			GenesisSet:     genesisSet,
+			MaximumRecords: 1,
+			Signal:         signal,
+			IsCanonical: func(number uint64, hash common.Hash) bool {
+				header := bc.GetHeaderByNumber(number)
+				if header == nil {
+					return false
+				}
+				return header.Hash() == hash
+			},
+		},
+	})
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
@@ -965,7 +1000,7 @@ func (bc *BlockChain) GetUnclesInChain(block *types.Block, length int) []*types.
 // TrieNode retrieves a blob of data associated with a trie node
 // either from ephemeral in-memory cache, or from persistent storage.
 func (bc *BlockChain) TrieNode(hash common.Hash) ([]byte, error) {
-	return bc.stateCache.TrieDB().Node(hash)
+	return nil, errors.New("not found")
 }
 
 // ContractCode retrieves a blob of data associated with a contract hash
@@ -1043,6 +1078,7 @@ func (bc *BlockChain) Stop() {
 		triedb := bc.stateCache.TrieDB()
 		triedb.SaveCache(bc.cacheConfig.TrieCleanJournal)
 	}
+	bc.stateCache.TrieDB().Close()
 	log.Info("Blockchain stopped")
 }
 
@@ -1485,7 +1521,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		}
 	} else {
 		// Full but not archive node, do proper garbage collection
-		triedb.Reference(root, common.Hash{}) // metadata reference to keep trie alive
+		triedb.Reference(common.Hash{}, root, common.Hash{}, nil) // metadata reference to keep trie alive
 		bc.triegc.Push(root, -int64(block.NumberU64()))
 
 		if current := block.NumberU64(); current > TriesInMemory {
@@ -1514,7 +1550,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 						log.Info("State in memory for too long, committing", "time", bc.gcproc, "allowance", bc.cacheConfig.TrieTimeLimit, "optimum", float64(chosen-lastWrite)/TriesInMemory)
 					}
 					// Flush an entire trie and restart the counters
-					triedb.Commit(header.Root, true, nil)
+					triedb.CommitWithMetadata(header.Number.Uint64(), header.Hash(), header.Root, true, nil)
 					lastWrite = chosen
 					bc.gcproc = 0
 				}

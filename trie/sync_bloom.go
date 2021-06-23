@@ -17,8 +17,9 @@
 package trie
 
 import (
-	"encoding/binary"
 	"fmt"
+	"hash"
+	"hash/fnv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,12 +41,58 @@ var (
 	bloomErrorGauge = metrics.NewRegisteredGauge("trie/bloom/error", nil)
 )
 
+// keybloom is the wrapper of the raw bloom filter with related hash function
+type keybloom struct {
+	bloom  *bloomfilter.Filter
+	hasher hash.Hash64
+}
+
+func newKeyBloom(m, k uint64) (*keybloom, error) {
+	bloom, err := bloomfilter.New(m, k)
+	if err != nil {
+		return nil, err
+	}
+	return &keybloom{bloom: bloom, hasher: fnv.New64a()}, nil
+}
+
+func newOptimalKeyBloom(maxN uint64, p float64) *keybloom {
+	bloom, err := bloomfilter.NewOptimal(maxN, p)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create bloom %v", err))
+	}
+	return &keybloom{bloom: bloom, hasher: fnv.New64a()}
+}
+
+func (bloom *keybloom) add(key []byte) {
+	bloom.hasher.Reset()
+	bloom.hasher.Write(key)
+	bloom.bloom.AddHash(bloom.hasher.Sum64())
+}
+
+func (bloom *keybloom) contain(key []byte) bool {
+	bloom.hasher.Reset()
+	bloom.hasher.Write(key)
+	return bloom.bloom.ContainsHash(bloom.hasher.Sum64())
+}
+
+func (bloom *keybloom) n() uint64 {
+	return bloom.bloom.N()
+}
+
+func (bloom *keybloom) m() uint64 {
+	return bloom.bloom.M() / 8 // Size in bytes
+}
+
+func (bloom *keybloom) falsePosititveProbability() float64 {
+	return bloom.bloom.FalsePosititveProbability()
+}
+
 // SyncBloom is a bloom filter used during fast sync to quickly decide if a trie
 // node or contract code already exists on disk or not. It self populates from the
 // provided disk database on creation in a background thread and will only start
 // returning live results once that's finished.
 type SyncBloom struct {
-	bloom   *bloomfilter.Filter
+	bloom   *keybloom
 	inited  uint32
 	closer  sync.Once
 	closed  uint32
@@ -57,7 +104,7 @@ type SyncBloom struct {
 // initializes it from the database. The bloom is hard coded to use 3 filters.
 func NewSyncBloom(memory uint64, database ethdb.Iteratee) *SyncBloom {
 	// Create the bloom filter to track known trie nodes
-	bloom, err := bloomfilter.New(memory*1024*1024*8, 4)
+	bloom, err := newKeyBloom(memory*1024*1024*8, 4)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create bloom: %v", err))
 	}
@@ -98,12 +145,11 @@ func (b *SyncBloom) init(database ethdb.Iteratee) {
 	for it.Next() && atomic.LoadUint32(&b.closed) == 0 {
 		// If the database entry is a trie node, add it to the bloom
 		key := it.Key()
-		if len(key) == common.HashLength {
-			b.bloom.AddHash(binary.BigEndian.Uint64(key))
+		if ok, rawkey := rawdb.IsStateTrieNodeKey(key); ok {
+			b.bloom.add(rawkey)
 			bloomLoadMeter.Mark(1)
 		} else if ok, hash := rawdb.IsCodeKey(key); ok {
-			// If the database entry is a contract code, add it to the bloom
-			b.bloom.AddHash(binary.BigEndian.Uint64(hash))
+			b.bloom.add(hash)
 			bloomLoadMeter.Mark(1)
 		}
 		// If enough time elapsed since the last iterator swap, restart
@@ -113,14 +159,14 @@ func (b *SyncBloom) init(database ethdb.Iteratee) {
 			it.Release()
 			it = database.NewIterator(nil, key)
 
-			log.Info("Initializing state bloom", "items", b.bloom.N(), "errorrate", b.bloom.FalsePosititveProbability(), "elapsed", common.PrettyDuration(time.Since(start)))
+			log.Info("Initializing state bloom", "items", b.bloom.n(), "errorrate", b.bloom.falsePosititveProbability(), "elapsed", common.PrettyDuration(time.Since(start)))
 			swap = time.Now()
 		}
 	}
 	it.Release()
 
 	// Mark the bloom filter inited and return
-	log.Info("Initialized state bloom", "items", b.bloom.N(), "errorrate", b.bloom.FalsePosititveProbability(), "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Info("Initialized state bloom", "items", b.bloom.n(), "errorrate", b.bloom.falsePosititveProbability(), "elapsed", common.PrettyDuration(time.Since(start)))
 	atomic.StoreUint32(&b.inited, 1)
 }
 
@@ -133,7 +179,7 @@ func (b *SyncBloom) meter() {
 		select {
 		case <-tick.C:
 			// Report the current error ration. No floats, lame, scale it up.
-			bloomErrorGauge.Update(int64(b.bloom.FalsePosititveProbability() * 100000))
+			bloomErrorGauge.Update(int64(b.bloom.falsePosititveProbability() * 100000))
 		case <-b.closeCh:
 			return
 		}
@@ -150,7 +196,7 @@ func (b *SyncBloom) Close() error {
 		b.pend.Wait()
 
 		// Wipe the bloom, but mark it "uninited" just in case someone attempts an access
-		log.Info("Deallocated state bloom", "items", b.bloom.N(), "errorrate", b.bloom.FalsePosititveProbability())
+		log.Info("Deallocated state bloom", "items", b.bloom.n(), "errorrate", b.bloom.falsePosititveProbability())
 
 		atomic.StoreUint32(&b.inited, 0)
 		b.bloom = nil
@@ -159,20 +205,20 @@ func (b *SyncBloom) Close() error {
 }
 
 // Add inserts a new trie node hash into the bloom filter.
-func (b *SyncBloom) Add(hash []byte) {
+func (b *SyncBloom) Add(key []byte) {
 	if atomic.LoadUint32(&b.closed) == 1 {
 		return
 	}
-	b.bloom.AddHash(binary.BigEndian.Uint64(hash))
+	b.bloom.add(key)
 	bloomAddMeter.Mark(1)
 }
 
-// Contains tests if the bloom filter contains the given hash:
-//   - false: the bloom definitely does not contain hash
-//   - true:  the bloom maybe contains hash
+// Contains tests if the bloom filter contains the given key:
+//   - false: the bloom definitely does not contain key
+//   - true:  the bloom maybe contains key
 //
 // While the bloom is being initialized, any query will return true.
-func (b *SyncBloom) Contains(hash []byte) bool {
+func (b *SyncBloom) Contains(key []byte) bool {
 	bloomTestMeter.Mark(1)
 	if atomic.LoadUint32(&b.inited) == 0 {
 		// We didn't load all the trie nodes from the previous run of Geth yet. As
@@ -181,7 +227,7 @@ func (b *SyncBloom) Contains(hash []byte) bool {
 		return true
 	}
 	// Bloom initialized, check the real one and report any successful misses
-	maybe := b.bloom.ContainsHash(binary.BigEndian.Uint64(hash))
+	maybe := b.bloom.contain(key)
 	if !maybe {
 		bloomMissMeter.Mark(1)
 	}

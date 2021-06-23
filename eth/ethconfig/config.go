@@ -79,8 +79,8 @@ var Defaults = Config{
 	TrieCleanCache:          154,
 	TrieCleanCacheJournal:   "triecache",
 	TrieCleanCacheRejournal: 60 * time.Minute,
-	TrieDirtyCache:          256,
-	TrieTimeout:             60 * time.Minute,
+	TrieDirtyCache:          1024,
+	TrieTimeout:             120 * time.Second,
 	SnapshotCache:           102,
 	Miner: miner.Config{
 		GasCeil:  8000000,
