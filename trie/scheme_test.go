@@ -36,30 +36,20 @@ func TestEncodeNodeKey(t *testing.T) {
 	}{
 		// metaroot
 		{common.Hash{}, nil, common.Hash{}, nil},
-		// no owner, empty keys, with and without terminator.
-		{common.HexToHash(""), []byte{}, randomHash, append([]byte{0x00}, randomHash.Bytes()...)},
-		{common.HexToHash(""), []byte{16}, randomHash, append([]byte{0x20}, randomHash.Bytes()...)},
+		// no owner, empty keys, without terminator.
+		{common.HexToHash(""), []byte{}, randomHash, append(append(common.RightPadBytes(nil, common.HashLength), randomHash.Bytes()...), byte(0))},
 
 		// no owner, odd length, no terminator
-		{common.HexToHash(""), []byte{1, 2, 3, 4, 5}, randomHash, append([]byte{0x11, 0x23, 0x45}, randomHash.Bytes()...)},
+		{common.HexToHash(""), []byte{1, 2, 3, 4, 5}, randomHash, append(append(common.RightPadBytes([]byte{0x12, 0x34, 0x50}, common.HashLength), randomHash.Bytes()...), byte(5))},
 		// no owner, even length, no terminator
-		{common.HexToHash(""), []byte{0, 1, 2, 3, 4, 5}, randomHash, append([]byte{0x00, 0x01, 0x23, 0x45}, randomHash.Bytes()...)},
-		// no owner, odd length, terminator
-		{common.HexToHash(""), []byte{15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append([]byte{0x3f, 0x1c, 0xb8}, randomHash.Bytes()...)},
-		// no owner, even length, terminator
-		{common.HexToHash(""), []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append([]byte{0x20, 0x0f, 0x1c, 0xb8}, randomHash.Bytes()...)},
+		{common.HexToHash(""), []byte{0, 1, 2, 3, 4, 5}, randomHash, append(append(common.RightPadBytes([]byte{0x01, 0x23, 0x45}, common.HashLength), randomHash.Bytes()...), byte(6))},
 
-		// with owner, empty keys, with and without terminator.
-		{randomOwner, []byte{}, randomHash, append(append(randomOwner.Bytes(), []byte{0x00}...), randomHash.Bytes()...)},
-		{randomOwner, []byte{16}, randomHash, append(append(randomOwner.Bytes(), []byte{0x20}...), randomHash.Bytes()...)},
+		// with owner, empty keys, without terminator.
+		{randomOwner, []byte{}, randomHash, append(append(append(randomOwner.Bytes(), common.RightPadBytes(nil, common.HashLength)...), randomHash.Bytes()...), byte(0))},
 		// with owner, odd length, no terminator
-		{randomOwner, []byte{1, 2, 3, 4, 5}, randomHash, append(append(randomOwner.Bytes(), []byte{0x11, 0x23, 0x45}...), randomHash.Bytes()...)},
+		{randomOwner, []byte{1, 2, 3, 4, 5}, randomHash, append(append(append(randomOwner.Bytes(), common.RightPadBytes([]byte{0x12, 0x34, 0x50}, common.HashLength)...), randomHash.Bytes()...), byte(5))},
 		// with owner, even length, no terminator
-		{randomOwner, []byte{0, 1, 2, 3, 4, 5}, randomHash, append(append(randomOwner.Bytes(), []byte{0x00, 0x01, 0x23, 0x45}...), randomHash.Bytes()...)},
-		// with owner, odd length, terminator
-		{randomOwner, []byte{15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append(append(randomOwner.Bytes(), []byte{0x3f, 0x1c, 0xb8}...), randomHash.Bytes()...)},
-		// with owner, even length, terminator
-		{randomOwner, []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append(append(randomOwner.Bytes(), []byte{0x20, 0x0f, 0x1c, 0xb8}...), randomHash.Bytes()...)},
+		{randomOwner, []byte{0, 1, 2, 3, 4, 5}, randomHash, append(append(append(randomOwner.Bytes(), common.RightPadBytes([]byte{0x01, 0x23, 0x45}, common.HashLength)...), randomHash.Bytes()...), byte(6))},
 	}
 	for _, c := range cases {
 		got := EncodeNodeKey(c.owner, c.path, c.hash)
@@ -82,30 +72,20 @@ func TestDecodeNodeKey(t *testing.T) {
 	}{
 		// metaroot
 		{common.Hash{}, nil, common.Hash{}, nil},
-		// no owner, empty keys, with and without terminator.
-		{common.HexToHash(""), []byte{}, randomHash, append([]byte{0x00}, randomHash.Bytes()...)},
-		{common.HexToHash(""), []byte{16}, randomHash, append([]byte{0x20}, randomHash.Bytes()...)},
+		// no owner, empty keys, without terminator.
+		{common.HexToHash(""), []byte{}, randomHash, append(append(common.RightPadBytes(nil, common.HashLength), randomHash.Bytes()...), byte(0))},
 
 		// no owner, odd length, no terminator
-		{common.HexToHash(""), []byte{1, 2, 3, 4, 5}, randomHash, append([]byte{0x11, 0x23, 0x45}, randomHash.Bytes()...)},
+		{common.HexToHash(""), []byte{1, 2, 3, 4, 5}, randomHash, append(append(common.RightPadBytes([]byte{0x12, 0x34, 0x50}, common.HashLength), randomHash.Bytes()...), byte(5))},
 		// no owner, even length, no terminator
-		{common.HexToHash(""), []byte{0, 1, 2, 3, 4, 5}, randomHash, append([]byte{0x00, 0x01, 0x23, 0x45}, randomHash.Bytes()...)},
-		// no owner, odd length, terminator
-		{common.HexToHash(""), []byte{15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append([]byte{0x3f, 0x1c, 0xb8}, randomHash.Bytes()...)},
-		// no owner, even length, terminator
-		{common.HexToHash(""), []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append([]byte{0x20, 0x0f, 0x1c, 0xb8}, randomHash.Bytes()...)},
+		{common.HexToHash(""), []byte{0, 1, 2, 3, 4, 5}, randomHash, append(append(common.RightPadBytes([]byte{0x01, 0x23, 0x45}, common.HashLength), randomHash.Bytes()...), byte(6))},
 
-		// with owner, empty keys, with and without terminator.
-		{randomOwner, []byte{}, randomHash, append(append(randomOwner.Bytes(), []byte{0x00}...), randomHash.Bytes()...)},
-		{randomOwner, []byte{16}, randomHash, append(append(randomOwner.Bytes(), []byte{0x20}...), randomHash.Bytes()...)},
+		// with owner, empty keys, without terminator.
+		{randomOwner, []byte{}, randomHash, append(append(append(randomOwner.Bytes(), common.RightPadBytes(nil, common.HashLength)...), randomHash.Bytes()...), byte(0))},
 		// with owner, odd length, no terminator
-		{randomOwner, []byte{1, 2, 3, 4, 5}, randomHash, append(append(randomOwner.Bytes(), []byte{0x11, 0x23, 0x45}...), randomHash.Bytes()...)},
+		{randomOwner, []byte{1, 2, 3, 4, 5}, randomHash, append(append(append(randomOwner.Bytes(), common.RightPadBytes([]byte{0x12, 0x34, 0x50}, common.HashLength)...), randomHash.Bytes()...), byte(5))},
 		// with owner, even length, no terminator
-		{randomOwner, []byte{0, 1, 2, 3, 4, 5}, randomHash, append(append(randomOwner.Bytes(), []byte{0x00, 0x01, 0x23, 0x45}...), randomHash.Bytes()...)},
-		// with owner, odd length, terminator
-		{randomOwner, []byte{15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append(append(randomOwner.Bytes(), []byte{0x3f, 0x1c, 0xb8}...), randomHash.Bytes()...)},
-		// with owner, even length, terminator
-		{randomOwner, []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}, randomHash, append(append(randomOwner.Bytes(), []byte{0x20, 0x0f, 0x1c, 0xb8}...), randomHash.Bytes()...)},
+		{randomOwner, []byte{0, 1, 2, 3, 4, 5}, randomHash, append(append(append(randomOwner.Bytes(), common.RightPadBytes([]byte{0x01, 0x23, 0x45}, common.HashLength)...), randomHash.Bytes()...), byte(6))},
 	}
 	for _, c := range cases {
 		owner, path, hash := DecodeNodeKey(c.input)
@@ -117,6 +97,36 @@ func TestDecodeNodeKey(t *testing.T) {
 		}
 		if !bytes.Equal(hash.Bytes(), c.hash.Bytes()) {
 			t.Fatal("Decode hash mismatch", "want", c.hash, "got", hash)
+		}
+	}
+}
+
+func TestEncodePrefix(t *testing.T) {
+	var randomOwner = common.HexToHash("0x65710c2c33ddfda00132ce3ab21de97bfa01ea7a1403cfa8a8e3a9dccbb66422")
+	var cases = []struct {
+		owner  common.Hash
+		path   []byte
+		expect []byte
+	}{
+		// no owner, empty keys, without terminator.
+		{common.HexToHash(""), []byte{}, common.RightPadBytes(nil, common.HashLength)},
+
+		// no owner, odd length, no terminator
+		{common.HexToHash(""), []byte{1, 2, 3, 4, 5}, common.RightPadBytes([]byte{0x12, 0x34, 0x50}, common.HashLength)},
+		// no owner, even length, no terminator
+		{common.HexToHash(""), []byte{0, 1, 2, 3, 4, 5}, common.RightPadBytes([]byte{0x01, 0x23, 0x45}, common.HashLength)},
+
+		// with owner, empty keys, without terminator.
+		{randomOwner, []byte{}, append(randomOwner.Bytes(), common.RightPadBytes(nil, common.HashLength)...)},
+		// with owner, odd length, no terminator
+		{randomOwner, []byte{1, 2, 3, 4, 5}, append(randomOwner.Bytes(), common.RightPadBytes([]byte{0x12, 0x34, 0x50}, common.HashLength)...)},
+		// with owner, even length, no terminator
+		{randomOwner, []byte{0, 1, 2, 3, 4, 5}, append(randomOwner.Bytes(), common.RightPadBytes([]byte{0x01, 0x23, 0x45}, common.HashLength)...)},
+	}
+	for _, c := range cases {
+		prefix := encodeNodePath(c.owner, c.path)
+		if !bytes.Equal(prefix, c.expect) {
+			t.Fatal("Prefix mismatch", "want", c.expect, "got", prefix)
 		}
 	}
 }

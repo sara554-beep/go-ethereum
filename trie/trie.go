@@ -512,7 +512,7 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 	hash := common.BytesToHash(n)
-	if node := t.db.node(t.owner, prefix, hash); node != nil {
+	if node := t.db.node(t.owner, common.CopyBytes(prefix), hash); node != nil {
 		return node, nil
 	}
 	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}

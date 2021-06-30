@@ -20,7 +20,6 @@ package rawdb
 import (
 	"bytes"
 	"encoding/binary"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/metrics"
 )
@@ -89,7 +88,11 @@ var (
 	SnapshotAccountPrefix = []byte("a") // SnapshotAccountPrefix + account hash -> account trie value
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
-	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path + node hash -> trie node
+
+	accountTrieNodePrefix = []byte("A")              // accountTrieNodePrefix + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
+	storageTrieNodePrefix = []byte("S")              // storageTrieNodePrefix + node owner(32 bytes) + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
+	commitRecordPrefix    = []byte("commit-record-") // commitRecordPrefix + number(uint64 big endian) + hash -> state update
+	resurrectionPrefix    = []byte("resurrection-")  // resurrectionPrefix + node path + node hash -> marker
 
 	preimagePrefix = []byte("secure-key-")      // preimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-") // config prefix for the db
@@ -208,6 +211,18 @@ func bloomBitsKey(bit uint, section uint64, hash common.Hash) []byte {
 	return key
 }
 
+// commitRecordKey = commitRecordPrefix + number(uint64 big endian) + hash
+func commitRecordKey(number uint64, hash common.Hash) []byte {
+	key := append(append(commitRecordPrefix, make([]byte, 8)...), hash.Bytes()...)
+	binary.BigEndian.PutUint64(key[len(commitRecordPrefix):], number)
+	return key
+}
+
+// resurrectionMarkerKey = resurrectionPrefix + key
+func resurrectionMarkerKey(key []byte) []byte {
+	return append(resurrectionPrefix, key...)
+}
+
 // preimageKey = preimagePrefix + hash
 func preimageKey(hash common.Hash) []byte {
 	return append(preimagePrefix, hash.Bytes()...)
@@ -227,16 +242,32 @@ func IsCodeKey(key []byte) (bool, []byte) {
 	return false, nil
 }
 
-// trieNodeKey = TrieNodePrefix + encoded node key
+// trieNodeKey = accountTrieNodePrefix + node key if the key length is 2*32+1
+// trieNodeKey = storageTrieNodePrefix + node key if the key length is 3*32+1
 func trieNodeKey(key []byte) []byte {
-	return append(TrieNodePrefix, key...)
+	if len(key) == 2*common.HashLength+1 {
+		return append(accountTrieNodePrefix, key...)
+	}
+	return append(storageTrieNodePrefix, key...)
 }
 
-// IsTrieNodeKey reports whether the given byte slice is the key of trie node.
+// trieNodePrefix = accountTrieNodePrefix + node path if the prefix length is 32
+// trieNodePrefix = storageTrieNodePrefix + node path if the prefix length is 64
+func trieNodePrefix(prefix []byte) ([]byte, int) {
+	if len(prefix) == common.HashLength {
+		return append(accountTrieNodePrefix, prefix...), len(accountTrieNodePrefix)
+	}
+	return append(storageTrieNodePrefix, prefix...), len(storageTrieNodePrefix)
+}
+
+// IsStateTrieNodeKey reports whether the given byte slice is the key of trie node.
 // if so return the raw encoded trie key as well.
-func IsTrieNodeKey(key []byte) (bool, []byte) {
-	if bytes.HasPrefix(key, TrieNodePrefix) && len(key) > common.HashLength+len(TrieNodePrefix) {
-		return true, key[len(TrieNodePrefix):]
+func IsStateTrieNodeKey(key []byte) (bool, []byte) {
+	if bytes.HasPrefix(key, accountTrieNodePrefix) && len(key) == 2*common.HashLength+1+len(accountTrieNodePrefix) {
+		return true, key[len(accountTrieNodePrefix):]
+	}
+	if bytes.HasPrefix(key, storageTrieNodePrefix) && len(key) == 3*common.HashLength+1+len(storageTrieNodePrefix) {
+		return true, key[len(storageTrieNodePrefix):]
 	}
 	return false, nil
 }

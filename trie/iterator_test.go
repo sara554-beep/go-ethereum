@@ -135,7 +135,7 @@ func TestNodeIteratorCoverage(t *testing.T) {
 	it := db.diskdb.NewIterator(nil, nil)
 	for it.Next() {
 		key := it.Key()
-		ok, rawKey := rawdb.IsTrieNodeKey(key)
+		ok, rawKey := rawdb.IsStateTrieNodeKey(key)
 		if !ok {
 			t.Errorf("state entry not reported %v", key)
 		}
@@ -330,7 +330,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	} else {
 		it := diskdb.NewIterator(nil, nil)
 		for it.Next() {
-			ok, rawKey := rawdb.IsTrieNodeKey(it.Key())
+			ok, rawKey := rawdb.IsStateTrieNodeKey(it.Key())
 			if ok {
 				fmt.Println("key", rawKey, "db", it.Key())
 				diskKeys = append(diskKeys, common.CopyBytes(rawKey))

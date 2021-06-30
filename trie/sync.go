@@ -40,6 +40,39 @@ var ErrAlreadyProcessed = errors.New("already processed")
 // memory if the node was configured with a significant number of peers.
 const maxFetchesPerDepth = 16384
 
+// NodePath is a path tuple identifying a particular trie node either in a single
+// trie (account) or a layered trie (account -> storage).
+//
+// Content wise the tuple either has 1 element if it addresses a node in a single
+// trie or 2 elements if it addresses a node in a stacked trie.
+//
+// To support aiming arbitrary trie nodes, the path needs to support odd nibble
+// lengths. To avoid transferring expanded hex form over the network, the last
+// part of the tuple (which needs to index into the middle of a trie) is compact
+// encoded. In case of a 2-tuple, the first item is always 32 bytes so that is
+// simple binary encoded.
+//
+// Examples:
+//   - Path 0x9  -> {0x19}
+//   - Path 0x99 -> {0x0099}
+//   - Path 0x01234567890123456789012345678901012345678901234567890123456789019  -> {0x0123456789012345678901234567890101234567890123456789012345678901, 0x19}
+//   - Path 0x012345678901234567890123456789010123456789012345678901234567890199 -> {0x0123456789012345678901234567890101234567890123456789012345678901, 0x0099}
+type NodePath [][]byte
+
+// newNodePath converts an expanded trie path from nibble form into a compact
+// version that can be sent over the network.
+func newNodePath(path []byte) NodePath {
+	// If the hash is from the account trie, append a single item, if it
+	// is from the a storage trie, append a tuple. Note, the length 64 is
+	// clashing between account leaf and storage root. It's fine though
+	// because having a trie node at 64 depth means a hash collision was
+	// found and we're long dead.
+	if len(path) < 64 {
+		return NodePath{hexToCompact(path)}
+	}
+	return NodePath{HexToKeybytes(path[:64]), hexToCompact(path[64:])}
+}
+
 // nodeRequest represents a scheduled or already in-flight trie node retrieval request.
 type nodeRequest struct {
 	key  string // Key of the node data content to retrieve

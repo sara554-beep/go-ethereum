@@ -71,8 +71,7 @@ const metaRoot = ""
 // behind this split design is to provide read access to RPC handlers and sync
 // servers even while the trie is executing expensive garbage collection.
 type Database struct {
-	diskdb ethdb.KeyValueStore // Persistent storage for matured trie nodes
-
+	diskdb  ethdb.KeyValueStore    // Persistent storage for matured trie nodes
 	cleans  *fastcache.Cache       // GC friendly memory cache of clean node RLPs
 	dirties map[string]*cachedNode // Data and references relationships of dirty trie nodes
 	oldest  string                 // Oldest tracked node, flush-list head
@@ -91,6 +90,10 @@ type Database struct {
 	dirtiesSize   common.StorageSize // Storage size of the dirty node cache (exc. metadata)
 	childrenSize  common.StorageSize // Storage size of the external children tracking
 	preimagesSize common.StorageSize // Storage size of the preimages cache
+
+	// Pruning related fields
+	manager     *commitRecordManager // Commit record manager for in-disk pruning purposes
+	commitBloom *keybloom            // Bloom filter used to track state commit(cap and commit operation)
 
 	lock sync.RWMutex
 }
@@ -291,6 +294,8 @@ func NewDatabaseWithConfig(diskdb ethdb.KeyValueStore, config *Config) *Database
 		dirties: map[string]*cachedNode{"": {
 			children: make(map[string]uint16),
 		}},
+		manager:     newCommitRecordManager(diskdb),
+		commitBloom: newOptimalKeyBloom(300_000, 0.01),
 	}
 	if config == nil || config.Preimages { // TODO(karalabe): Flip to default off in the future
 		db.preimages = make(map[common.Hash][]byte)
@@ -629,8 +634,10 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	for size > limit && oldest != metaRoot {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
-		rawdb.WriteTrieNode(batch, []byte(oldest), node.rlp())
-
+		owner, path, hash := DecodeNodeKey([]byte(oldest))
+		if err := db.writeNode(batch, owner, path, hash, node.rlp()); err != nil {
+			return err
+		}
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
@@ -685,7 +692,7 @@ func (db *Database) Cap(limit common.StorageSize) error {
 	memcacheFlushSizeMeter.Mark(int64(storage - db.dirtiesSize))
 	memcacheFlushNodesMeter.Mark(int64(nodes - len(db.dirties)))
 
-	log.Debug("Persisted nodes from memory database", "nodes", nodes-len(db.dirties), "size", storage-db.dirtiesSize, "time", time.Since(start),
+	log.Info("Persisted nodes from memory database", "nodes", nodes-len(db.dirties), "size", storage-db.dirtiesSize, "time", time.Since(start),
 		"flushnodes", db.flushnodes, "flushsize", db.flushsize, "flushtime", db.flushtime, "livenodes", len(db.dirties), "livesize", db.dirtiesSize)
 
 	return nil
@@ -697,7 +704,14 @@ func (db *Database) Cap(limit common.StorageSize) error {
 //
 // Note, this method is a non-synchronized mutator. It is unsafe to call this
 // concurrently with other mutators.
-func (db *Database) Commit(node common.Hash, report bool, callback func(key []byte)) error {
+func (db *Database) Commit(root common.Hash, report bool, callback func(key []byte)) error {
+	return db.CommitWithMetadata(0, common.Hash{}, root, report, callback)
+}
+
+// CommitWithMetadata is one variation of commit operation with two additional parameters.
+// In this function the meta information of the operation will be saved into the disk
+// for future pruning processing.
+func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root common.Hash, report bool, callback func(key []byte)) error {
 	// Create a database batch to flush persistent data out. It is important that
 	// outside code doesn't see an inconsistent state (referenced data removed from
 	// memory cache during commit but not yet in persistent storage). This is ensured
@@ -718,8 +732,12 @@ func (db *Database) Commit(node common.Hash, report bool, callback func(key []by
 	// Move the trie itself into the batch, flushing if enough data is accumulated
 	nodes, storage := len(db.dirties), db.dirtiesSize
 
-	uncacher := &cleaner{db}
-	if err := db.commit(common.Hash{}, []byte{}, node, batch, uncacher, callback); err != nil {
+	writeMeta := number != 0 && hash != (common.Hash{})
+	uncacher := &cleaner{db: db}
+	if writeMeta {
+		uncacher.record = newCommitRecord(db.diskdb, number, hash)
+	}
+	if err := db.commit(common.Hash{}, []byte{}, root, batch, uncacher, callback); err != nil {
 		log.Error("Failed to commit trie from trie database", "err", err)
 		return err
 	}
@@ -735,7 +753,19 @@ func (db *Database) Commit(node common.Hash, report bool, callback func(key []by
 	batch.Replay(uncacher)
 	batch.Reset()
 
-	// Reset the storage counters and bumped metrics
+	if writeMeta {
+		// Persist the commit record if no error, otherwise just
+		// discard the corrupted one and print warning log.
+		//
+		// TODO it can be processed in the background. RJL493456442
+		if err := uncacher.record.finalize(db.commitBloom); err == nil {
+			db.manager.addRecord(uncacher.record)
+		} else {
+			log.Warn("Failed to persist commit record", "hash", hash, "number", number, "err", err)
+		}
+	}
+	// Reset the storage counters, commit bloom and bumped metrics
+	db.commitBloom = newOptimalKeyBloom(300_000, 0.01)
 	if db.preimages != nil {
 		db.preimages, db.preimagesSize = make(map[common.Hash][]byte), 0
 	}
@@ -777,11 +807,13 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 			return err
 		}
 	}
-	// If we've reached an optimal batch size, commit and start over
-	rawdb.WriteTrieNode(batch, byteKey, node.rlp())
+	if err := db.writeNode(batch, owner, path, hash, node.rlp()); err != nil {
+		return err
+	}
 	if callback != nil {
 		callback(byteKey)
 	}
+	// If we've reached an optimal batch size, commit and start over
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
 		if err := batch.Write(); err != nil {
 			return err
@@ -794,10 +826,27 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 	return nil
 }
 
+// writeNode wraps the necessary operation of flushing a trie node into the disk.
+func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, path []byte, hash common.Hash, node []byte) error {
+	// Mark no deletion if the written node is in the deletion set of
+	// the previous commits.
+	key := EncodeNodeKey(owner, path, hash)
+	if err := db.manager.invalidateDeletion(key, writer); err != nil {
+		return err
+	}
+	// Add the written node into the commit set
+	db.commitBloom.add(key)
+
+	// Flush the node index and node itself into the disk in atomic way
+	rawdb.WriteTrieNode(writer, key, node)
+	return nil
+}
+
 // cleaner is a database batch replayer that takes a batch of write operations
 // and cleans up the trie database from anything written to disk.
 type cleaner struct {
-	db *Database
+	db     *Database
+	record *commitRecord
 }
 
 // Put reacts to database writes and implements dirty data uncaching. This is the
@@ -806,9 +855,12 @@ type cleaner struct {
 // the two-phase commit is to ensure ensure data availability while moving from
 // memory to disk.
 func (c *cleaner) Put(key []byte, rlp []byte) error {
-	ok, rawKey := rawdb.IsTrieNodeKey(key)
+	ok, rawKey := rawdb.IsStateTrieNodeKey(key)
 	if !ok {
 		return errors.New("unexpected data")
+	}
+	if c.record != nil {
+		c.record.add(key)
 	}
 	nodeKey := string(rawKey)
 

@@ -16,6 +16,10 @@
 
 package trie
 
+import (
+	"github.com/ethereum/go-ethereum/common"
+)
+
 // Trie keys are dealt with in three distinct encodings:
 //
 // KEYBYTES encoding contains the actual key and nothing else. This encoding is the
@@ -92,6 +96,94 @@ func compactToHex(compact []byte) []byte {
 	// apply odd flag
 	chop := 2 - base[0]&1
 	return base[chop:]
+}
+
+// SIMPLE-COMAPCT encoding is used for encoding trie node path in the trie node
+// database key. In order to keep the key ordering in the database it will be
+// zero-padded to the right up to length l. The raw key length will be returned
+// and callers need to take care of it by themselves.
+//
+// e.g. let assumes the length is 4
+// - the key [] is encoded as [0x00, 0x00, 0x00, 0x00], raw length is 0
+// - the key [0x1, 0x2, 0x3] is encoded as [0x12, 0x30, 0x00, 0x00], raw length is 3
+// - the key [0x1, 0x2, 0x3, 0x0] is encoded as [0x12, 0x30, 0x00, 0x00], raw length is 4
+// - the key [0x1, 0x2, 0x3, 0x1] is encoded as [0x12, 0x31, 0x00, 0x00], raw length is 4
+//
+// Note the assumption is held that all the passed key doesn't contain the
+// terminator flag(the path can never point to a leave node directly).
+func hexToSimpleCompact(hex []byte, l int) ([]byte, int) {
+	var (
+		length = len(hex) // Range from 0 to 64 at most
+		buf    = make([]byte, (len(hex)+1)/2)
+	)
+	if len(hex)%2 != 0 {
+		hex = append(append([]byte(nil), hex...), byte(0)) // Deep copy here
+	}
+	decodeNibbles(hex, buf)
+	buf = common.RightPadBytes(buf, l)
+	return buf, length
+}
+
+func simpleCompactToHex(encoded []byte, length int) []byte {
+	byteLen := (length + 1) / 2
+	encoded = encoded[:byteLen]
+
+	// delete terminator flag
+	base := keybytesToHex(encoded)
+	base = base[:len(base)-1]
+
+	// apply odd flag
+	chop := 0
+	if length&1 == 1 {
+		chop = 1
+	}
+	base = base[:len(base)-chop]
+	return base
+}
+
+// REVERSE-COMAPCT encoding is used for encoding trie node path in the trie node
+// database key. The main difference with COMPACT encoding is that the key flag
+// is put in the end of the key.
+//
+// e.g.
+// - the key [] is encoded as [0x00]
+// - the key [0x1, 0x2, 0x3] is encoded as [0x12, 0x31]
+// - the key [0x1, 0x2, 0x3, 0x0] is encoded as [0x12, 0x30, 0x00]
+func hexToReverseCompact(hex []byte) []byte {
+	terminator := byte(0)
+	if hasTerm(hex) {
+		terminator = 1
+		hex = hex[:len(hex)-1]
+	}
+	buf := make([]byte, len(hex)/2+1)
+	buf[len(buf)-1] = terminator << 1 // the flag byte
+	if len(hex)&1 == 1 {
+		buf[len(buf)-1] |= 1                    // odd flag
+		buf[len(buf)-1] |= hex[len(hex)-1] << 4 // last nibble is contained in the last byte
+		hex = hex[:len(hex)-1]
+	}
+	decodeNibbles(hex, buf[:len(buf)-1])
+	return buf
+}
+
+func reverseCompactToHex(compact []byte) []byte {
+	if len(compact) == 0 {
+		return compact
+	}
+	// delete terminator flag
+	base := keybytesToHex(compact)
+	base = base[:len(base)-1]
+
+	// apply odd flag
+	flag := base[len(base)-1]
+	chop := 2 - flag&1
+	base = base[:len(base)-int(chop)]
+
+	// apply terminator flag
+	if flag >= 2 {
+		base = append(base, 16)
+	}
+	return base
 }
 
 func keybytesToHex(str []byte) []byte {

@@ -140,7 +140,7 @@ func prune(snaptree *snapshot.Tree, root common.Hash, maindb ethdb.Database, sta
 		if isCode {
 			checkKey = codeKey
 		}
-		isNode, nodeKey := rawdb.IsTrieNodeKey(key)
+		isNode, nodeKey := rawdb.IsStateTrieNodeKey(key)
 		if isNode {
 			checkKey = nodeKey
 		}
