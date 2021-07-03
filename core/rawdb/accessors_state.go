@@ -119,8 +119,8 @@ func ReadTrieNodesWithPrefix(db ethdb.KeyValueStore, path []byte, filterFn func(
 	return keys, vals
 }
 
-// ReadCommitRecords retrieves the state update of the provided hash.
-func ReadCommitRecords(db ethdb.KeyValueReader, number uint64, hash common.Hash) []byte {
+// ReadCommitRecord retrieves the state update of the provided hash.
+func ReadCommitRecord(db ethdb.KeyValueReader, number uint64, hash common.Hash) []byte {
 	data, _ := db.Get(commitRecordKey(number, hash))
 	return data
 }

@@ -58,6 +58,20 @@ var (
 	memcacheCommitSizeMeter  = metrics.NewRegisteredMeter("trie/memcache/commit/size", nil)
 )
 
+const (
+	// commitBloomSize is the rough trie node number of each commit operation
+	// (and all partial commits). The value can be twisted a bit based on the
+	// experience.
+	commitBloomSize = 1000_000
+
+	// maxFalsePositivateRate is the maximum acceptable bloom filter false-positive
+	// rate to aviod too many useless operations.
+	maxFalsePositivateRate = 0.01
+
+	// minBlockConfirms is the minimal block confirms on top for executing pruning.
+	minBlockConfirms = 3600
+)
+
 // metaRoot is the identifier of the global memcache root that anchors the block
 // accounts tries for garbage collection.
 const metaRoot = ""
@@ -91,9 +105,7 @@ type Database struct {
 	childrenSize  common.StorageSize // Storage size of the external children tracking
 	preimagesSize common.StorageSize // Storage size of the preimages cache
 
-	// Pruning related fields
-	manager     *commitRecordManager // Commit record manager for in-disk pruning purposes
-	commitBloom *keybloom            // Bloom filter used to track state commit(cap and commit operation)
+	pruner *pruner // Pruner for in-disk trie nodes pruning
 
 	lock sync.RWMutex
 }
@@ -294,8 +306,7 @@ func NewDatabaseWithConfig(diskdb ethdb.KeyValueStore, config *Config) *Database
 		dirties: map[string]*cachedNode{"": {
 			children: make(map[string]uint16),
 		}},
-		manager:     newCommitRecordManager(diskdb),
-		commitBloom: newOptimalKeyBloom(300_000, 0.01),
+		pruner: newPruner(diskdb),
 	}
 	if config == nil || config.Preimages { // TODO(karalabe): Flip to default off in the future
 		db.preimages = make(map[common.Hash][]byte)
@@ -346,8 +357,8 @@ func (db *Database) insert(owner common.Hash, path []byte, hash common.Hash, siz
 }
 
 // insertPreimage writes a new trie node pre-image to the memory database if it's
-// yet unknown. The method will NOT make a copy of the slice,
-// only use if the preimage will NOT be changed later on.
+// yet unknown. The method will NOT make a copy of the slice, only use if the
+// preimage will NOT be changed later on.
 //
 // Note, this method assumes that the database's lock is held!
 func (db *Database) insertPreimage(hash common.Hash, preimage []byte) {
@@ -635,11 +646,14 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
 		owner, path, hash := DecodeNodeKey([]byte(oldest))
-		if err := db.writeNode(batch, owner, path, hash, node.rlp()); err != nil {
+		if err := db.writeNode(batch, owner, path, hash, node.rlp(), false); err != nil {
 			return err
 		}
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := db.pruner.flushMarker(batch); err != nil {
+				return err
+			}
 			if err := batch.Write(); err != nil {
 				log.Error("Failed to write flush list to disk", "err", err)
 				return err
@@ -656,6 +670,9 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		oldest = node.flushNext
 	}
 	// Flush out any remainder data from the last batch
+	if err := db.pruner.flushMarker(batch); err != nil {
+		return err
+	}
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to write flush list to disk", "err", err)
 		return err
@@ -735,13 +752,16 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 	writeMeta := number != 0 && hash != (common.Hash{})
 	uncacher := &cleaner{db: db}
 	if writeMeta {
-		uncacher.record = newCommitRecord(db.diskdb, number, hash)
+		db.pruner.commitStart(number, hash)
 	}
 	if err := db.commit(common.Hash{}, []byte{}, root, batch, uncacher, callback); err != nil {
 		log.Error("Failed to commit trie from trie database", "err", err)
 		return err
 	}
 	// Trie mostly committed to disk, flush any batch leftovers
+	if err := db.pruner.flushMarker(batch); err != nil {
+		return err
+	}
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to write trie to disk", "err", err)
 		return err
@@ -754,18 +774,12 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 	batch.Reset()
 
 	if writeMeta {
-		// Persist the commit record if no error, otherwise just
-		// discard the corrupted one and print warning log.
-		//
-		// TODO it can be processed in the background. RJL493456442
-		if err := uncacher.record.finalize(db.commitBloom); err == nil {
-			db.manager.addRecord(uncacher.record)
-		} else {
+		if err := db.pruner.commitEnd(); err != nil {
 			log.Warn("Failed to persist commit record", "hash", hash, "number", number, "err", err)
+			return err
 		}
 	}
 	// Reset the storage counters, commit bloom and bumped metrics
-	db.commitBloom = newOptimalKeyBloom(300_000, 0.01)
 	if db.preimages != nil {
 		db.preimages, db.preimagesSize = make(map[common.Hash][]byte), 0
 	}
@@ -807,7 +821,7 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 			return err
 		}
 	}
-	if err := db.writeNode(batch, owner, path, hash, node.rlp()); err != nil {
+	if err := db.writeNode(batch, owner, path, hash, node.rlp(), true); err != nil {
 		return err
 	}
 	if callback != nil {
@@ -815,6 +829,9 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 	}
 	// If we've reached an optimal batch size, commit and start over
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
+		if err := db.pruner.flushMarker(batch); err != nil {
+			return err
+		}
 		if err := batch.Write(); err != nil {
 			return err
 		}
@@ -827,16 +844,16 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 }
 
 // writeNode wraps the necessary operation of flushing a trie node into the disk.
-func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, path []byte, hash common.Hash, node []byte) error {
+func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, path []byte, hash common.Hash, node []byte, record bool) error {
 	// Mark no deletion if the written node is in the deletion set of
 	// the previous commits.
 	key := EncodeNodeKey(owner, path, hash)
-	if err := db.manager.invalidateDeletion(key, writer); err != nil {
+	if err := db.pruner.trackKey(key); err != nil {
 		return err
 	}
-	// Add the written node into the commit set
-	db.commitBloom.add(key)
-
+	if record {
+		db.pruner.addCommittedKey(key)
+	}
 	// Flush the node index and node itself into the disk in atomic way
 	rawdb.WriteTrieNode(writer, key, node)
 	return nil
@@ -845,8 +862,7 @@ func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, pa
 // cleaner is a database batch replayer that takes a batch of write operations
 // and cleans up the trie database from anything written to disk.
 type cleaner struct {
-	db     *Database
-	record *commitRecord
+	db *Database
 }
 
 // Put reacts to database writes and implements dirty data uncaching. This is the
@@ -858,9 +874,6 @@ func (c *cleaner) Put(key []byte, rlp []byte) error {
 	ok, rawKey := rawdb.IsStateTrieNodeKey(key)
 	if !ok {
 		return errors.New("unexpected data")
-	}
-	if c.record != nil {
-		c.record.add(key)
 	}
 	nodeKey := string(rawKey)
 

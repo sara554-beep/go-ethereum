@@ -90,8 +90,8 @@ var (
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 
 	accountTrieNodePrefix = []byte("A")              // accountTrieNodePrefix + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
-	storageTrieNodePrefix = []byte("S")              // storageTrieNodePrefix + node owner(32 bytes) + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
-	commitRecordPrefix    = []byte("commit-record-") // commitRecordPrefix + number(uint64 big endian) + hash -> state update
+	storageTrieNodePrefix = []byte("O")              // storageTrieNodePrefix + node owner(32 bytes) + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
+	commitRecordPrefix    = []byte("commit-record-") // commitRecordPrefix + number(uint64 big endian) + hash -> commit record
 	resurrectionPrefix    = []byte("resurrection-")  // resurrectionPrefix + node path + node hash -> marker
 
 	preimagePrefix = []byte("secure-key-")      // preimagePrefix + hash -> preimage
