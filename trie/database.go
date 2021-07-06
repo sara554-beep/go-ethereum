@@ -64,9 +64,9 @@ const (
 	// experience.
 	commitBloomSize = 1000_000
 
-	// maxFalsePositivateRate is the maximum acceptable bloom filter false-positive
+	// maxFalsePositiveRate is the maximum acceptable bloom filter false-positive
 	// rate to aviod too many useless operations.
-	maxFalsePositivateRate = 0.01
+	maxFalsePositiveRate = 0.01
 
 	// minBlockConfirms is the minimal block confirms on top for executing pruning.
 	minBlockConfirms = 3600
@@ -279,6 +279,7 @@ type Config struct {
 	Cache     int    // Memory allowance (MB) to use for caching trie nodes in memory
 	Journal   string // Journal of clean cache to survive node restarts
 	Preimages bool   // Flag whether the preimage of trie key is recorded
+	Pruner    PrunerConfig
 }
 
 // NewDatabase creates a new trie database to store ephemeral trie content before
@@ -306,10 +307,14 @@ func NewDatabaseWithConfig(diskdb ethdb.KeyValueStore, config *Config) *Database
 		dirties: map[string]*cachedNode{"": {
 			children: make(map[string]uint16),
 		}},
-		pruner: newPruner(diskdb),
 	}
 	if config == nil || config.Preimages { // TODO(karalabe): Flip to default off in the future
 		db.preimages = make(map[common.Hash][]byte)
+	}
+	if config == nil {
+		db.pruner = newPruner(PrunerConfig{Enabled: false}, diskdb)
+	} else {
+		db.pruner = newPruner(config.Pruner, diskdb)
 	}
 	return db
 }
@@ -646,7 +651,7 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		// Fetch the oldest referenced node and push into the batch
 		node := db.dirties[oldest]
 		owner, path, hash := DecodeNodeKey([]byte(oldest))
-		if err := db.writeNode(batch, owner, path, hash, node.rlp(), false); err != nil {
+		if err := db.writeNode(batch, owner, path, hash, node.rlp(), true); err != nil {
 			return err
 		}
 		// If we exceeded the ideal batch size, commit and reset
@@ -821,7 +826,7 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 			return err
 		}
 	}
-	if err := db.writeNode(batch, owner, path, hash, node.rlp(), true); err != nil {
+	if err := db.writeNode(batch, owner, path, hash, node.rlp(), false); err != nil {
 		return err
 	}
 	if callback != nil {
@@ -844,15 +849,12 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 }
 
 // writeNode wraps the necessary operation of flushing a trie node into the disk.
-func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, path []byte, hash common.Hash, node []byte, record bool) error {
+func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, path []byte, hash common.Hash, node []byte, partial bool) error {
 	// Mark no deletion if the written node is in the deletion set of
 	// the previous commits.
 	key := EncodeNodeKey(owner, path, hash)
-	if err := db.pruner.trackKey(key); err != nil {
+	if err := db.pruner.addKey(key, partial); err != nil {
 		return err
-	}
-	if record {
-		db.pruner.addCommittedKey(key)
 	}
 	// Flush the node index and node itself into the disk in atomic way
 	rawdb.WriteTrieNode(writer, key, node)

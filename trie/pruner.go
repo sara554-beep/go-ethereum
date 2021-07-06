@@ -27,20 +27,25 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
+type PrunerConfig struct {
+	Enabled     bool
+	GenesisSet  map[string]struct{}
+	IsCanonical func(uint64, common.Hash) bool
+}
+
 type pruner struct {
+	config     PrunerConfig
 	db         ethdb.KeyValueStore
 	mwriter    *markerWriter
 	bloom      *keybloom
-	liveRecord *commitRecord
+	current    *commitRecord
 	records    []*commitRecord
 	minRecord  uint64
 	recordLock sync.Mutex
 
-	// pruning thread fields
 	signal   chan uint64
-	filter   func(uint64, common.Hash) bool
-	pauseCh  chan chan struct{} // Notification channel to pauseCh the pruner
-	resumeCh chan chan struct{} // Notification channel to resume the pruner
+	pauseCh  chan chan struct{}
+	resumeCh chan chan struct{}
 	wg       sync.WaitGroup
 	closeCh  chan struct{}
 
@@ -49,7 +54,7 @@ type pruner struct {
 	contained uint64
 }
 
-func newPruner(db ethdb.KeyValueStore) *pruner {
+func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	numbers, hashes, blobs := rawdb.ReadAllCommitRecords(db, 0, math.MaxUint64)
 	var records []*commitRecord
 	for i := 0; i < len(numbers); i++ {
@@ -67,9 +72,10 @@ func newPruner(db ethdb.KeyValueStore) *pruner {
 		minRecord = records[0].number
 	}
 	pruner := &pruner{
+		config:    config,
 		db:        db,
 		mwriter:   newMarkerWriter(db),
-		bloom:     newOptimalKeyBloom(commitBloomSize, maxFalsePositivateRate),
+		bloom:     newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate),
 		records:   records,
 		minRecord: minRecord,
 		signal:    make(chan uint64),
@@ -79,6 +85,13 @@ func newPruner(db ethdb.KeyValueStore) *pruner {
 	}
 	pruner.wg.Add(1)
 	go pruner.loop()
+
+	var ctx []interface{}
+	ctx = append(ctx, "enabled", config.Enabled)
+	if len(records) > 0 {
+		ctx = append(ctx, "records", len(pruner.records), "oldest", pruner.minRecord)
+	}
+	log.Info("Initialized state pruner", ctx)
 	return pruner
 }
 
@@ -88,34 +101,15 @@ func (p *pruner) close() {
 }
 
 func (p *pruner) commitStart(number uint64, hash common.Hash) {
-	p.liveRecord = newCommitRecord(p.db, number, hash)
-}
-
-func (p *pruner) addCommittedKey(key []byte) {
-	if p.liveRecord == nil {
+	if !p.config.Enabled {
 		return
 	}
-	p.liveRecord.add(key)
+	p.current = newCommitRecord(p.db, number, hash)
 }
 
-func (p *pruner) commitEnd() error {
-	if err := p.liveRecord.finalize(p.bloom); err != nil {
-		return err
-	}
-	p.recordLock.Lock()
-	p.records = append(p.records, p.liveRecord)
-	sort.Sort(commitRecordsByNumber(p.records))
-	p.minRecord = p.records[0].number
-	p.recordLock.Unlock()
-
-	p.liveRecord = nil
-	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositivateRate)
-	log.Info("Added new record", "live", len(p.records), "totalchecked", p.checked, "existence", p.contained)
-	return nil
-}
-
-// trackKey tracks all written trie node keys since last Commit operation
-func (p *pruner) trackKey(key []byte) error {
+func (p *pruner) addKey(key []byte, partial bool) error {
+	// Invalidate the previous deletion if the given key is in the
+	// deletion set. It's done no matter the pruning is enabled or not.
 	var found bool
 	for _, record := range p.records {
 		if record.contain(key) {
@@ -130,7 +124,36 @@ func (p *pruner) trackKey(key []byte) error {
 	if found {
 		p.contained += 1
 	}
+	// If pruning is disabled, unnecessary to track the written keys here.
+	if !p.config.Enabled {
+		return nil
+	}
 	p.bloom.add(key)
+	if !partial {
+		p.current.add(key)
+	}
+	return nil
+}
+
+func (p *pruner) commitEnd() error {
+	if !p.config.Enabled {
+		return nil
+	}
+	for key := range p.config.GenesisSet {
+		p.bloom.add([]byte(key))
+	}
+	if err := p.current.finalize(p.bloom); err != nil {
+		return err
+	}
+	p.recordLock.Lock()
+	p.records = append(p.records, p.current)
+	sort.Sort(commitRecordsByNumber(p.records))
+	p.minRecord = p.records[0].number
+	p.recordLock.Unlock()
+
+	p.current = nil
+	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate)
+	log.Info("Added new record", "live", len(p.records), "totalchecked", p.checked, "existence", p.contained)
 	return nil
 }
 
@@ -152,7 +175,7 @@ func (p *pruner) recordsLT(number uint64) []*commitRecord {
 	return ret
 }
 
-func (p *pruner) removeRecord(record *commitRecord) {
+func (p *pruner) removeRecord(record *commitRecord, writer ethdb.KeyValueWriter) {
 	p.recordLock.Lock()
 	defer p.recordLock.Unlock()
 
@@ -162,6 +185,7 @@ func (p *pruner) removeRecord(record *commitRecord) {
 			sort.Sort(commitRecordsByNumber(p.records))
 		}
 	}
+	rawdb.DeleteCommitRecord(writer, record.number, record.hash)
 }
 
 func (p *pruner) resume() {
@@ -186,14 +210,16 @@ func (p *pruner) pruning(records []*commitRecord, done chan struct{}, cancel cha
 			return
 		default:
 		}
-		if !p.filter(r.number, r.hash) {
-			record, err := readCommitRecord(p.db, r.number, r.hash)
-			if err == nil {
-				record.deleteStale()
-			}
+		if p.config.IsCanonical(r.number, r.hash) {
+			p.removeRecord(r, p.db)
+			continue
 		}
-		p.removeRecord(r)
-		rawdb.DeleteCommitRecord(p.db, r.number, r.hash)
+		record, err := readCommitRecord(p.db, r.number, r.hash)
+		if err != nil {
+			p.removeRecord(r, p.db)
+			continue
+		}
+		record.deleteStale(p.removeRecord)
 	}
 }
 

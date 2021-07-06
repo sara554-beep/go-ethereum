@@ -329,7 +329,9 @@ func (p *Pruner) Prune(root common.Hash) error {
 	}
 	// Traverse the genesis, put all genesis state entries into the
 	// bloom filter too.
-	if err := extractGenesis(p.db, p.stateBloom); err != nil {
+	if err := ExtractGenesis(p.db, func(key []byte) {
+		p.stateBloom.Put(key, nil)
+	}); err != nil {
 		return err
 	}
 	filterName := bloomFilterName(p.datadir, root)
@@ -406,9 +408,9 @@ func RecoverPruning(datadir string, db ethdb.Database, trieCachePath string) err
 	return prune(snaptree, stateBloomRoot, db, stateBloom, stateBloomPath, middleRoots, time.Now())
 }
 
-// extractGenesis loads the genesis state and commits all the state entries
+// ExtractGenesis loads the genesis state and commits all the state entries
 // into the given bloomfilter.
-func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
+func ExtractGenesis(db ethdb.Database, write func([]byte)) error {
 	genesisHash := rawdb.ReadCanonicalHash(db, 0)
 	if genesisHash == (common.Hash{}) {
 		return errors.New("missing genesis hash")
@@ -427,7 +429,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 
 		// Embedded nodes don't have hash.
 		if hash != (common.Hash{}) {
-			stateBloom.Put(accIter.ComposedKey(), nil)
+			write(accIter.ComposedKey())
 		}
 		// If it's a leaf node, yes we are touching an account,
 		// dig into the storage trie further.
@@ -445,7 +447,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 				for storageIter.Next(true) {
 					hash := storageIter.Hash()
 					if hash != (common.Hash{}) {
-						stateBloom.Put(storageIter.ComposedKey(), nil)
+						write(storageIter.ComposedKey())
 					}
 				}
 				if storageIter.Error() != nil {
@@ -453,7 +455,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 				}
 			}
 			if !bytes.Equal(acc.CodeHash, emptyCode) {
-				stateBloom.Put(acc.CodeHash, nil)
+				write(acc.CodeHash)
 			}
 		}
 	}

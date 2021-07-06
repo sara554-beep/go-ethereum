@@ -31,8 +31,8 @@ import (
 // commitRecord represents a diff set for each Commit operation(trie.Database)
 // which occurs regularly at a certain time interval. It will flush out all the
 // dirty nodes compared with the latest flushed state so that it can be regarded
-// as the state update. The flushed trie node keys can be used as the marker for
-// deriving a list of stale trie nodes in the same path scope and these stale
+// as the state update. The flushed trie node keys can be used as the indicator
+// for deriving a list of stale trie nodes in the same path scope and these stale
 // trie nodes can be pruned later from the disk.
 type commitRecord struct {
 	db     ethdb.KeyValueStore
@@ -50,9 +50,10 @@ type commitRecord struct {
 	// The key list of the stale trie nodes which can be deleted from the disk
 	// later if the Commit operation has enough confirmation(prevent deep reorg).
 	//
-	// Note the key of the trie node is not trivial(around 100 bytes at most),
-	// but most of them have the shared key prefix. The optimization can be applied
-	// here in order to improve the space efficiency.
+	// Note the key of the trie node is not trivial(around 100 bytes in average),
+	// but most of them have the shared key prefix and compressed zero bytes. The
+	// optimization can be applied here in order to improve the space efficiency.
+	// All the key in the deletion set should be unique.
 	//
 	// Export fields for RLP encoding/decoding.
 	DeletionSet [][]byte
@@ -124,7 +125,6 @@ func (stack *genstack) push(path []byte) [][]byte {
 }
 
 func (record *commitRecord) finalize(noDelete *keybloom) error {
-	// Derive the stale node keys from the added list as the deletion set.
 	var (
 		stack    *genstack
 		filtered int
@@ -211,7 +211,7 @@ func (record *commitRecord) initBloom() {
 	if size == 0 {
 		size = 1 // 0 size bloom filter is not allowed
 	}
-	bloom := newOptimalKeyBloom(uint64(size), maxFalsePositivateRate)
+	bloom := newOptimalKeyBloom(uint64(size), maxFalsePositiveRate)
 	for _, key := range record.DeletionSet {
 		bloom.add(key)
 	}
@@ -228,18 +228,23 @@ func (record *commitRecord) contain(key []byte) bool {
 	return record.bloom.contain(key)
 }
 
-func (record *commitRecord) deleteStale() error {
+func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValueWriter)) error {
 	var (
 		batch    = record.db.NewBatch()
 		mDeleter = newMarkerWriter(record.db)
 	)
 	for _, key := range record.DeletionSet {
+		// Read the resurrection marker is expensive since most of
+		// the disk reads are for the non-existent data. But it's a
+		// background operation so the low efficiency is fine here.
 		blob := rawdb.ReadResurrectionMarker(record.db, key)
 		if len(blob) != 0 {
 			var marker resurrectionMarker
 			if err := rlp.DecodeBytes(blob, &marker); err != nil {
 				return err
 			}
+			// Skip the deletion if the preventing-deletion marker
+			// is present, and remove this marker as well.
 			if ok, _ := marker.has(record.number, record.hash); ok {
 				if err := mDeleter.remove(key, record.number, record.hash); err != nil {
 					return err
@@ -248,7 +253,15 @@ func (record *commitRecord) deleteStale() error {
 			}
 		}
 		rawdb.DeleteTrieNode(batch, key)
+		if batch.ValueSize() > ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			batch.Reset()
+		}
 	}
+	// Delete the commit record itself before the markers
+	remove(record, batch)
 	if err := mDeleter.flush(batch); err != nil {
 		return err
 	}
