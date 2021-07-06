@@ -62,7 +62,7 @@ const (
 	// commitBloomSize is the rough trie node number of each commit operation
 	// (and all partial commits). The value can be twisted a bit based on the
 	// experience.
-	commitBloomSize = 1000_000
+	commitBloomSize = 3000_000
 
 	// maxFalsePositiveRate is the maximum acceptable bloom filter false-positive
 	// rate to aviod too many useless operations.

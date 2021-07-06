@@ -50,8 +50,10 @@ type pruner struct {
 	closeCh  chan struct{}
 
 	// statistic
-	checked   uint64
-	contained uint64
+	written     uint64 // Counter for the total written trie nodes
+	iterated    uint64 // Counter for the total itearated trie nodes
+	filtered    uint64 // Counter for tht total filtered trie nodes for deletion
+	resurrected uint64 // Counter for the total resurrected trie nodes
 }
 
 func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
@@ -120,9 +122,9 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 			found = true
 		}
 	}
-	p.checked += 1
+	p.written += 1
 	if found {
-		p.contained += 1
+		p.resurrected += 1
 	}
 	// If pruning is disabled, unnecessary to track the written keys here.
 	if !p.config.Enabled {
@@ -142,9 +144,13 @@ func (p *pruner) commitEnd() error {
 	for key := range p.config.GenesisSet {
 		p.bloom.add([]byte(key))
 	}
-	if err := p.current.finalize(p.bloom); err != nil {
+	iterated, filtered, err := p.current.finalize(p.bloom)
+	if err != nil {
 		return err
 	}
+	p.iterated += uint64(iterated)
+	p.filtered += uint64(filtered)
+
 	p.recordLock.Lock()
 	p.records = append(p.records, p.current)
 	sort.Sort(commitRecordsByNumber(p.records))
@@ -153,7 +159,7 @@ func (p *pruner) commitEnd() error {
 
 	p.current = nil
 	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate)
-	log.Info("Added new record", "live", len(p.records), "totalchecked", p.checked, "existence", p.contained)
+	log.Info("Added new record", "live", len(p.records), "written", p.written, "iterated", p.iterated, "filtered", p.filtered, "resurrected", p.resurrected)
 	return nil
 }
 

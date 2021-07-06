@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -124,10 +125,12 @@ func (stack *genstack) push(path []byte) [][]byte {
 	return dropped
 }
 
-func (record *commitRecord) finalize(noDelete *keybloom) error {
+func (record *commitRecord) finalize(noDelete *keybloom) (int, int, error) {
 	var (
-		stack    *genstack
-		filtered int
+		iterated  int
+		filtered  int
+		stack     *genstack
+		startTime = time.Now()
 	)
 	for _, key := range record.keys {
 		// Scope changed, reset the stack context
@@ -140,6 +143,7 @@ func (record *commitRecord) finalize(noDelete *keybloom) error {
 		}
 		// Delete all other nodes with same node path
 		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
+			iterated += 1
 			if noDelete.contain(key) {
 				filtered += 1
 				return true
@@ -165,6 +169,7 @@ func (record *commitRecord) finalize(noDelete *keybloom) error {
 			for i := len(path); i < len(child)-1; i++ {
 				innerPath := append(path, child[len(path):i+1]...)
 				keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, innerPath), func(key []byte) bool {
+					iterated += 1
 					if noDelete.contain(key) {
 						filtered += 1
 						return true
@@ -191,18 +196,18 @@ func (record *commitRecord) finalize(noDelete *keybloom) error {
 	if len(record.DeletionSet) != 0 {
 		blob, err = rlp.EncodeToBytes(record)
 		if err != nil {
-			return err
+			return 0, 0, err
 		}
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
 	record.initBloom()
-	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered, "metasize", len(blob))
+	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered, "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
 
 	if record.onDeletionSet != nil {
 		record.onDeletionSet(record.DeletionSet)
 	}
 	record.DeletionSet, record.keys = nil, nil
-	return nil
+	return iterated, filtered, nil
 }
 
 // initBloom initializes the bloom filter with the key set.
@@ -288,9 +293,9 @@ func (t commitRecordsByNumber) Less(i, j int) bool { return t[i].number < t[j].n
 // live node A will be deleted by mistake.
 //
 // So before flushing trie nodes into the disk, the presence in deletion set will
-// be checked and if so the relevant commit record id will be saved in the marker
+// be written and if so the relevant commit record id will be saved in the marker
 // to prevent deletion from the relevant pruning operation. The overhead for checking
-// deletion set is acceptable since only the bloom filters are checked.
+// deletion set is acceptable since only the bloom filters are written.
 //
 // e.g. for node A, the no-deletion marker contain these records:
 // [<number = 1, hash = xxx>, <number = 100, hash = yyy>], the node A won't be deleted
