@@ -201,7 +201,7 @@ func (record *commitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
 	record.initBloom()
-	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered, "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
+	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered, "average", float64(iterated)/float64(len(record.keys)), "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
 
 	if record.onDeletionSet != nil {
 		record.onDeletionSet(record.DeletionSet)
