@@ -1031,19 +1031,25 @@ func (bc *BlockChain) Stop() {
 	if !bc.cacheConfig.TrieDirtyDisabled {
 		triedb := bc.stateCache.TrieDB()
 
-		for _, offset := range []uint64{0, 1, TriesInMemory - 1} {
+		for _, offset := range []uint64{TriesInMemory - 1, 1, 0} {
 			if number := bc.CurrentBlock().NumberU64(); number > offset {
 				recent := bc.GetBlockByNumber(number - offset)
 
 				log.Info("Writing cached state to disk", "block", recent.Number(), "hash", recent.Hash(), "root", recent.Root())
-				if err := triedb.CommitWithMetadata(recent.NumberU64(), recent.Hash(), recent.Root(), true, nil); err != nil {
-					log.Error("Failed to commit recent state trie", "err", err)
+				if offset == 0 {
+					if err := triedb.CommitWithMetadata(recent.NumberU64(), recent.Hash(), recent.Root(), true, nil); err != nil {
+						log.Error("Failed to commit recent state trie", "err", err)
+					}
+				} else {
+					if err := triedb.Commit(recent.Root(), true, nil); err != nil {
+						log.Error("Failed to commit recent state trie", "err", err)
+					}
 				}
 			}
 		}
 		if snapBase != (common.Hash{}) {
 			log.Info("Writing snapshot state to disk", "root", snapBase)
-			if err := triedb.CommitWithMetadata(0, common.Hash{}, snapBase, true, nil); err != nil { // TODO
+			if err := triedb.Commit(snapBase, true, nil); err != nil {
 				log.Error("Failed to commit recent state trie", "err", err)
 			}
 		}
