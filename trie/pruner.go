@@ -91,7 +91,7 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	if len(records) > 0 {
 		ctx = append(ctx, "records", len(pruner.records), "oldest", pruner.minRecord)
 	}
-	log.Info("Initialized state pruner", ctx)
+	log.Info("Initialized state pruner", ctx...)
 	return pruner
 }
 

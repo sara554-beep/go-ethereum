@@ -80,7 +80,7 @@ var Defaults = Config{
 	TrieCleanCacheJournal:   "triecache",
 	TrieCleanCacheRejournal: 60 * time.Minute,
 	TrieDirtyCache:          256,
-	TrieTimeout:             60 * time.Minute,
+	TrieTimeout:             5 * time.Minute,
 	SnapshotCache:           102,
 	Miner: miner.Config{
 		GasFloor: 8000000,
