@@ -252,7 +252,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	var headCh = make(chan ChainHeadEvent, 1024)
 	var signal = make(chan uint64, 1024)
 	sub := bc.SubscribeChainHeadEvent(headCh)
-	defer sub.Unsubscribe()
 	go func() {
 		for {
 			select {
