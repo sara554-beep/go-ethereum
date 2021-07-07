@@ -256,10 +256,13 @@ func (p *pruner) loop() {
 	for {
 		select {
 		case number := <-p.signal:
+			log.Info("Received pruning signal", "number", number)
 			if paused {
+				log.Info("Pruner is paused", "number", number)
 				continue
 			}
 			if done != nil {
+				log.Info("Pruner is running", "number", number)
 				continue
 			}
 			if number < minBlockConfirms {
