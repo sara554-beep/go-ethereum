@@ -62,7 +62,7 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	numbers, hashes, blobs := rawdb.ReadAllCommitRecords(db, 0, math.MaxUint64)
 	var records []*commitRecord
 	for i := 0; i < len(numbers); i++ {
-		record, err := loadCommitRecord(numbers[i], hashes[i], blobs[i])
+		record, err := loadCommitRecord(db, numbers[i], hashes[i], blobs[i])
 		if err != nil {
 			rawdb.DeleteCommitRecord(db, numbers[i], hashes[i]) // Corrupted record can be just discarded
 			continue
@@ -237,7 +237,7 @@ func (p *pruner) pruning(records []*commitRecord, done chan struct{}, cancel cha
 		record, err := readCommitRecord(p.db, r.number, r.hash)
 		if err != nil {
 			p.removeRecord(r, p.db)
-			log.Info("Filtered out corrupted commit record", "number", r.number, "hash", r.hash)
+			log.Info("Filtered out corrupted commit record", "number", r.number, "hash", r.hash, "err", err)
 			continue
 		}
 		record.deleteStale(p.removeRecord)

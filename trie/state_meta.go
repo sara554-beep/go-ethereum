@@ -71,20 +71,21 @@ func newCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) *c
 	}
 }
 
-func loadCommitRecord(number uint64, hash common.Hash, val []byte) (*commitRecord, error) {
+func loadCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash, val []byte) (*commitRecord, error) {
 	var object commitRecord
 	if err := rlp.DecodeBytes(val, &object); err != nil {
 		return nil, err
 	}
 	object.initBloom()
 	object.DeletionSet = nil
+	object.db = db
 	object.number = number
 	object.hash = hash
 	return &object, nil
 }
 
-func readCommitRecord(reader ethdb.KeyValueReader, number uint64, hash common.Hash) (*commitRecord, error) {
-	blob := rawdb.ReadCommitRecord(reader, number, hash)
+func readCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) (*commitRecord, error) {
+	blob := rawdb.ReadCommitRecord(db, number, hash)
 	if len(blob) == 0 {
 		return nil, errors.New("non-existent record")
 	}
@@ -92,6 +93,7 @@ func readCommitRecord(reader ethdb.KeyValueReader, number uint64, hash common.Ha
 	if err := rlp.DecodeBytes(blob, &object); err != nil {
 		return nil, err
 	}
+	object.db = db
 	object.number = number
 	object.hash = hash
 	return &object, nil
