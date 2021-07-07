@@ -220,13 +220,12 @@ func (p *pruner) pause() {
 	<-ch
 }
 
-func (p *pruner) pruning(records []*commitRecord, done chan struct{}, cancel chan chan struct{}) {
+func (p *pruner) pruning(records []*commitRecord, done chan struct{}, cancel chan struct{}) {
 	defer func() { done <- struct{}{} }()
 
 	for _, r := range records {
 		select {
-		case signal := <-cancel:
-			signal <- struct{}{}
+		case <-cancel:
 			return
 		default:
 		}
@@ -250,9 +249,9 @@ func (p *pruner) loop() {
 	defer p.wg.Done()
 
 	var (
-		paused bool               // Flag if the pruning is allowed
-		done   chan struct{}      // Non-nil if background unindexing or reindexing routine is active.
-		cancel chan chan struct{} // Channel for notifying pause signal
+		paused bool          // Flag if the pruning is allowed
+		done   chan struct{} // Non-nil if background unindexing or reindexing routine is active.
+		cancel chan struct{} // Channel for notifying pause signal
 	)
 	for {
 		select {
@@ -270,15 +269,16 @@ func (p *pruner) loop() {
 			if len(ret) == 0 {
 				continue
 			}
-			done, cancel = make(chan struct{}), make(chan chan struct{})
+			done, cancel = make(chan struct{}), make(chan struct{})
 			go p.pruning(ret, done, cancel)
 
 		case ch := <-p.pauseCh:
 			paused = true
 
-			s := make(chan struct{})
-			cancel <- s
-			<-s
+			if cancel != nil {
+				close(cancel)
+				<-done
+			}
 			ch <- struct{}{}
 
 		case ch := <-p.resumeCh:

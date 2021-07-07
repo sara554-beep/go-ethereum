@@ -646,6 +646,9 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		}
 	}
 	// Keep committing nodes from the flush-list until we're below allowance
+	db.pruner.pause()
+	defer db.pruner.resume()
+
 	oldest := db.oldest
 	for size > limit && oldest != metaRoot {
 		// Fetch the oldest referenced node and push into the batch
@@ -752,8 +755,10 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 		batch.Reset()
 	}
 	// Move the trie itself into the batch, flushing if enough data is accumulated
-	nodes, storage := len(db.dirties), db.dirtiesSize
+	db.pruner.pause()
+	defer db.pruner.resume()
 
+	nodes, storage := len(db.dirties), db.dirtiesSize
 	writeMeta := number != 0 && hash != (common.Hash{})
 	uncacher := &cleaner{db: db}
 	if writeMeta {
