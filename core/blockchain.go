@@ -257,6 +257,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		for {
 			select {
 			case ev := <-headCh:
+				log.Info("Received block head event", "number", ev.Block.NumberU64())
 				signal <- ev.Block.NumberU64()
 			case <-sub.Err():
 				return
