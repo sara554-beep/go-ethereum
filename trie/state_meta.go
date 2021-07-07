@@ -235,8 +235,14 @@ func (record *commitRecord) contain(key []byte) bool {
 
 func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValueWriter)) error {
 	var (
-		batch    = record.db.NewBatch()
-		mDeleter = newMarkerWriter(record.db)
+		startTime = time.Now()
+		batch     = record.db.NewBatch()
+		mDeleter  = newMarkerWriter(record.db)
+
+		// statistic
+		resurrected int
+		noDeletion  int
+		deleted     int
 	)
 	for _, key := range record.DeletionSet {
 		// Read the resurrection marker is expensive since most of
@@ -244,6 +250,7 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 		// background operation so the low efficiency is fine here.
 		blob := rawdb.ReadResurrectionMarker(record.db, key)
 		if len(blob) != 0 {
+			resurrected += 1
 			var marker resurrectionMarker
 			if err := rlp.DecodeBytes(blob, &marker); err != nil {
 				return err
@@ -251,6 +258,7 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 			// Skip the deletion if the preventing-deletion marker
 			// is present, and remove this marker as well.
 			if ok, _ := marker.has(record.number, record.hash); ok {
+				noDeletion += 1
 				if err := mDeleter.remove(key, record.number, record.hash); err != nil {
 					return err
 				}
@@ -258,6 +266,8 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 			}
 		}
 		rawdb.DeleteTrieNode(batch, key)
+		deleted += 1
+
 		if batch.ValueSize() > ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				return err
@@ -270,7 +280,11 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 	if err := mDeleter.flush(batch); err != nil {
 		return err
 	}
-	return batch.Write()
+	if err := batch.Write(); err != nil {
+		return err
+	}
+	log.Info("Pruned stale trie nodes", "number", record.number, "hash", record.hash, "deleted", deleted, "resurrected", resurrected, "nodeletion", noDeletion, "elasped", common.PrettyDuration(time.Since(startTime)))
+	return nil
 }
 
 type commitRecordsByNumber []*commitRecord

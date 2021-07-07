@@ -242,11 +242,28 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:         engine,
 		vmConfig:       vmConfig,
 	}
+
 	var genesisSet = make(map[string]struct{})
 	pruner.ExtractGenesis(db, func(key []byte) {
 		genesisSet[string(key)] = struct{}{}
 	})
 	log.Info("Genesis extracted", "size", len(genesisSet))
+
+	var headCh = make(chan ChainHeadEvent, 1024)
+	var signal = make(chan uint64, 1024)
+	sub := bc.SubscribeChainHeadEvent(headCh)
+	defer sub.Unsubscribe()
+	go func() {
+		for {
+			select {
+			case ev := <-headCh:
+				signal <- ev.Block.Time()
+			case <-sub.Err():
+				return
+			}
+		}
+	}()
+
 	bc.stateCache = state.NewDatabaseWithConfig(db, &trie.Config{
 		Cache:     cacheConfig.TrieCleanLimit,
 		Journal:   cacheConfig.TrieCleanJournal,
@@ -254,6 +271,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		Pruner: trie.PrunerConfig{
 			Enabled:    true,
 			GenesisSet: genesisSet,
+			Signal:     signal,
 			IsCanonical: func(number uint64, hash common.Hash) bool {
 				header := bc.GetHeaderByNumber(number)
 				if header == nil {
