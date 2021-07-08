@@ -19,6 +19,7 @@ package trie
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -220,14 +221,12 @@ func (p *pruner) pause() {
 	<-ch
 }
 
-func (p *pruner) pruning(records []*commitRecord, done chan struct{}, cancel chan struct{}) {
+func (p *pruner) pruning(records []*commitRecord, done chan struct{}, interrupt *uint64) {
 	defer func() { done <- struct{}{} }()
 
 	for _, r := range records {
-		select {
-		case <-cancel:
+		if atomic.LoadUint64(interrupt) == 1 {
 			return
-		default:
 		}
 		if !p.config.IsCanonical(r.number, r.hash) {
 			p.removeRecord(r, p.db)
@@ -249,20 +248,17 @@ func (p *pruner) loop() {
 	defer p.wg.Done()
 
 	var (
-		paused bool          // Flag if the pruning is allowed
-		done   chan struct{} // Non-nil if background unindexing or reindexing routine is active.
-		cancel chan struct{} // Channel for notifying pause signal
+		paused    bool          // Flag if the pruning is allowed
+		done      chan struct{} // Non-nil if background unindexing or reindexing routine is active.
+		interrupt *uint64       // Indicator for notifying pause signal
 	)
 	for {
 		select {
 		case number := <-p.signal:
-			log.Info("Received pruning signal", "number", number)
 			if paused {
-				log.Info("Pruner is paused", "number", number)
 				continue
 			}
 			if done != nil {
-				log.Info("Pruner is running", "number", number)
 				continue
 			}
 			if number < minBlockConfirms {
@@ -272,14 +268,13 @@ func (p *pruner) loop() {
 			if len(ret) == 0 {
 				continue
 			}
-			done, cancel = make(chan struct{}), make(chan struct{})
-			go p.pruning(ret, done, cancel)
+			done, interrupt = make(chan struct{}), new(uint64)
+			go p.pruning(ret, done, interrupt)
 
 		case ch := <-p.pauseCh:
 			paused = true
-
-			if cancel != nil {
-				close(cancel)
+			if interrupt != nil && atomic.LoadUint64(interrupt) == 0 {
+				atomic.StoreUint64(interrupt, 1)
 				<-done
 			}
 			ch <- struct{}{}
@@ -289,7 +284,7 @@ func (p *pruner) loop() {
 			ch <- struct{}{}
 
 		case <-done:
-			done, cancel = nil, nil
+			done, interrupt = nil, nil
 
 		case <-p.closeCh:
 			return
