@@ -256,9 +256,11 @@ func (p *pruner) loop() {
 		select {
 		case number := <-p.signal:
 			if paused {
+				log.Info("Pruner is paused", "number", number)
 				continue
 			}
 			if done != nil {
+				log.Info("Pruner is running", "number", number)
 				continue
 			}
 			if number < minBlockConfirms {
@@ -285,6 +287,7 @@ func (p *pruner) loop() {
 
 		case <-done:
 			done, interrupt = nil, nil
+			log.Info("Finish pruning task, wait next")
 
 		case <-p.closeCh:
 			return

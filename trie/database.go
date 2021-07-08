@@ -972,3 +972,7 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 		}
 	}
 }
+
+func (db *Database) Close() {
+	db.pruner.close()
+}
