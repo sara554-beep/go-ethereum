@@ -267,6 +267,10 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 				continue
 			}
 		}
+		if present := rawdb.ReadTrieNode(record.db, key); !present {
+			log.Info("The deleted key is not present", "key", key)
+			continue
+		}
 		rawdb.DeleteTrieNode(batch, key)
 		deleted += 1
 
