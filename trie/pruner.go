@@ -222,7 +222,7 @@ func (p *pruner) pause() {
 }
 
 func (p *pruner) pruning(records []*commitRecord, done chan struct{}, interrupt *uint64) {
-	defer func() { done <- struct{}{} }()
+	defer close(done)
 
 	for _, r := range records {
 		if atomic.LoadUint64(interrupt) == 1 {
