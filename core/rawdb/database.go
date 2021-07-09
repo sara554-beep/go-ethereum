@@ -289,23 +289,24 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		logged = time.Now()
 
 		// Key-value store statistics
-		headers             stat
-		bodies              stat
-		receipts            stat
-		tds                 stat
-		numHashPairings     stat
-		hashNumPairings     stat
-		accountTrie         stat
-		storageTries        stat
-		codes               stat
-		txLookups           stat
-		accountSnaps        stat
-		storageSnaps        stat
-		preimages           stat
-		bloomBits           stat
-		cliqueSnaps         stat
-		commitRecords       stat
-		resurrectionMarkers stat
+		headers              stat
+		bodies               stat
+		receipts             stat
+		tds                  stat
+		numHashPairings      stat
+		hashNumPairings      stat
+		accountTrie          stat
+		storageTries         stat
+		codes                stat
+		txLookups            stat
+		accountSnaps         stat
+		storageSnaps         stat
+		preimages            stat
+		bloomBits            stat
+		cliqueSnaps          stat
+		commitRecords        stat
+		deletedCommitRecords stat
+		resurrectionMarkers  stat
 
 		// Ancient store statistics
 		ancientHeadersSize  common.StorageSize
@@ -363,6 +364,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			metadata.Add(size)
 		case bytes.HasPrefix(key, commitRecordPrefix) && len(key) == (len(commitRecordPrefix)+8+common.HashLength):
 			commitRecords.Add(size)
+		case bytes.HasPrefix(key, deletedCommitRecord) && len(key) == (len(deletedCommitRecord)+8+common.HashLength):
+			deletedCommitRecords.Add(size)
 		case bytes.HasPrefix(key, resurrectionPrefix) && len(key) > (len(resurrectionPrefix)+common.HashLength):
 			resurrectionMarkers.Add(size)
 		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
@@ -430,6 +433,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Account Trie nodes", accountTrie.Size(), accountTrie.Count()},
 		{"Key-Value store", "Storage Trie nodes", storageTries.Size(), storageTries.Count()},
 		{"Key-Value store", "Commit records", commitRecords.Size(), commitRecords.Count()},
+		{"Key-Value store", "Deleted commit records", deletedCommitRecords.Size(), deletedCommitRecords.Count()},
 		{"Key-Value store", "Resurrection markers", resurrectionMarkers.Size(), resurrectionMarkers.Count()},
 		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
 		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},

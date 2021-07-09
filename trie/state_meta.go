@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"sort"
 	"sync"
 	"time"
 
@@ -130,8 +131,12 @@ func (stack *genstack) push(path []byte) [][]byte {
 
 func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 	var (
-		iterated  int
-		filtered  int
+		// Statistic
+		iterated             int
+		filtered             int
+		deletedWithSamePath  int
+		deletedWithInnerPath int
+
 		stack     *genstack
 		startTime = time.Now()
 	)
@@ -166,6 +171,8 @@ func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		for _, key := range keys {
 			record.DeletionSet = append(record.DeletionSet, key)
 		}
+		deletedWithSamePath += len(keys)
+
 		// Push the path and pop all the children path, delete all intermidate nodes.
 		children := stack.push(path)
 		for _, child := range children {
@@ -189,6 +196,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 				for _, key := range keys {
 					record.DeletionSet = append(record.DeletionSet, key)
 				}
+				deletedWithInnerPath += len(keys)
 			}
 		}
 	}
@@ -204,7 +212,8 @@ func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
 	record.initBloom()
-	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered,
+	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet),
+		"samepath", deletedWithSamePath, "innerpath", deletedWithInnerPath, "filter", filtered,
 		"average", float64(iterated)/float64(len(record.keys)), "metasize", len(blob), "bloomSize", common.StorageSize(float64(record.bloom.m())), "elasped", common.PrettyDuration(time.Since(startTime)))
 
 	if record.onDeletionSet != nil {
@@ -338,6 +347,18 @@ func (m ResurrectionMarker) has(number uint64, hash common.Hash) (bool, int) {
 		}
 	}
 	return false, 0
+}
+
+func (m ResurrectionMarker) inRange(number uint64, hash common.Hash) bool {
+	var numbers []int
+	for i := 0; i < len(m.Numbers); i++ {
+		numbers = append(numbers, int(m.Numbers[i]))
+	}
+	sort.Ints(numbers)
+	if len(numbers) > 0 && uint64(numbers[0]) < number && uint64(numbers[len(numbers)-1]) > number {
+		return true
+	}
+	return false
 }
 
 // markerWriter is the marker cacher for writing a batch of resurrection marker

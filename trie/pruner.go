@@ -115,6 +115,7 @@ func (p *pruner) commitStart(number uint64, hash common.Hash) {
 	p.recordLock.Unlock()
 
 	if live >= p.config.MaximumRecords {
+		log.Info("Too many accumulated records", "number", live, "threshold", p.config.MaximumRecords)
 		return
 	}
 	p.current = newCommitRecord(p.db, number, hash)
@@ -133,6 +134,7 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 		}
 	}
 	p.written += 1
+
 	// If the pruning is disabled, or there are too many un-processed pruning
 	// tasks remained, skip the tracking .
 	if !p.config.Enabled {
@@ -275,6 +277,9 @@ func (p *pruner) loop() {
 			go p.pruning(ret, done, interrupt)
 
 		case ch := <-p.pauseCh:
+			if paused {
+				log.Crit("Try to double pause")
+			}
 			paused = true
 			if interrupt != nil && atomic.LoadUint64(interrupt) == 0 {
 				atomic.StoreUint64(interrupt, 1)
@@ -283,6 +288,9 @@ func (p *pruner) loop() {
 			ch <- struct{}{}
 
 		case ch := <-p.resumeCh:
+			if !paused {
+				log.Crit("Try to resume unpaused state")
+			}
 			paused = false
 			ch <- struct{}{}
 
