@@ -79,6 +79,10 @@ func (bloom *keybloom) n() uint64 {
 	return bloom.bloom.N()
 }
 
+func (bloom *keybloom) m() uint64 {
+	return bloom.bloom.M() / 8 // Size in bytes
+}
+
 func (bloom *keybloom) falsePosititveProbability() float64 {
 	return bloom.bloom.FalsePosititveProbability()
 }

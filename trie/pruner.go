@@ -41,8 +41,8 @@ type pruner struct {
 	db         ethdb.KeyValueStore
 	mwriter    *markerWriter
 	bloom      *keybloom
-	current    *commitRecord
-	records    []*commitRecord
+	current    *CommitRecord
+	records    []*CommitRecord
 	minRecord  uint64
 	recordLock sync.Mutex
 
@@ -55,16 +55,17 @@ type pruner struct {
 	// statistic
 	written     uint64 // Counter for the total written trie nodes
 	iterated    uint64 // Counter for the total itearated trie nodes
-	filtered    uint64 // Counter for tht total filtered trie nodes for deletion
+	filtered    uint64 // Counter for the total filtered trie nodes for deletion
 	resurrected uint64 // Counter for the total resurrected trie nodes
 }
 
 func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
-	numbers, hashes, blobs := rawdb.ReadAllCommitRecords(db, 0, math.MaxUint64)
-	var records []*commitRecord
+	numbers, hashes, blobs := rawdb.ReadAllCommitRecords(db, 0, math.MaxUint64, false)
+	var records []*CommitRecord
 	for i := 0; i < len(numbers); i++ {
 		record, err := loadCommitRecord(db, numbers[i], hashes[i], blobs[i])
 		if err != nil {
+			log.Info("Commit record is corrupted", "number", numbers[i], "hash", hashes[i].Hex())
 			rawdb.DeleteCommitRecord(db, numbers[i], hashes[i]) // Corrupted record can be just discarded
 			continue
 		}
@@ -183,11 +184,11 @@ func (p *pruner) flushMarker(writer ethdb.KeyValueWriter) error {
 	return p.mwriter.flush(writer)
 }
 
-func (p *pruner) filterRecords(number uint64) []*commitRecord {
+func (p *pruner) filterRecords(number uint64) []*CommitRecord {
 	p.recordLock.Lock()
 	defer p.recordLock.Unlock()
 
-	var ret []*commitRecord
+	var ret []*CommitRecord
 	for _, r := range p.records {
 		if r.number < number {
 			ret = append(ret, r)
@@ -196,7 +197,7 @@ func (p *pruner) filterRecords(number uint64) []*commitRecord {
 	return ret
 }
 
-func (p *pruner) removeRecord(record *commitRecord, writer ethdb.KeyValueWriter) {
+func (p *pruner) removeRecord(record *CommitRecord, db ethdb.KeyValueStore) {
 	p.recordLock.Lock()
 	defer p.recordLock.Unlock()
 
@@ -206,7 +207,7 @@ func (p *pruner) removeRecord(record *commitRecord, writer ethdb.KeyValueWriter)
 			sort.Sort(commitRecordsByNumber(p.records))
 		}
 	}
-	rawdb.DeleteCommitRecord(writer, record.number, record.hash)
+	rawdb.DeleteCommitRecord(db, record.number, record.hash)
 }
 
 func (p *pruner) resume() {
@@ -221,7 +222,7 @@ func (p *pruner) pause() {
 	<-ch
 }
 
-func (p *pruner) pruning(records []*commitRecord, done chan struct{}, interrupt *uint64) {
+func (p *pruner) pruning(records []*CommitRecord, done chan struct{}, interrupt *uint64) {
 	defer close(done)
 
 	for _, r := range records {

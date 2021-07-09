@@ -17,7 +17,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/rlp"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,6 +65,9 @@ Remove blockchain and state databases`,
 			dbPutCmd,
 			dbGetSlotsCmd,
 			dbDumpFreezerIndex,
+			dbListCommitRecord,
+			dbInspectCommitRecord,
+			dbInspectResurrectMarker,
 		},
 	}
 	dbInspectCmd = cli.Command{
@@ -194,6 +200,54 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 			utils.CalaverasFlag,
 		},
 		Description: "This command displays information about the freezer index.",
+	}
+	dbListCommitRecord = cli.Command{
+		Action:    utils.MigrateFlags(listCommitRecords),
+		Name:      "list-commits",
+		Usage:     "Dump out the commit record list",
+		ArgsUsage: "<type>",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.SyncModeFlag,
+			utils.MainnetFlag,
+			utils.RopstenFlag,
+			utils.RinkebyFlag,
+			utils.GoerliFlag,
+			utils.BaikalFlag,
+		},
+		Description: "This command displays information about the commit records.",
+	}
+	dbInspectCommitRecord = cli.Command{
+		Action:    utils.MigrateFlags(inspectCommitRecord),
+		Name:      "inspect-commit",
+		Usage:     "Inspect the commit record",
+		ArgsUsage: "<number> <hash> <key> <type>",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.SyncModeFlag,
+			utils.MainnetFlag,
+			utils.RopstenFlag,
+			utils.RinkebyFlag,
+			utils.GoerliFlag,
+			utils.BaikalFlag,
+		},
+		Description: "This command inspect information about the commit record.",
+	}
+	dbInspectResurrectMarker = cli.Command{
+		Action:    utils.MigrateFlags(inspectResurrectionMarker),
+		Name:      "inspect-marker",
+		Usage:     "Inspect the resurrect marker",
+		ArgsUsage: "<number> <hash> <key>",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.SyncModeFlag,
+			utils.MainnetFlag,
+			utils.RopstenFlag,
+			utils.RinkebyFlag,
+			utils.GoerliFlag,
+			utils.BaikalFlag,
+		},
+		Description: "This command inspect information about the resurrection marker",
 	}
 )
 
@@ -505,5 +559,135 @@ func freezerInspect(ctx *cli.Context) error {
 	} else {
 		f.DumpIndex(start, end)
 	}
+	return nil
+}
+
+func listCommitRecords(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	defer db.Close()
+
+	if ctx.NArg() < 1 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	var (
+		kind    = ctx.Args().Get(0)
+		deleted bool
+	)
+	switch kind {
+	case "live":
+		deleted = false
+	case "deleted":
+		deleted = true
+	default:
+		utils.Fatalf("Invalid type, only `live` or `deleted` supported")
+	}
+	numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
+	for i := 0; i < len(numbers); i++ {
+		log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals), "type", kind)
+	}
+	return nil
+}
+
+func inspectCommitRecord(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	defer db.Close()
+
+	if ctx.NArg() < 4 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	var (
+		number, _   = strconv.ParseUint(ctx.Args().Get(0), 10, 64)
+		hashblob, _ = hexutil.Decode(ctx.Args().Get(1))
+		hash        = common.BytesToHash(hashblob)
+		key, _      = hexutil.Decode(ctx.Args().Get(2))
+
+		kind    = ctx.Args().Get(3)
+		deleted bool
+	)
+	switch kind {
+	case "live":
+		deleted = false
+	case "deleted":
+		deleted = true
+	default:
+		utils.Fatalf("Invalid type, only `live` or `deleted` supported")
+	}
+	log.Info("Inspect the commit record", "number", number, "hash", hash.Hex(), "key", hexutil.Encode(key), "type", kind)
+
+	if number == 0 {
+		numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
+		for i := 0; i < len(numbers); i++ {
+			log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals), "type", kind)
+			blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+			var object trie.CommitRecord
+			if err := rlp.DecodeBytes(blob, &object); err != nil {
+				return err
+			}
+			for index, k := range object.DeletionSet {
+				if bytes.Equal(k, key) {
+					log.Info("Find the key in deleteion set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
+					return nil
+				}
+			}
+		}
+		log.Info("The key is not in deleteion set")
+		return nil
+	}
+
+	blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+	var object trie.CommitRecord
+	if err := rlp.DecodeBytes(blob, &object); err != nil {
+		return err
+	}
+	for index, k := range object.DeletionSet {
+		if bytes.Equal(k, key) {
+			log.Info("Find the key in deleteion set", "index", index)
+			return nil
+		}
+	}
+	log.Info("The key is not in deleteion set")
+	return nil
+}
+
+func inspectResurrectionMarker(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	defer db.Close()
+
+	if ctx.NArg() < 3 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	var (
+		number, _   = strconv.ParseUint(ctx.Args().Get(0), 10, 64)
+		hashblob, _ = hexutil.Decode(ctx.Args().Get(1))
+		hash        = common.BytesToHash(hashblob)
+		key, _      = hexutil.Decode(ctx.Args().Get(2))
+	)
+	log.Info("Inspect the resurrect marker", "number", number, "hash", hash.Hex(), "key", hexutil.Encode(key))
+
+	blob := rawdb.ReadResurrectionMarker(db, key)
+	if len(blob) == 0 {
+		log.Info("No marker found")
+		return nil
+	}
+	var marker trie.ResurrectionMarker
+	if err := rlp.DecodeBytes(blob, &marker); err != nil {
+		utils.Fatalf("Failed to decode bytes %v", err)
+	}
+	for i := 0; i < len(marker.Numbers); i++ {
+		if marker.Numbers[i] == number && marker.Hashes[i] == hash {
+			log.Info("Find the record in marker", "number", marker.Numbers[i], "hash", marker.Hashes[i].Hex())
+			return nil
+		}
+	}
+	log.Info("Nothing found in marker", "len", len(marker.Numbers))
 	return nil
 }

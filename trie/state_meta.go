@@ -19,6 +19,7 @@ package trie
 import (
 	"bytes"
 	"errors"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"sync"
 	"time"
 
@@ -29,13 +30,13 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-// commitRecord represents a diff set for each Commit operation(trie.Database)
+// CommitRecord represents a diff set for each Commit operation(trie.Database)
 // which occurs regularly at a certain time interval. It will flush out all the
 // dirty nodes compared with the latest flushed state so that it can be regarded
 // as the state update. The flushed trie node keys can be used as the indicator
 // for deriving a list of stale trie nodes in the same path scope and these stale
 // trie nodes can be pruned later from the disk.
-type commitRecord struct {
+type CommitRecord struct {
 	db     ethdb.KeyValueStore
 	hash   common.Hash
 	number uint64
@@ -63,16 +64,16 @@ type commitRecord struct {
 	onDeletionSet func([][]byte) // Hooks used for exposing the generated deletion set
 }
 
-func newCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) *commitRecord {
-	return &commitRecord{
+func newCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) *CommitRecord {
+	return &CommitRecord{
 		db:     db,
 		hash:   hash,
 		number: number,
 	}
 }
 
-func loadCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash, val []byte) (*commitRecord, error) {
-	var object commitRecord
+func loadCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash, val []byte) (*CommitRecord, error) {
+	var object CommitRecord
 	if err := rlp.DecodeBytes(val, &object); err != nil {
 		return nil, err
 	}
@@ -84,12 +85,12 @@ func loadCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash, v
 	return &object, nil
 }
 
-func readCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) (*commitRecord, error) {
-	blob := rawdb.ReadCommitRecord(db, number, hash)
+func readCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) (*CommitRecord, error) {
+	blob := rawdb.ReadCommitRecord(db, number, hash, false)
 	if len(blob) == 0 {
 		return nil, errors.New("non-existent record")
 	}
-	var object commitRecord
+	var object CommitRecord
 	if err := rlp.DecodeBytes(blob, &object); err != nil {
 		return nil, err
 	}
@@ -99,7 +100,7 @@ func readCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) (
 	return &object, nil
 }
 
-func (record *commitRecord) add(key []byte) {
+func (record *CommitRecord) add(key []byte) {
 	if len(key) != 2*common.HashLength+1 && len(key) != 3*common.HashLength+1 {
 		log.Warn("Invalid key length", "len", len(key), "key", key)
 		return // It should never happen
@@ -127,7 +128,7 @@ func (stack *genstack) push(path []byte) [][]byte {
 	return dropped
 }
 
-func (record *commitRecord) finalize(noDelete *keybloom) (int, int, error) {
+func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 	var (
 		iterated  int
 		filtered  int
@@ -203,7 +204,8 @@ func (record *commitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
 	record.initBloom()
-	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered, "average", float64(iterated)/float64(len(record.keys)), "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
+	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet), "filter", filtered,
+		"average", float64(iterated)/float64(len(record.keys)), "metasize", len(blob), "bloomSize", common.StorageSize(float64(record.bloom.m())), "elasped", common.PrettyDuration(time.Since(startTime)))
 
 	if record.onDeletionSet != nil {
 		record.onDeletionSet(record.DeletionSet)
@@ -213,7 +215,7 @@ func (record *commitRecord) finalize(noDelete *keybloom) (int, int, error) {
 }
 
 // initBloom initializes the bloom filter with the key set.
-func (record *commitRecord) initBloom() {
+func (record *CommitRecord) initBloom() {
 	size := len(record.DeletionSet)
 	if size == 0 {
 		size = 1 // 0 size bloom filter is not allowed
@@ -228,18 +230,18 @@ func (record *commitRecord) initBloom() {
 // contain reports if the given key is in the deletion set.
 // It only checks the bloom filter but never check the real
 // deletion set since the false-positive is totally fine.
-func (record *commitRecord) contain(key []byte) bool {
+func (record *CommitRecord) contain(key []byte) bool {
 	if record.bloom == nil {
 		return true // In theory it shouldn't happen
 	}
 	return record.bloom.contain(key)
 }
 
-func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValueWriter)) error {
+func (record *CommitRecord) deleteStale(remove func(*CommitRecord, ethdb.KeyValueStore)) error {
 	var (
 		startTime = time.Now()
 		batch     = record.db.NewBatch()
-		mDeleter  = newMarkerWriter(record.db)
+		//mDeleter  = newMarkerWriter(record.db)
 
 		// statistic
 		resurrected int
@@ -253,7 +255,7 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 		blob := rawdb.ReadResurrectionMarker(record.db, key)
 		if len(blob) != 0 {
 			resurrected += 1
-			var marker resurrectionMarker
+			var marker ResurrectionMarker
 			if err := rlp.DecodeBytes(blob, &marker); err != nil {
 				return err
 			}
@@ -261,9 +263,9 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 			// is present, and remove this marker as well.
 			if ok, _ := marker.has(record.number, record.hash); ok {
 				noDeletion += 1
-				if err := mDeleter.remove(key, record.number, record.hash); err != nil {
-					return err
-				}
+				//if err := mDeleter.remove(key, record.number, record.hash); err != nil {
+				//	return err
+				//}
 				continue
 			}
 		}
@@ -282,10 +284,10 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 		}
 	}
 	// Delete the commit record itself before the markers
-	remove(record, batch)
-	if err := mDeleter.flush(batch); err != nil {
-		return err
-	}
+	remove(record, record.db)
+	//if err := mDeleter.flush(batch); err != nil {
+	//	return err
+	//}
 	if err := batch.Write(); err != nil {
 		return err
 	}
@@ -293,13 +295,13 @@ func (record *commitRecord) deleteStale(remove func(*commitRecord, ethdb.KeyValu
 	return nil
 }
 
-type commitRecordsByNumber []*commitRecord
+type commitRecordsByNumber []*CommitRecord
 
 func (t commitRecordsByNumber) Len() int           { return len(t) }
 func (t commitRecordsByNumber) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
 func (t commitRecordsByNumber) Less(i, j int) bool { return t[i].number < t[j].number }
 
-// resurrectionMarker is a delete-preventing marker of a trie node. It contains
+// ResurrectionMarker is a delete-preventing marker of a trie node. It contains
 // a list of commit record identifiers to prevent deletion by the corresponding
 // pruning operation of these commit records.
 //
@@ -324,12 +326,12 @@ func (t commitRecordsByNumber) Less(i, j int) bool { return t[i].number < t[j].n
 //
 // If the marker doesn't contain any commit record id, the relevant database entry
 // should be removed.
-type resurrectionMarker struct {
+type ResurrectionMarker struct {
 	Numbers []uint64
 	Hashes  []common.Hash
 }
 
-func (m resurrectionMarker) has(number uint64, hash common.Hash) (bool, int) {
+func (m ResurrectionMarker) has(number uint64, hash common.Hash) (bool, int) {
 	for i := 0; i < len(m.Numbers); i++ {
 		if m.Numbers[i] == number && m.Hashes[i] == hash {
 			return true, i
@@ -345,14 +347,14 @@ func (m resurrectionMarker) has(number uint64, hash common.Hash) (bool, int) {
 // be handled by ourselves.
 type markerWriter struct {
 	reader ethdb.KeyValueReader           // Database handler for read operation
-	cached map[string]*resurrectionMarker // Uncommitted markers
+	cached map[string]*ResurrectionMarker // Uncommitted markers
 	lock   sync.Mutex
 }
 
 func newMarkerWriter(reader ethdb.KeyValueReader) *markerWriter {
 	return &markerWriter{
 		reader: reader,
-		cached: make(map[string]*resurrectionMarker),
+		cached: make(map[string]*ResurrectionMarker),
 	}
 }
 
@@ -360,7 +362,7 @@ func (writer *markerWriter) add(key []byte, number uint64, hash common.Hash) err
 	writer.lock.Lock()
 	defer writer.lock.Unlock()
 
-	var marker resurrectionMarker
+	var marker ResurrectionMarker
 	if m := writer.cached[string(key)]; m != nil {
 		marker = *m
 	} else {
@@ -373,7 +375,7 @@ func (writer *markerWriter) add(key []byte, number uint64, hash common.Hash) err
 		}
 	}
 	if ok, _ := marker.has(number, hash); ok {
-		log.Warn("Duplicated commit record", "number", number, "hash", hash)
+		log.Warn("Duplicated commit record", "number", number, "hash", hash, "key", hexutil.Encode(key))
 		return nil
 	}
 	marker.Numbers = append(marker.Numbers, number)
@@ -386,7 +388,7 @@ func (writer *markerWriter) remove(key []byte, number uint64, hash common.Hash) 
 	writer.lock.Lock()
 	defer writer.lock.Unlock()
 
-	var marker resurrectionMarker
+	var marker ResurrectionMarker
 	if m := writer.cached[string(key)]; m != nil {
 		marker = *m
 	} else {
@@ -428,6 +430,6 @@ func (writer *markerWriter) flush(w ethdb.KeyValueWriter) error {
 		}
 		rawdb.WriteResurrectionMarker(w, []byte(k), blob)
 	}
-	writer.cached = make(map[string]*resurrectionMarker)
+	writer.cached = make(map[string]*ResurrectionMarker)
 	return nil
 }

@@ -120,8 +120,13 @@ func ReadTrieNodesWithPrefix(db ethdb.KeyValueStore, path []byte, filterFn func(
 }
 
 // ReadCommitRecord retrieves the state update of the provided hash.
-func ReadCommitRecord(db ethdb.KeyValueReader, number uint64, hash common.Hash) []byte {
-	data, _ := db.Get(commitRecordKey(number, hash))
+func ReadCommitRecord(db ethdb.KeyValueReader, number uint64, hash common.Hash, deleted bool) []byte {
+	var data []byte
+	if deleted {
+		data, _ = db.Get(deletedCommitRecordKey(number, hash))
+	} else {
+		data, _ = db.Get(commitRecordKey(number, hash))
+	}
 	return data
 }
 
@@ -133,22 +138,33 @@ func WriteCommitRecord(db ethdb.KeyValueWriter, number uint64, hash common.Hash,
 }
 
 // DeleteCommitRecord deletes the specified state update from the database.
-func DeleteCommitRecord(db ethdb.KeyValueWriter, number uint64, hash common.Hash) {
+func DeleteCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) {
+	blob, err := db.Get(commitRecordKey(number, hash))
+	if err != nil {
+		log.Crit("Failed to load commit record", "err", err)
+	}
 	if err := db.Delete(commitRecordKey(number, hash)); err != nil {
-		log.Crit("Failed to delete state update", "err", err)
+		log.Crit("Failed to delete commit record", "err", err)
+	}
+	if err := db.Put(deletedCommitRecordKey(number, hash), blob); err != nil {
+		log.Crit("Failed to move the deleted commit record", "err", err)
 	}
 }
 
 // ReadAllCommitRecords retrieves all the state update objects at the certain range
 // where from is included while to is excluded.
-func ReadAllCommitRecords(db ethdb.Iteratee, from uint64, to uint64) ([]uint64, []common.Hash, [][]byte) {
+func ReadAllCommitRecords(db ethdb.Iteratee, from uint64, to uint64, deleted bool) ([]uint64, []common.Hash, [][]byte) {
 	var (
 		numbers []uint64
 		hashes  []common.Hash
 		vals    [][]byte
+		prefix  []byte
 	)
 	// Construct the key prefix of start point.
-	start, end := commitRecordKey(from, common.Hash{}), commitRecordKey(to, common.Hash{})
+	start, end, prefix := commitRecordKey(from, common.Hash{}), commitRecordKey(to, common.Hash{}), commitRecordPrefix
+	if deleted {
+		start, end, prefix = deletedCommitRecordKey(from, common.Hash{}), deletedCommitRecordKey(to, common.Hash{}), deletedCommitRecord
+	}
 	it := db.NewIterator(nil, start)
 	defer it.Release()
 
@@ -156,8 +172,8 @@ func ReadAllCommitRecords(db ethdb.Iteratee, from uint64, to uint64) ([]uint64, 
 		if bytes.Compare(it.Key(), end) >= 0 {
 			break
 		}
-		if key := it.Key(); len(key) == len(commitRecordPrefix)+8+common.HashLength {
-			numbers = append(numbers, binary.BigEndian.Uint64(key[len(commitRecordPrefix):len(commitRecordPrefix)+8]))
+		if key := it.Key(); len(key) == len(prefix)+8+common.HashLength {
+			numbers = append(numbers, binary.BigEndian.Uint64(key[len(prefix):len(prefix)+8]))
 			hashes = append(hashes, common.BytesToHash(key[len(key)-common.HashLength:]))
 			vals = append(vals, common.CopyBytes(it.Value()))
 		}

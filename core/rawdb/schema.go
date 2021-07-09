@@ -89,10 +89,11 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 
-	accountTrieNodePrefix = []byte("A")              // accountTrieNodePrefix + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
-	storageTrieNodePrefix = []byte("O")              // storageTrieNodePrefix + node owner(32 bytes) + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
-	commitRecordPrefix    = []byte("commit-record-") // commitRecordPrefix + number(uint64 big endian) + hash -> commit record
-	resurrectionPrefix    = []byte("resurrection-")  // resurrectionPrefix + node path + node hash -> marker
+	accountTrieNodePrefix = []byte("A")                         // accountTrieNodePrefix + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
+	storageTrieNodePrefix = []byte("O")                         // storageTrieNodePrefix + node owner(32 bytes) + node path(SIMPLE_COMPACT) + node hash + path flag -> trie node
+	commitRecordPrefix    = []byte("commit-record-")            // commitRecordPrefix + number(uint64 big endian) + hash -> commit record
+	deletedCommitRecord   = []byte("deleted-committed-record-") // deletedCommitRecord + number(uint64 big endian) + hash -> commit record
+	resurrectionPrefix    = []byte("resurrection-")             // resurrectionPrefix + node path + node hash -> marker
 
 	preimagePrefix = []byte("secure-key-")      // preimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-") // config prefix for the db
@@ -215,6 +216,13 @@ func bloomBitsKey(bit uint, section uint64, hash common.Hash) []byte {
 func commitRecordKey(number uint64, hash common.Hash) []byte {
 	key := append(append(commitRecordPrefix, make([]byte, 8)...), hash.Bytes()...)
 	binary.BigEndian.PutUint64(key[len(commitRecordPrefix):], number)
+	return key
+}
+
+// deletedCommitRecordKey = deletedCommitRecord + number(uint64 big endian) + hash
+func deletedCommitRecordKey(number uint64, hash common.Hash) []byte {
+	key := append(append(deletedCommitRecord, make([]byte, 8)...), hash.Bytes()...)
+	binary.BigEndian.PutUint64(key[len(deletedCommitRecord):], number)
 	return key
 }
 
