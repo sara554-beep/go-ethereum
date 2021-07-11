@@ -379,7 +379,7 @@ func newMarkerWriter(reader ethdb.KeyValueReader) *markerWriter {
 	}
 }
 
-func (writer *markerWriter) add(key []byte, number uint64, hash common.Hash) error {
+func (writer *markerWriter) add(key []byte, number uint64, hash common.Hash, partial bool) error {
 	writer.lock.Lock()
 	defer writer.lock.Unlock()
 
@@ -396,7 +396,8 @@ func (writer *markerWriter) add(key []byte, number uint64, hash common.Hash) err
 		}
 	}
 	if ok, _ := marker.has(number, hash); ok {
-		log.Warn("Duplicated commit record", "number", number, "hash", hash, "key", hexutil.Encode(key))
+		owner, path, hash := DecodeNodeKey(key)
+		log.Warn("Duplicated commit record", "number", number, "hash", hash, "key", hexutil.Encode(key), "owner", owner.Hex(), "path", path, "hash", hash.Hex(), "partial", partial)
 		return nil
 	}
 	marker.Numbers = append(marker.Numbers, number)

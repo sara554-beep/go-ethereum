@@ -146,7 +146,7 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	// deletion set. It's done no matter the pruning is enabled or not.
 	for _, record := range p.records {
 		if record.contain(key) {
-			err := p.mwriter.add(key, record.number, record.hash)
+			err := p.mwriter.add(key, record.number, record.hash, partial)
 			if err != nil {
 				return err
 			}
