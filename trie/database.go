@@ -754,10 +754,11 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 		}
 		batch.Reset()
 	}
-	// Move the trie itself into the batch, flushing if enough data is accumulated
+	// Suspend all background pruning operations.
 	db.pruner.pause()
 	defer db.pruner.resume()
 
+	// Move the trie itself into the batch, flushing if enough data is accumulated
 	nodes, storage := len(db.dirties), db.dirtiesSize
 	writeMeta := number != 0 && hash != (common.Hash{})
 	uncacher := &cleaner{db: db}
@@ -801,7 +802,7 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 	if !report {
 		logger = log.Debug
 	}
-	logger("Persisted trie from memory database", "nodes", nodes-len(db.dirties)+int(db.flushnodes), "size", storage-db.dirtiesSize+db.flushsize, "time", time.Since(start)+db.flushtime,
+	logger("Persisted trie from memory database", "pure-nodes", nodes-len(db.dirties), "nodes", nodes-len(db.dirties)+int(db.flushnodes), "size", storage-db.dirtiesSize+db.flushsize, "time", time.Since(start)+db.flushtime,
 		"gcnodes", db.gcnodes, "gcsize", db.gcsize, "gctime", db.gctime, "livenodes", len(db.dirties), "livesize", db.dirtiesSize)
 
 	// Reset the garbage collection statistics

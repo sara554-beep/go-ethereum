@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -89,6 +90,8 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 		resumeCh:  make(chan chan struct{}),
 		closeCh:   make(chan struct{}),
 	}
+	pruner.checkRecords()
+
 	pruner.wg.Add(1)
 	go pruner.loop()
 
@@ -101,6 +104,19 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	return pruner
 }
 
+// checkRecords is a debug function used to ensure the commits are sorted correctly.
+func (p *pruner) checkRecords() {
+	if len(p.records) <= 1 {
+		return
+	}
+	for i := 0; i < len(p.records)-1; i++ {
+		current, next := p.records[i], p.records[i+1]
+		if current.number >= next.number {
+			log.Crit("Invalid commit record", "index", i, "curnumber", current.number, "curhash", current.hash, "nextnumber", next.number, "nexthash", next.hash)
+		}
+	}
+}
+
 func (p *pruner) close() {
 	close(p.closeCh)
 	p.wg.Wait()
@@ -109,6 +125,9 @@ func (p *pruner) close() {
 func (p *pruner) commitStart(number uint64, hash common.Hash) {
 	if !p.config.Enabled {
 		return
+	}
+	if p.current != nil {
+		log.Crit("The current commit record is not nil")
 	}
 	p.recordLock.Lock()
 	live := len(p.records)
@@ -119,6 +138,7 @@ func (p *pruner) commitStart(number uint64, hash common.Hash) {
 		return
 	}
 	p.current = newCommitRecord(p.db, number, hash)
+	log.Info("Start commit operation", "number", number, "hash", hash.Hex())
 }
 
 func (p *pruner) addKey(key []byte, partial bool) error {
@@ -173,7 +193,10 @@ func (p *pruner) commitEnd() error {
 	p.records = append(p.records, p.current)
 	sort.Sort(commitRecordsByNumber(p.records))
 	p.minRecord = p.records[0].number
+	p.checkRecords()
 	p.recordLock.Unlock()
+
+	log.Info("Commit operation is finished", "number", p.current.number, "hash", p.current.hash.Hex())
 
 	p.current = nil
 	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate)
@@ -203,12 +226,18 @@ func (p *pruner) removeRecord(record *CommitRecord, db ethdb.KeyValueStore) {
 	p.recordLock.Lock()
 	defer p.recordLock.Unlock()
 
+	var found bool
 	for i, r := range p.records {
 		if r.number == record.number && r.hash == record.hash {
 			p.records = append(p.records[:i], p.records[i+1:]...)
 			sort.Sort(commitRecordsByNumber(p.records))
+			found = true
 		}
 	}
+	if !found {
+		log.Crit("Failed to delete non-existent commit record", "number", record.number, "hash", record.hash.Hex())
+	}
+	p.checkRecords()
 	rawdb.DeleteCommitRecord(db, record.number, record.hash)
 }
 
@@ -229,6 +258,7 @@ func (p *pruner) pruning(records []*CommitRecord, done chan struct{}, interrupt 
 
 	for _, r := range records {
 		if atomic.LoadUint64(interrupt) == 1 {
+			log.Info("Pruning operation is interrupted")
 			return
 		}
 		if !p.config.IsCanonical(r.number, r.hash) {
@@ -278,20 +308,26 @@ func (p *pruner) loop() {
 
 		case ch := <-p.pauseCh:
 			if paused {
-				log.Crit("Try to double pause")
+				log.Crit("Duplicated suspend operations")
 			}
 			paused = true
 			if interrupt != nil && atomic.LoadUint64(interrupt) == 0 {
 				atomic.StoreUint64(interrupt, 1)
+				startTime := time.Now()
+				log.Info("Wait the pruning operation to be finished")
 				<-done
+				log.Info("The pruning operation is finished", "elapsed", common.PrettyDuration(time.Since(startTime)))
 			}
 			ch <- struct{}{}
 
 		case ch := <-p.resumeCh:
 			if !paused {
-				log.Crit("Try to resume unpaused state")
+				log.Crit("Invalid resume operation")
 			}
 			paused = false
+			if interrupt != nil && atomic.LoadUint64(interrupt) == 0 {
+				log.Crit("Pruner is paused but the pruning operation is running")
+			}
 			ch <- struct{}{}
 
 		case <-done:
