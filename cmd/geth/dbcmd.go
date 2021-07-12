@@ -584,7 +584,13 @@ func listCommitRecords(ctx *cli.Context) error {
 	}
 	numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
 	for i := 0; i < len(numbers); i++ {
-		log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
+		var object trie.CommitRecord
+		if err := rlp.DecodeBytes(vals[i], &object); err != nil {
+			log.Error("Failed to RLP decode the commit record", "err", err)
+			return err
+		}
+		log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]),
+			"committed", len(object.Keys), "partial", len(object.PartialKeys), "deleted", len(object.DeletionSet), "type", kind)
 	}
 	return nil
 }
@@ -651,6 +657,7 @@ func inspectCommitRecord(ctx *cli.Context) error {
 				}
 			}
 			if found {
+				log.Info("Commit details", "deletion", len(object.DeletionSet), "part", len(object.PartialKeys), "commit", len(object.Keys))
 				if deleteW != nil {
 					for index, k := range object.DeletionSet {
 						owner, path, hash := trie.DecodeNodeKey(k)
