@@ -38,14 +38,15 @@ type PrunerConfig struct {
 }
 
 type pruner struct {
-	config     PrunerConfig
-	db         ethdb.KeyValueStore
-	mwriter    *markerWriter
-	bloom      *keybloom
-	current    *CommitRecord
-	records    []*CommitRecord
-	minRecord  uint64
-	recordLock sync.Mutex
+	config      PrunerConfig
+	db          ethdb.KeyValueStore
+	mwriter     *markerWriter
+	partialKeys [][]byte
+	bloom       *keybloom
+	current     *CommitRecord
+	records     []*CommitRecord
+	minRecord   uint64
+	recordLock  sync.Mutex
 
 	signal   chan uint64
 	pauseCh  chan chan struct{}
@@ -168,6 +169,8 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	p.bloom.add(key)
 	if !partial {
 		p.current.add(key)
+	} else {
+		p.partialKeys = append(p.partialKeys, key)
 	}
 	return nil
 }
@@ -182,7 +185,7 @@ func (p *pruner) commitEnd() error {
 	for key := range p.config.GenesisSet {
 		p.bloom.add([]byte(key))
 	}
-	iterated, filtered, err := p.current.finalize(p.bloom)
+	iterated, filtered, err := p.current.finalize(p.bloom, p.partialKeys)
 	if err != nil {
 		return err
 	}
@@ -200,6 +203,7 @@ func (p *pruner) commitEnd() error {
 
 	p.current = nil
 	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate)
+	p.partialKeys = nil
 	log.Info("Added new record", "live", len(p.records), "written", p.written, "iterated", p.iterated, "filtered", p.filtered, "resurrected", p.resurrected)
 	return nil
 }

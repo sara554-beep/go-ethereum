@@ -19,12 +19,12 @@ package trie
 import (
 	"bytes"
 	"errors"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -45,7 +45,7 @@ type CommitRecord struct {
 	// The key list of the flushed dirty trie nodes. They are used to derive
 	// the stale node keys for pruning purposes. All the dirty trie nodes are
 	// flushed from the bottom to top. The keys here are also sorted in this order.
-	keys [][]byte
+	Keys [][]byte
 
 	// The bloom filter of the stale node keys(a.k.a deletion set)
 	bloom *keybloom
@@ -60,6 +60,7 @@ type CommitRecord struct {
 	//
 	// Export fields for RLP encoding/decoding.
 	DeletionSet [][]byte
+	PartialKeys [][]byte
 
 	// Test hooks
 	onDeletionSet func([][]byte) // Hooks used for exposing the generated deletion set
@@ -106,7 +107,7 @@ func (record *CommitRecord) add(key []byte) {
 		log.Warn("Invalid key length", "len", len(key), "key", key)
 		return // It should never happen
 	}
-	record.keys = append(record.keys, key)
+	record.Keys = append(record.Keys, key)
 }
 
 type genstack struct {
@@ -129,7 +130,7 @@ func (stack *genstack) push(path []byte) [][]byte {
 	return dropped
 }
 
-func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
+func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (int, int, error) {
 	var (
 		// Statistic
 		iterated             int
@@ -140,7 +141,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		stack     *genstack
 		startTime = time.Now()
 	)
-	for _, key := range record.keys {
+	for _, key := range record.Keys {
 		// Scope changed, reset the stack context
 		owner, path, hash := DecodeNodeKey(key)
 		if stack != nil && stack.owner != owner {
@@ -205,6 +206,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		err  error
 	)
 	if len(record.DeletionSet) != 0 {
+		record.PartialKeys = partialKeys
 		blob, err = rlp.EncodeToBytes(record)
 		if err != nil {
 			return 0, 0, err
@@ -212,14 +214,14 @@ func (record *CommitRecord) finalize(noDelete *keybloom) (int, int, error) {
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
 	record.initBloom()
-	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet),
+	log.Info("Written commit metadata", "key", len(record.Keys), "stale", len(record.DeletionSet),
 		"samepath", deletedWithSamePath, "innerpath", deletedWithInnerPath, "filter", filtered,
-		"average", float64(iterated)/float64(len(record.keys)), "metasize", len(blob), "bloomSize", common.StorageSize(float64(record.bloom.m())), "elasped", common.PrettyDuration(time.Since(startTime)))
+		"average", float64(iterated)/float64(len(record.Keys)), "metasize", len(blob), "bloomSize", common.StorageSize(float64(record.bloom.m())), "elasped", common.PrettyDuration(time.Since(startTime)))
 
 	if record.onDeletionSet != nil {
 		record.onDeletionSet(record.DeletionSet)
 	}
-	record.DeletionSet, record.keys = nil, nil
+	record.DeletionSet, record.Keys, record.PartialKeys = nil, nil, nil
 	return iterated, filtered, nil
 }
 
