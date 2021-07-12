@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 // MissingNodeError is returned by the trie functions (TryGet, TryUpdate, TryDelete)
@@ -33,7 +34,7 @@ type MissingNodeError struct {
 
 func (err *MissingNodeError) Error() string {
 	if err.Owner == (common.Hash{}) {
-		return fmt.Sprintf("missing trie node %x (path %x)", err.NodeHash, err.Path)
+		return fmt.Sprintf("missing trie node %x (path %x) %v", err.NodeHash, err.Path, hexutil.Encode(EncodeNodeKey(err.Owner, err.Path, err.NodeHash)))
 	}
-	return fmt.Sprintf("missing trie node %x (owner %x) (path %x)", err.NodeHash, err.Owner, err.Path)
+	return fmt.Sprintf("missing trie node %x (owner %x) (path %x) %v", err.NodeHash, err.Owner, err.Path, hexutil.Encode(EncodeNodeKey(err.Owner, err.Path, err.NodeHash)))
 }
