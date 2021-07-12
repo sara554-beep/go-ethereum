@@ -19,8 +19,10 @@ package trie
 import (
 	"bytes"
 	"errors"
+	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -133,74 +135,99 @@ func (stack *genstack) push(path []byte) [][]byte {
 func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (int, int, error) {
 	var (
 		// Statistic
-		iterated             int
-		filtered             int
+		lock                 sync.Mutex
+		iterated             uint64
+		filtered             uint64
 		deletedWithSamePath  int
 		deletedWithInnerPath int
 
-		stack     *genstack
+		//stack     *genstack
 		startTime = time.Now()
-	)
-	for _, key := range record.Keys {
-		// Scope changed, reset the stack context
-		owner, path, hash := DecodeNodeKey(key)
-		if stack != nil && stack.owner != owner {
-			stack = nil
-		}
-		if stack == nil {
-			stack = &genstack{owner: owner}
-		}
-		// Delete all other nodes with same node path
-		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
-			iterated += 1
-			if noDelete.contain(key) {
-				filtered += 1
-				return true
-			}
-			o, p, h := DecodeNodeKey(key)
-			if !bytes.Equal(path, p) {
-				return true
-			}
-			if o != owner {
-				return true
-			}
-			if h == hash {
-				return true
-			}
-			return false
-		})
-		for _, key := range keys {
-			record.DeletionSet = append(record.DeletionSet, key)
-		}
-		deletedWithSamePath += len(keys)
 
-		// Push the path and pop all the children path, delete all intermidate nodes.
-		children := stack.push(path)
-		for _, child := range children {
-			for i := len(path); i < len(child)-1; i++ {
-				innerPath := append(path, child[len(path):i+1]...)
-				keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, innerPath), func(key []byte) bool {
-					iterated += 1
-					if noDelete.contain(key) {
-						filtered += 1
-						return true
-					}
-					o, p, _ := DecodeNodeKey(key)
-					if !bytes.Equal(innerPath, p) {
-						return true
-					}
-					if o != owner {
-						return true
-					}
-					return false
-				})
-				for _, key := range keys {
-					record.DeletionSet = append(record.DeletionSet, key)
-				}
-				deletedWithInnerPath += len(keys)
-			}
-		}
+		wg      sync.WaitGroup
+		threads = make(chan struct{}, runtime.NumCPU())
+	)
+	// Prefill channel with signals
+	for i := 0; i < runtime.NumCPU(); i++ {
+		threads <- struct{}{}
 	}
+	for _, key := range record.Keys {
+		<-threads
+		wg.Add(1)
+		go func(key []byte) {
+			defer func() {
+				threads <- struct{}{}
+				wg.Done()
+			}()
+			// Scope changed, reset the stack context
+			owner, path, hash := DecodeNodeKey(key)
+			keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
+				atomic.AddUint64(&iterated, 1)
+				if noDelete.contain(key) {
+					atomic.AddUint64(&filtered, 1)
+					return true
+				}
+				o, p, h := DecodeNodeKey(key)
+				if !bytes.Equal(path, p) {
+					return true
+				}
+				if o != owner {
+					return true
+				}
+				if h == hash {
+					return true
+				}
+				return false
+			})
+			lock.Lock()
+			for _, key := range keys {
+				record.DeletionSet = append(record.DeletionSet, key)
+			}
+			deletedWithSamePath += len(keys)
+			lock.Unlock()
+		}(key)
+	}
+	wg.Wait()
+	log.Info("Iterate the trie nodes with same path", "elapsed", time.Since(startTime))
+
+	//for _, key := range record.Keys {
+	//	// Scope changed, reset the stack context
+	//	owner, path, hash := DecodeNodeKey(key)
+	//	if stack != nil && stack.owner != owner {
+	//		stack = nil
+	//	}
+	//	if stack == nil {
+	//		stack = &genstack{owner: owner}
+	//	}
+	//	// Push the path and pop all the children path, delete all intermidate nodes.
+	//	children := stack.push(path)
+	//	for _, child := range children {
+	//		for i := len(path); i < len(child)-1; i++ {
+	//			innerPath := append(path, child[len(path):i+1]...)
+	//			keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, innerPath), func(key []byte) bool {
+	//				atomic.AddUint64(&iterated, 1)
+	//				if noDelete.contain(key) {
+	//					atomic.AddUint64(&filtered, 1)
+	//					return true
+	//				}
+	//				o, p, _ := DecodeNodeKey(key)
+	//				if !bytes.Equal(innerPath, p) {
+	//					return true
+	//				}
+	//				if o != owner {
+	//					return true
+	//				}
+	//				return false
+	//			})
+	//			lock.Lock()
+	//			for _, key := range keys {
+	//				record.DeletionSet = append(record.DeletionSet, key)
+	//			}
+	//			deletedWithInnerPath += len(keys)
+	//			lock.Unlock()
+	//		}
+	//	}
+	//}
 	var (
 		blob []byte
 		err  error
@@ -222,7 +249,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		record.onDeletionSet(record.DeletionSet)
 	}
 	record.DeletionSet, record.Keys, record.PartialKeys = nil, nil, nil
-	return iterated, filtered, nil
+	return int(iterated), int(filtered), nil
 }
 
 // initBloom initializes the bloom filter with the key set.
@@ -255,45 +282,62 @@ func (record *CommitRecord) deleteStale(remove func(*CommitRecord, ethdb.KeyValu
 		//mDeleter  = newMarkerWriter(record.db)
 
 		// statistic
-		resurrected int
-		noDeletion  int
-		deleted     int
-	)
-	for _, key := range record.DeletionSet {
-		// Read the resurrection marker is expensive since most of
-		// the disk reads are for the non-existent data. But it's a
-		// background operation so the low efficiency is fine here.
-		blob := rawdb.ReadResurrectionMarker(record.db, key)
-		if len(blob) != 0 {
-			resurrected += 1
-			var marker ResurrectionMarker
-			if err := rlp.DecodeBytes(blob, &marker); err != nil {
-				return err
-			}
-			// Skip the deletion if the preventing-deletion marker
-			// is present, and remove this marker as well.
-			if ok, _ := marker.has(record.number, record.hash); ok {
-				noDeletion += 1
-				//if err := mDeleter.remove(key, record.number, record.hash); err != nil {
-				//	return err
-				//}
-				continue
-			}
-		}
-		if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
-			log.Info("The deleted key is not present", "key", key)
-			continue
-		}
-		rawdb.DeleteTrieNode(batch, key)
-		deleted += 1
+		resurrected uint64
+		noDeletion  uint64
+		deleted     uint64
 
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				return err
-			}
-			batch.Reset()
-		}
+		threads = make(chan struct{}, runtime.NumCPU())
+		lock    sync.Mutex
+		wg      sync.WaitGroup
+	)
+	for i := 0; i < runtime.NumCPU(); i++ {
+		threads <- struct{}{}
 	}
+	for _, key := range record.DeletionSet {
+		<-threads
+		wg.Add(1)
+		go func(key []byte) {
+			defer func() {
+				threads <- struct{}{}
+				wg.Done()
+			}()
+			// Read the resurrection marker is expensive since most of
+			// the disk reads are for the non-existent data. But it's a
+			// background operation so the low efficiency is fine here.
+			blob := rawdb.ReadResurrectionMarker(record.db, key)
+			if len(blob) != 0 {
+				atomic.AddUint64(&resurrected, 1)
+				var marker ResurrectionMarker
+				if err := rlp.DecodeBytes(blob, &marker); err != nil {
+					panic("Failed to decode marker")
+				}
+				// Skip the deletion if the preventing-deletion marker
+				// is present, and remove this marker as well.
+				if ok, _ := marker.has(record.number, record.hash); ok {
+					atomic.AddUint64(&noDeletion, 1)
+					//if err := mDeleter.remove(key, record.number, record.hash); err != nil {
+					//	return err
+					//}
+					return
+				}
+			}
+			if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
+				log.Info("The deleted key is not present", "key", key)
+				return
+			}
+			lock.Lock()
+			rawdb.DeleteTrieNode(batch, key)
+			atomic.AddUint64(&deleted, 1)
+			if batch.ValueSize() > ethdb.IdealBatchSize {
+				if err := batch.Write(); err != nil {
+					panic("failed to write batch")
+				}
+				batch.Reset()
+			}
+			lock.Unlock()
+		}(key)
+	}
+	wg.Wait()
 	// Delete the commit record itself before the markers
 	remove(record, record.db)
 	//if err := mDeleter.flush(batch); err != nil {
