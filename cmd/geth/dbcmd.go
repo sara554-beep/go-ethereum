@@ -621,12 +621,12 @@ func inspectCommitRecord(ctx *cli.Context) error {
 		numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
 		for i := 0; i < len(numbers); i++ {
 			log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals), "type", kind)
-			blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
-			if len(blob) == 0 {
-				log.Info("Empty commit record")
-			}
+			//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+			//if len(blob) == 0 {
+			//	log.Info("Empty commit record")
+			//}
 			var object trie.CommitRecord
-			if err := rlp.DecodeBytes(blob, &object); err != nil {
+			if err := rlp.DecodeBytes(vals[i], &object); err != nil {
 				log.Error("Failed to RLP decode the commit record", "err", err)
 				return err
 			}
