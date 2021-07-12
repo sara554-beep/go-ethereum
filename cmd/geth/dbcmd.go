@@ -620,7 +620,7 @@ func inspectCommitRecord(ctx *cli.Context) error {
 	if number == 0 {
 		numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
 		for i := 0; i < len(numbers); i++ {
-			log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals), "type", kind)
+			log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
 			//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
 			//if len(blob) == 0 {
 			//	log.Info("Empty commit record")
