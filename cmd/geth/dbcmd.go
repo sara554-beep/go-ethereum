@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/rlp"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -607,6 +608,12 @@ func inspectCommitRecord(ctx *cli.Context) error {
 		kind    = ctx.Args().Get(3)
 		deleted bool
 	)
+	var fw string
+	var w io.Writer
+	if ctx.NArg() == 5 {
+		fw = ctx.Args().Get(4)
+		w, _ = os.OpenFile(fw, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	}
 	switch kind {
 	case "live":
 		deleted = false
@@ -630,11 +637,23 @@ func inspectCommitRecord(ctx *cli.Context) error {
 				log.Error("Failed to RLP decode the commit record", "err", err)
 				return err
 			}
+			var found bool
 			for index, k := range object.DeletionSet {
 				if bytes.Equal(k, key) {
+					found = true
 					log.Info("Find the key in deleteion set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
-					return nil
+					break
 				}
+			}
+			if found {
+				if w != nil {
+					for index, k := range object.DeletionSet {
+						owner, path, hash := trie.DecodeNodeKey(k)
+						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+						w.Write([]byte(content))
+					}
+				}
+				return nil
 			}
 		}
 		log.Info("The key is not in deleteion set")
