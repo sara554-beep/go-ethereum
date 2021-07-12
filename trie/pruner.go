@@ -149,6 +149,7 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 		if record.contain(key) {
 			err := p.mwriter.add(key, record.number, record.hash, partial)
 			if err != nil {
+				log.Error("Failed to add key to marker", "err", err)
 				return err
 			}
 			p.resurrected += 1
@@ -161,13 +162,13 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	if !p.config.Enabled {
 		return nil
 	}
-	if p.current == nil {
-		return nil
-	}
 	// Track all the written keys in the bloom, and put it in the commit set
 	// if it's passed by the Commit operation.
 	p.bloom.add(key)
 	if !partial {
+		if p.current == nil {
+			log.Crit("The commit record is not initialized")
+		}
 		p.current.add(key)
 	} else {
 		p.partialKeys = append(p.partialKeys, key)
