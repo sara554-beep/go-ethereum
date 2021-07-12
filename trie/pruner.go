@@ -186,20 +186,21 @@ func (p *pruner) commitEnd() error {
 	for key := range p.config.GenesisSet {
 		p.bloom.add([]byte(key))
 	}
-	iterated, filtered, err := p.current.finalize(p.bloom, p.partialKeys)
+	iterated, filtered, exist, err := p.current.finalize(p.bloom, p.partialKeys)
 	if err != nil {
 		return err
 	}
 	p.iterated += uint64(iterated)
 	p.filtered += uint64(filtered)
 
-	p.recordLock.Lock()
-	p.records = append(p.records, p.current)
-	sort.Sort(commitRecordsByNumber(p.records))
-	p.minRecord = p.records[0].number
-	p.checkRecords()
-	p.recordLock.Unlock()
-
+	if exist {
+		p.recordLock.Lock()
+		p.records = append(p.records, p.current)
+		sort.Sort(commitRecordsByNumber(p.records))
+		p.minRecord = p.records[0].number
+		p.checkRecords()
+		p.recordLock.Unlock()
+	}
 	log.Info("Commit operation is finished", "number", p.current.number, "hash", p.current.hash.Hex())
 
 	p.current = nil

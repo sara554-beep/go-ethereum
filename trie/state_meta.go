@@ -131,7 +131,7 @@ func (stack *genstack) push(path []byte) [][]byte {
 	return dropped
 }
 
-func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (int, int, error) {
+func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (int, int, bool, error) {
 	var (
 		// Statistic
 		//lock                 sync.Mutex
@@ -235,7 +235,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		record.PartialKeys = partialKeys
 		blob, err = rlp.EncodeToBytes(record)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, false, err
 		}
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
@@ -248,7 +248,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		record.onDeletionSet(record.DeletionSet)
 	}
 	record.DeletionSet, record.Keys, record.PartialKeys = nil, nil, nil
-	return int(iterated), int(filtered), nil
+	return int(iterated), int(filtered), len(record.DeletionSet) > 0, nil
 }
 
 // initBloom initializes the bloom filter with the key set.
