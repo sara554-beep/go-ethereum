@@ -609,10 +609,15 @@ func inspectCommitRecord(ctx *cli.Context) error {
 		deleted bool
 	)
 	var fw string
-	var w io.Writer
+	var deleteW io.Writer
+	var keyW io.Writer
+	var pKeyW io.Writer
 	if ctx.NArg() == 5 {
 		fw = ctx.Args().Get(4)
-		w, _ = os.OpenFile(fw, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		deleteW, _ = os.OpenFile(fw+"_deletion", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		keyW, _ = os.OpenFile(fw+"_commit", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		pKeyW, _ = os.OpenFile(fw+"_partial", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+
 	}
 	switch kind {
 	case "live":
@@ -646,11 +651,21 @@ func inspectCommitRecord(ctx *cli.Context) error {
 				}
 			}
 			if found {
-				if w != nil {
+				if deleteW != nil {
 					for index, k := range object.DeletionSet {
 						owner, path, hash := trie.DecodeNodeKey(k)
 						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						w.Write([]byte(content))
+						deleteW.Write([]byte(content))
+					}
+					for index, k := range object.Keys {
+						owner, path, hash := trie.DecodeNodeKey(k)
+						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+						keyW.Write([]byte(content))
+					}
+					for index, k := range object.PartialKeys {
+						owner, path, hash := trie.DecodeNodeKey(k)
+						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+						pKeyW.Write([]byte(content))
 					}
 				}
 				return nil
