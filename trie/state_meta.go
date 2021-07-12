@@ -19,7 +19,6 @@ package trie
 import (
 	"bytes"
 	"errors"
-	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -135,7 +134,7 @@ func (stack *genstack) push(path []byte) [][]byte {
 func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (int, int, error) {
 	var (
 		// Statistic
-		lock                 sync.Mutex
+		//lock                 sync.Mutex
 		iterated             uint64
 		filtered             uint64
 		deletedWithSamePath  int
@@ -144,50 +143,50 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		//stack     *genstack
 		startTime = time.Now()
 
-		wg      sync.WaitGroup
-		threads = make(chan struct{}, runtime.NumCPU())
+		//wg      sync.WaitGroup
+		//threads = make(chan struct{}, runtime.NumCPU())
 	)
 	// Prefill channel with signals
-	for i := 0; i < runtime.NumCPU(); i++ {
-		threads <- struct{}{}
-	}
+	//for i := 0; i < runtime.NumCPU(); i++ {
+	//	threads <- struct{}{}
+	//}
 	for _, key := range record.Keys {
-		<-threads
-		wg.Add(1)
-		go func(key []byte) {
-			defer func() {
-				threads <- struct{}{}
-				wg.Done()
-			}()
-			// Scope changed, reset the stack context
-			owner, path, hash := DecodeNodeKey(key)
-			keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
-				atomic.AddUint64(&iterated, 1)
-				if noDelete.contain(key) {
-					atomic.AddUint64(&filtered, 1)
-					return true
-				}
-				o, p, h := DecodeNodeKey(key)
-				if !bytes.Equal(path, p) {
-					return true
-				}
-				if o != owner {
-					return true
-				}
-				if h == hash {
-					return true
-				}
-				return false
-			})
-			lock.Lock()
-			for _, key := range keys {
-				record.DeletionSet = append(record.DeletionSet, key)
+		//<-threads
+		//wg.Add(1)
+		//go func(key []byte) {
+		//	defer func() {
+		//		threads <- struct{}{}
+		//		wg.Done()
+		//	}()
+		// Scope changed, reset the stack context
+		owner, path, hash := DecodeNodeKey(key)
+		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
+			atomic.AddUint64(&iterated, 1)
+			if noDelete.contain(key) {
+				atomic.AddUint64(&filtered, 1)
+				return true
 			}
-			deletedWithSamePath += len(keys)
-			lock.Unlock()
-		}(key)
+			o, p, h := DecodeNodeKey(key)
+			if !bytes.Equal(path, p) {
+				return true
+			}
+			if o != owner {
+				return true
+			}
+			if h == hash {
+				return true
+			}
+			return false
+		})
+		//lock.Lock()
+		for _, key := range keys {
+			record.DeletionSet = append(record.DeletionSet, key)
+		}
+		deletedWithSamePath += len(keys)
+		//lock.Unlock()
+		//}(key)
 	}
-	wg.Wait()
+	//wg.Wait()
 	log.Info("Iterate the trie nodes with same path", "elapsed", time.Since(startTime))
 
 	//for _, key := range record.Keys {
@@ -286,58 +285,60 @@ func (record *CommitRecord) deleteStale(remove func(*CommitRecord, ethdb.KeyValu
 		noDeletion  uint64
 		deleted     uint64
 
-		threads = make(chan struct{}, runtime.NumCPU())
-		lock    sync.Mutex
-		wg      sync.WaitGroup
+		//threads = make(chan struct{}, runtime.NumCPU())
+		//lock    sync.Mutex
+		//wg      sync.WaitGroup
 	)
-	for i := 0; i < runtime.NumCPU(); i++ {
-		threads <- struct{}{}
-	}
+	//for i := 0; i < runtime.NumCPU(); i++ {
+	//	threads <- struct{}{}
+	//}
 	for _, key := range record.DeletionSet {
-		<-threads
-		wg.Add(1)
-		go func(key []byte) {
-			defer func() {
-				threads <- struct{}{}
-				wg.Done()
-			}()
-			// Read the resurrection marker is expensive since most of
-			// the disk reads are for the non-existent data. But it's a
-			// background operation so the low efficiency is fine here.
-			blob := rawdb.ReadResurrectionMarker(record.db, key)
-			if len(blob) != 0 {
-				atomic.AddUint64(&resurrected, 1)
-				var marker ResurrectionMarker
-				if err := rlp.DecodeBytes(blob, &marker); err != nil {
-					panic("Failed to decode marker")
-				}
-				// Skip the deletion if the preventing-deletion marker
-				// is present, and remove this marker as well.
-				if ok, _ := marker.has(record.number, record.hash); ok {
-					atomic.AddUint64(&noDeletion, 1)
-					//if err := mDeleter.remove(key, record.number, record.hash); err != nil {
-					//	return err
-					//}
-					return
-				}
+		//<-threads
+		//wg.Add(1)
+		//go func(key []byte) {
+		//	defer func() {
+		//		threads <- struct{}{}
+		//		wg.Done()
+		//	}()
+		// Read the resurrection marker is expensive since most of
+		// the disk reads are for the non-existent data. But it's a
+		// background operation so the low efficiency is fine here.
+		blob := rawdb.ReadResurrectionMarker(record.db, key)
+		if len(blob) != 0 {
+			atomic.AddUint64(&resurrected, 1)
+			var marker ResurrectionMarker
+			if err := rlp.DecodeBytes(blob, &marker); err != nil {
+				panic("Failed to decode marker")
 			}
-			if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
-				log.Info("The deleted key is not present", "key", key)
-				return
+			// Skip the deletion if the preventing-deletion marker
+			// is present, and remove this marker as well.
+			if ok, _ := marker.has(record.number, record.hash); ok {
+				atomic.AddUint64(&noDeletion, 1)
+				//if err := mDeleter.remove(key, record.number, record.hash); err != nil {
+				//	return err
+				//}
+				//return err
+				continue
 			}
-			lock.Lock()
-			rawdb.DeleteTrieNode(batch, key)
-			atomic.AddUint64(&deleted, 1)
-			if batch.ValueSize() > ethdb.IdealBatchSize {
-				if err := batch.Write(); err != nil {
-					panic("failed to write batch")
-				}
-				batch.Reset()
+		}
+		if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
+			log.Info("The deleted key is not present", "key", key)
+			//return nil
+			continue
+		}
+		//lock.Lock()
+		rawdb.DeleteTrieNode(batch, key)
+		atomic.AddUint64(&deleted, 1)
+		if batch.ValueSize() > ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				panic("failed to write batch")
 			}
-			lock.Unlock()
-		}(key)
+			batch.Reset()
+		}
+		//lock.Unlock()
+		//}(key)
 	}
-	wg.Wait()
+	//wg.Wait()
 	// Delete the commit record itself before the markers
 	remove(record, record.db)
 	//if err := mDeleter.flush(batch); err != nil {
