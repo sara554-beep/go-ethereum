@@ -241,7 +241,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 	}
 	record.initBloom()
-	log.Info("Written commit metadata", "key", len(record.Keys), "stale", len(record.DeletionSet),
+	log.Info("Written commit metadata", "key", len(record.Keys), "part", len(record.PartialKeys), "stale", len(record.DeletionSet),
 		"samepath", deletedWithSamePath, "innerpath", deletedWithInnerPath, "filter", filtered,
 		"average", float64(iterated)/float64(len(record.Keys)), "metasize", len(blob), "bloomSize", common.StorageSize(float64(record.bloom.m())), "elasped", common.PrettyDuration(time.Since(startTime)))
 
