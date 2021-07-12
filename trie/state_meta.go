@@ -134,32 +134,23 @@ func (stack *genstack) push(path []byte) [][]byte {
 func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (int, int, bool, error) {
 	var (
 		// Statistic
-		//lock                 sync.Mutex
 		iterated             uint64
 		filtered             uint64
 		deletedWithSamePath  int
 		deletedWithInnerPath int
 
-		//stack     *genstack
+		stack     *genstack
 		startTime = time.Now()
-
-		//wg      sync.WaitGroup
-		//threads = make(chan struct{}, runtime.NumCPU())
 	)
-	// Prefill channel with signals
-	//for i := 0; i < runtime.NumCPU(); i++ {
-	//	threads <- struct{}{}
-	//}
 	for _, key := range record.Keys {
-		//<-threads
-		//wg.Add(1)
-		//go func(key []byte) {
-		//	defer func() {
-		//		threads <- struct{}{}
-		//		wg.Done()
-		//	}()
 		// Scope changed, reset the stack context
 		owner, path, hash := DecodeNodeKey(key)
+		if stack != nil && stack.owner != owner {
+			stack = nil
+		}
+		if stack == nil {
+			stack = &genstack{owner: owner}
+		}
 		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
 			atomic.AddUint64(&iterated, 1)
 			if noDelete.contain(key) {
@@ -178,58 +169,41 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 			}
 			return false
 		})
-		//lock.Lock()
 		for _, key := range keys {
 			record.DeletionSet = append(record.DeletionSet, key)
 		}
 		deletedWithSamePath += len(keys)
-		//lock.Unlock()
-		//}(key)
+		// Push the path and pop all the children path, delete all intermidate nodes.
+		children := stack.push(path)
+		for _, child := range children {
+			for i := len(path); i < len(child)-1; i++ {
+				innerPath := append(path, child[len(path):i+1]...)
+				keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, innerPath), func(key []byte) bool {
+					atomic.AddUint64(&iterated, 1)
+					if noDelete.contain(key) {
+						atomic.AddUint64(&filtered, 1)
+						return true
+					}
+					o, p, _ := DecodeNodeKey(key)
+					if !bytes.Equal(innerPath, p) {
+						return true
+					}
+					if o != owner {
+						return true
+					}
+					return false
+				})
+				for _, key := range keys {
+					record.DeletionSet = append(record.DeletionSet, key)
+				}
+				deletedWithInnerPath += len(keys)
+			}
+		}
 	}
-	//wg.Wait()
-	log.Info("Iterate the trie nodes with same path", "elapsed", time.Since(startTime))
-
-	//for _, key := range record.Keys {
-	//	// Scope changed, reset the stack context
-	//	owner, path, hash := DecodeNodeKey(key)
-	//	if stack != nil && stack.owner != owner {
-	//		stack = nil
-	//	}
-	//	if stack == nil {
-	//		stack = &genstack{owner: owner}
-	//	}
-	//	// Push the path and pop all the children path, delete all intermidate nodes.
-	//	children := stack.push(path)
-	//	for _, child := range children {
-	//		for i := len(path); i < len(child)-1; i++ {
-	//			innerPath := append(path, child[len(path):i+1]...)
-	//			keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, innerPath), func(key []byte) bool {
-	//				atomic.AddUint64(&iterated, 1)
-	//				if noDelete.contain(key) {
-	//					atomic.AddUint64(&filtered, 1)
-	//					return true
-	//				}
-	//				o, p, _ := DecodeNodeKey(key)
-	//				if !bytes.Equal(innerPath, p) {
-	//					return true
-	//				}
-	//				if o != owner {
-	//					return true
-	//				}
-	//				return false
-	//			})
-	//			lock.Lock()
-	//			for _, key := range keys {
-	//				record.DeletionSet = append(record.DeletionSet, key)
-	//			}
-	//			deletedWithInnerPath += len(keys)
-	//			lock.Unlock()
-	//		}
-	//	}
-	//}
 	var (
 		blob []byte
 		err  error
+		ok   bool
 	)
 	if len(record.DeletionSet) != 0 {
 		record.PartialKeys = partialKeys
@@ -238,6 +212,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 			return 0, 0, false, err
 		}
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
+		ok = true
 	}
 	record.initBloom()
 	log.Info("Written commit metadata", "key", len(record.Keys), "part", len(record.PartialKeys), "stale", len(record.DeletionSet),
@@ -248,7 +223,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		record.onDeletionSet(record.DeletionSet)
 	}
 	record.DeletionSet, record.Keys, record.PartialKeys = nil, nil, nil
-	return int(iterated), int(filtered), len(record.DeletionSet) > 0, nil
+	return int(iterated), int(filtered), ok, nil
 }
 
 // initBloom initializes the bloom filter with the key set.

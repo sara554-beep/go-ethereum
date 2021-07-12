@@ -89,7 +89,7 @@ func TestStaleKeyGeneration(t *testing.T) {
 	record.add(EncodeNodeKey(common.Hash{}, []byte{0x01, 0x02}, common.HexToHash("0xdeadbeef12")))
 	record.add(EncodeNodeKey(common.Hash{}, []byte{0x01}, common.HexToHash("0xdeadbeef11")))
 	record.add(EncodeNodeKey(common.Hash{}, []byte{}, common.HexToHash("0xdeadbeef10")))
-	record.finalize(newOptimalKeyBloom(1000, 0.01))
+	record.finalize(newOptimalKeyBloom(1000, 0.01), nil)
 
 	// Storage trie
 	record2 := newCommitRecord(db, 100, common.HexToHash("0xdeadbeef"))
@@ -111,5 +111,5 @@ func TestStaleKeyGeneration(t *testing.T) {
 	record2.add(EncodeNodeKey(owner, []byte{0x01, 0x02}, common.HexToHash("0xdeadbeef1a")))                                     // rewrite existent
 	record2.add(EncodeNodeKey(owner, []byte{0x01}, common.HexToHash("0xdeadbeef19")))                                           // rewrite existent
 	record2.add(EncodeNodeKey(owner, []byte{}, common.HexToHash("0xdeadbeef18")))                                               // rewrite existent
-	record2.finalize(newOptimalKeyBloom(1000, 0.01))
+	record2.finalize(newOptimalKeyBloom(1000, 0.01), nil)
 }
