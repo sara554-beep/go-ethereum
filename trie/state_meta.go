@@ -155,7 +155,7 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte, c
 		//	stack = &genstack{owner: owner}
 		//}
 		if time.Since(logged) > time.Second*8 {
-			log.Info("Iterating database", "iterated", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
+			log.Info("Iterating database", "iterated", iterated, "keyIndex", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
 			logged = time.Now()
 		}
 		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
