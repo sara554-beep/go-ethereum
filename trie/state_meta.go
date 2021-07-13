@@ -220,9 +220,11 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte, c
 		if err != nil {
 			return 0, 0, false, err
 		}
+		log.Info("Try to persist commit record", "number", record.number, "hash", record.hash)
 		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
 		ok = true
 	}
+	log.Info("Initialize bloom filter for commit record")
 	record.initBloom()
 	log.Info("Written commit metadata", "key", len(record.Keys), "part", len(record.PartialKeys), "clean", len(record.CleanKeys), "stale", len(record.DeletionSet),
 		"samepath", deletedWithSamePath, "innerpath", deletedWithInnerPath, "filter", filtered,

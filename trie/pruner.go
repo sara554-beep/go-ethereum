@@ -169,6 +169,9 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	if !partial {
 		if p.current != nil {
 			p.current.add(key)
+			if len(p.current.Keys)%100_000 == 0 {
+				log.Info("Added keys to current set", "len", len(p.current.Keys))
+			}
 		} else {
 			p.cleanKeys = append(p.cleanKeys, key)
 		}
@@ -188,6 +191,7 @@ func (p *pruner) commitEnd() error {
 	for key := range p.config.GenesisSet {
 		p.bloom.add([]byte(key))
 	}
+	log.Info("Try to finalize commit operation")
 	iterated, filtered, exist, err := p.current.finalize(p.bloom, p.partialKeys, p.cleanKeys)
 	if err != nil {
 		return err
@@ -195,6 +199,7 @@ func (p *pruner) commitEnd() error {
 	p.iterated += uint64(iterated)
 	p.filtered += uint64(filtered)
 
+	log.Info("Try to insert new commit")
 	if exist {
 		p.recordLock.Lock()
 		p.records = append(p.records, p.current)
