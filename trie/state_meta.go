@@ -141,8 +141,10 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 
 		stack     *genstack
 		startTime = time.Now()
+
+		logged time.Time
 	)
-	for _, key := range record.Keys {
+	for index, key := range record.Keys {
 		// Scope changed, reset the stack context
 		owner, path, hash := DecodeNodeKey(key)
 		if stack != nil && stack.owner != owner {
@@ -150,6 +152,10 @@ func (record *CommitRecord) finalize(noDelete *keybloom, partialKeys [][]byte) (
 		}
 		if stack == nil {
 			stack = &genstack{owner: owner}
+		}
+		if time.Since(logged) > time.Second * 8 {
+			log.Info("Iterating database", "iterated", index, "remaining", len(record.Keys) - index, "elasped", common.PrettyDuration(time.Since(startTime)))
+			logged = time.Now()
 		}
 		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
 			atomic.AddUint64(&iterated, 1)
