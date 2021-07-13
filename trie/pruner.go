@@ -42,6 +42,7 @@ type pruner struct {
 	db          ethdb.KeyValueStore
 	mwriter     *markerWriter
 	partialKeys [][]byte
+	cleanKeys   [][]byte
 	bloom       *keybloom
 	current     *CommitRecord
 	records     []*CommitRecord
@@ -166,10 +167,11 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	// if it's passed by the Commit operation.
 	p.bloom.add(key)
 	if !partial {
-		if p.current == nil {
-			log.Crit("The commit record is not initialized")
+		if p.current != nil {
+			p.current.add(key)
+		} else {
+			p.cleanKeys = append(p.cleanKeys, key)
 		}
-		p.current.add(key)
 	} else {
 		p.partialKeys = append(p.partialKeys, key)
 	}
@@ -186,7 +188,7 @@ func (p *pruner) commitEnd() error {
 	for key := range p.config.GenesisSet {
 		p.bloom.add([]byte(key))
 	}
-	iterated, filtered, exist, err := p.current.finalize(p.bloom, p.partialKeys)
+	iterated, filtered, exist, err := p.current.finalize(p.bloom, p.partialKeys, p.cleanKeys)
 	if err != nil {
 		return err
 	}
@@ -206,6 +208,7 @@ func (p *pruner) commitEnd() error {
 	p.current = nil
 	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate)
 	p.partialKeys = nil
+	p.cleanKeys = nil
 	log.Info("Added new record", "live", len(p.records), "written", p.written, "iterated", p.iterated, "filtered", p.filtered, "resurrected", p.resurrected)
 	return nil
 }
@@ -309,6 +312,7 @@ func (p *pruner) loop() {
 			if len(ret) == 0 {
 				continue
 			}
+			log.Info("Start pruning", "task", len(ret))
 			done, interrupt = make(chan struct{}), new(uint64)
 			go p.pruning(ret, done, interrupt)
 
