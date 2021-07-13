@@ -652,46 +652,48 @@ func inspectCommitRecord(ctx *cli.Context) error {
 	log.Info("Inspect the commit record", "number", number, "hash", hash.Hex(), "key", hexutil.Encode(key), "type", kind, "deleted", deleted)
 
 	if number == 0 {
-		numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
-		for i := 0; i < len(numbers); i++ {
-			log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
-			//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
-			//if len(blob) == 0 {
-			//	log.Info("Empty commit record")
-			//}
-			var object trie.CommitRecord
-			if err := rlp.DecodeBytes(vals[i], &object); err != nil {
-				log.Error("Failed to RLP decode the commit record", "err", err)
-				return err
-			}
-			var found bool
-			for index, k := range object.DeletionSet {
-				if bytes.Equal(k, key) {
-					found = true
-					log.Info("Find the key in deleteion set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
-					break
+		for i := 0; i < 10; i++ {
+			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i * 1000_000), uint64((i+1) * 1000_000), deleted)
+			for i := 0; i < len(numbers); i++ {
+				log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
+				//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+				//if len(blob) == 0 {
+				//	log.Info("Empty commit record")
+				//}
+				var object trie.CommitRecord
+				if err := rlp.DecodeBytes(vals[i], &object); err != nil {
+					log.Error("Failed to RLP decode the commit record", "err", err)
+					return err
 				}
-			}
-			if found {
-				log.Info("Commit details", "deletion", len(object.DeletionSet), "part", len(object.PartialKeys), "commit", len(object.Keys))
-				if deleteW != nil {
-					for index, k := range object.DeletionSet {
-						owner, path, hash := trie.DecodeNodeKey(k)
-						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						deleteW.Write([]byte(content))
-					}
-					for index, k := range object.Keys {
-						owner, path, hash := trie.DecodeNodeKey(k)
-						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						keyW.Write([]byte(content))
-					}
-					for index, k := range object.PartialKeys {
-						owner, path, hash := trie.DecodeNodeKey(k)
-						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						pKeyW.Write([]byte(content))
+				var found bool
+				for index, k := range object.DeletionSet {
+					if bytes.Equal(k, key) {
+						found = true
+						log.Info("Find the key in deleteion set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
+						break
 					}
 				}
-				return nil
+				if found {
+					log.Info("Commit details", "deletion", len(object.DeletionSet), "part", len(object.PartialKeys), "commit", len(object.Keys))
+					if deleteW != nil {
+						for index, k := range object.DeletionSet {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							deleteW.Write([]byte(content))
+						}
+						for index, k := range object.Keys {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							keyW.Write([]byte(content))
+						}
+						for index, k := range object.PartialKeys {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							pKeyW.Write([]byte(content))
+						}
+					}
+					return nil
+				}
 			}
 		}
 		log.Info("The key is not in deleteion set")
@@ -758,46 +760,48 @@ func inspectCommitRecord2(ctx *cli.Context) error {
 	log.Info("Inspect the commit record", "number", number, "hash", hash.Hex(), "key", hexutil.Encode(key), "type", kind, "deleted", deleted)
 
 	if number == 0 {
-		numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(0), uint64(math.MaxUint64), deleted)
-		for i := 0; i < len(numbers); i++ {
-			log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
-			//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
-			//if len(blob) == 0 {
-			//	log.Info("Empty commit record")
-			//}
-			var object trie.CommitRecord
-			if err := rlp.DecodeBytes(vals[i], &object); err != nil {
-				log.Error("Failed to RLP decode the commit record", "err", err)
-				return err
-			}
-			var found bool
-			for index, k := range object.Keys {
-				if bytes.Equal(k, key) {
-					found = true
-					log.Info("Find the key in commit set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
-					break
+		for i := 0; i < 10; i++ {
+			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i * 1000_000), uint64((i+1)* 1000_000), deleted)
+			for i := 0; i < len(numbers); i++ {
+				log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
+				//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+				//if len(blob) == 0 {
+				//	log.Info("Empty commit record")
+				//}
+				var object trie.CommitRecord
+				if err := rlp.DecodeBytes(vals[i], &object); err != nil {
+					log.Error("Failed to RLP decode the commit record", "err", err)
+					return err
 				}
-			}
-			if found {
-				log.Info("Commit details", "deletion", len(object.DeletionSet), "part", len(object.PartialKeys), "commit", len(object.Keys))
-				if deleteW != nil {
-					for index, k := range object.DeletionSet {
-						owner, path, hash := trie.DecodeNodeKey(k)
-						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						deleteW.Write([]byte(content))
-					}
-					for index, k := range object.Keys {
-						owner, path, hash := trie.DecodeNodeKey(k)
-						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						keyW.Write([]byte(content))
-					}
-					for index, k := range object.PartialKeys {
-						owner, path, hash := trie.DecodeNodeKey(k)
-						content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
-						pKeyW.Write([]byte(content))
+				var found bool
+				for index, k := range object.Keys {
+					if bytes.Equal(k, key) {
+						found = true
+						log.Info("Find the key in commit set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
+						break
 					}
 				}
-				return nil
+				if found {
+					log.Info("Commit details", "deletion", len(object.DeletionSet), "part", len(object.PartialKeys), "commit", len(object.Keys))
+					if deleteW != nil {
+						for index, k := range object.DeletionSet {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							deleteW.Write([]byte(content))
+						}
+						for index, k := range object.Keys {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							keyW.Write([]byte(content))
+						}
+						for index, k := range object.PartialKeys {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							pKeyW.Write([]byte(content))
+						}
+					}
+					return nil
+				}
 			}
 		}
 		log.Info("The key is not in deleteion set")
