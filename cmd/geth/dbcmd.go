@@ -69,6 +69,7 @@ Remove blockchain and state databases`,
 			dbListCommitRecord,
 			dbInspectCommitRecord,
 			dbInspectCommitRecord2,
+			dbInspectCommitRecord3,
 			dbInspectResurrectMarker,
 		},
 	}
@@ -236,6 +237,21 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 	dbInspectCommitRecord2 = cli.Command{
 		Action:    utils.MigrateFlags(inspectCommitRecord2),
 		Name:      "inspect-commit2",
+		Usage:     "Inspect the commit record",
+		ArgsUsage: "<number> <hash> <key> <type>",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.SyncModeFlag,
+			utils.MainnetFlag,
+			utils.RopstenFlag,
+			utils.RinkebyFlag,
+			utils.GoerliFlag,
+		},
+		Description: "This command inspect information about the commit record.",
+	}
+	dbInspectCommitRecord3 = cli.Command{
+		Action:    utils.MigrateFlags(inspectCommitRecord3),
+		Name:      "inspect-commit3",
 		Usage:     "Inspect the commit record",
 		ArgsUsage: "<number> <hash> <key> <type>",
 		Flags: []cli.Flag{
@@ -653,7 +669,7 @@ func inspectCommitRecord(ctx *cli.Context) error {
 
 	if number == 0 {
 		for i := 0; i < 10; i++ {
-			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i * 1000_000), uint64((i+1) * 1000_000), deleted)
+			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i*1000_000), uint64((i+1)*1000_000), deleted)
 			for i := 0; i < len(numbers); i++ {
 				log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
 				//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
@@ -761,7 +777,7 @@ func inspectCommitRecord2(ctx *cli.Context) error {
 
 	if number == 0 {
 		for i := 0; i < 10; i++ {
-			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i * 1000_000), uint64((i+1)* 1000_000), deleted)
+			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i*1000_000), uint64((i+1)*1000_000), deleted)
 			for i := 0; i < len(numbers); i++ {
 				log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
 				//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
@@ -775,6 +791,114 @@ func inspectCommitRecord2(ctx *cli.Context) error {
 				}
 				var found bool
 				for index, k := range object.Keys {
+					if bytes.Equal(k, key) {
+						found = true
+						log.Info("Find the key in commit set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
+						break
+					}
+				}
+				if found {
+					log.Info("Commit details", "deletion", len(object.DeletionSet), "part", len(object.PartialKeys), "commit", len(object.Keys))
+					if deleteW != nil {
+						for index, k := range object.DeletionSet {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							deleteW.Write([]byte(content))
+						}
+						for index, k := range object.Keys {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							keyW.Write([]byte(content))
+						}
+						for index, k := range object.PartialKeys {
+							owner, path, hash := trie.DecodeNodeKey(k)
+							content := fmt.Sprintf("%d %v o: %s p %v h: %s\n", index, hexutil.Encode(k), owner.Hex(), path, hash.Hex())
+							pKeyW.Write([]byte(content))
+						}
+					}
+					return nil
+				}
+			}
+		}
+		log.Info("The key is not in deleteion set")
+		return nil
+	}
+
+	blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+	if len(blob) == 0 {
+		log.Info("Empty commit record")
+	}
+	var object trie.CommitRecord
+	if err := rlp.DecodeBytes(blob, &object); err != nil {
+		log.Error("Failed to RLP decode the commit record", "err", err)
+		return err
+	}
+	for index, k := range object.DeletionSet {
+		if bytes.Equal(k, key) {
+			log.Info("Find the key in deleteion set", "index", index)
+			return nil
+		}
+	}
+	log.Info("The key is not in deleteion set")
+	return nil
+}
+
+func inspectCommitRecord3(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	defer db.Close()
+
+	if ctx.NArg() < 4 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	var (
+		number, _   = strconv.ParseUint(ctx.Args().Get(0), 10, 64)
+		hashblob, _ = hexutil.Decode(ctx.Args().Get(1))
+		hash        = common.BytesToHash(hashblob)
+		key, _      = hexutil.Decode(ctx.Args().Get(2))
+
+		kind    = ctx.Args().Get(3)
+		deleted bool
+	)
+	var fw string
+	var deleteW io.Writer
+	var keyW io.Writer
+	var pKeyW io.Writer
+	if ctx.NArg() == 5 {
+		fw = ctx.Args().Get(4)
+		deleteW, _ = os.OpenFile(fw+"_deletion", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		keyW, _ = os.OpenFile(fw+"_commit", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+		pKeyW, _ = os.OpenFile(fw+"_partial", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+
+	}
+	switch kind {
+	case "live":
+		deleted = false
+	case "deleted":
+		deleted = true
+	default:
+		utils.Fatalf("Invalid type, only `live` or `deleted` supported")
+	}
+	log.Info("Inspect the commit record", "number", number, "hash", hash.Hex(), "key", hexutil.Encode(key), "type", kind, "deleted", deleted)
+
+	if number == 0 {
+		for i := 0; i < 10; i++ {
+			numbers, hashes, vals := rawdb.ReadAllCommitRecords(db, uint64(i*1000_000), uint64((i+1)*1000_000), deleted)
+			for i := 0; i < len(numbers); i++ {
+				log.Info("Commit record", "number", numbers[i], "hash", hashes[i].Hex(), "size", len(vals[i]), "type", kind)
+				//blob := rawdb.ReadCommitRecord(db, number, hash, deleted)
+				//if len(blob) == 0 {
+				//	log.Info("Empty commit record")
+				//}
+				var object trie.CommitRecord
+				if err := rlp.DecodeBytes(vals[i], &object); err != nil {
+					log.Error("Failed to RLP decode the commit record", "err", err)
+					return err
+				}
+				var found bool
+				for index, k := range object.PartialKeys {
 					if bytes.Equal(k, key) {
 						found = true
 						log.Info("Find the key in commit set", "index", index, "number", numbers[i], "hash", hashes[i].Hex())
