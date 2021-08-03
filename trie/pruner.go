@@ -40,10 +40,8 @@ type PrunerConfig struct {
 type pruner struct {
 	config      PrunerConfig
 	db          ethdb.KeyValueStore
-	mwriter     *markerWriter
 	partialKeys [][]byte
 	cleanKeys   [][]byte
-	bloom       *keybloom
 	current     *CommitRecord
 	records     []*CommitRecord
 	minRecord   uint64
@@ -66,13 +64,7 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	numbers, hashes, blobs := rawdb.ReadAllCommitRecords(db, 0, math.MaxUint64, false)
 	var records []*CommitRecord
 	for i := 0; i < len(numbers); i++ {
-		record, err := loadCommitRecord(db, numbers[i], hashes[i], blobs[i])
-		if err != nil {
-			log.Info("Commit record is corrupted", "number", numbers[i], "hash", hashes[i].Hex())
-			rawdb.DeleteCommitRecord(db, numbers[i], hashes[i]) // Corrupted record can be just discarded
-			continue
-		}
-		records = append(records, record)
+		records = append(records, newCommitRecord(db, numbers[i], hashes[i], blobs[i]))
 	}
 	sort.Sort(commitRecordsByNumber(records))
 
@@ -83,8 +75,6 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	pruner := &pruner{
 		config:    config,
 		db:        db,
-		mwriter:   newMarkerWriter(db),
-		bloom:     newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate),
 		records:   records,
 		minRecord: minRecord,
 		signal:    config.Signal,
@@ -144,18 +134,6 @@ func (p *pruner) commitStart(number uint64, hash common.Hash) {
 }
 
 func (p *pruner) addKey(key []byte, partial bool) error {
-	// Invalidate the previous deletion if the given key is in the
-	// deletion set. It's done no matter the pruning is enabled or not.
-	for _, record := range p.records {
-		if record.contain(key) {
-			err := p.mwriter.add(key, record.number, record.hash, partial)
-			if err != nil {
-				log.Error("Failed to add key to marker", "err", err)
-				return err
-			}
-			p.resurrected += 1
-		}
-	}
 	p.written += 1
 
 	// If the pruning is disabled, or there are too many un-processed pruning
@@ -163,9 +141,6 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	if !p.config.Enabled {
 		return nil
 	}
-	// Track all the written keys in the bloom, and put it in the commit set
-	// if it's passed by the Commit operation.
-	p.bloom.add(key)
 	if !partial {
 		if p.current != nil {
 			p.current.add(key)
@@ -188,11 +163,8 @@ func (p *pruner) commitEnd() error {
 	if p.current == nil {
 		return nil
 	}
-	for key := range p.config.GenesisSet {
-		p.bloom.add([]byte(key))
-	}
 	log.Info("Try to finalize commit operation")
-	iterated, filtered, exist, err := p.current.finalize(p.bloom, p.partialKeys, p.cleanKeys)
+	iterated, filtered, exist, err := p.current.finalize(p.partialKeys, p.cleanKeys)
 	if err != nil {
 		return err
 	}
@@ -211,16 +183,10 @@ func (p *pruner) commitEnd() error {
 	log.Info("Commit operation is finished", "number", p.current.number, "hash", p.current.hash.Hex())
 
 	p.current = nil
-	p.bloom = newOptimalKeyBloom(commitBloomSize, maxFalsePositiveRate)
 	p.partialKeys = nil
 	p.cleanKeys = nil
 	log.Info("Added new record", "live", len(p.records), "written", p.written, "iterated", p.iterated, "filtered", p.filtered, "resurrected", p.resurrected)
 	return nil
-}
-
-// flushMarker flushes out all cached marker updates into the given database writer
-func (p *pruner) flushMarker(writer ethdb.KeyValueWriter) error {
-	return p.mwriter.flush(writer)
 }
 
 func (p *pruner) filterRecords(number uint64) []*CommitRecord {

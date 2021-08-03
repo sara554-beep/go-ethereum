@@ -59,15 +59,6 @@ var (
 )
 
 const (
-	// commitBloomSize is the rough trie node number of each commit operation
-	// (and all partial commits). The value can be twisted a bit based on the
-	// experience.
-	commitBloomSize = 6000_000
-
-	// maxFalsePositiveRate is the maximum acceptable bloom filter false-positive
-	// rate to aviod too many useless operations.
-	maxFalsePositiveRate = 0.01
-
 	// minBlockConfirms is the minimal block confirms on top for executing pruning.
 	minBlockConfirms = 3600
 )
@@ -659,9 +650,6 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		}
 		// If we exceeded the ideal batch size, commit and reset
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
-			if err := db.pruner.flushMarker(batch); err != nil {
-				return err
-			}
 			if err := batch.Write(); err != nil {
 				log.Error("Failed to write flush list to disk", "err", err)
 				return err
@@ -678,9 +666,6 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		oldest = node.flushNext
 	}
 	// Flush out any remainder data from the last batch
-	if err := db.pruner.flushMarker(batch); err != nil {
-		return err
-	}
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to write flush list to disk", "err", err)
 		return err
@@ -770,9 +755,6 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 		return err
 	}
 	// Trie mostly committed to disk, flush any batch leftovers
-	if err := db.pruner.flushMarker(batch); err != nil {
-		return err
-	}
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to write trie to disk", "err", err)
 		return err
@@ -840,9 +822,6 @@ func (db *Database) commit(owner common.Hash, path []byte, hash common.Hash, bat
 	}
 	// If we've reached an optimal batch size, commit and start over
 	if batch.ValueSize() >= ethdb.IdealBatchSize {
-		if err := db.pruner.flushMarker(batch); err != nil {
-			return err
-		}
 		if err := batch.Write(); err != nil {
 			return err
 		}
