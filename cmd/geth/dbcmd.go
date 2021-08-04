@@ -70,7 +70,6 @@ Remove blockchain and state databases`,
 			dbInspectCommitRecord,
 			dbInspectCommitRecord2,
 			dbInspectCommitRecord3,
-			dbInspectResurrectMarker,
 		},
 	}
 	dbInspectCmd = cli.Command{
@@ -263,21 +262,6 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 			utils.GoerliFlag,
 		},
 		Description: "This command inspect information about the commit record.",
-	}
-	dbInspectResurrectMarker = cli.Command{
-		Action:    utils.MigrateFlags(inspectResurrectionMarker),
-		Name:      "inspect-marker",
-		Usage:     "Inspect the resurrect marker",
-		ArgsUsage: "<number> <hash> <key>",
-		Flags: []cli.Flag{
-			utils.DataDirFlag,
-			utils.SyncModeFlag,
-			utils.MainnetFlag,
-			utils.RopstenFlag,
-			utils.RinkebyFlag,
-			utils.GoerliFlag,
-		},
-		Description: "This command inspect information about the resurrection marker",
 	}
 )
 
@@ -948,42 +932,5 @@ func inspectCommitRecord3(ctx *cli.Context) error {
 		}
 	}
 	log.Info("The key is not in deleteion set")
-	return nil
-}
-
-func inspectResurrectionMarker(ctx *cli.Context) error {
-	stack, _ := makeConfigNode(ctx)
-	defer stack.Close()
-
-	db := utils.MakeChainDatabase(ctx, stack, true)
-	defer db.Close()
-
-	if ctx.NArg() < 3 {
-		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
-	}
-	var (
-		number, _   = strconv.ParseUint(ctx.Args().Get(0), 10, 64)
-		hashblob, _ = hexutil.Decode(ctx.Args().Get(1))
-		hash        = common.BytesToHash(hashblob)
-		key, _      = hexutil.Decode(ctx.Args().Get(2))
-	)
-	log.Info("Inspect the resurrect marker", "number", number, "hash", hash.Hex(), "key", hexutil.Encode(key))
-
-	blob := rawdb.ReadResurrectionMarker(db, key)
-	if len(blob) == 0 {
-		log.Info("No marker found")
-		return nil
-	}
-	var marker trie.ResurrectionMarker
-	if err := rlp.DecodeBytes(blob, &marker); err != nil {
-		utils.Fatalf("Failed to decode bytes %v", err)
-	}
-	for i := 0; i < len(marker.Numbers); i++ {
-		if marker.Numbers[i] == number && marker.Hashes[i] == hash {
-			log.Info("Find the record in marker", "number", marker.Numbers[i], "hash", marker.Hashes[i].Hex())
-			return nil
-		}
-	}
-	log.Info("Nothing found in marker", "len", len(marker.Numbers))
 	return nil
 }

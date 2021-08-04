@@ -302,10 +302,8 @@ func NewDatabaseWithConfig(diskdb ethdb.KeyValueStore, config *Config) *Database
 	if config == nil || config.Preimages { // TODO(karalabe): Flip to default off in the future
 		db.preimages = make(map[common.Hash][]byte)
 	}
-	if config == nil {
-		db.pruner = newPruner(PrunerConfig{Enabled: false}, diskdb)
-	} else {
-		db.pruner = newPruner(config.Pruner, diskdb)
+	if config != nil {
+		db.pruner = newPruner(config.Pruner, db)
 	}
 	return db
 }
@@ -637,9 +635,10 @@ func (db *Database) Cap(limit common.StorageSize) error {
 		}
 	}
 	// Keep committing nodes from the flush-list until we're below allowance
-	db.pruner.pause()
-	defer db.pruner.resume()
-
+	if db.pruner != nil {
+		db.pruner.pause()
+		defer db.pruner.resume()
+	}
 	oldest := db.oldest
 	for size > limit && oldest != metaRoot {
 		// Fetch the oldest referenced node and push into the batch
@@ -740,14 +739,15 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 		batch.Reset()
 	}
 	// Suspend all background pruning operations.
-	db.pruner.pause()
-	defer db.pruner.resume()
-
+	if db.pruner != nil {
+		db.pruner.pause()
+		defer db.pruner.resume()
+	}
 	// Move the trie itself into the batch, flushing if enough data is accumulated
 	nodes, storage := len(db.dirties), db.dirtiesSize
 	writeMeta := number != 0 && hash != (common.Hash{})
 	uncacher := &cleaner{db: db}
-	if writeMeta {
+	if writeMeta && db.pruner != nil {
 		db.pruner.commitStart(number, hash)
 	}
 	if err := db.commit(common.Hash{}, []byte{}, root, batch, uncacher, callback); err != nil {
@@ -766,7 +766,7 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 	batch.Replay(uncacher)
 	batch.Reset()
 
-	if writeMeta {
+	if writeMeta && db.pruner != nil {
 		if err := db.pruner.commitEnd(); err != nil {
 			log.Warn("Failed to persist commit record", "hash", hash, "number", number, "err", err)
 			return err
@@ -838,8 +838,10 @@ func (db *Database) writeNode(writer ethdb.KeyValueWriter, owner common.Hash, pa
 	// Mark no deletion if the written node is in the deletion set of
 	// the previous commits.
 	key := EncodeNodeKey(owner, path, hash)
-	if err := db.pruner.addKey(key, partial); err != nil {
-		return err
+	if db.pruner != nil {
+		if err := db.pruner.addKey(key, partial); err != nil {
+			return err
+		}
 	}
 	// Flush the node index and node itself into the disk in atomic way
 	rawdb.WriteTrieNode(writer, key, node)

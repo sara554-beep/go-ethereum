@@ -30,7 +30,6 @@ import (
 )
 
 type PrunerConfig struct {
-	Enabled        bool
 	GenesisSet     map[string]struct{}
 	MaximumRecords int
 	Signal         chan uint64
@@ -39,7 +38,7 @@ type PrunerConfig struct {
 
 type pruner struct {
 	config      PrunerConfig
-	db          ethdb.KeyValueStore
+	db          *Database
 	partialKeys [][]byte
 	cleanKeys   [][]byte
 	current     *CommitRecord
@@ -60,11 +59,11 @@ type pruner struct {
 	resurrected uint64 // Counter for the total resurrected trie nodes
 }
 
-func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
-	numbers, hashes, blobs := rawdb.ReadAllCommitRecords(db, 0, math.MaxUint64, false)
+func newPruner(config PrunerConfig, triedb *Database) *pruner {
+	numbers, hashes, _ := rawdb.ReadAllCommitRecords(triedb.diskdb, 0, math.MaxUint64, false)
 	var records []*CommitRecord
 	for i := 0; i < len(numbers); i++ {
-		records = append(records, newCommitRecord(db, numbers[i], hashes[i], blobs[i]))
+		records = append(records, newCommitRecord(triedb.diskdb, numbers[i], hashes[i]))
 	}
 	sort.Sort(commitRecordsByNumber(records))
 
@@ -74,7 +73,7 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	}
 	pruner := &pruner{
 		config:    config,
-		db:        db,
+		db:        triedb,
 		records:   records,
 		minRecord: minRecord,
 		signal:    config.Signal,
@@ -88,7 +87,7 @@ func newPruner(config PrunerConfig, db ethdb.KeyValueStore) *pruner {
 	go pruner.loop()
 
 	var ctx []interface{}
-	ctx = append(ctx, "enabled", config.Enabled, "maxtasks", pruner.config.MaximumRecords)
+	ctx = append(ctx, "maxtasks", pruner.config.MaximumRecords)
 	if len(records) > 0 {
 		ctx = append(ctx, "records", len(pruner.records), "oldest", pruner.minRecord)
 	}
@@ -115,9 +114,6 @@ func (p *pruner) close() {
 }
 
 func (p *pruner) commitStart(number uint64, hash common.Hash) {
-	if !p.config.Enabled {
-		return
-	}
 	if p.current != nil {
 		log.Crit("The current commit record is not nil")
 	}
@@ -129,18 +125,12 @@ func (p *pruner) commitStart(number uint64, hash common.Hash) {
 		log.Info("Too many accumulated records", "number", live, "threshold", p.config.MaximumRecords)
 		return
 	}
-	p.current = newCommitRecord(p.db, number, hash)
+	p.current = newCommitRecord(p.db.diskdb, number, hash)
 	log.Info("Start commit operation", "number", number, "hash", hash.Hex())
 }
 
 func (p *pruner) addKey(key []byte, partial bool) error {
 	p.written += 1
-
-	// If the pruning is disabled, or there are too many un-processed pruning
-	// tasks remained, skip the tracking .
-	if !p.config.Enabled {
-		return nil
-	}
 	if !partial {
 		if p.current != nil {
 			p.current.add(key)
@@ -157,9 +147,6 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 }
 
 func (p *pruner) commitEnd() error {
-	if !p.config.Enabled {
-		return nil
-	}
 	if p.current == nil {
 		return nil
 	}
@@ -242,17 +229,17 @@ func (p *pruner) pruning(records []*CommitRecord, done chan struct{}, interrupt 
 			return
 		}
 		if !p.config.IsCanonical(r.number, r.hash) {
-			p.removeRecord(r, p.db)
+			p.removeRecord(r, p.db.diskdb)
 			log.Info("Filtered out side commit record", "number", r.number, "hash", r.hash)
 			continue
 		}
-		record, err := readCommitRecord(p.db, r.number, r.hash)
+		record, err := readCommitRecord(p.db.diskdb, r.number, r.hash)
 		if err != nil {
-			p.removeRecord(r, p.db)
+			p.removeRecord(r, p.db.diskdb)
 			log.Info("Filtered out corrupted commit record", "number", r.number, "hash", r.hash, "err", err)
 			continue
 		}
-		record.deleteStale(p.removeRecord)
+		record.deleteStale(p.db, p.removeRecord)
 	}
 }
 

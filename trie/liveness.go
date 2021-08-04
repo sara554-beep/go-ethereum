@@ -43,6 +43,15 @@ type traverserState struct {
 	hash   common.Hash     // Hash of the trie node at the traversed position
 }
 
+// ownerAndPath resolves the node path referenced by the traverser.
+func (state *traverserState) ownerAndPath() (common.Hash, []byte) {
+	if index := bytes.Index(state.prefix, []byte{0xff}); index == -1 {
+		return common.Hash{}, state.prefix
+	} else {
+		return common.BytesToHash(state.prefix[:index]), state.prefix[index+1:]
+	}
+}
+
 // live checks whether the trie iterated by this traverser contains the hashnode
 // at the given path, minimizing data access and processing by reusing previous
 // state instead of starting fresh.
@@ -62,23 +71,23 @@ func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte) bool 
 	for len(remain) > 0 {
 		// If we're at a hash node, expand before continuing
 		if n, ok := t.state.node.(hashNode); ok {
-			// Generate the database key for this hash node
 			t.state.hash = common.BytesToHash(n)
-			byteKey := EncodeNodeKey(owner, path, t.state.hash)
-			key := string(byteKey)
+
 			// Replace the node in the traverser with the expanded one
-			if enc := t.db.cleans.Get(nil, byteKey); enc != nil {
+			sowner, spath := t.state.ownerAndPath()
+			key := EncodeNodeKey(sowner, spath, t.state.hash)
+			if enc := t.db.cleans.Get(nil, key); enc != nil {
 				t.state.node = mustDecodeNode(t.state.hash[:], enc)
-			} else if node := t.db.dirties[key]; node != nil {
+			} else if node := t.db.dirties[string(key)]; node != nil {
 				t.state.node = node.node
 			} else {
-				blob, err := t.db.diskdb.Get(byteKey)
+				blob, err := t.db.diskdb.Get(key)
 				if blob == nil || err != nil {
 					log.Error("Missing referenced node", "owner", owner, "hash", t.state.hash.Hex(), "path", fmt.Sprintf("%x", path))
 					return false
 				}
 				t.state.node = mustDecodeNode(t.state.hash[:], blob)
-				t.db.cleans.Set(byteKey, blob)
+				t.db.cleans.Set(key, blob)
 			}
 		}
 		// If we reached an account node, extract the storage trie root to continue on

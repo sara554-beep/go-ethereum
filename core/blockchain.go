@@ -269,7 +269,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		Journal:   cacheConfig.TrieCleanJournal,
 		Preimages: cacheConfig.Preimages,
 		Pruner: trie.PrunerConfig{
-			Enabled:        true,
 			GenesisSet:     genesisSet,
 			MaximumRecords: 3,
 			Signal:         signal,

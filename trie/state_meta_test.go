@@ -16,6 +16,7 @@
 
 package trie
 
+/*
 import (
 	"bytes"
 	"testing"
@@ -113,3 +114,5 @@ func TestStaleKeyGeneration(t *testing.T) {
 	record2.add(EncodeNodeKey(owner, []byte{}, common.HexToHash("0xdeadbeef18")))                                               // rewrite existent
 	record2.finalize(newOptimalKeyBloom(1000, 0.01), nil)
 }
+
+*/

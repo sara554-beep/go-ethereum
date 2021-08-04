@@ -116,25 +116,13 @@ func (stack *genstack) push(path []byte) [][]byte {
 func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (int, int, bool, error) {
 	var (
 		// Statistic
-		iterated             uint64
-		filtered             uint64
-		deletedWithSamePath  int
-		deletedWithInnerPath int
-
-		//stack     *genstack
+		iterated  uint64
+		filtered  uint64
 		startTime = time.Now()
-
-		logged time.Time
+		logged    time.Time
 	)
 	for index, key := range record.Keys {
-		// Scope changed, reset the stack context
 		owner, path, hash := DecodeNodeKey(key)
-		//if stack != nil && stack.owner != owner {
-		//	stack = nil
-		//}
-		//if stack == nil {
-		//	stack = &genstack{owner: owner}
-		//}
 		if time.Since(logged) > time.Second*8 {
 			log.Info("Iterating database", "iterated", iterated, "keyIndex", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
 			logged = time.Now()
@@ -156,34 +144,6 @@ func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (
 		for _, key := range keys {
 			record.DeletionSet = append(record.DeletionSet, key)
 		}
-		deletedWithSamePath += len(keys)
-
-		// Push the path and pop all the children path, delete all intermidate nodes.
-		//children := stack.push(path)
-		//for _, child := range children {
-		//	for i := len(path); i < len(child)-1; i++ {
-		//		innerPath := append(path, child[len(path):i+1]...)
-		//		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, innerPath), func(key []byte) bool {
-		//			atomic.AddUint64(&iterated, 1)
-		//			if noDelete.contain(key) {
-		//				atomic.AddUint64(&filtered, 1)
-		//				return true
-		//			}
-		//			o, p, _ := DecodeNodeKey(key)
-		//			if !bytes.Equal(innerPath, p) {
-		//				return true
-		//			}
-		//			if o != owner {
-		//				return true
-		//			}
-		//			return false
-		//		})
-		//		for _, key := range keys {
-		//			record.DeletionSet = append(record.DeletionSet, key)
-		//		}
-		//		deletedWithInnerPath += len(keys)
-		//	}
-		//}
 	}
 	var (
 		blob []byte
@@ -202,8 +162,7 @@ func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (
 		ok = true
 	}
 	log.Info("Written commit metadata", "key", len(record.Keys), "part", len(record.PartialKeys), "clean", len(record.CleanKeys), "stale", len(record.DeletionSet),
-		"samepath", deletedWithSamePath, "innerpath", deletedWithInnerPath, "filter", filtered,
-		"average", float64(iterated)/float64(len(record.Keys)), "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
+		"filter", filtered, "average", float64(iterated)/float64(len(record.Keys)), "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
 
 	if record.onDeletionSet != nil {
 		record.onDeletionSet(record.DeletionSet)
@@ -212,59 +171,58 @@ func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (
 	return int(iterated), int(filtered), ok, nil
 }
 
-func (record *CommitRecord) deleteStale(remove func(*CommitRecord, ethdb.KeyValueStore)) error {
+func (record *CommitRecord) deleteStale(db *Database, remove func(*CommitRecord, ethdb.KeyValueStore)) error {
 	var (
 		startTime = time.Now()
 		batch     = record.db.NewBatch()
-
-		// statistic
-		resurrected uint64
-		noDeletion  uint64
-		deleted     uint64
-
-		//threads = make(chan struct{}, runtime.NumCPU())
-		//lock    sync.Mutex
-		//wg      sync.WaitGroup
+		tries     []*traverser // Individual trie traversers for liveness checks
+		checks    uint64
+		deleted   uint64
 	)
-	//for i := 0; i < runtime.NumCPU(); i++ {
-	//	threads <- struct{}{}
-	//}
-	for _, key := range record.DeletionSet {
-		//<-threads
-		//wg.Add(1)
-		//go func(key []byte) {
-		//	defer func() {
-		//		threads <- struct{}{}
-		//		wg.Done()
-		//	}()
-		// LIVENESS CHECK HERE
+	db.lock.RLock()
+	for key := range db.dirties[metaRoot].children {
+		_, _, hash := DecodeNodeKey([]byte(key))
+		tries = append(tries, &traverser{
+			db:    db,
+			state: &traverserState{hash: hash, node: hashNode(hash[:])},
+		})
+	}
+	for index, key := range record.DeletionSet {
+		owner, path, hash := DecodeNodeKey(key)
+		// Iterate over all the live tries and check node liveliness
+		crosspath := path
+		if owner != (common.Hash{}) {
+			crosspath = append(append(keybytesToHex(owner[:]), 0xff), crosspath...)
+		}
+		for _, trie := range tries {
+			checks += 1
+			if trie.live(owner, hash, crosspath) {
+				continue
+			}
+		}
 		if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
 			log.Info("The deleted key is not present", "key", key)
-			//return nil
 			continue
 		}
-		//lock.Lock()
 		rawdb.DeleteTrieNode(batch, key)
 		atomic.AddUint64(&deleted, 1)
+
 		if batch.ValueSize() > ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				panic("failed to write batch")
 			}
 			batch.Reset()
 		}
-		//lock.Unlock()
-		//}(key)
+		if index%50000 == 0 {
+			log.Info("Pruning stale trie nodes", "checks", checks, "deleted", index, "elasped", common.PrettyDuration(time.Since(startTime)))
+		}
 	}
-	//wg.Wait()
-	// Delete the commit record itself before the markers
+	db.lock.RUnlock()
 	remove(record, record.db)
-	//if err := mDeleter.flush(batch); err != nil {
-	//	return err
-	//}
 	if err := batch.Write(); err != nil {
 		return err
 	}
-	log.Info("Pruned stale trie nodes", "number", record.number, "hash", record.hash, "deleted", deleted, "resurrected", resurrected, "nodeletion", noDeletion, "elasped", common.PrettyDuration(time.Since(startTime)))
+	log.Info("Pruned stale trie nodes", "number", record.number, "hash", record.hash, "checks", checks, "deleted", deleted, "elapsed", common.PrettyDuration(time.Since(startTime)))
 	return nil
 }
 
