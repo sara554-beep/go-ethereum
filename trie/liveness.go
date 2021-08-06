@@ -48,7 +48,7 @@ func (state *traverserState) ownerAndPath() (common.Hash, []byte) {
 	if index := bytes.Index(state.prefix, []byte{0xff}); index == -1 {
 		return common.Hash{}, state.prefix
 	} else {
-		return common.BytesToHash(state.prefix[:index]), state.prefix[index+1:]
+		return common.BytesToHash(HexToKeybytes(state.prefix[:index])), state.prefix[index+1:]
 	}
 }
 

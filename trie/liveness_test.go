@@ -17,6 +17,8 @@
 package trie
 
 import (
+	"bytes"
+	"fmt"
 	"testing"
 
 	"github.com/VictoriaMetrics/fastcache"
@@ -64,4 +66,20 @@ func TestCheckLiveness(t *testing.T) {
 			t.Fatalf("Missing existent node")
 		}
 	}
+}
+
+func myFunc(input []byte) (common.Hash, []byte) {
+	if index := bytes.Index(input, []byte{0xff}); index == -1 {
+		return common.Hash{}, input
+	} else {
+		return common.BytesToHash(HexToKeybytes(input[:index])), input[index+1:]
+	}
+}
+
+func TestMy(t *testing.T) {
+	var b = common.Hex2Bytes("000e0f06010d0701070f0307090d08010c0c040b0706060309090700070a0a0f0204000d0907000e0609060a010d010f000a04020d0007070f060d0b0c0a040010ff0e0c0101")
+
+	owner, path := myFunc(b)
+	fmt.Println(owner.Hex())
+	fmt.Println(path)
 }
