@@ -83,7 +83,7 @@ func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte) bool 
 			} else {
 				blob, err := t.db.diskdb.Get(key)
 				if blob == nil || err != nil {
-					log.Error("Missing referenced node", "owner", owner, "hash", t.state.hash.Hex(),
+					log.Error("Missing referenced node", "sowner", sowner, "shash", t.state.hash.Hex(), "spath", fmt.Sprintf("%x", spath),
 						"remain", fmt.Sprintf("%x", remain), "path", fmt.Sprintf("%x", path))
 					return false
 				}
