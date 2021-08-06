@@ -177,6 +177,7 @@ func (record *CommitRecord) deleteStale(db *Database, remove func(*CommitRecord,
 		batch     = record.db.NewBatch()
 		tries     []*traverser // Individual trie traversers for liveness checks
 		checks    uint64
+		refed     uint64
 		deleted   uint64
 	)
 	db.lock.RLock()
@@ -194,11 +195,17 @@ func (record *CommitRecord) deleteStale(db *Database, remove func(*CommitRecord,
 		if owner != (common.Hash{}) {
 			crosspath = append(append(keybytesToHex(owner[:]), 0xff), crosspath...)
 		}
+		var skip bool
 		for _, trie := range tries {
 			checks += 1
 			if trie.live(owner, hash, crosspath) {
-				continue
+				skip = true
+				break
 			}
+		}
+		if skip {
+			refed += 1
+			continue
 		}
 		if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
 			log.Info("The deleted key is not present", "key", key)
@@ -222,7 +229,7 @@ func (record *CommitRecord) deleteStale(db *Database, remove func(*CommitRecord,
 	if err := batch.Write(); err != nil {
 		return err
 	}
-	log.Info("Pruned stale trie nodes", "number", record.number, "hash", record.hash, "checks", checks, "deleted", deleted, "elapsed", common.PrettyDuration(time.Since(startTime)))
+	log.Info("Pruned stale trie nodes", "number", record.number, "hash", record.hash, "checks", checks, "referenced", refed, "deleted", deleted, "elapsed", common.PrettyDuration(time.Since(startTime)))
 	return nil
 }
 
