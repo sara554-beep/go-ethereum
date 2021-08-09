@@ -19,6 +19,7 @@ package trie
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -81,8 +82,8 @@ func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte) bool 
 			} else if node := t.db.dirties[string(key)]; node != nil {
 				t.state.node = node.node
 			} else {
-				blob, err := t.db.diskdb.Get(key)
-				if blob == nil || err != nil {
+				blob := rawdb.ReadTrieNode(t.db.diskdb, key)
+				if blob == nil {
 					log.Error("Missing referenced node", "sowner", sowner, "shash", t.state.hash.Hex(), "spath", fmt.Sprintf("%x", spath),
 						"remain", fmt.Sprintf("%x", remain), "path", fmt.Sprintf("%x", path), "owner", owner.Hex(), "hash", hash.Hex())
 					return false
