@@ -84,7 +84,7 @@ func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte) bool 
 				blob, err := t.db.diskdb.Get(key)
 				if blob == nil || err != nil {
 					log.Error("Missing referenced node", "sowner", sowner, "shash", t.state.hash.Hex(), "spath", fmt.Sprintf("%x", spath),
-						"remain", fmt.Sprintf("%x", remain), "path", fmt.Sprintf("%x", path))
+						"remain", fmt.Sprintf("%x", remain), "path", fmt.Sprintf("%x", path), "owner", owner.Hex(), "hash", hash.Hex())
 					return false
 				}
 				t.state.node = mustDecodeNode(t.state.hash[:], blob)

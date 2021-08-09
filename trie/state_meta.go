@@ -182,12 +182,19 @@ func (record *CommitRecord) deleteStale(db *Database, remove func(*CommitRecord,
 	)
 	db.lock.RLock()
 	for key := range db.dirties[metaRoot].children {
-		_, _, hash := DecodeNodeKey([]byte(key))
+		owner, path, hash := DecodeNodeKey([]byte(key))
+		if owner != (common.Hash{}) {
+			log.Crit("Invalid root node", "owner", owner.Hex(), "path", path, "hash", hash.Hex())
+		}
+		if len(path) != 0 {
+			log.Crit("Invalid root node", "owner", owner.Hex(), "path", path, "hash", hash.Hex())
+		}
 		tries = append(tries, &traverser{
 			db:    db,
 			state: &traverserState{hash: hash, node: hashNode(hash[:])},
 		})
 	}
+	log.Info("Setup live trie traverses", "number", len(db.dirties[metaRoot].children))
 	for index, key := range record.DeletionSet {
 		owner, path, hash := DecodeNodeKey(key)
 		// Iterate over all the live tries and check node liveliness
