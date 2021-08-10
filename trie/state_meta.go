@@ -113,7 +113,7 @@ func (stack *genstack) push(path []byte) [][]byte {
 	return dropped
 }
 
-func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (int, int, bool, error) {
+func (record *CommitRecord) finalize(genesis map[string]struct{}, partialKeys [][]byte, cleanKeys [][]byte) (int, int, bool, error) {
 	var (
 		// Statistic
 		iterated     uint64
@@ -134,6 +134,9 @@ func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (
 		}
 		keys, _, count, newElapsed, iterElapsed := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
 			atomic.AddUint64(&iterated, 1)
+			if _, ok := genesis[string(key)]; ok {
+				return true
+			}
 			o, p, h := DecodeNodeKey(key)
 			if !bytes.Equal(path, p) {
 				return true

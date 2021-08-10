@@ -151,7 +151,7 @@ func (p *pruner) commitEnd() error {
 		return nil
 	}
 	log.Info("Try to finalize commit operation")
-	iterated, filtered, exist, err := p.current.finalize(p.partialKeys, p.cleanKeys)
+	iterated, filtered, exist, err := p.current.finalize(p.config.GenesisSet, p.partialKeys, p.cleanKeys)
 	if err != nil {
 		return err
 	}
