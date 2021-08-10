@@ -116,18 +116,21 @@ func (stack *genstack) push(path []byte) [][]byte {
 func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (int, int, bool, error) {
 	var (
 		// Statistic
-		iterated  uint64
-		filtered  uint64
-		startTime = time.Now()
-		logged    time.Time
+		iterated     uint64
+		filtered     uint64
+		read         uint64
+		startTime    = time.Now()
+		logged       time.Time
+		newDuration  time.Duration
+		iterDuration time.Duration
 	)
 	for index, key := range record.Keys {
 		owner, path, hash := DecodeNodeKey(key)
 		if time.Since(logged) > time.Second*8 {
-			log.Info("Iterating database", "iterated", iterated, "keyIndex", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
+			log.Info("Iterating database", "iterated", iterated, "read", read, common.PrettyDuration(newDuration), common.PrettyDuration(iterDuration), "keyIndex", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
 			logged = time.Now()
 		}
-		keys, _ := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
+		keys, _, count, newElapsed, iterElapsed := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
 			atomic.AddUint64(&iterated, 1)
 			o, p, h := DecodeNodeKey(key)
 			if !bytes.Equal(path, p) {
@@ -141,6 +144,11 @@ func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (
 			}
 			return false
 		})
+
+		read += uint64(count)
+		newDuration += newElapsed
+		iterDuration += iterElapsed
+
 		for _, key := range keys {
 			record.DeletionSet = append(record.DeletionSet, key)
 		}
