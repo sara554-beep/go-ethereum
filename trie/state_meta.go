@@ -127,7 +127,9 @@ func (record *CommitRecord) finalize(partialKeys [][]byte, cleanKeys [][]byte) (
 	for index, key := range record.Keys {
 		owner, path, hash := DecodeNodeKey(key)
 		if time.Since(logged) > time.Second*8 {
-			log.Info("Iterating database", "iterated", iterated, "read", read, common.PrettyDuration(newDuration), common.PrettyDuration(iterDuration), "keyIndex", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
+			log.Info("Iterating database", "iterated", iterated, "read", read,
+				"newDuration", common.PrettyDuration(newDuration), "iterDuration", common.PrettyDuration(iterDuration),
+				"keyIndex", index, "remaining", len(record.Keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
 			logged = time.Now()
 		}
 		keys, _, count, newElapsed, iterElapsed := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
