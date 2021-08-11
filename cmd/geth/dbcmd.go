@@ -955,13 +955,15 @@ func deleteDebugData(ctx *cli.Context) error {
 	stack, _ := makeConfigNode(ctx)
 	defer stack.Close()
 
-	db := utils.MakeChainDatabase(ctx, stack, true)
+	db := utils.MakeChainDatabase(ctx, stack, false)
 	defer db.Close()
 
 	numbers, hashes, _ := rawdb.ReadAllCommitRecords(db, 0, uint64(math.MaxUint64), true)
 	for i := 0; i < len(numbers); i++ {
 		rawdb.DeleteDeletedCommitRecord(db, numbers[i], hashes[i])
 	}
+	log.Info("Deleted all the debug data", "items", len(numbers))
+	log.Info("Do the database compaction")
 	db.Compact(nil, nil)
 	return nil
 }
