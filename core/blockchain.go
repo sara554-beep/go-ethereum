@@ -270,7 +270,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		Preimages: cacheConfig.Preimages,
 		Pruner: trie.PrunerConfig{
 			GenesisSet:     genesisSet,
-			MaximumRecords: 3,
+			MaximumRecords: 1,
 			Signal:         signal,
 			IsCanonical: func(number uint64, hash common.Hash) bool {
 				header := bc.GetHeaderByNumber(number)

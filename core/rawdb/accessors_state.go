@@ -146,16 +146,16 @@ func WriteCommitRecord(db ethdb.KeyValueWriter, number uint64, hash common.Hash,
 
 // DeleteCommitRecord deletes the specified state update from the database.
 func DeleteCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) {
-	blob, err := db.Get(commitRecordKey(number, hash))
-	if err != nil {
-		log.Crit("Failed to load commit record", "err", err)
-	}
+	//blob, err := db.Get(commitRecordKey(number, hash))
+	//if err != nil {
+	//	log.Crit("Failed to load commit record", "err", err)
+	//}
 	if err := db.Delete(commitRecordKey(number, hash)); err != nil {
 		log.Crit("Failed to delete commit record", "err", err)
 	}
-	if err := db.Put(deletedCommitRecordKey(number, hash), blob); err != nil {
-		log.Crit("Failed to move the deleted commit record", "err", err)
-	}
+	//if err := db.Put(deletedCommitRecordKey(number, hash), blob); err != nil {
+	//	log.Crit("Failed to move the deleted commit record", "err", err)
+	//}
 }
 
 // ReadAllCommitRecords retrieves all the state update objects at the certain range
