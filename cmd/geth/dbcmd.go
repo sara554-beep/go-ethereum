@@ -70,6 +70,7 @@ Remove blockchain and state databases`,
 			dbInspectCommitRecord,
 			dbInspectCommitRecord2,
 			dbInspectCommitRecord3,
+			dbDeleteDebug,
 		},
 	}
 	dbInspectCmd = cli.Command{
@@ -251,6 +252,21 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 	dbInspectCommitRecord3 = cli.Command{
 		Action:    utils.MigrateFlags(inspectCommitRecord3),
 		Name:      "inspect-commit3",
+		Usage:     "Inspect the commit record",
+		ArgsUsage: "<number> <hash> <key> <type>",
+		Flags: []cli.Flag{
+			utils.DataDirFlag,
+			utils.SyncModeFlag,
+			utils.MainnetFlag,
+			utils.RopstenFlag,
+			utils.RinkebyFlag,
+			utils.GoerliFlag,
+		},
+		Description: "This command inspect information about the commit record.",
+	}
+	dbDeleteDebug = cli.Command{
+		Action:    utils.MigrateFlags(deleteDebugData),
+		Name:      "delete-debug",
 		Usage:     "Inspect the commit record",
 		ArgsUsage: "<number> <hash> <key> <type>",
 		Flags: []cli.Flag{
@@ -932,5 +948,20 @@ func inspectCommitRecord3(ctx *cli.Context) error {
 		}
 	}
 	log.Info("The key is not in deleteion set")
+	return nil
+}
+
+func deleteDebugData(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	defer db.Close()
+
+	numbers, hashes, _ := rawdb.ReadAllCommitRecords(db, 0, uint64(math.MaxUint64), true)
+	for i := 0; i < len(numbers); i++ {
+		rawdb.DeleteDeletedCommitRecord(db, numbers[i], hashes[i])
+	}
+	db.Compact(nil, nil)
 	return nil
 }
