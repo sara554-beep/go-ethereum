@@ -219,6 +219,8 @@ func (stats *pruningStats) report(msg string, processed int, force bool) {
 	if !force && time.Since(stats.last) < time.Second*8 {
 		return
 	}
+	stats.last = time.Now()
+
 	var ctx []interface{}
 	ctx = append(ctx, []interface{}{
 		"number", stats.number, "hash", stats.hash,
