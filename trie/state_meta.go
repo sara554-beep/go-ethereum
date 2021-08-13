@@ -77,15 +77,19 @@ func (record *StateRecord) add(key []byte) {
 	if len(key) != accountTrieNodekeyLength && len(key) != storageTrieNodeKeyLength {
 		panic(fmt.Sprintf("invalid key(%d) %v", len(key), key))
 	}
-	// Insert the key into keyset in reverse order, it's a key step
-	// since the trie nodes are flushed from the bottom to top, so
-	// the deletion can be done in reverse order.
-	record.Keys = append([][]byte{key}, record.Keys...)
+	record.Keys = append(record.Keys, key)
 }
 
 func (record *StateRecord) save() error {
 	if len(record.Keys) == 0 {
 		return nil
+	}
+	// Insert the key into keyset in reverse order, it's a key step
+	// since the trie nodes are flushed from the bottom to top, so
+	// the deletion can be done in reverse order.
+	for i := len(record.Keys)/2 - 1; i >= 0; i-- {
+		opp := len(record.Keys) - 1 - i
+		record.Keys[i], record.Keys[opp] = record.Keys[opp], record.Keys[i]
 	}
 	blob, err := rlp.EncodeToBytes(record)
 	if err != nil {

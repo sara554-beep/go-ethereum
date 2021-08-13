@@ -16,6 +16,11 @@
 
 package trie
 
+import (
+	"fmt"
+	"testing"
+)
+
 /*
 import (
 	"bytes"
@@ -116,3 +121,17 @@ func TestStaleKeyGeneration(t *testing.T) {
 }
 
 */
+
+func TestReverse(t *testing.T) {
+	slice := [][]byte{
+		{0x01, 0x02},
+		{0x03, 0x04},
+		{0x05, 0x06},
+		{0x07, 0x08},
+	}
+	for i := len(slice)/2 - 1; i >= 0; i-- {
+		opp := len(slice) - 1 - i
+		slice[i], slice[opp] = slice[opp], slice[i]
+	}
+	fmt.Println(slice)
+}
