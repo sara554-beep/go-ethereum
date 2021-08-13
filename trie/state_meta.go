@@ -19,7 +19,7 @@ package trie
 import (
 	"bytes"
 	"errors"
-	"sync/atomic"
+	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -29,219 +29,203 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-// CommitRecord represents a key set for each Commit operation(trie.Database)
-// which occurs regularly at a certain time interval. It will flush out all the
-// dirty nodes compared with the latest flushed state so that it can be regarded
-// as the state update. The flushed trie node keys can be used as the indicator
-// for deriving a list of stale trie nodes in the same path scope and these stale
-// trie nodes can be pruned later from the disk.
-type CommitRecord struct {
-	db     ethdb.KeyValueStore
-	hash   common.Hash
-	number uint64
+// StateRecord represents a record for each commit operation(trie.Database)
+// which includes the keys of the written dirty nodes and the relevant meta
+// data. Commit operation writes all the trie nodes in the memory of the state
+// to the database. These nodes can be regarded as an update to the state,
+// so that the historical trie nodes that have the same path as the written
+// node can be replaced and become stale.
+type StateRecord struct {
+	db ethdb.KeyValueStore
 
-	// The key list of the flushed dirty trie nodes. They are used to derive
-	// the stale node keys for pruning purposes. All the dirty trie nodes are
-	// flushed from the bottom to top. The keys here are also sorted in this order.
-	keys [][]byte
+	// Meta info of the committed state
+	Hash   common.Hash // The block hash of the committed state
+	Number uint64      // The block number of the committed state
+	Root   common.Hash // The account trie root of the committed state
 
-	// The key list of the stale trie nodes which can be deleted from the disk
-	// later if the Commit operation has enough confirmation(prevent deep reorg).
-	//
-	// Note the key of the trie node is not trivial(around 100 bytes in average),
-	// but most of them have the shared key prefix and compressed zero bytes. The
-	// optimization can be applied here in order to improve the space efficiency.
-	// All the key in the deletion set should be unique.
-	//
-	// Export fields for RLP encoding/decoding.
-	DeletionSet [][]byte
-
-	// Test hooks
-	onDeletionSet func([][]byte) // Hooks used for exposing the generated deletion set
+	// The key list of the flushed dirty trie nodes. They can be used for
+	// deriving the stale node keys for pruning purpooses. All the dirty
+	// trie nodes are flushed from the bottom to top. The keys here are
+	// also sorted in this order.
+	// TODO: the keys can be stored in more efficient format.
+	Keys [][]byte
 }
 
-func newCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) *CommitRecord {
-	return &CommitRecord{
+func newCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash, root common.Hash) *StateRecord {
+	return &StateRecord{
 		db:     db,
-		hash:   hash,
-		number: number,
+		Hash:   hash,
+		Number: number,
+		Root:   root,
 	}
 }
 
-func loadCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) (*CommitRecord, error) {
+func loadCommitRecord(db ethdb.KeyValueStore, number uint64, hash common.Hash) (*StateRecord, error) {
 	blob := rawdb.ReadCommitRecord(db, number, hash)
 	if len(blob) == 0 {
 		return nil, errors.New("non-existent record")
 	}
-	var object CommitRecord
+	var object StateRecord
 	if err := rlp.DecodeBytes(blob, &object); err != nil {
 		return nil, err
 	}
 	object.db = db
-	object.number = number
-	object.hash = hash
 	return &object, nil
 }
 
-func (record *CommitRecord) add(key []byte) {
+func (record *StateRecord) add(key []byte) {
 	if len(key) != accountTrieNodekeyLength && len(key) != storageTrieNodeKeyLength {
-		log.Warn("Invalid key length", "len", len(key), "key", key)
-		return
+		panic(fmt.Sprintf("invalid key(%d) %v", len(key), key))
 	}
-	record.keys = append(record.keys, key)
+	// Insert the key into keyset in reverse order, it's a key step
+	// since the trie nodes are flushed from the bottom to top, so
+	// the deletion can be done in reverse order.
+	record.Keys = append([][]byte{key}, record.Keys...)
 }
 
-func (record *CommitRecord) finalize(genesis map[string]struct{}) (int, int, bool, error) {
+func (record *StateRecord) save() error {
+	if len(record.Keys) == 0 {
+		return nil
+	}
+	blob, err := rlp.EncodeToBytes(record)
+	if err != nil {
+		return err
+	}
+	rawdb.WriteCommitRecord(record.db, record.Number, record.Hash, blob)
+	record.Keys = nil // Release the keys
+	return nil
+}
+
+// process is the function for deriving stale nodes and make the deletion.
+// Since the entire proceduce can take a few minutes, so this function be
+// be interrupted and resumed in order to not block the chain activities.
+func (record *StateRecord) process(db *Database, genesis map[string]struct{}, noprune []common.Hash, remove func(*StateRecord, ethdb.KeyValueStore)) error {
 	var (
-		// Statistic
-		iterated     uint64
-		filtered     uint64
-		read         uint64
-		startTime    = time.Now()
-		logged       time.Time
-		newDuration  time.Duration
-		iterDuration time.Duration
-	)
-	for index, key := range record.keys {
-		owner, path, hash := DecodeNodeKey(key)
-		if time.Since(logged) > time.Second*8 {
-			log.Info("Iterating database", "iterated", iterated, "read", read,
-				"newDuration", common.PrettyDuration(newDuration), "iterDuration", common.PrettyDuration(iterDuration),
-				"keyIndex", index, "remaining", len(record.keys)-index, "elasped", common.PrettyDuration(time.Since(startTime)))
-			logged = time.Now()
-		}
-		keys, _, count, newElapsed, iterElapsed := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
-			atomic.AddUint64(&iterated, 1)
-			if _, ok := genesis[string(key)]; ok {
-				return true
-			}
-			o, p, h := DecodeNodeKey(key)
-			if !bytes.Equal(path, p) {
-				return true
-			}
-			if o != owner {
-				return true
-			}
-			if h == hash {
-				return true
-			}
-			return false
-		})
-		read += uint64(count)
-		newDuration += newElapsed
-		iterDuration += iterElapsed
-		record.DeletionSet = append(record.DeletionSet, keys...)
-	}
-	var (
-		blob []byte
-		err  error
-		ok   bool
-	)
-	if len(record.DeletionSet) != 0 {
-		blob, err = rlp.EncodeToBytes(record)
-		if err != nil {
-			return 0, 0, false, err
-		}
-		log.Info("Try to persist commit record", "number", record.number, "hash", record.hash)
-		rawdb.WriteCommitRecord(record.db, record.number, record.hash, blob)
-		ok = true
-	}
-	log.Info("Written commit metadata", "key", len(record.keys), "stale", len(record.DeletionSet),
-		"filter", filtered, "average", float64(iterated)/float64(len(record.keys)), "metasize", len(blob), "elasped", common.PrettyDuration(time.Since(startTime)))
-
-	if record.onDeletionSet != nil {
-		record.onDeletionSet(record.DeletionSet)
-	}
-	record.DeletionSet, record.keys = nil, nil
-	return int(iterated), int(filtered), ok, nil
-}
-
-type livenessStats struct {
-	inClean uint64
-	inDirty uint64
-	inDisk  uint64
-	miss    uint64
-}
-
-func (stats *livenessStats) report() {
-	log.Info("Liveness check statistic", "inclean", stats.inClean, "indirty", stats.inDirty, "indisk", stats.inDisk, "miss", stats.miss)
-}
-
-func (record *CommitRecord) deleteStale(db *Database, remove func(*CommitRecord, ethdb.KeyValueStore)) error {
-	var (
-		startTime = time.Now()
-		batch     = record.db.NewBatch()
-		tries     []*traverser // Individual trie traversers for liveness checks
-		checks    uint64
-		refed     uint64
-		deleted   uint64
+		tries []*traverser
+		batch = record.db.NewBatch()
+		stats = newPruningStats(record.Number, record.Hash, len(record.Keys))
 	)
 	db.lock.RLock()
+
+	// Initialises the trie traversers for liveness check, ensure all the
+	// deleted trie nodes are not referenced by the target tries anymore.
 	for key := range db.dirties[metaRoot].children {
-		owner, path, hash := DecodeNodeKey([]byte(key))
-		if owner != (common.Hash{}) {
-			log.Crit("Invalid root node", "owner", owner.Hex(), "path", path, "hash", hash.Hex())
-		}
-		if len(path) != 0 {
-			log.Crit("Invalid root node", "owner", owner.Hex(), "path", path, "hash", hash.Hex())
-		}
+		_, _, hash := DecodeNodeKey([]byte(key))
 		tries = append(tries, &traverser{
 			db:    db,
 			state: &traverserState{hash: hash, node: hashNode(hash[:])},
 		})
 	}
-	log.Info("Setup live trie traverses", "number", len(db.dirties[metaRoot].children))
+	for _, hash := range noprune {
+		tries = append(tries, &traverser{
+			db:    db,
+			state: &traverserState{hash: hash, node: hashNode(hash[:])},
+		})
+	}
+	log.Info("Initialised tries for liveness check", "number", len(tries), "live", len(db.dirties[metaRoot].children), "noprune", len(noprune))
 
-	var stats livenessStats
-	for index, key := range record.DeletionSet {
+	// Iterate the database for retrieveing the stale nodes in the same path
+	// scope and ensure they are not referenced by any target tries.
+	for index, key := range record.Keys {
+		stats.report("Processing state record", index, false)
+
 		owner, path, hash := DecodeNodeKey(key)
-		// Iterate over all the live tries and check node liveliness
-		crosspath := path
-		if owner != (common.Hash{}) {
-			crosspath = append(append(keybytesToHex(owner[:]), 0xff), crosspath...)
-		}
-		var skip bool
-		for _, trie := range tries {
-			checks += 1
-			if trie.live(owner, hash, crosspath, &stats) {
-				skip = true
-				break
+		stales := rawdb.ReadTrieNodesWithPrefix(record.db, encodeNodePath(owner, path), func(key []byte) bool {
+			if _, ok := genesis[string(key)]; ok {
+				return true
 			}
-		}
-		if skip {
-			refed += 1
-			continue
-		}
-		if blob := rawdb.ReadTrieNode(record.db, key); len(blob) == 0 {
-			log.Info("The deleted key is not present", "key", key)
-			continue
-		}
-		rawdb.DeleteTrieNode(batch, key)
-		atomic.AddUint64(&deleted, 1)
+			keyOwner, keyPath, keyHash := DecodeNodeKey(key)
+			return !bytes.Equal(path, keyPath) || owner != keyOwner || hash == keyHash
+		})
+		stats.read += len(stales)
 
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				panic("failed to write batch")
+		for _, stale := range stales {
+			keyOwner, keyPath, keyHash := DecodeNodeKey(stale)
+			crosspath := keyPath
+			if keyOwner != (common.Hash{}) {
+				crosspath = append(append(keybytesToHex(keyOwner[:]), 0xff), crosspath...)
 			}
-			batch.Reset()
-		}
-		if index%50000 == 0 {
-			log.Info("Pruning stale trie nodes", "checks", checks, "deleted", index, "elasped", common.PrettyDuration(time.Since(startTime)))
-			stats.report()
+			var skip bool
+			for _, trie := range tries {
+				if trie.live(keyOwner, keyHash, crosspath, stats) {
+					skip = true
+					break
+				}
+			}
+			if skip {
+				stats.referenced += 1
+				continue
+			}
+			if blob := rawdb.ReadTrieNode(record.db, stale); len(blob) == 0 {
+				log.Info("The deleted key is not present", "key", stale)
+				continue
+			}
+			rawdb.DeleteTrieNode(batch, stale)
+			stats.deleted += 1
+
+			if batch.ValueSize() > ethdb.IdealBatchSize {
+				if err := batch.Write(); err != nil {
+					panic("failed to write batch")
+				}
+				batch.Reset()
+			}
 		}
 	}
 	db.lock.RUnlock()
+
 	remove(record, record.db)
 	if err := batch.Write(); err != nil {
 		return err
 	}
-	log.Info("Pruned stale trie nodes", "number", record.number, "hash", record.hash, "checks", checks, "referenced", refed, "deleted", deleted, "elapsed", common.PrettyDuration(time.Since(startTime)))
-	stats.report()
+	stats.report("Processed state record", len(record.Keys), true)
 	return nil
 }
 
-type commitRecordsByNumber []*CommitRecord
+type pruningStats struct {
+	number uint64
+	hash   common.Hash
+	start  time.Time
+	last   time.Time
+
+	// General statistics
+	keys       int // The count of keys in the state record
+	read       int // The count of loaded trie nodes from the disk
+	referenced int // The count of referenced trie nodes
+	deleted    int // The count of deleted trie nodes
+
+	// Liveness check statistics
+	clean int // The count of nodes hit in the clean cache
+	dirty int // The count of nodes hit in the dirty cache
+	disk  int // The count of nodes hit in the database
+	miss  int // The count of missing nodes
+}
+
+func newPruningStats(number uint64, hash common.Hash, keys int) *pruningStats {
+	return &pruningStats{
+		number: number,
+		hash:   hash,
+		start:  time.Now(),
+		keys:   keys,
+	}
+}
+
+func (stats *pruningStats) report(msg string, processed int, force bool) {
+	if !force && time.Since(stats.last) < time.Second*8 {
+		return
+	}
+	var ctx []interface{}
+	ctx = append(ctx, []interface{}{
+		"number", stats.number, "hash", stats.hash,
+		"diskread", stats.read, "referenced", stats.referenced, "deleted", stats.deleted,
+		"clean", stats.clean, "dirty", stats.dirty, "disk", stats.disk, "miss", stats.miss,
+		"progress", float64(processed) * 100 / float64(stats.keys),
+		"elasped", common.PrettyDuration(time.Since(stats.start)),
+	}...)
+	log.Info(msg, ctx...)
+}
+
+type commitRecordsByNumber []*StateRecord
 
 func (t commitRecordsByNumber) Len() int           { return len(t) }
 func (t commitRecordsByNumber) Swap(i, j int)      { t[i], t[j] = t[j], t[i] }
-func (t commitRecordsByNumber) Less(i, j int) bool { return t[i].number < t[j].number }
+func (t commitRecordsByNumber) Less(i, j int) bool { return t[i].Number < t[j].Number }

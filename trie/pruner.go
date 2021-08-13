@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -39,8 +40,8 @@ type PrunerConfig struct {
 type pruner struct {
 	config     PrunerConfig
 	db         *Database
-	current    *CommitRecord
-	records    []*CommitRecord
+	current    *StateRecord
+	records    []*StateRecord
 	minRecord  uint64
 	recordLock sync.Mutex
 
@@ -51,23 +52,24 @@ type pruner struct {
 	closeCh  chan struct{}
 
 	// statistic
-	written     uint64 // Counter for the total written trie nodes
-	iterated    uint64 // Counter for the total itearated trie nodes
-	filtered    uint64 // Counter for the total filtered trie nodes for deletion
-	resurrected uint64 // Counter for the total resurrected trie nodes
+	written uint64 // Counter for the total written trie nodes
 }
 
 func newPruner(config PrunerConfig, triedb *Database) *pruner {
 	numbers, hashes := rawdb.ReadAllCommitRecords(triedb.diskdb, 0, math.MaxUint64)
-	var records []*CommitRecord
+	var records []*StateRecord
 	for i := 0; i < len(numbers); i++ {
-		records = append(records, newCommitRecord(triedb.diskdb, numbers[i], hashes[i]))
+		record, err := loadCommitRecord(triedb.diskdb, numbers[i], hashes[i])
+		if err != nil {
+			panic(fmt.Sprintf("failed to decode commit record %v", err))
+		}
+		records = append(records, record)
 	}
 	sort.Sort(commitRecordsByNumber(records))
 
 	minRecord := uint64(math.MaxUint64)
 	if len(records) > 0 {
-		minRecord = records[0].number
+		minRecord = records[0].Number
 	}
 	pruner := &pruner{
 		config:    config,
@@ -93,6 +95,17 @@ func newPruner(config PrunerConfig, triedb *Database) *pruner {
 	return pruner
 }
 
+func (p *pruner) noprunes() []common.Hash {
+	var hashes []common.Hash
+	for i, record := range p.records {
+		if i == 0 {
+			continue
+		}
+		hashes = append(hashes, record.Root)
+	}
+	return hashes
+}
+
 // checkRecords is a debug function used to ensure the commits are sorted correctly.
 func (p *pruner) checkRecords() {
 	if len(p.records) <= 1 {
@@ -100,8 +113,9 @@ func (p *pruner) checkRecords() {
 	}
 	for i := 0; i < len(p.records)-1; i++ {
 		current, next := p.records[i], p.records[i+1]
-		if current.number >= next.number {
-			log.Crit("Invalid commit record", "index", i, "curnumber", current.number, "curhash", current.hash, "nextnumber", next.number, "nexthash", next.hash)
+		if current.Number >= next.Number {
+			log.Crit("Invalid commit record", "index", i, "curnumber", current.Number, "curhash", current.Hash,
+				"nextnumber", next.Number, "nexthash", next.Hash)
 		}
 	}
 }
@@ -111,7 +125,7 @@ func (p *pruner) close() {
 	p.wg.Wait()
 }
 
-func (p *pruner) commitStart(number uint64, hash common.Hash) {
+func (p *pruner) commitStart(number uint64, hash common.Hash, root common.Hash) {
 	if p.current != nil {
 		log.Crit("The current commit record is not nil")
 	}
@@ -123,7 +137,7 @@ func (p *pruner) commitStart(number uint64, hash common.Hash) {
 		log.Info("Too many accumulated records", "number", live, "threshold", p.config.MaximumRecords)
 		return
 	}
-	p.current = newCommitRecord(p.db.diskdb, number, hash)
+	p.current = newCommitRecord(p.db.diskdb, number, hash, root)
 	log.Info("Start commit operation", "number", number, "hash", hash.Hex())
 }
 
@@ -131,8 +145,8 @@ func (p *pruner) addKey(key []byte, partial bool) error {
 	p.written += 1
 	if !partial && p.current != nil {
 		p.current.add(key)
-		if len(p.current.keys)%100_000 == 0 {
-			log.Info("Added keys to current set", "len", len(p.current.keys))
+		if len(p.current.Keys)%100_000 == 0 {
+			log.Info("Added keys to current set", "len", len(p.current.Keys))
 		}
 	}
 	return nil
@@ -142,60 +156,52 @@ func (p *pruner) commitEnd() error {
 	if p.current == nil {
 		return nil
 	}
-	log.Info("Try to finalize commit operation")
-	iterated, filtered, exist, err := p.current.finalize(p.config.GenesisSet)
-	if err != nil {
+	if err := p.current.save(); err != nil {
 		return err
 	}
-	p.iterated += uint64(iterated)
-	p.filtered += uint64(filtered)
 
-	log.Info("Try to insert new commit")
-	if exist {
-		p.recordLock.Lock()
-		p.records = append(p.records, p.current)
-		sort.Sort(commitRecordsByNumber(p.records))
-		p.minRecord = p.records[0].number
-		p.checkRecords()
-		p.recordLock.Unlock()
-	}
-	log.Info("Commit operation is finished", "number", p.current.number, "hash", p.current.hash.Hex())
+	p.recordLock.Lock()
+	p.records = append(p.records, p.current)
+	sort.Sort(commitRecordsByNumber(p.records))
+	p.minRecord = p.records[0].Number
+	p.checkRecords()
+	p.recordLock.Unlock()
 
 	p.current = nil
-	log.Info("Added new record", "live", len(p.records), "written", p.written, "iterated", p.iterated, "filtered", p.filtered, "resurrected", p.resurrected)
+	log.Info("Added new record", "live", len(p.records), "written", p.written)
 	return nil
 }
 
-func (p *pruner) filterRecords(number uint64) []*CommitRecord {
+func (p *pruner) filterRecords(number uint64) []*StateRecord {
 	p.recordLock.Lock()
 	defer p.recordLock.Unlock()
 
-	var ret []*CommitRecord
+	var ret []*StateRecord
 	for _, r := range p.records {
-		if r.number < number {
+		if r.Number < number {
 			ret = append(ret, r)
 		}
 	}
 	return ret
 }
 
-func (p *pruner) removeRecord(record *CommitRecord, db ethdb.KeyValueStore) {
+func (p *pruner) removeRecord(record *StateRecord, db ethdb.KeyValueStore) {
 	p.recordLock.Lock()
 	defer p.recordLock.Unlock()
 
 	var found bool
 	for i, r := range p.records {
-		if r.number == record.number && r.hash == record.hash {
+		if r.Number == record.Number && r.Hash == record.Hash {
 			p.records = append(p.records[:i], p.records[i+1:]...)
 			sort.Sort(commitRecordsByNumber(p.records))
 			found = true
 		}
 	}
 	if !found {
-		log.Crit("Failed to delete non-existent commit record", "number", record.number, "hash", record.hash.Hex())
+		log.Crit("Failed to delete non-existent commit record", "number", record.Number, "hash", record.Hash.Hex())
 	}
 	p.checkRecords()
-	rawdb.DeleteCommitRecord(db, record.number, record.hash)
+	rawdb.DeleteCommitRecord(db, record.Number, record.Hash)
 }
 
 func (p *pruner) resume() {
@@ -210,7 +216,7 @@ func (p *pruner) pause() {
 	<-ch
 }
 
-func (p *pruner) pruning(records []*CommitRecord, done chan struct{}, interrupt *uint64) {
+func (p *pruner) pruning(records []*StateRecord, done chan struct{}, interrupt *uint64) {
 	defer close(done)
 
 	for _, r := range records {
@@ -218,18 +224,18 @@ func (p *pruner) pruning(records []*CommitRecord, done chan struct{}, interrupt 
 			log.Info("Pruning operation is interrupted")
 			return
 		}
-		if !p.config.IsCanonical(r.number, r.hash) {
+		if !p.config.IsCanonical(r.Number, r.Hash) {
 			p.removeRecord(r, p.db.diskdb)
-			log.Info("Filtered out side commit record", "number", r.number, "hash", r.hash)
+			log.Info("Filtered out side commit record", "number", r.Number, "hash", r.Hash)
 			continue
 		}
-		record, err := loadCommitRecord(p.db.diskdb, r.number, r.hash)
+		record, err := loadCommitRecord(p.db.diskdb, r.Number, r.Hash)
 		if err != nil {
 			p.removeRecord(r, p.db.diskdb)
-			log.Info("Filtered out corrupted commit record", "number", r.number, "hash", r.hash, "err", err)
+			log.Info("Filtered out corrupted commit record", "number", r.Number, "hash", r.Hash, "err", err)
 			continue
 		}
-		record.deleteStale(p.db, p.removeRecord)
+		record.process(p.db, p.config.GenesisSet, p.noprunes(), p.removeRecord)
 	}
 }
 

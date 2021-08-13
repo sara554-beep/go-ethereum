@@ -748,7 +748,7 @@ func (db *Database) CommitWithMetadata(number uint64, hash common.Hash, root com
 	writeMeta := number != 0 && hash != (common.Hash{})
 	uncacher := &cleaner{db: db}
 	if writeMeta && db.pruner != nil {
-		db.pruner.commitStart(number, hash)
+		db.pruner.commitStart(number, hash, root)
 	}
 	if err := db.commit(common.Hash{}, []byte{}, root, batch, uncacher, callback); err != nil {
 		log.Error("Failed to commit trie from trie database", "err", err)

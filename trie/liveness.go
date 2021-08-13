@@ -62,7 +62,7 @@ func (state *traverserState) ownerAndPath() (common.Hash, []byte) {
 // paths are separated by a 0xff byte (nibbles range from 0x00-0x10). This byte
 // is needed to differentiate between the leaf of the account trie and the root
 // of a storage trie (which otherwise would have the same traversal path).
-func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte, stats *livenessStats) bool {
+func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte, stats *pruningStats) bool {
 	// Rewind the traverser until it's prefix is actually a prefix of the path
 	for !bytes.HasPrefix(path, t.state.prefix) {
 		t.state = t.state.parent
@@ -78,34 +78,30 @@ func (t *traverser) live(owner common.Hash, hash common.Hash, path []byte, stats
 			sowner, spath := t.state.ownerAndPath()
 			key := EncodeNodeKey(sowner, spath, t.state.hash)
 			if enc := t.db.cleans.Get(nil, key); enc != nil {
+				if stats != nil {
+					stats.clean += 1
+				}
 				t.state.node = mustDecodeNode(t.state.hash[:], enc)
-
-				if stats != nil {
-					stats.inClean += 1
-				}
 			} else if node := t.db.dirties[string(key)]; node != nil {
-				t.state.node = node.node
-
 				if stats != nil {
-					stats.inDirty += 1
+					stats.dirty += 1
 				}
+				t.state.node = node.node
 			} else {
 				blob := rawdb.ReadTrieNode(t.db.diskdb, key)
 				if blob == nil {
-					log.Error("Missing referenced node", "sowner", sowner, "shash", t.state.hash.Hex(), "spath", fmt.Sprintf("%x", spath),
-						"remain", fmt.Sprintf("%x", remain), "path", fmt.Sprintf("%x", path), "owner", owner.Hex(), "hash", hash.Hex())
-
 					if stats != nil {
 						stats.miss += 1
 					}
+					log.Error("Missing referenced node", "sowner", sowner, "shash", t.state.hash.Hex(), "spath", fmt.Sprintf("%x", spath),
+						"remain", fmt.Sprintf("%x", remain), "path", fmt.Sprintf("%x", path), "owner", owner.Hex(), "hash", hash.Hex())
 					return false
+				}
+				if stats != nil {
+					stats.disk += 1
 				}
 				t.state.node = mustDecodeNode(t.state.hash[:], blob)
 				t.db.cleans.Set(key, blob)
-
-				if stats != nil {
-					stats.inDisk += 1
-				}
 			}
 		}
 		// If we reached an account node, extract the storage trie root to continue on

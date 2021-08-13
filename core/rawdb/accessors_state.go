@@ -22,7 +22,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"time"
 )
 
 // ReadPreimage retrieves a single preimage of the provided hash.
@@ -98,32 +97,21 @@ func DeleteTrieNode(db ethdb.KeyValueWriter, key []byte) {
 	}
 }
 
-func ReadTrieNodesWithPrefix(db ethdb.KeyValueStore, path []byte, filterFn func([]byte) bool) ([][]byte, [][]byte, int, time.Duration, time.Duration) {
-	var (
-		keys  [][]byte
-		vals  [][]byte
-		count int
-		start = time.Now()
-	)
-	// Construct the key prefix of start point.
+func ReadTrieNodesWithPrefix(db ethdb.KeyValueStore, path []byte, filterFn func([]byte) bool) [][]byte {
 	prefix, length := trieNodePrefix(path)
 	it := db.NewIterator(prefix, nil)
 	defer it.Release()
-	newElasped := time.Since(start)
 
-	start = time.Now()
+	var keys [][]byte
 	for it.Next() {
-		count += 1
 		if key := it.Key(); len(key) == len(prefix)+common.HashLength+1 {
 			if filterFn(it.Key()[length:]) {
 				continue
 			}
 			keys = append(keys, common.CopyBytes(it.Key()[length:]))
-			vals = append(vals, common.CopyBytes(it.Value()))
 		}
 	}
-	iterElapsed := time.Since(start)
-	return keys, vals, count, newElasped, iterElapsed
+	return keys
 }
 
 // ReadCommitRecord retrieves the state update of the provided hash.
