@@ -92,6 +92,8 @@ func (record *StateRecord) save() error {
 		return err
 	}
 	rawdb.WriteCommitRecord(record.db, record.Number, record.Hash, blob)
+	log.Info("Committed state record", "number", record.Number, "hash", record.Hash.Hex(), "keys", len(record.Keys))
+
 	record.Keys = nil // Release the keys
 	return nil
 }

@@ -52,7 +52,8 @@ type pruner struct {
 	closeCh  chan struct{}
 
 	// statistic
-	written uint64 // Counter for the total written trie nodes
+	partial   uint64
+	canonical uint64
 }
 
 func newPruner(config PrunerConfig, triedb *Database) *pruner {
@@ -142,7 +143,11 @@ func (p *pruner) commitStart(number uint64, hash common.Hash, root common.Hash) 
 }
 
 func (p *pruner) addKey(key []byte, partial bool) error {
-	p.written += 1
+	if partial {
+		p.partial += 1
+	} else {
+		p.canonical += 1
+	}
 	if !partial && p.current != nil {
 		p.current.add(key)
 		if len(p.current.Keys)%100_000 == 0 {
@@ -166,9 +171,10 @@ func (p *pruner) commitEnd() error {
 	p.minRecord = p.records[0].Number
 	p.checkRecords()
 	p.recordLock.Unlock()
+	log.Info("Added new record", "live", len(p.records), "number", p.current.Number, "hash", p.current.Hash.Hex(),
+		"partial", p.partial, "canonical", p.canonical)
 
 	p.current = nil
-	log.Info("Added new record", "live", len(p.records), "written", p.written)
 	return nil
 }
 
