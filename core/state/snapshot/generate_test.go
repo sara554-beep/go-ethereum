@@ -377,12 +377,14 @@ func TestGenerateCorruptAccountTrie(t *testing.T) {
 	helper.accTrie.Commit(nil) // Root: 0xa04693ea110a31037fb5ee814308a6f1d76bdab0b11676bdf4541d2de55ba978
 
 	var deletionKey []byte
-	helper.triedb.Commit(common.HexToHash("0xa04693ea110a31037fb5ee814308a6f1d76bdab0b11676bdf4541d2de55ba978"), false, func(key []byte) {
+	helper.triedb.Commit(common.HexToHash("0xa04693ea110a31037fb5ee814308a6f1d76bdab0b11676bdf4541d2de55ba978"), false, func(key, val []byte) {
 		if deletionKey == nil && len(key) > common.HashLength {
 			deletionKey = append([]byte{}, key...)
 		}
 	})
-	rawdb.DeleteTrieNode(helper.diskdb, deletionKey)
+	key := deletionKey[:len(deletionKey)-common.HashLength]
+	hash := common.BytesToHash(deletionKey[len(deletionKey)-common.HashLength:])
+	rawdb.DeleteTrieNode3(helper.diskdb, key, hash)
 
 	snap := generateSnapshot(helper.diskdb, helper.triedb, 16, common.HexToHash("0xa04693ea110a31037fb5ee814308a6f1d76bdab0b11676bdf4541d2de55ba978"))
 	select {
@@ -445,13 +447,15 @@ func TestGenerateMissingStorageTrie(t *testing.T) {
 		accThreePath,
 	)
 	var deletionKey []byte
-	helper.triedb.Commit(common.HexToHash("0xe3712f1a226f3782caca78ca770ccc19ee000552813a9f59d479f8611db9b1fd"), false, func(key []byte) {
+	helper.triedb.Commit(common.HexToHash("0xe3712f1a226f3782caca78ca770ccc19ee000552813a9f59d479f8611db9b1fd"), false, func(key, val []byte) {
 		if bytes.Contains(key, stRoot) {
 			deletionKey = append([]byte{}, key...)
 		}
 	})
 	// Delete a storage trie root and ensure the generator chokes
-	rawdb.DeleteTrieNode(helper.diskdb, deletionKey)
+	key := deletionKey[:len(deletionKey)-common.HashLength]
+	hash := common.BytesToHash(deletionKey[len(deletionKey)-common.HashLength:])
+	rawdb.DeleteTrieNode3(helper.diskdb, key, hash)
 
 	snap := generateSnapshot(helper.diskdb, helper.triedb, 16, common.HexToHash("0xe3712f1a226f3782caca78ca770ccc19ee000552813a9f59d479f8611db9b1fd"))
 	select {
@@ -513,13 +517,15 @@ func TestGenerateCorruptStorageTrie(t *testing.T) {
 		accThreePath,
 	)
 	var deletionKey []byte
-	helper.triedb.Commit(common.HexToHash("0xe3712f1a226f3782caca78ca770ccc19ee000552813a9f59d479f8611db9b1fd"), false, func(key []byte) {
+	helper.triedb.Commit(common.HexToHash("0xe3712f1a226f3782caca78ca770ccc19ee000552813a9f59d479f8611db9b1fd"), false, func(key, val []byte) {
 		if deletionKey == nil && bytes.Contains(key, common.Hex2Bytes("0x18a0f4d79cff4459642dd7604f303886ad9d77c30cf3d7d7cedb3a693ab6d371")) {
 			deletionKey = append([]byte{}, key...)
 		}
 	})
 	// Delete a storage trie leaf and ensure the generator chokes
-	rawdb.DeleteTrieNode(helper.diskdb, deletionKey)
+	key := deletionKey[:len(deletionKey)-common.HashLength]
+	hash := common.BytesToHash(deletionKey[len(deletionKey)-common.HashLength:])
+	rawdb.DeleteTrieNode3(helper.diskdb, key, hash)
 
 	snap := generateSnapshot(helper.diskdb, helper.triedb, 16, common.HexToHash("0xe3712f1a226f3782caca78ca770ccc19ee000552813a9f59d479f8611db9b1fd"))
 	select {

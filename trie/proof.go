@@ -20,12 +20,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 )
 
 // Prove constructs a merkle proof for key. The result contains all encoded nodes
@@ -42,7 +44,7 @@ func (t *Trie) Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWriter) e
 		nodes  []node
 		tn     = t.root
 	)
-	key = keybytesToHex(key)
+	key = encoding.KeybytesToHex(key)
 	for len(key) > 0 && tn != nil {
 		switch n := tn.(type) {
 		case *shortNode:
@@ -109,7 +111,7 @@ func (t *SecureTrie) Prove(key []byte, fromLevel uint, proofDb ethdb.KeyValueWri
 // key in a trie with the given root hash. VerifyProof returns an error if the
 // proof contains invalid trie nodes or the wrong value.
 func VerifyProof(rootHash common.Hash, key []byte, proofDb ethdb.KeyValueReader) (value []byte, err error) {
-	key = keybytesToHex(key)
+	key = encoding.KeybytesToHex(key)
 	wantHash := rootHash
 	for i := 0; ; i++ {
 		buf, _ := proofDb.Get(wantHash[:])
@@ -167,7 +169,7 @@ func proofToPath(rootHash common.Hash, root node, key []byte, proofDb ethdb.KeyV
 		keyrest       []byte
 		valnode       []byte
 	)
-	key, parent = keybytesToHex(key), root
+	key, parent = encoding.KeybytesToHex(key), root
 	for {
 		keyrest, child = get(parent, key, false)
 		switch cld := child.(type) {
@@ -222,7 +224,7 @@ func proofToPath(rootHash common.Hash, root node, key []byte, proofDb ethdb.KeyV
 // Note we have the assumption here the given boundary keys are different
 // and right is larger than left.
 func unsetInternal(n node, left []byte, right []byte) (bool, error) {
-	left, right = keybytesToHex(left), keybytesToHex(right)
+	left, right = encoding.KeybytesToHex(left), encoding.KeybytesToHex(right)
 
 	// Step down to the fork point. There are two scenarios can happen:
 	// - the fork point is a shortnode: either the key of left proof or
@@ -415,7 +417,7 @@ func unset(parent node, child node, key []byte, pos int, removeLeft bool) error 
 // key or a non-existent one. This function has the assumption that the whole
 // path should already be resolved.
 func hasRightElement(node node, key []byte) bool {
-	pos, key := 0, keybytesToHex(key)
+	pos, key := 0, encoding.KeybytesToHex(key)
 	for node != nil {
 		switch rn := node.(type) {
 		case *fullNode:
@@ -553,7 +555,7 @@ func VerifyRangeProof(rootHash common.Hash, firstKey []byte, lastKey []byte, key
 	}
 	// Rebuild the trie with the leaf stream, the shape of trie
 	// should be same with the original one.
-	tr := &Trie{root: root, db: NewDatabase(memorydb.New())}
+	tr := &Trie{root: root, db: triedb.New(memorydb.New(), nil)}
 	if empty {
 		tr.root = nil
 	}

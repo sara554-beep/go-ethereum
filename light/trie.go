@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 )
 
 var (
@@ -53,7 +54,7 @@ func (db *odrDatabase) OpenTrie(root common.Hash) (state.Trie, error) {
 	return &odrTrie{db: db, id: db.id}, nil
 }
 
-func (db *odrDatabase) OpenStorageTrie(addrHash, root common.Hash) (state.Trie, error) {
+func (db *odrDatabase) OpenStorageTrie(state, addrHash, root common.Hash) (state.Trie, error) {
 	return &odrTrie{db: db, id: StorageTrieID(db.id, addrHash, root)}, nil
 }
 
@@ -91,7 +92,7 @@ func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, er
 	return len(code), err
 }
 
-func (db *odrDatabase) TrieDB() *trie.Database {
+func (db *odrDatabase) TrieDB() *triedb.Database {
 	return nil
 }
 
@@ -157,7 +158,7 @@ func (t *odrTrie) do(key []byte, fn func() error) error {
 	for {
 		var err error
 		if t.trie == nil {
-			t.trie, err = trie.New(t.id.Root, trie.NewDatabase(t.db.backend.Database()))
+			t.trie, err = trie.New(t.id.Root, triedb.New(t.db.backend.Database(), nil))
 		}
 		if err == nil {
 			err = fn()
@@ -183,7 +184,7 @@ func newNodeIterator(t *odrTrie, startkey []byte) trie.NodeIterator {
 	// Open the actual non-ODR trie if that hasn't happened yet.
 	if t.trie == nil {
 		it.do(func() error {
-			t, err := trie.New(t.id.Root, trie.NewDatabase(t.db.backend.Database()))
+			t, err := trie.New(t.id.Root, triedb.New(t.db.backend.Database(), nil))
 			if err == nil {
 				it.t.trie = t
 			}

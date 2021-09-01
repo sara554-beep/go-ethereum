@@ -18,6 +18,7 @@ package les
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -358,7 +359,7 @@ func (h *serverHandler) AddTxsSync() bool {
 }
 
 // getAccount retrieves an account from the state based on root.
-func getAccount(triedb *trie.Database, root, hash common.Hash) (state.Account, error) {
+func getAccount(triedb *triedb.Database, root, hash common.Hash) (state.Account, error) {
 	trie, err := trie.New(root, triedb)
 	if err != nil {
 		return state.Account{}, err
@@ -374,7 +375,7 @@ func getAccount(triedb *trie.Database, root, hash common.Hash) (state.Account, e
 	return account, nil
 }
 
-// getHelperTrie returns the post-processed trie root for the given trie ID and section index
+// GetHelperTrie returns the post-processed trie root for the given trie ID and section index
 func (h *serverHandler) GetHelperTrie(typ uint, index uint64) *trie.Trie {
 	var (
 		root   common.Hash
@@ -391,7 +392,7 @@ func (h *serverHandler) GetHelperTrie(typ uint, index uint64) *trie.Trie {
 	if root == (common.Hash{}) {
 		return nil
 	}
-	trie, _ := trie.New(root, trie.NewDatabase(rawdb.NewTable(h.chainDb, prefix)))
+	trie, _ := trie.New(root, triedb.New(rawdb.NewTable(h.chainDb, prefix), nil))
 	return trie
 }
 

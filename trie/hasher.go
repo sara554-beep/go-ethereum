@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"github.com/ethereum/go-ethereum/trie/encoding"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -107,7 +108,7 @@ func (h *hasher) hashShortNodeChildren(n *shortNode) (collapsed, cached *shortNo
 	// Previously, we did copy this one. We don't seem to need to actually
 	// do that, since we don't overwrite/reuse keys
 	//cached.Key = common.CopyBytes(n.Key)
-	collapsed.Key = hexToCompact(n.Key)
+	collapsed.Key = encoding.HexToCompact(n.Key)
 	// Unless the child is a valuenode or hashnode, hash it
 	switch n.Val.(type) {
 	case *fullNode, *shortNode:

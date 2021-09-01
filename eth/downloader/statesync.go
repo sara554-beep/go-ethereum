@@ -18,6 +18,7 @@ package downloader
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 	"sync"
 	"time"
 
@@ -454,7 +455,7 @@ func (s *stateSync) assignTasks() {
 
 // fillTasks fills the given request object with a maximum of n state download
 // tasks to send to the remote peer.
-func (s *stateSync) fillTasks(n int, req *stateReq) (nodes []common.Hash, paths []trie.NodePath, codes []common.Hash) {
+func (s *stateSync) fillTasks(n int, req *stateReq) (nodes []common.Hash, paths []encoding.NodePath, codes []common.Hash) {
 	// Refill available tasks from the scheduler.
 	if fill := n - (len(s.trieTasks) + len(s.codeTasks)); fill > 0 {
 		keys, hashes, paths, codes := s.sched.Missing(fill)
@@ -474,7 +475,7 @@ func (s *stateSync) fillTasks(n int, req *stateReq) (nodes []common.Hash, paths 
 	// Find tasks that haven't been tried with the request's peer. Prefer code
 	// over trie nodes as those can be written to disk and forgotten about.
 	nodes = make([]common.Hash, 0, n)
-	paths = make([]trie.NodePath, 0, n)
+	paths = make([]encoding.NodePath, 0, n)
 	codes = make([]common.Hash, 0, n)
 
 	req.trieTasks = make(map[string]*trieTask, n)

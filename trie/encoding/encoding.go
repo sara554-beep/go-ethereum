@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package encoding
 
 // Trie keys are dealt with in three distinct encodings:
 //
@@ -34,9 +34,9 @@ package trie
 // in the case of an odd number. All remaining nibbles (now an even number) fit properly
 // into the remaining bytes. Compact encoding is used for nodes stored on disk.
 
-func hexToCompact(hex []byte) []byte {
+func HexToCompact(hex []byte) []byte {
 	terminator := byte(0)
-	if hasTerm(hex) {
+	if HasTerm(hex) {
 		terminator = 1
 		hex = hex[:len(hex)-1]
 	}
@@ -51,9 +51,9 @@ func hexToCompact(hex []byte) []byte {
 	return buf
 }
 
-// hexToCompactInPlace places the compact key in input buffer, returning the length
+// HexToCompactInPlace places the compact key in input buffer, returning the length
 // needed for the representation
-func hexToCompactInPlace(hex []byte) int {
+func HexToCompactInPlace(hex []byte) int {
 	var (
 		hexLen    = len(hex) // length of the hex input
 		firstByte = byte(0)
@@ -80,11 +80,11 @@ func hexToCompactInPlace(hex []byte) int {
 	return binLen
 }
 
-func compactToHex(compact []byte) []byte {
+func CompactToHex(compact []byte) []byte {
 	if len(compact) == 0 {
 		return compact
 	}
-	base := keybytesToHex(compact)
+	base := KeybytesToHex(compact)
 	// delete terminator flag
 	if base[0] < 2 {
 		base = base[:len(base)-1]
@@ -94,7 +94,56 @@ func compactToHex(compact []byte) []byte {
 	return base[chop:]
 }
 
-func keybytesToHex(str []byte) []byte {
+// REVERSE-COMAPCT encoding is used for encoding trie node path in the trie node
+// storage key. The main difference with COMPACT encoding is that the key flag
+// is put in the end of the key.
+//
+// e.g.
+// - the key [] is encoded as [0x00]
+// - the key [0x1, 0x2, 0x3] is encoded as [0x12, 0x31]
+// - the key [0x1, 0x2, 0x3, 0x0] is encoded as [0x12, 0x30, 0x00]
+//
+// The main benefit of this format is the continuous paths can retain the shared
+// path prefix after encoding.
+
+func HexToReverseCompact(hex []byte) []byte {
+	terminator := byte(0)
+	if HasTerm(hex) {
+		terminator = 1
+		hex = hex[:len(hex)-1]
+	}
+	buf := make([]byte, len(hex)/2+1)
+	buf[len(buf)-1] = terminator << 1 // the flag byte
+	if len(hex)&1 == 1 {
+		buf[len(buf)-1] |= 1                    // odd flag
+		buf[len(buf)-1] |= hex[len(hex)-1] << 4 // last nibble is contained in the last byte
+		hex = hex[:len(hex)-1]
+	}
+	decodeNibbles(hex, buf[:len(buf)-1])
+	return buf
+}
+
+func ReverseCompactToHex(compact []byte) []byte {
+	if len(compact) == 0 {
+		return compact
+	}
+	// delete terminator flag
+	base := KeybytesToHex(compact)
+	base = base[:len(base)-1]
+
+	// apply odd flag
+	flag := base[len(base)-1]
+	chop := 2 - flag&1
+	base = base[:len(base)-int(chop)]
+
+	// apply terminator flag
+	if flag >= 2 {
+		base = append(base, 16)
+	}
+	return base
+}
+
+func KeybytesToHex(str []byte) []byte {
 	l := len(str)*2 + 1
 	var nibbles = make([]byte, l)
 	for i, b := range str {
@@ -108,7 +157,7 @@ func keybytesToHex(str []byte) []byte {
 // HexToKeybytes turns hex nibbles into key bytes.
 // This can only be used for keys of even length.
 func HexToKeybytes(hex []byte) []byte {
-	if hasTerm(hex) {
+	if HasTerm(hex) {
 		hex = hex[:len(hex)-1]
 	}
 	if len(hex)&1 != 0 {
@@ -125,8 +174,8 @@ func decodeNibbles(nibbles []byte, bytes []byte) {
 	}
 }
 
-// prefixLen returns the length of the common prefix of a and b.
-func prefixLen(a, b []byte) int {
+// PrefixLen returns the length of the common prefix of a and b.
+func PrefixLen(a, b []byte) int {
 	var i, length = 0, len(a)
 	if len(b) < length {
 		length = len(b)
@@ -139,7 +188,7 @@ func prefixLen(a, b []byte) int {
 	return i
 }
 
-// hasTerm returns whether a hex key has the terminator flag.
-func hasTerm(s []byte) bool {
+// HasTerm returns whether a hex key has the terminator flag.
+func HasTerm(s []byte) bool {
 	return len(s) > 0 && s[len(s)-1] == 16
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -166,9 +167,9 @@ func (s *stateObject) getTrie(db Database) Trie {
 		}
 		if s.trie == nil {
 			var err error
-			s.trie, err = db.OpenStorageTrie(s.addrHash, s.data.Root)
+			s.trie, err = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, s.data.Root)
 			if err != nil {
-				s.trie, _ = db.OpenStorageTrie(s.addrHash, common.Hash{})
+				s.trie, _ = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, common.Hash{})
 				s.setError(fmt.Errorf("can't create storage trie: %v", err))
 			}
 		}
@@ -247,7 +248,8 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Has
 		if metrics.EnabledExpensive {
 			meter = &s.db.StorageReads
 		}
-		if enc, err = s.getTrie(db).TryGet(key.Bytes()); err != nil {
+		t := s.getTrie(db)
+		if enc, err = t.TryGet(key.Bytes()); err != nil {
 			s.setError(err)
 			return common.Hash{}
 		}
@@ -398,13 +400,13 @@ func (s *stateObject) updateRoot(db Database) {
 
 // CommitTrie the storage trie of the object to db.
 // This updates the trie root.
-func (s *stateObject) CommitTrie(db Database) (int, int, error) {
+func (s *stateObject) CommitTrie(db Database) (*trie.CommitResult, error) {
 	// If nothing changed, don't bother with hashing anything
 	if s.updateTrie(db) == nil {
-		return 0, 0, nil
+		return nil, nil
 	}
 	if s.dbErr != nil {
-		return 0, 0, s.dbErr
+		return nil, s.dbErr
 	}
 	// Track the amount of time wasted on committing the storage trie
 	if metrics.EnabledExpensive {
@@ -414,7 +416,7 @@ func (s *stateObject) CommitTrie(db Database) (int, int, error) {
 	if err == nil {
 		s.data.Root = result.Root
 	}
-	return len(result.UpdatedNodes), len(result.DeletedNodes), err
+	return result, err
 }
 
 // AddBalance adds amount to s's balance.

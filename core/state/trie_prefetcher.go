@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	// triePrefetchMetricsPrefix is the prefix under which to publis the metrics.
+	// triePrefetchMetricsPrefix is the prefix under which to publish the metrics.
 	triePrefetchMetricsPrefix = "trie/prefetch/"
 )
 
@@ -51,7 +51,6 @@ type triePrefetcher struct {
 	storageWasteMeter metrics.Meter
 }
 
-// newTriePrefetcher
 func newTriePrefetcher(db Database, root common.Hash, namespace string) *triePrefetcher {
 	prefix := triePrefetchMetricsPrefix + namespace
 	p := &triePrefetcher{
@@ -148,7 +147,7 @@ func (p *triePrefetcher) prefetch(owner common.Hash, root common.Hash, keys [][]
 	id := p.trieID(owner, root)
 	fetcher := p.fetchers[id]
 	if fetcher == nil {
-		fetcher = newSubfetcher(p.db, owner, root)
+		fetcher = newSubfetcher(p.db, p.root, owner, root)
 		p.fetchers[id] = fetcher
 	}
 	fetcher.schedule(keys)
@@ -203,7 +202,8 @@ func (p *triePrefetcher) trieID(owner common.Hash, root common.Hash) string {
 // main prefetcher is paused and either all requested items are processed or if
 // the trie being worked on is retrieved from the prefetcher.
 type subfetcher struct {
-	db    Database    // Database to load trie nodes through
+	db    Database // Database to load trie nodes through
+	state common.Hash
 	owner common.Hash // Owner of the trie, usually account hash
 	root  common.Hash // Root hash of the trie to prefetch
 	trie  Trie        // Trie being populated with nodes
@@ -223,9 +223,10 @@ type subfetcher struct {
 
 // newSubfetcher creates a goroutine to prefetch state items belonging to a
 // particular root hash.
-func newSubfetcher(db Database, owner common.Hash, root common.Hash) *subfetcher {
+func newSubfetcher(db Database, state common.Hash, owner common.Hash, root common.Hash) *subfetcher {
 	sf := &subfetcher{
 		db:    db,
+		state: state,
 		owner: owner,
 		root:  root,
 		wake:  make(chan struct{}, 1),
@@ -296,7 +297,7 @@ func (sf *subfetcher) loop() {
 		}
 		sf.trie = trie
 	} else {
-		trie, err := sf.db.OpenStorageTrie(sf.owner, sf.root)
+		trie, err := sf.db.OpenStorageTrie(sf.state, sf.owner, sf.root)
 		if err != nil {
 			log.Warn("Trie prefetcher failed opening trie", "root", sf.root, "err", err)
 			return

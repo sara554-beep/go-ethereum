@@ -20,6 +20,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"sort"
 	"time"
@@ -105,6 +106,11 @@ type StateDB struct {
 	validRevisions []revision
 	nextRevisionId int
 
+	// The flag indicates that state transition can allow an error occurs.
+	// It's used by prefetcher which aims to load states but may enter the
+	// invalid execution path.
+	nonStrict bool
+
 	// Measurements gathered during execution for debugging purposes
 	AccountReads         time.Duration
 	AccountHashes        time.Duration
@@ -122,6 +128,8 @@ type StateDB struct {
 	StorageUpdated int
 	AccountDeleted int
 	StorageDeleted int
+
+	debugMode bool
 }
 
 // New creates a new state from a given trie.
@@ -239,6 +247,9 @@ func (s *StateDB) AddRefund(gas uint64) {
 func (s *StateDB) SubRefund(gas uint64) {
 	s.journal.append(refundChange{prev: s.refund})
 	if gas > s.refund {
+		if s.nonStrict {
+			return
+		}
 		panic(fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d)", gas, s.refund))
 	}
 	s.refund -= gas
@@ -893,6 +904,12 @@ func (s *StateDB) Prepare(thash common.Hash, ti int) {
 	s.accessList = newAccessList()
 }
 
+// SetNonStrict sets the nonStrict flag as true which allows the invalid
+// state transition.
+func (s *StateDB) SetNonStrict() {
+	s.nonStrict = true
+}
+
 func (s *StateDB) clearJournalAndRefund() {
 	if len(s.journal.entries) > 0 {
 		s.journal = newJournal()
@@ -913,6 +930,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	var (
 		storageUpdated int
 		storageDeleted int
+		nodes          = make(map[string][]byte)
 	)
 	codeWriter := s.db.TrieDB().DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
@@ -923,12 +941,15 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				obj.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie
-			updated, deleted, err := obj.CommitTrie(s.db)
+			result, err := obj.CommitTrie(s.db)
 			if err != nil {
 				return common.Hash{}, err
 			}
-			storageUpdated += updated
-			storageDeleted += deleted
+			if result != nil {
+				storageUpdated += len(result.UpdatedNodes)
+				storageDeleted += len(result.DeletedNodes)
+				nodes = result.CommitTo(nodes)
+			}
 		}
 	}
 	if len(s.stateObjectsDirty) > 0 {
@@ -944,23 +965,12 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	if metrics.EnabledExpensive {
 		start = time.Now()
 	}
-	// The onleaf func is called _serially_, so we can reuse the same account
-	// for unmarshalling every time.
-	var account Account
-	result, err := s.trie.Commit(func(keys [][]byte, path []byte, leaf []byte, parent common.Hash, parentPath []byte) error {
-		if err := rlp.DecodeBytes(leaf, &account); err != nil {
-			return nil
-		}
-		if account.Root != emptyRoot {
-			owner := common.BytesToHash(keys[0])
-			s.db.TrieDB().Reference(owner, account.Root, parent, parentPath)
-		}
-		return nil
-	})
+	result, err := s.trie.Commit(nil)
 	if err != nil {
 		return common.Hash{}, err
 	}
 	root := result.Root
+	nodes = result.CommitTo(nodes)
 
 	if metrics.EnabledExpensive {
 		s.AccountCommits += time.Since(start)
@@ -995,6 +1005,21 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 			}
 		}
 		s.snap, s.snapDestructs, s.snapAccounts, s.snapStorage = nil, nil, nil, nil
+	}
+	// Push the state diffs into the in-memory layer if the root hash is changed.
+	if root != s.originalRoot {
+		if err := s.db.TrieDB().Update(root, s.originalRoot, nodes); err != nil {
+			if err != triedb.ErrSnapshotReadOnly {
+				log.Warn("Failed to commit dirty trie nodes", "err", err)
+			}
+			return common.Hash{}, err
+		}
+		if err := s.db.TrieDB().Cap(root, 128); err != nil {
+			if err != triedb.ErrSnapshotReadOnly {
+				log.Warn("Failed to cap node tree", "err", err)
+			}
+			return common.Hash{}, err
+		}
 	}
 	return root, err
 }

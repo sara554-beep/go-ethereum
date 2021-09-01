@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	lru "github.com/hashicorp/golang-lru"
 )
 
@@ -42,7 +43,7 @@ type Database interface {
 	OpenTrie(root common.Hash) (Trie, error)
 
 	// OpenStorageTrie opens the storage trie of an account.
-	OpenStorageTrie(addrHash, root common.Hash) (Trie, error)
+	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
 
 	// CopyTrie returns an independent copy of the given trie.
 	CopyTrie(Trie) Trie
@@ -54,7 +55,7 @@ type Database interface {
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 
 	// TrieDB retrieves the low level trie database used for data storage.
-	TrieDB() *trie.Database
+	TrieDB() *triedb.Database
 }
 
 // Trie is a Ethereum Merkle Patricia trie.
@@ -112,17 +113,17 @@ func NewDatabase(db ethdb.Database) Database {
 // NewDatabaseWithConfig creates a backing store for state. The returned database
 // is safe for concurrent use and retains a lot of collapsed RLP trie nodes in a
 // large memory cache.
-func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
+func NewDatabaseWithConfig(db ethdb.Database, config *triedb.Config) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
 	return &cachingDB{
-		db:            trie.NewDatabaseWithConfig(db, config),
+		db:            triedb.New(db, config),
 		codeSizeCache: csc,
 		codeCache:     fastcache.New(codeCacheSize),
 	}
 }
 
 type cachingDB struct {
-	db            *trie.Database
+	db            *triedb.Database
 	codeSizeCache *lru.Cache
 	codeCache     *fastcache.Cache
 }
@@ -137,8 +138,8 @@ func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash) (Trie, error) {
-	tr, err := trie.NewSecureWithOwner(addrHash, root, db.db)
+func (db *cachingDB) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error) {
+	tr, err := trie.NewSecureWithOwner(stateRoot, addrHash, root, db.db)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +196,6 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.
-func (db *cachingDB) TrieDB() *trie.Database {
+func (db *cachingDB) TrieDB() *triedb.Database {
 	return db.db
 }

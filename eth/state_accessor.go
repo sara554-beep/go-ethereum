@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 )
 
 // stateAtBlock retrieves the state database associated with a certain block.
@@ -59,7 +60,7 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, reexec uint64, base *state
 
 		// Create an ephemeral trie.Database for isolating the live one. Otherwise
 		// the internal junks created by tracing will be persisted into the disk.
-		database = state.NewDatabaseWithConfig(eth.chainDb, &trie.Config{Cache: 16})
+		database = state.NewDatabaseWithConfig(eth.chainDb, &triedb.Config{Cache: 16})
 
 		// If we didn't check the dirty database, do check the clean one, otherwise
 		// we would rewind past a persisted block (specific corner case is chain
@@ -125,9 +126,9 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, reexec uint64, base *state
 		if err != nil {
 			return nil, fmt.Errorf("state reset after block %d failed: %v", current.NumberU64(), err)
 		}
-		database.TrieDB().Reference(common.Hash{}, root, common.Hash{}, nil)
+		//database.TrieDB().Reference(common.Hash{}, root, common.Hash{}, nil)
 		if parent != (common.Hash{}) {
-			database.TrieDB().Dereference(parent)
+			//database.TrieDB().Dereference(parent)
 		}
 		parent = root
 	}

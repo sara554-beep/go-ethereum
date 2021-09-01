@@ -68,6 +68,7 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 			return // Also invalid block, bail out
 		}
 		statedb.Prepare(tx.Hash(), i)
+		statedb.SetNonStrict()
 		if err := precacheTransaction(msg, p.config, gaspool, statedb, header, evm); err != nil {
 			return // Ugh, something went horribly wrong, bail out
 		}
