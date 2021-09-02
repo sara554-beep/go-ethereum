@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package tries
+package triedb
 
 import (
 	"sync"
@@ -55,15 +55,21 @@ func (dl *diskLayer) Stale() bool {
 	return dl.stale
 }
 
-func (dl *diskLayer) TrieNode(key string) ([]byte, error) {
+func (dl *diskLayer) Node(key string, hash common.Hash) ([]byte, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
 		return nil, ErrSnapshotStale
 	}
-	blob := rawdb.ReadTrieNode(dl.diskdb, []byte(key))
-	return blob, nil
+	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, []byte(key))
+	if len(blob) == 0 || nodeHash != hash {
+		blob = rawdb.ReadArchiveTrieNode(dl.diskdb, hash)
+	}
+	if len(blob) > 0 {
+		return blob, nil
+	}
+	return nil, nil
 }
 
 func (dl *diskLayer) Update(blockHash common.Hash, nodes map[string][]byte) *diffLayer {

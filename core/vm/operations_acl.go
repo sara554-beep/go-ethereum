@@ -32,10 +32,10 @@ func makeGasSStoreFunc(clearingRefund uint64) gasFunc {
 		}
 		// Gas sentry honoured, do the actual gas calculation based on the stored value
 		var (
-			y, x    = stack.Back(1), stack.peek()
-			slot    = common.Hash(x.Bytes32())
-			current = evm.StateDB.GetState(contract.Address(), slot)
-			cost    = uint64(0)
+			y, x           = stack.Back(1), stack.peek()
+			slot           = common.Hash(x.Bytes32())
+			current, sflag = evm.StateDB.GetState(contract.Address(), slot)
+			cost           = uint64(0)
 		)
 		// Check slot presence in the access list
 		if addrPresent, slotPresent := evm.StateDB.SlotInAccessList(contract.Address(), slot); !slotPresent {
@@ -56,7 +56,7 @@ func makeGasSStoreFunc(clearingRefund uint64) gasFunc {
 			//		return params.SloadGasEIP2200, nil
 			return cost + params.WarmStorageReadCostEIP2929, nil // SLOAD_GAS
 		}
-		original := evm.StateDB.GetCommittedState(contract.Address(), x.Bytes32())
+		original, flag := evm.StateDB.GetCommittedState(contract.Address(), x.Bytes32())
 		if original == current {
 			if original == (common.Hash{}) { // create slot (2.1.1)
 				return cost + params.SstoreSetGasEIP2200, nil
@@ -70,7 +70,8 @@ func makeGasSStoreFunc(clearingRefund uint64) gasFunc {
 		}
 		if original != (common.Hash{}) {
 			if current == (common.Hash{}) { // recreate slot (2.2.1.1)
-				evm.StateDB.SubRefund(clearingRefund)
+				evm.StateDB.SubRefund(clearingRefund, evm.Context.BlockNumber.Uint64(), contract.Address(),
+					x.Bytes32(), original, current, value, sflag, flag)
 			} else if value == (common.Hash{}) { // delete slot (2.2.1.2)
 				evm.StateDB.AddRefund(clearingRefund)
 			}

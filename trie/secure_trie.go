@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
@@ -51,7 +52,7 @@ type SecureTrie struct {
 // Loaded nodes are kept around until their 'cache generation' expires.
 // A new cache generation is created by each call to Commit.
 // cachelimit sets the number of past cache generations to keep.
-func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
+func NewSecure(root common.Hash, db *triedb.Database) (*SecureTrie, error) {
 	if db == nil {
 		panic("trie.NewSecure called without a database")
 	}
@@ -62,11 +63,11 @@ func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
 	return &SecureTrie{trie: *trie}, nil
 }
 
-func NewSecureWithOwner(owner common.Hash, root common.Hash, db *Database) (*SecureTrie, error) {
+func NewSecureWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db *triedb.Database) (*SecureTrie, error) {
 	if db == nil {
 		panic("trie.NewSecure called without a database")
 	}
-	trie, err := NewWithOwner(owner, root, db)
+	trie, err := NewWithOwner(stateRoot, owner, root, db)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +148,7 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
 		return key
 	}
-	return t.trie.db.preimage(common.BytesToHash(shaKey))
+	return t.trie.db.Preimage(common.BytesToHash(shaKey))
 }
 
 // Commit writes all nodes and the secure hash pre-images to the trie's database.
@@ -158,13 +159,11 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 func (t *SecureTrie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	// Write all the pre-images to the actual disk database
 	if len(t.getSecKeyCache()) > 0 {
-		if t.trie.db.preimages != nil { // Ugly direct check but avoids the below write lock
-			t.trie.db.lock.Lock()
-			for hk, key := range t.secKeyCache {
-				t.trie.db.insertPreimage(common.BytesToHash([]byte(hk)), key)
-			}
-			t.trie.db.lock.Unlock()
+		preimages := make(map[common.Hash][]byte)
+		for hk, key := range t.secKeyCache {
+			preimages[common.BytesToHash([]byte(hk))] = key
 		}
+		t.trie.db.InsertPreimage(preimages)
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database

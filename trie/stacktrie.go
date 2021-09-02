@@ -22,6 +22,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 	"io"
 	"sync"
 
@@ -206,7 +207,7 @@ const (
 
 // TryUpdate inserts a (key, value) pair into the stack trie
 func (st *StackTrie) TryUpdate(key, value []byte) error {
-	k := keybytesToHex(key)
+	k := encoding.KeybytesToHex(key)
 	if len(value) == 0 {
 		panic("deletion not supported")
 	}
@@ -444,7 +445,7 @@ func (st *StackTrie) hash(path []byte) {
 			Key []byte
 			Val node
 		}{
-			Key: hexToCompact(st.key),
+			Key: encoding.HexToCompact(st.key),
 			Val: valuenode,
 		}
 		if err := rlp.Encode(&h.tmp, n); err != nil {
@@ -458,7 +459,7 @@ func (st *StackTrie) hash(path []byte) {
 		h.tmp.Reset()
 		key := append(append([]byte{}, st.key...), byte(16))
 		st.key = key
-		sz := hexToCompactInPlace(st.key)
+		sz := encoding.HexToCompactInPlace(st.key)
 		n := [][]byte{st.key[:sz], st.val}
 		if err := rlp.Encode(&h.tmp, n); err != nil {
 			panic(err)
@@ -486,7 +487,7 @@ func (st *StackTrie) hash(path []byte) {
 	if st.db != nil {
 		// TODO! Is it safe to Put the slice here?
 		// Do all db implementations copy the value provided?
-		key := EncodeNodeKey(st.owner, path, common.BytesToHash(st.val))
+		key := encoding.EncodeStorageKey(st.owner, path)
 		rawdb.WriteTrieNode(st.db, key, h.tmp)
 	}
 }
@@ -532,7 +533,7 @@ func (st *StackTrie) Commit() (common.Hash, error) {
 		h.sha.Write(st.val)
 		h.sha.Read(ret)
 
-		key := EncodeNodeKey(st.owner, nil, common.BytesToHash(ret))
+		key := encoding.EncodeStorageKey(st.owner, nil)
 		rawdb.WriteTrieNode(st.db, key, st.val)
 		return common.BytesToHash(ret), nil
 	}

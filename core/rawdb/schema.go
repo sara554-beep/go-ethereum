@@ -63,9 +63,6 @@ var (
 	// snapshotSyncStatusKey tracks the snapshot sync status across restarts.
 	snapshotSyncStatusKey = []byte("SnapshotSyncStatus")
 
-	// persistTrieRootKey tracks the hash of the persisted trie in disk.
-	persistTrieRootKey = []byte("DiskTrieRoot")
-
 	// triesJournalKey tracks the in-memory diff trie node layers across restarts.
 	triesJournalKey = []byte("TriesJournal")
 
@@ -95,7 +92,8 @@ var (
 	SnapshotAccountPrefix = []byte("a") // SnapshotAccountPrefix + account hash -> account trie value
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
-	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path + node hash -> trie node
+	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
+	ArchiveTrieNodePrefix = []byte("W") // ArchiveTrieNodePrefix + node hash -> trie node
 
 	preimagePrefix = []byte("secure-key-")      // preimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-") // config prefix for the db
@@ -241,8 +239,22 @@ func trieNodeKey(key []byte) []byte {
 // IsTrieNodeKey reports whether the given byte slice is the key of trie node.
 // if so return the raw encoded trie key as well.
 func IsTrieNodeKey(key []byte) (bool, []byte) {
-	if bytes.HasPrefix(key, TrieNodePrefix) && len(key) > common.HashLength+len(TrieNodePrefix) {
+	if bytes.HasPrefix(key, TrieNodePrefix) {
 		return true, key[len(TrieNodePrefix):]
+	}
+	return false, nil
+}
+
+// preservedTrieNodeKey = ArchiveTrieNodePrefix + encoded node key
+func preservedTrieNodeKey(key []byte) []byte {
+	return append(ArchiveTrieNodePrefix, key...)
+}
+
+// IsPreservedTrieNodeKey reports whether the given byte slice is the
+// key of trie node. if so return the raw encoded trie key as well.
+func IsPreservedTrieNodeKey(key []byte) (bool, []byte) {
+	if bytes.HasPrefix(key, ArchiveTrieNodePrefix) {
+		return true, key[len(ArchiveTrieNodePrefix):]
 	}
 	return false, nil
 }

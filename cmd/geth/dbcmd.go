@@ -18,6 +18,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"os"
 	"path/filepath"
 	"sort"
@@ -443,7 +444,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 			return err
 		}
 	}
-	theTrie, err := trie.New(stRoot, trie.NewDatabase(db))
+	theTrie, err := trie.New(stRoot, triedb.New(db, nil))
 	if err != nil {
 		return err
 	}

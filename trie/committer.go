@@ -17,8 +17,8 @@
 package trie
 
 import (
-	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -52,7 +52,7 @@ type committer struct {
 	owner   common.Hash
 	onleaf  LeafCallback
 	leafCh  chan *leaf
-	tracker *diffTracker
+	tracker *stateTracker
 }
 
 // committers live in a global sync.Pool
@@ -66,7 +66,7 @@ var committerPool = sync.Pool{
 }
 
 // newCommitter creates a new committer or picks one from the pool.
-func newCommitter(tracker *diffTracker) *committer {
+func newCommitter(tracker *stateTracker) *committer {
 	committer := committerPool.Get().(*committer)
 	committer.tracker = tracker
 	return committer
@@ -81,11 +81,8 @@ func returnCommitterToPool(h *committer) {
 }
 
 // Commit collapses a node down into a hash node and inserts it into the database
-func (c *committer) Commit(n node, db *Database) (hashNode, error) {
-	if db == nil {
-		return nil, errors.New("no db provided")
-	}
-	h, err := c.commit(nil, n, db)
+func (c *committer) Commit(n node) (hashNode, error) {
+	h, err := c.commit(nil, n)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +90,7 @@ func (c *committer) Commit(n node, db *Database) (hashNode, error) {
 }
 
 // commit collapses a node down into a hash node and inserts it into the database
-func (c *committer) commit(path []byte, n node, db *Database) (node, error) {
+func (c *committer) commit(path []byte, n node) (node, error) {
 	// if this path is clean, use available cached data
 	hash, dirty := n.cache()
 	if hash != nil && !dirty {
@@ -110,28 +107,28 @@ func (c *committer) commit(path []byte, n node, db *Database) (node, error) {
 		if _, ok := cn.Val.(*fullNode); ok {
 			// Use concat here instead of append since the passed path
 			// might be mutated.
-			childV, err := c.commit(concat(path, cn.Key...), cn.Val, db)
+			childV, err := c.commit(concat(path, cn.Key...), cn.Val)
 			if err != nil {
 				return nil, err
 			}
 			collapsed.Val = childV
 		}
 		// The key needs to be copied, since we're delivering it to database
-		collapsed.Key = hexToCompact(cn.Key)
-		hashedNode := c.store(path, collapsed, db)
+		collapsed.Key = encoding.HexToCompact(cn.Key)
+		hashedNode := c.store(path, collapsed)
 		if hn, ok := hashedNode.(hashNode); ok {
 			return hn, nil
 		}
 		return collapsed, nil
 	case *fullNode:
-		hashedKids, err := c.commitChildren(path, cn, db)
+		hashedKids, err := c.commitChildren(path, cn)
 		if err != nil {
 			return nil, err
 		}
 		collapsed := cn.copy()
 		collapsed.Children = hashedKids
 
-		hashedNode := c.store(path, collapsed, db)
+		hashedNode := c.store(path, collapsed)
 		if hn, ok := hashedNode.(hashNode); ok {
 			return hn, nil
 		}
@@ -145,7 +142,7 @@ func (c *committer) commit(path []byte, n node, db *Database) (node, error) {
 }
 
 // commitChildren commits the children of the given fullnode
-func (c *committer) commitChildren(path []byte, n *fullNode, db *Database) ([17]node, error) {
+func (c *committer) commitChildren(path []byte, n *fullNode) ([17]node, error) {
 	var children [17]node
 	for i := 0; i < 16; i++ {
 		child := n.Children[i]
@@ -162,7 +159,7 @@ func (c *committer) commitChildren(path []byte, n *fullNode, db *Database) ([17]
 		// Commit the child recursively and store the "hashed" value.
 		// Note the returned node can be some embedded nodes, so it's
 		// possible the type is not hashNode.
-		hashed, err := c.commit(concat(path, byte(i)), child, db)
+		hashed, err := c.commit(concat(path, byte(i)), child)
 		if err != nil {
 			return children, err
 		}
@@ -178,7 +175,7 @@ func (c *committer) commitChildren(path []byte, n *fullNode, db *Database) ([17]
 // store hashes the node n and if we have a storage layer specified, it writes
 // the key/value pair to it and tracks any node->child references as well as any
 // node->external trie references.
-func (c *committer) store(path []byte, n node, db *Database) node {
+func (c *committer) store(path []byte, n node) node {
 	// Larger nodes are replaced by their hash and stored in the database.
 	var hash, _ = n.cache()
 
@@ -196,7 +193,7 @@ func (c *committer) store(path []byte, n node, db *Database) node {
 	// Track the updated trie nodes during the commit operation.
 	if c.tracker != nil {
 		blob, _ := rlp.EncodeToBytes(n)
-		c.tracker.onUpdate(path, blob)
+		c.tracker.onUpdate(encoding.EncodeStorageKey(c.owner, path), blob)
 	}
 	// If we're using channel-based leaf-reporting, send to channel.
 	// The leaf channel will be active only when there an active leaf-callback
@@ -207,36 +204,24 @@ func (c *committer) store(path []byte, n node, db *Database) node {
 			node: n,
 			path: path,
 		}
-	} else if db != nil {
-		// No leaf-callback used, but there's still a database. Do serial
-		// insertion
-		db.lock.Lock()
-		db.insert(c.owner, path, common.BytesToHash(hash), size, n)
-		db.lock.Unlock()
 	}
 	return hash
 }
 
 // commitLoop does the actual insert + leaf callback for nodes.
-func (c *committer) commitLoop(db *Database) {
+func (c *committer) commitLoop() {
 	for item := range c.leafCh {
 		var (
 			hash = item.hash
-			size = item.size
 			n    = item.node
 			path = item.path
 		)
-		// We are pooling the trie nodes into an intermediate memory cache
-		db.lock.Lock()
-		db.insert(c.owner, path, hash, size, n)
-		db.lock.Unlock()
-
 		if c.onleaf != nil {
 			switch n := n.(type) {
 			case *shortNode:
 				if child, ok := n.Val.(valueNode); ok {
-					key := compactToHex(n.Key)
-					if hasTerm(key) {
+					key := encoding.CompactToHex(n.Key)
+					if encoding.HasTerm(key) {
 						key = key[:len(key)-1]
 					}
 					var (
@@ -244,10 +229,10 @@ func (c *committer) commitLoop(db *Database) {
 						leafPath = append(append([]byte(nil), path...), key...)
 					)
 					if len(leafPath) == 2*common.HashLength {
-						keys = append(keys, HexToKeybytes(leafPath))
+						keys = append(keys, encoding.HexToKeybytes(leafPath))
 					} else if len(leafPath) == 4*common.HashLength {
-						keys = append(keys, HexToKeybytes(leafPath[:2*common.HashLength]))
-						keys = append(keys, HexToKeybytes(leafPath[2*common.HashLength:]))
+						keys = append(keys, encoding.HexToKeybytes(leafPath[:2*common.HashLength]))
+						keys = append(keys, encoding.HexToKeybytes(leafPath[2*common.HashLength:]))
 					}
 					c.onleaf(keys, leafPath, child, hash, path)
 				}

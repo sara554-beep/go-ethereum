@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -14,21 +14,26 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package tries implements a journalled, dynamic state dump.
-package tries
+// Package triedb implements a multiple layered structure for maintaining
+// in-memory trie nodes. It serves as a supplement to the singleton trie
+// stored in disk and can be used to resist frequent mini reorgs.
+package triedb
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
+	"time"
 
+	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -47,8 +52,9 @@ type Snapshot interface {
 	// Root returns the root hash for which this snapshot was made.
 	Root() common.Hash
 
-	// TrieNode retrieves the trie node associated with a particular key.
-	TrieNode(key string) ([]byte, error)
+	// Node retrieves the trie node associated with a particular key.
+	// The passed key should be encoded in storage format.
+	Node(key string, hash common.Hash) ([]byte, error)
 }
 
 // snapshot is the internal version of the snapshot data layer that supports some
@@ -64,105 +70,163 @@ type snapshot interface {
 	Parent() snapshot
 
 	// Update creates a new layer on top of the existing snapshot diff tree with
-	// the specified data items.
+	// the given dirty trie node set. The deleted trie nodes are also included
+	// with the nil as the value.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, trieNodes map[string][]byte) *diffLayer
+	Update(blockRoot common.Hash, nodes map[string][]byte) *diffLayer
 
 	// Journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the snapshot without
 	// flattening everything down (bad for reorgs).
-	Journal(buffer *bytes.Buffer) (common.Hash, error)
+	Journal(buffer *bytes.Buffer) error
 
 	// Stale return whether this layer has become stale (was flattened across) or
 	// if it's still live.
 	Stale() bool
 }
 
-// Tree is an Ethereum state snapshot tree. It consists of one persistent base
-// layer backed by a key-value store, on top of which arbitrarily many in-memory
-// diff layers are topped. The memory diffs can form a tree with branching, but
-// the disk layer is singleton and common to all. If a reorg goes deeper than the
-// disk layer, everything needs to be deleted.
-//
-// The goal of a state snapshot is twofold: to allow direct access to account and
-// storage data to avoid expensive multi-level trie lookups; and to allow sorted,
-// cheap iteration of the account/storage tries for sync aid.
-type Tree struct {
-	diskdb ethdb.KeyValueStore      // Persistent database to store the snapshot
-	triedb *trie.Database           // In-memory cache to access the trie through
-	cache  int                      // Megabytes permitted to use for read caches
-	layers map[common.Hash]snapshot // Collection of all known layers
-	lock   sync.RWMutex
+// Config defines all necessary options for database.
+type Config struct {
+	Cache     int                // Memory allowance (MB) to use for caching trie nodes in memory
+	Journal   string             // Journal of clean cache to survive node restarts
+	Preimages bool               // Flag whether the preimage of trie key is recorded
+	Archive   bool               // Flag whether the database is opened in archive mode
+	Fallback  func() common.Hash // Function used to find the fallback base layer root
+}
+
+// isArchive returns the archive mode indicator.
+func (config *Config) isArchive() bool {
+	if config == nil {
+		return false
+	}
+	return config.Archive
+}
+
+// getFallback returns the fallback for finding the base layer root.
+// Usually it's used for resolving legacy state trie in the database
+// after upgrading from the legacy version.
+func (config *Config) getFallback() func() common.Hash {
+	if config == nil {
+		return nil
+	}
+	return config.Fallback
+}
+
+// Database is a multiple-layered structure for maintaining in-memory trie nodes.
+// It consists of one persistent base layer backed by a key-value store, on top
+// of which arbitrarily many in-memory diff layers are topped. The memory diffs
+// can form a tree with branching, but the disk layer is singleton and common to
+// all. If a reorg goes deeper than the disk layer, a batch of reverse diffs should
+// be applied. The deepest reorg can be handled depends on the amount of reverse
+// diffs tracked in the disk.
+type Database struct {
+	config        *Config
+	lock          sync.RWMutex
+	diskdb        ethdb.KeyValueStore      // Persistent database to store the snapshot
+	cache         *fastcache.Cache         // Megabytes permitted using for read caches
+	layers        map[common.Hash]snapshot // Collection of all known layers
+	preimages     map[common.Hash][]byte   // Preimages of nodes from the secure trie
+	preimagesSize common.StorageSize       // Storage size of the preimages cache
 }
 
 // New attempts to load an already existing snapshot from a persistent key-value
-// store (with a number of memory layers from a journal), ensuring that the head
-// of the snapshot matches the expected one.
-//
-// If the snapshot is missing or the disk layer is broken, the snapshot will be
-// reconstructed using both the existing data and the state trie.
-// The repair happens on a background thread.
-//
-// If the memory layers in the journal do not match the disk layer (e.g. there is
-// a gap) or the journal is missing, there are two repair cases:
-//
-// - if the 'recovery' parameter is true, all memory diff-layers will be discarded.
-//   This case happens when the snapshot is 'ahead' of the state trie.
-// - otherwise, the entire snapshot is considered invalid and will be recreated on
-//   a background thread.
-func New(diskdb ethdb.KeyValueStore, cache int, root common.Hash) (*Tree, error) {
-	// Create a new, empty snapshot tree
-	snap := &Tree{
+// store (with a number of memory layers from a journal). If the journal is not
+// matched with the base persistent layer, all the recorded diff layers are discarded.
+func New(diskdb ethdb.KeyValueStore, config *Config) *Database {
+	var cleans *fastcache.Cache
+	if config != nil && config.Cache > 0 {
+		if config.Journal == "" {
+			cleans = fastcache.New(config.Cache * 1024 * 1024)
+		} else {
+			cleans = fastcache.LoadFromFileOrNew(config.Journal, config.Cache*1024*1024)
+		}
+	}
+	db := &Database{
+		config: config,
 		diskdb: diskdb,
-		cache:  cache,
+		cache:  cleans,
 		layers: make(map[common.Hash]snapshot),
 	}
-	head, err := loadSnapshot(diskdb, cache, root)
-	if err != nil {
-		return nil, err // Bail out the error, don't rebuild automatically.
-	}
-	// Existing snapshot loaded, seed all the layers
+	head := loadSnapshot(diskdb, cleans, config.getFallback())
 	for head != nil {
-		snap.layers[head.Root()] = head
+		db.layers[head.Root()] = head
 		head = head.Parent()
 	}
-	return snap, nil
+	if config == nil || config.Preimages {
+		db.preimages = make(map[common.Hash][]byte)
+	}
+	return db
+}
+
+// InsertPreimage writes a new trie node pre-image to the memory database if it's
+// yet unknown. The method will NOT make a copy of the slice, only use if the
+// preimage will NOT be changed later on.
+func (db *Database) InsertPreimage(preimages map[common.Hash][]byte) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// Short circuit if preimage collection is disabled
+	if db.preimages == nil {
+		return
+	}
+	for hash, preimage := range preimages {
+		if _, ok := db.preimages[hash]; ok {
+			continue
+		}
+		db.preimages[hash] = preimage
+		db.preimagesSize += common.StorageSize(common.HashLength + len(preimage))
+	}
+}
+
+// Preimage retrieves a cached trie node pre-image from memory. If it cannot be
+// found cached, the method queries the persistent database for the content.
+func (db *Database) Preimage(hash common.Hash) []byte {
+	// Short circuit if preimage collection is disabled
+	if db.preimages == nil {
+		return nil
+	}
+	db.lock.RLock()
+	preimage := db.preimages[hash]
+	db.lock.RUnlock()
+
+	if preimage != nil {
+		return preimage
+	}
+	return rawdb.ReadPreimage(db.diskdb, hash)
 }
 
 // Snapshot retrieves a snapshot belonging to the given block root, or nil if no
 // snapshot is maintained for that block.
-func (t *Tree) Snapshot(blockRoot common.Hash) Snapshot {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
+func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
 
-	return t.layers[blockRoot]
+	return db.layers[blockRoot]
 }
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
-func (t *Tree) Update(blockRoot common.Hash, parentRoot common.Hash, nodes map[string][]byte) error {
-	// Reject noop updates to avoid self-loops in the snapshot tree. This is a
-	// special case that can only happen for Clique networks where empty blocks
-	// don't modify the state (0 block subsidy).
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string][]byte) error {
+	// Reject noop updates to avoid self-loops. This is a special case that can
+	// only happen for Clique networks where empty blocks don't modify the state
+	// (0 block subsidy).
 	//
 	// Although we could silently ignore this internally, it should be the caller's
 	// responsibility to avoid even attempting to insert such a snapshot.
-	if blockRoot == parentRoot {
+	if root == parentRoot {
 		return errSnapshotCycle
 	}
 	// Generate a new snapshot on top of the parent
-	parent := t.Snapshot(parentRoot)
+	parent := db.Snapshot(parentRoot)
 	if parent == nil {
 		return fmt.Errorf("parent [%#x] snapshot missing", parentRoot)
 	}
-	snap := parent.(snapshot).Update(blockRoot, nodes)
+	snap := parent.(snapshot).Update(root, nodes)
 
-	// Save the new snapshot for later
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
-	t.layers[snap.root] = snap
+	db.lock.Lock()
+	db.layers[snap.root] = snap
+	db.lock.Unlock()
 	return nil
 }
 
@@ -175,9 +239,9 @@ func (t *Tree) Update(blockRoot common.Hash, parentRoot common.Hash, nodes map[s
 // which may or may not overflow and cascade to disk. Since this last layer's
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
-func (t *Tree) Cap(root common.Hash, layers int) error {
+func (db *Database) Cap(root common.Hash, layers int) error {
 	// Retrieve the head snapshot to cap from
-	snap := t.Snapshot(root)
+	snap := db.Snapshot(root)
 	if snap == nil {
 		return fmt.Errorf("snapshot [%#x] missing", root)
 	}
@@ -186,8 +250,8 @@ func (t *Tree) Cap(root common.Hash, layers int) error {
 		return fmt.Errorf("snapshot [%#x] is disk layer", root)
 	}
 	// Run the internal capping and discard all stale layers
-	t.lock.Lock()
-	defer t.lock.Unlock()
+	db.lock.Lock()
+	defer db.lock.Unlock()
 
 	// Flattening the bottom-most diff layer requires special casing since there's
 	// no child to rewire to the grandparent. In that case we can fake a temporary
@@ -195,18 +259,18 @@ func (t *Tree) Cap(root common.Hash, layers int) error {
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
 		diff.lock.RLock()
-		base := diffToDisk(diff.flatten().(*diffLayer))
+		base := diffToDisk(diff.flatten().(*diffLayer), db.config.isArchive())
 		diff.lock.RUnlock()
 
 		// Replace the entire snapshot tree with the flat base
-		t.layers = map[common.Hash]snapshot{base.root: base}
+		db.layers = map[common.Hash]snapshot{base.root: base}
 		return nil
 	}
-	t.cap(diff, layers)
+	db.cap(diff, layers)
 
 	// Remove any layer that is stale or links into a stale layer
 	children := make(map[common.Hash][]common.Hash)
-	for root, snap := range t.layers {
+	for root, snap := range db.layers {
 		if diff, ok := snap.(*diffLayer); ok {
 			parent := diff.parent.Root()
 			children[parent] = append(children[parent], root)
@@ -214,13 +278,13 @@ func (t *Tree) Cap(root common.Hash, layers int) error {
 	}
 	var remove func(root common.Hash)
 	remove = func(root common.Hash) {
-		delete(t.layers, root)
+		delete(db.layers, root)
 		for _, child := range children[root] {
 			remove(child)
 		}
 		delete(children, root)
 	}
-	for root, snap := range t.layers {
+	for root, snap := range db.layers {
 		if snap.Stale() {
 			remove(root)
 		}
@@ -239,7 +303,7 @@ func (t *Tree) Cap(root common.Hash, layers int) error {
 // which may or may not overflow and cascade to disk. Since this last layer's
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
-func (t *Tree) cap(diff *diffLayer, layers int) *diskLayer {
+func (db *Database) cap(diff *diffLayer, layers int) *diskLayer {
 	// Dive until we run out of layers or reach the persistent database
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
@@ -260,7 +324,7 @@ func (t *Tree) cap(diff *diffLayer, layers int) *diskLayer {
 		// Flatten the parent into the grandparent. The flattening internally obtains a
 		// write lock on grandparent.
 		flattened := parent.flatten().(*diffLayer)
-		t.layers[flattened.root] = flattened
+		db.layers[flattened.root] = flattened
 
 		diff.lock.Lock()
 		defer diff.lock.Unlock()
@@ -276,27 +340,23 @@ func (t *Tree) cap(diff *diffLayer, layers int) *diskLayer {
 	bottom := diff.parent.(*diffLayer)
 
 	bottom.lock.RLock()
-	base := diffToDisk(bottom)
+	base := diffToDisk(bottom, db.config.isArchive())
 	bottom.lock.RUnlock()
 
-	t.layers[base.root] = base
+	db.layers[base.root] = base
 	diff.parent = base
 	return base
 }
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
-// it. The method will panic if called onto a non-bottom-most diff layer.
-//
-// The disk layer persistence should be operated in an atomic way. All updates should
-// be discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer) *diskLayer {
+// it. The method will panic if called onto a non-bottom-most diff layer. The disk
+// layer persistence should be operated in an atomic way. All updates should be
+// discarded if the whole transition if not finished.
+func diffToDisk(bottom *diffLayer, archive bool) *diskLayer {
 	var (
 		base  = bottom.parent.(*diskLayer)
 		batch = base.diskdb.NewBatch()
 	)
-	// Put the deletion in the batch writer, flush all updates in the final step.
-	rawdb.DeletePersistedTrieRoot(batch)
-
 	// Mark the original base as stale as we're going to create a new wrapper
 	base.lock.Lock()
 	if base.stale {
@@ -305,13 +365,18 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 	base.stale = true
 	base.lock.Unlock()
 
-	// Push all updated accounts into the database
-	for hash, data := range bottom.nodes {
-		rawdb.WriteTrieNode(batch, []byte(hash), data)
+	// Push all updated accounts into the database.
+	// TODO it will lead to a huge disk write which should be avoided.
+	for key, data := range bottom.nodes {
+		if data == nil {
+			rawdb.DeleteTrieNode(batch, []byte(key))
+		} else {
+			rawdb.WriteTrieNode(batch, []byte(key), data)
+			if archive {
+				rawdb.WriteArchiveTrieNode(batch, crypto.Keccak256Hash(data), data)
+			}
+		}
 	}
-	// Update the snapshot block marker and write any remainder data
-	rawdb.WritePersistedTrieRoot(batch, bottom.root)
-
 	// Flush all the updates in the single db operation. Ensure the
 	// disk layer transition is atomic.
 	if err := batch.Write(); err != nil {
@@ -329,48 +394,49 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
 // This is meant to be used during shutdown to persist the snapshot without
 // flattening everything down (bad for reorgs).
-//
-// The method returns the root hash of the base layer that needs to be persisted
-// to disk as a trie too to allow continuing any pending generation op.
-func (t *Tree) Journal(root common.Hash) (common.Hash, error) {
+func (db *Database) Journal(root common.Hash) error {
 	// Retrieve the head snapshot to journal from var snap snapshot
-	snap := t.Snapshot(root)
+	snap := db.Snapshot(root)
 	if snap == nil {
-		return common.Hash{}, fmt.Errorf("snapshot [%#x] missing", root)
+		return fmt.Errorf("snapshot [%#x] missing", root)
 	}
 	// Run the journaling
-	t.lock.Lock()
-	defer t.lock.Unlock()
+	db.lock.Lock()
+	defer db.lock.Unlock()
 
 	// Firstly write out the metadata of journal
 	journal := new(bytes.Buffer)
 	if err := rlp.Encode(journal, journalVersion); err != nil {
-		return common.Hash{}, err
+		return err
 	}
-	diskroot := t.diskRoot()
+	diskroot := db.diskRoot()
 	if diskroot == (common.Hash{}) {
-		return common.Hash{}, errors.New("invalid disk root")
+		return errors.New("invalid disk root")
 	}
 	// Secondly write out the disk layer root, ensure the
 	// diff journal is continuous with disk.
 	if err := rlp.Encode(journal, diskroot); err != nil {
-		return common.Hash{}, err
+		return err
 	}
 	// Finally write out the journal of each layer in reverse order.
-	base, err := snap.(snapshot).Journal(journal)
-	if err != nil {
-		return common.Hash{}, err
+	if err := snap.(snapshot).Journal(journal); err != nil {
+		return err
 	}
 	// Store the journal into the database and return
-	rawdb.WriteTriesJournal(t.diskdb, journal.Bytes())
-	return base, nil
+	rawdb.WriteTriesJournal(db.diskdb, journal.Bytes())
+	return nil
+}
+
+// DiskDB retrieves the persistent storage backing the trie database.
+func (db *Database) DiskDB() ethdb.KeyValueStore {
+	return db.diskdb
 }
 
 // disklayer is an internal helper function to return the disk layer.
-// The lock of snapTree is assumed to be held already.
-func (t *Tree) disklayer() *diskLayer {
+// The lock of trieDB is assumed to be held already.
+func (db *Database) disklayer() *diskLayer {
 	var snap snapshot
-	for _, s := range t.layers {
+	for _, s := range db.layers {
 		snap = s
 		break
 	}
@@ -389,10 +455,65 @@ func (t *Tree) disklayer() *diskLayer {
 
 // diskRoot is a internal helper function to return the disk layer root.
 // The lock of snapTree is assumed to be held already.
-func (t *Tree) diskRoot() common.Hash {
-	disklayer := t.disklayer()
+func (db *Database) diskRoot() common.Hash {
+	disklayer := db.disklayer()
 	if disklayer == nil {
 		return common.Hash{}
 	}
 	return disklayer.Root()
+}
+
+// Size returns the current storage size of the memory cache in front of the
+// persistent database layer.
+func (db *Database) Size() (common.StorageSize, common.StorageSize) {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	var nodes common.StorageSize
+	for _, layer := range db.layers {
+		if diff, ok := layer.(*diffLayer); ok {
+			nodes += common.StorageSize(diff.memory)
+		}
+	}
+	return nodes, db.preimagesSize
+}
+
+// saveCache saves clean state cache to given directory path
+// using specified CPU cores.
+func (db *Database) saveCache(dir string, threads int) error {
+	if db.cache == nil {
+		return nil
+	}
+	log.Info("Writing clean trie cache to disk", "path", dir, "threads", threads)
+
+	start := time.Now()
+	err := db.cache.SaveToFileConcurrent(dir, threads)
+	if err != nil {
+		log.Error("Failed to persist clean trie cache", "error", err)
+		return err
+	}
+	log.Info("Persisted the clean trie cache", "path", dir, "elapsed", common.PrettyDuration(time.Since(start)))
+	return nil
+}
+
+// SaveCache atomically saves fast cache data to the given dir using all
+// available CPU cores.
+func (db *Database) SaveCache(dir string) error {
+	return db.saveCache(dir, runtime.GOMAXPROCS(0))
+}
+
+// SaveCachePeriodically atomically saves fast cache data to the given dir with
+// the specified interval. All dump operation will only use a single CPU core.
+func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, stopCh <-chan struct{}) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			db.saveCache(dir, 1)
+		case <-stopCh:
+			return
+		}
+	}
 }

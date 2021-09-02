@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"os"
 	"time"
 
@@ -214,7 +215,7 @@ func verifyState(ctx *cli.Context) error {
 		log.Error("Failed to load head block")
 		return errors.New("no head block")
 	}
-	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), 256, headBlock.Root(), false, false, false)
+	snaptree, err := snapshot.New(chaindb, triedb.New(chaindb, nil), 256, headBlock.Root(), false, false, false)
 	if err != nil {
 		log.Error("Failed to open snapshot tree", "err", err)
 		return err
@@ -271,7 +272,7 @@ func traverseState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	triedb := trie.NewDatabase(chaindb)
+	triedb := triedb.New(chaindb, nil)
 	t, err := trie.NewSecure(root, triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
@@ -293,7 +294,7 @@ func traverseState(ctx *cli.Context) error {
 			return err
 		}
 		if acc.Root != emptyRoot {
-			storageTrie, err := trie.NewSecureWithOwner(common.BytesToHash(accIter.Key), acc.Root, triedb)
+			storageTrie, err := trie.NewSecureWithOwner(root, common.BytesToHash(accIter.Key), acc.Root, triedb)
 			if err != nil {
 				log.Error("Failed to open storage trie", "root", acc.Root, "err", err)
 				return err
@@ -361,7 +362,7 @@ func traverseRawState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	triedb := trie.NewDatabase(chaindb)
+	triedb := triedb.New(chaindb, nil)
 	t, err := trie.NewSecure(root, triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
@@ -383,9 +384,13 @@ func traverseRawState(ctx *cli.Context) error {
 		if node != (common.Hash{}) {
 			// Check the present for non-empty hash node(embedded node doesn't
 			// have their own hash).
-			blob := rawdb.ReadTrieNode(chaindb, accIter.ComposedKey())
+			blob, nodeHash := rawdb.ReadTrieNode(chaindb, accIter.ComposedKey())
 			if len(blob) == 0 {
 				log.Error("Missing trie node(account)", "hash", node)
+				return errors.New("missing account")
+			}
+			if nodeHash != node {
+				log.Error("Unexpected trie node(account)", "want", node, "got", nodeHash)
 				return errors.New("missing account")
 			}
 		}
@@ -412,10 +417,14 @@ func traverseRawState(ctx *cli.Context) error {
 					// Check the present for non-empty hash node(embedded node doesn't
 					// have their own hash).
 					if node != (common.Hash{}) {
-						blob := rawdb.ReadTrieNode(chaindb, storageIter.ComposedKey())
+						blob, nodeHash := rawdb.ReadTrieNode(chaindb, storageIter.ComposedKey())
 						if len(blob) == 0 {
 							log.Error("Missing trie node(storage)", "hash", node)
 							return errors.New("missing storage")
+						}
+						if nodeHash != node {
+							log.Error("Unexpected trie node(storage)", "want", node, "got", nodeHash)
+							return errors.New("missing account")
 						}
 					}
 					// Bump the counter if it's leaf node.
@@ -466,7 +475,7 @@ func dumpState(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, root, false, false, false)
+	snaptree, err := snapshot.New(db, triedb.New(db, nil), 256, root, false, false, false)
 	if err != nil {
 		return err
 	}

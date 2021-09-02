@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 	"math/big"
 	"math/rand"
 	"sort"
@@ -231,7 +232,7 @@ type trienodeHealRequest struct {
 
 	keys   []string        // Trie node keys for identifing trie node
 	hashes []common.Hash   // Trie node hashes to validate responses
-	paths  []trie.NodePath // Trie node paths requested for rescheduling
+	paths  []encoding.NodePath // Trie node paths requested for rescheduling
 
 	task *healTask // Task which this request is filling (only access fields through the runloop!!)
 }
@@ -242,7 +243,7 @@ type trienodeHealResponse struct {
 
 	keys   []string        // List of trie node identifiers
 	hashes []common.Hash   // Hashes of the trie nodes to avoid double hashing
-	paths  []trie.NodePath // Trie node paths requested for rescheduling missing ones
+	paths  []encoding.NodePath // Trie node paths requested for rescheduling missing ones
 	nodes  [][]byte        // Actual trie nodes to store into the database (nil = missing)
 }
 
@@ -320,7 +321,7 @@ type storageTask struct {
 
 // nodeMeta is the descriptor of a trie node for retrieval
 type nodeMeta struct {
-	path trie.NodePath
+	path encoding.NodePath
 	hash common.Hash
 }
 
@@ -1294,7 +1295,7 @@ func (s *Syncer) assignTrienodeHealTasks(success chan *trienodeHealResponse, fai
 		var (
 			keys     = make([]string, 0, cap)
 			hashes   = make([]common.Hash, 0, cap)
-			paths    = make([]trie.NodePath, 0, cap)
+			paths    = make([]encoding.NodePath, 0, cap)
 			pathsets = make([]TrieNodePathSet, 0, cap)
 		)
 		for key, meta := range s.healer.trieTasks {
@@ -1771,8 +1772,8 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 		}
 		// Check if the account is a contract with an unknown storage trie
 		if account.Root != emptyRoot {
-			blob := rawdb.ReadTrieNode(s.db, trie.TrieRootKey(res.hashes[i], account.Root))
-			if len(blob) == 0 {
+			blob, nodeHash := rawdb.ReadTrieNode(s.db, encoding.EncodeStorageKey(res.hashes[i], nil))
+			if len(blob) == 0 || nodeHash != account.Root {
 				// If there was a previous large state retrieval in progress,
 				// don't restart it from scratch. This happens if a sync cycle
 				// is interrupted and resumed later. However, *do* update the

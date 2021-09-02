@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package tries
+package triedb
 
 import (
 	"bytes"
@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 )
 
 const journalVersion uint64 = 0
@@ -37,8 +38,8 @@ type journalNode struct {
 	Val []byte
 }
 
-// loadAndParseJournal tries to parse the snapshot journal in latest format.
-func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, error) {
+// loadJournal tries to parse the snapshot journal from the disk.
+func loadJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, error) {
 	journal := rawdb.ReadTriesJournal(db)
 	if len(journal) == 0 {
 		log.Warn("Loaded snapshot journal", "diskroot", base.root, "diffs", "missing")
@@ -63,9 +64,8 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, err
 	if err := r.Decode(&root); err != nil {
 		return nil, errors.New("missing disk layer root")
 	}
-	// The diff journal is not matched with disk, discard them.
-	// It can happen that Geth crashes without persisting the latest
-	// diff journal.
+	// The diff journal is not matched with disk, discard them. It can
+	// happen that Geth crashes without persisting the latest diff journal.
 	if !bytes.Equal(root.Bytes(), base.root.Bytes()) {
 		log.Warn("Loaded snapshot journal", "diskroot", base.root, "diffs", "unmatched")
 		return base, nil
@@ -80,34 +80,35 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, err
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func loadSnapshot(diskdb ethdb.KeyValueStore, cache int, root common.Hash) (snapshot, error) {
-	// Retrieve the block number and hash of the snapshot, failing if no snapshot
-	// is present in the database (or crashed mid-update).
-	baseRoot := rawdb.ReadPersistedTrieRoot(diskdb)
-	if baseRoot == (common.Hash{}) {
-		return nil, errors.New("missing or corrupted tries")
+func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, fallback func() common.Hash) snapshot {
+	// Retrieve the root node of single persisted trie node.
+	_, hash := rawdb.ReadTrieNode(diskdb, encoding.EncodeStorageKey(common.Hash{}, nil))
+	if hash == (common.Hash{}) {
+		// Nothing stored in the database, it can happen in the following scenarios:
+		// - start a brand-new node
+		// - upgrade from a node with legacy state scheme
+		// For the latter one, try to load the persistent trie with a fallback function.
+		if fallback != nil {
+			hash = fallback()
+		}
+		base := &diskLayer{
+			diskdb: diskdb,
+			cache:  cleans,
+			root:   hash,
+		}
+		return base
 	}
 	base := &diskLayer{
 		diskdb: diskdb,
-		cache:  fastcache.New(cache * 1024 * 1024),
-		root:   baseRoot,
+		cache:  cleans,
+		root:   hash,
 	}
-	snapshot, err := loadAndParseJournal(diskdb, base)
+	snapshot, err := loadJournal(diskdb, base)
 	if err != nil {
-		return nil, err
+		log.Info("Failed to load journal, discard it", "err", err)
+		return base
 	}
-	// Entire snapshot journal loaded, sanity check the head. If the loaded
-	// snapshot is not matched with current state root, print a warning log
-	// or discard the entire snapshot it's legacy snapshot.
-	//
-	// Possible scenario: Geth was crashed without persisting journal and then
-	// restart, the head is rewound to the point with available state(trie)
-	// which is below the snapshot. In this case the snapshot can be recovered
-	// by re-executing blocks but right now it's unavailable.
-	if head := snapshot.Root(); head != root {
-		return nil, fmt.Errorf("head doesn't match snapshot: have %#x, want %#x", head, root)
-	}
-	return snapshot, nil
+	return snapshot
 }
 
 // loadDiffLayer reads the next sections of a snapshot journal, reconstructing a new
@@ -122,60 +123,59 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 		}
 		return nil, fmt.Errorf("load diff root: %v", err)
 	}
-	var nodes []journalNode
-	if err := r.Decode(&nodes); err != nil {
+	var encoded []journalNode
+	if err := r.Decode(&encoded); err != nil {
 		return nil, fmt.Errorf("load diff accounts: %v", err)
 	}
-	tireNodes := make(map[string][]byte)
-	for _, entry := range nodes {
+	nodes := make(map[string][]byte)
+	for _, entry := range encoded {
 		if len(entry.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
-			tireNodes[entry.Key] = entry.Val
+			nodes[entry.Key] = entry.Val
 		} else {
-			tireNodes[entry.Key] = nil
+			nodes[entry.Key] = nil
 		}
 	}
-	return loadDiffLayer(newDiffLayer(parent, root, tireNodes), r)
+	return loadDiffLayer(newDiffLayer(parent, root, nodes), r)
 }
 
 // Journal terminates any in-progress snapshot generation, also implicitly pushing
 // the progress into the database.
-func (dl *diskLayer) Journal(buffer *bytes.Buffer) (common.Hash, error) {
+func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	// Ensure the layer didn't get stale
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
-		return common.Hash{}, ErrSnapshotStale
+		return ErrSnapshotStale
 	}
-	return dl.root, nil
+	return nil
 }
 
 // Journal writes the memory layer contents into a buffer to be stored in the
 // database as the snapshot journal.
-func (dl *diffLayer) Journal(buffer *bytes.Buffer) (common.Hash, error) {
+func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	// Journal the parent first
-	base, err := dl.parent.Journal(buffer)
-	if err != nil {
-		return common.Hash{}, err
+	if err := dl.parent.Journal(buffer); err != nil {
+		return err
 	}
 	// Ensure the layer didn't get stale
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.Stale() {
-		return common.Hash{}, ErrSnapshotStale
+		return ErrSnapshotStale
 	}
 	// Everything below was journalled, persist this layer too
 	if err := rlp.Encode(buffer, dl.root); err != nil {
-		return common.Hash{}, err
+		return err
 	}
 	nodes := make([]journalNode, 0, len(dl.nodes))
 	for key, blob := range dl.nodes {
 		nodes = append(nodes, journalNode{Key: key, Val: blob})
 	}
 	if err := rlp.Encode(buffer, nodes); err != nil {
-		return common.Hash{}, err
+		return err
 	}
 	log.Debug("Journalled diff layer", "root", dl.root, "parent", dl.parent.Root())
-	return base, nil
+	return nil
 }

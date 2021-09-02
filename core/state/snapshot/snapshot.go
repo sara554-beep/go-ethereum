@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"sync"
 	"sync/atomic"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -159,7 +159,7 @@ type snapshot interface {
 // cheap iteration of the account/storage tries for sync aid.
 type Tree struct {
 	diskdb ethdb.KeyValueStore      // Persistent database to store the snapshot
-	triedb *trie.Database           // In-memory cache to access the trie through
+	triedb *triedb.Database         // In-memory cache to access the trie through
 	cache  int                      // Megabytes permitted to use for read caches
 	layers map[common.Hash]snapshot // Collection of all known layers
 	lock   sync.RWMutex
@@ -180,7 +180,7 @@ type Tree struct {
 //   This case happens when the snapshot is 'ahead' of the state trie.
 // - otherwise, the entire snapshot is considered invalid and will be recreated on
 //   a background thread.
-func New(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root common.Hash, async bool, rebuild bool, recovery bool) (*Tree, error) {
+func New(diskdb ethdb.KeyValueStore, triedb *triedb.Database, cache int, root common.Hash, async bool, rebuild bool, recovery bool) (*Tree, error) {
 	// Create a new, empty snapshot tree
 	snap := &Tree{
 		diskdb: diskdb,
@@ -189,7 +189,6 @@ func New(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root comm
 		layers: make(map[common.Hash]snapshot),
 	}
 	if !async {
-		fmt.Println("wait")
 		defer snap.waitBuild()
 	}
 	// Attempt to load a previously persisted snapshot and rebuild one if failed

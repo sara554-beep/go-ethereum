@@ -122,6 +122,8 @@ type StateDB struct {
 	StorageUpdated int
 	AccountDeleted int
 	StorageDeleted int
+
+	debugMode bool
 }
 
 // New creates a new state from a given trie.
@@ -236,10 +238,19 @@ func (s *StateDB) AddRefund(gas uint64) {
 
 // SubRefund removes gas from the refund counter.
 // This method will panic if the refund counter goes below zero
-func (s *StateDB) SubRefund(gas uint64) {
+func (s *StateDB) SubRefund(gas uint64, number uint64, addr common.Address, slot common.Hash, origin common.Hash, current common.Hash, value common.Hash, sflag, flag int) {
 	s.journal.append(refundChange{prev: s.refund})
 	if gas > s.refund {
-		panic(fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d)", gas, s.refund))
+		localOrigin, localFlag := s.GetCommittedState2(addr, slot)
+		localCurrent, localSFlag := s.GetState(addr, slot)
+		msg := fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d %s) number: %d, address: %s, slot: %s origin: %s current: %s value: %s sflag %d flag %d localOrigin: %s localCurrent: %s, localSFlag %d localFlag %d %v",
+			gas, s.refund, s.thash.Hex(), number, addr.Hex(), slot.Hex(), origin.Hex(), current.Hex(), value.Hex(), sflag, flag, localOrigin, localCurrent, localSFlag, localFlag, s.Error())
+
+		if s.debugMode {
+			log.Error("Refund counter below zero", "gas", gas, "refund", s.refund, "hash", s.thash.Hex(), "msg", msg)
+		} else {
+			panic(msg)
+		}
 	}
 	s.refund -= gas
 }
@@ -305,12 +316,20 @@ func (s *StateDB) GetCodeHash(addr common.Address) common.Hash {
 }
 
 // GetState retrieves a value from the given account's storage trie.
-func (s *StateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
+// flag:
+// - 0: no object
+// - 1: dirty
+// - 2: pending
+// - 3: origin
+// - 4: snapshot destructed
+// - 5: trie not found
+// - 6: trie found
+func (s *StateDB) GetState(addr common.Address, hash common.Hash) (common.Hash, int) {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
 		return stateObject.GetState(s.db, hash)
 	}
-	return common.Hash{}
+	return common.Hash{}, 0
 }
 
 // GetProof returns the Merkle proof for a given account.
@@ -337,12 +356,21 @@ func (s *StateDB) GetStorageProof(a common.Address, key common.Hash) ([][]byte, 
 }
 
 // GetCommittedState retrieves a value from the given account's committed storage trie.
-func (s *StateDB) GetCommittedState(addr common.Address, hash common.Hash) common.Hash {
+func (s *StateDB) GetCommittedState(addr common.Address, hash common.Hash) (common.Hash, int) {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
-		return stateObject.GetCommittedState(s.db, hash)
+		return stateObject.GetCommittedState(s.db, hash, false)
 	}
-	return common.Hash{}
+	return common.Hash{}, 0
+}
+
+// GetCommittedState2 retrieves a value from the given account's committed storage trie.
+func (s *StateDB) GetCommittedState2(addr common.Address, hash common.Hash) (common.Hash, int) {
+	stateObject := s.getStateObject(addr)
+	if stateObject != nil {
+		return stateObject.GetCommittedState(s.db, hash, true)
+	}
+	return common.Hash{}, 0
 }
 
 // Database retrieves the low level database supporting the lower level trie ops.
@@ -893,6 +921,10 @@ func (s *StateDB) Prepare(thash common.Hash, ti int) {
 	s.accessList = newAccessList()
 }
 
+func (s *StateDB) SetDebugMode() {
+	s.debugMode = true
+}
+
 func (s *StateDB) clearJournalAndRefund() {
 	if len(s.journal.entries) > 0 {
 		s.journal = newJournal()
@@ -913,6 +945,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	var (
 		storageUpdated int
 		storageDeleted int
+		nodes          = make(map[string][]byte)
 	)
 	codeWriter := s.db.TrieDB().DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
@@ -923,12 +956,15 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				obj.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie
-			updated, deleted, err := obj.CommitTrie(s.db)
+			result, err := obj.CommitTrie(s.db)
 			if err != nil {
 				return common.Hash{}, err
 			}
-			storageUpdated += updated
-			storageDeleted += deleted
+			if result != nil {
+				storageUpdated += len(result.UpdatedNodes)
+				storageDeleted += len(result.DeletedNodes)
+				nodes = result.CommitTo(nodes)
+			}
 		}
 	}
 	if len(s.stateObjectsDirty) > 0 {
@@ -944,23 +980,12 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	if metrics.EnabledExpensive {
 		start = time.Now()
 	}
-	// The onleaf func is called _serially_, so we can reuse the same account
-	// for unmarshalling every time.
-	var account Account
-	result, err := s.trie.Commit(func(keys [][]byte, path []byte, leaf []byte, parent common.Hash, parentPath []byte) error {
-		if err := rlp.DecodeBytes(leaf, &account); err != nil {
-			return nil
-		}
-		if account.Root != emptyRoot {
-			owner := common.BytesToHash(keys[0])
-			s.db.TrieDB().Reference(owner, account.Root, parent, parentPath)
-		}
-		return nil
-	})
+	result, err := s.trie.Commit(nil)
 	if err != nil {
 		return common.Hash{}, err
 	}
 	root := result.Root
+	nodes = result.CommitTo(nodes)
 
 	if metrics.EnabledExpensive {
 		s.AccountCommits += time.Since(start)
@@ -995,6 +1020,17 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 			}
 		}
 		s.snap, s.snapDestructs, s.snapAccounts, s.snapStorage = nil, nil, nil, nil
+	}
+	// Push the state diffs into the in-memory layer if the root hash is changed.
+	if root != s.originalRoot {
+		if err := s.db.TrieDB().Update(root, s.originalRoot, nodes); err != nil {
+			log.Warn("Failed to commit dirty trie nodes", "err", err)
+			return common.Hash{}, err
+		}
+		if err := s.db.TrieDB().Cap(root, 128); err != nil {
+			log.Warn("Failed to cap node tree", "err", err)
+			return common.Hash{}, err
+		}
 	}
 	return root, err
 }

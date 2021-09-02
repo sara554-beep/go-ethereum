@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 	"io"
 	"strings"
 
@@ -150,8 +151,8 @@ func decodeShort(hash, elems []byte) (node, error) {
 		return nil, err
 	}
 	flag := nodeFlag{hash: hash}
-	key := compactToHex(kbuf)
-	if hasTerm(key) {
+	key := encoding.CompactToHex(kbuf)
+	if encoding.HasTerm(key) {
 		// value node
 		val, _, err := rlp.SplitString(rest)
 		if err != nil {

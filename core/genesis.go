@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"strings"
 
@@ -259,7 +260,7 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 	if db == nil {
 		db = rawdb.NewMemoryDatabase()
 	}
-	statedb, err := state.New(common.Hash{}, state.NewDatabase(db), nil)
+	statedb, err := state.New(common.Hash{}, state.NewDatabaseWithConfig(db, &triedb.Config{Archive: true}), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -300,8 +301,9 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 		}
 	}
 	statedb.Commit(false)
-	statedb.Database().TrieDB().Commit(root, true, nil)
-
+	if err := statedb.Database().TrieDB().Cap(root, 0); err != nil {
+		panic(err)
+	}
 	return types.NewBlock(head, nil, nil, nil, trie.NewStackTrie(nil))
 }
 

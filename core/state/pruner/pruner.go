@@ -21,6 +21,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math"
 	"os"
 	"path/filepath"
@@ -90,7 +92,7 @@ func NewPruner(db ethdb.Database, datadir, trieCachePath string, bloomSize uint6
 	if headBlock == nil {
 		return nil, errors.New("Failed to load head block")
 	}
-	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, headBlock.Root(), false, false, false)
+	snaptree, err := snapshot.New(db, triedb.New(db, nil), 256, headBlock.Root(), false, false, false)
 	if err != nil {
 		return nil, err // The relevant snapshot(s) might not exist
 	}
@@ -146,7 +148,11 @@ func prune(snaptree *snapshot.Tree, root common.Hash, maindb ethdb.Database, sta
 		}
 		if checkKey != nil {
 			if isNode {
-				owner, _, hash := trie.DecodeNodeKey(checkKey)
+				var owner common.Hash
+				if len(checkKey) > common.HashLength {
+					owner = common.BytesToHash(checkKey[:common.HashLength])
+				}
+				hash := crypto.Keccak256Hash(iter.Value())
 				if owner == (common.Hash{}) && middleStateRoots[hash] {
 					log.Debug("Forcibly delete the middle state roots", "hash", common.BytesToHash(checkKey))
 				} else {
@@ -272,7 +278,8 @@ func (p *Pruner) Prune(root common.Hash) error {
 	// Ensure the root is really present. The weak assumption
 	// is the presence of root can indicate the presence of the
 	// entire trie.
-	if blob := rawdb.ReadTrieNode(p.db, trie.TrieRootKey(common.Hash{}, root)); len(blob) == 0 {
+	blob, nodeHash := rawdb.ReadTrieNode(p.db, encoding.EncodeStorageKey(common.Hash{}, nil))
+	if len(blob) == 0 || nodeHash != root {
 		// The special case is for clique based networks(rinkeby, goerli
 		// and some other private networks), it's possible that two
 		// consecutive blocks will have same root. In this case snapshot
@@ -286,7 +293,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 		// as the pruning target.
 		var found bool
 		for i := len(layers) - 2; i >= 2; i-- {
-			if blob := rawdb.ReadTrieNode(p.db, trie.TrieRootKey(common.Hash{}, root)); len(blob) != 0 {
+			if blob, nodeHash := rawdb.ReadTrieNode(p.db, encoding.EncodeStorageKey(common.Hash{}, nil)); len(blob) != 0 && nodeHash == root {
 				root = layers[i].Root()
 				found = true
 				log.Info("Selecting middle-layer as the pruning target", "root", root, "depth", i)
@@ -369,7 +376,7 @@ func RecoverPruning(datadir string, db ethdb.Database, trieCachePath string) err
 	// - The state HEAD is rewound already because of multiple incomplete `prune-state`
 	// In this case, even the state HEAD is not exactly matched with snapshot, it
 	// still feasible to recover the pruning correctly.
-	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, headBlock.Root(), false, false, true)
+	snaptree, err := snapshot.New(db, triedb.New(db, nil), 256, headBlock.Root(), false, false, true)
 	if err != nil {
 		return err // The relevant snapshot(s) might not exist
 	}
@@ -417,7 +424,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 	if genesis == nil {
 		return errors.New("missing genesis block")
 	}
-	t, err := trie.NewSecure(genesis.Root(), trie.NewDatabase(db))
+	t, err := trie.NewSecure(genesis.Root(), triedb.New(db, nil))
 	if err != nil {
 		return err
 	}
@@ -437,7 +444,8 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 				return err
 			}
 			if acc.Root != emptyRoot {
-				storageTrie, err := trie.NewSecureWithOwner(common.BytesToHash(accIter.LeafKey()), acc.Root, trie.NewDatabase(db))
+				// TODO
+				storageTrie, err := trie.NewSecureWithOwner(common.Hash{}, common.BytesToHash(accIter.LeafKey()), acc.Root, triedb.New(db, nil))
 				if err != nil {
 					return err
 				}

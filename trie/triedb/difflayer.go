@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package tries
+package triedb
 
 import (
 	"sync"
@@ -31,7 +31,7 @@ var (
 	// Note, bumping this up might drastically increase the size of the bloom
 	// filters that's stored in every diff layer. Don't do that without fully
 	// understanding all the implications.
-	aggregatorMemoryLimit = uint64(256 * 1024 * 1024)
+	aggregatorMemoryLimit = uint64(16 * 1024 * 1024)
 )
 
 // diffLayer represents a collection of modifications made to the in-memory tries
@@ -58,6 +58,14 @@ func newDiffLayer(parent snapshot, root common.Hash, nodes map[string][]byte) *d
 		root:   root,
 		nodes:  nodes,
 	}
+	switch parent := parent.(type) {
+	case *diskLayer:
+		dl.origin = parent
+	case *diffLayer:
+		dl.origin = parent.origin
+	default:
+		panic("unknown parent type")
+	}
 	for key, node := range nodes {
 		dl.memory += uint64(len(key) + len(node))
 	}
@@ -80,8 +88,8 @@ func (dl *diffLayer) Stale() bool {
 	return atomic.LoadUint32(&dl.stale) != 0
 }
 
-// TrieNode retrieves the trie node associated with a particular key.
-func (dl *diffLayer) TrieNode(key string) ([]byte, error) {
+// Node retrieves the trie node associated with a particular key.
+func (dl *diffLayer) Node(key string, hash common.Hash) ([]byte, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -92,9 +100,14 @@ func (dl *diffLayer) TrieNode(key string) ([]byte, error) {
 	}
 	// If the trie node is known locally, return it
 	if data, ok := dl.nodes[key]; ok {
+		// The trie node is marked as deleted, don't bother parent anymore.
+		if data == nil {
+			return nil, nil
+		}
+		// TODO the node hash should be checked.
 		return data, nil
 	}
-	return dl.parent.TrieNode(key)
+	return dl.parent.Node(key, hash)
 }
 
 // Update creates a new layer on top of the existing snapshot diff tree with
@@ -130,10 +143,10 @@ func (dl *diffLayer) flatten() snapshot {
 	}
 	// Return the combo parent
 	return &diffLayer{
-		parent: parent.parent,
 		origin: parent.origin,
+		parent: parent.parent,
+		memory: parent.memory + dl.memory,
 		root:   dl.root,
 		nodes:  parent.nodes,
-		memory: parent.memory + dl.memory,
 	}
 }

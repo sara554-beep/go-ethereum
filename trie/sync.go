@@ -19,6 +19,7 @@ package trie
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/encoding"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/prque"
@@ -136,17 +137,17 @@ func (s *Sync) AddSubTrie(root common.Hash, path []byte, parent common.Hash, par
 	}
 	var owner common.Hash
 	if len(path) == 2*common.HashLength {
-		owner = common.BytesToHash(HexToKeybytes(path))
+		owner = common.BytesToHash(encoding.HexToKeybytes(path))
 	}
-	byteKey := EncodeNodeKey(owner, nil, root)
-	key := string(byteKey)
-	if s.membatch.hasNode(key) {
+	storageKey := encoding.EncodeStorageKey(owner, nil)
+	iKey := encoding.EncodeInternalKey(storageKey, root)
+	if s.membatch.hasNode(string(iKey)) {
 		return
 	}
-	if s.bloom == nil || s.bloom.Contains(byteKey) {
+	if s.bloom == nil || s.bloom.Contains(iKey) {
 		// Bloom filter says this might be a duplicate, double check.
-		blob := rawdb.ReadTrieNode(s.database, byteKey)
-		if len(blob) > 0 {
+		blob, nodeHash := rawdb.ReadTrieNode(s.database, storageKey)
+		if len(blob) > 0 && nodeHash == root {
 			return
 		}
 		// False positive, bump fault meter
@@ -154,13 +155,13 @@ func (s *Sync) AddSubTrie(root common.Hash, path []byte, parent common.Hash, par
 	}
 	// Assemble the new sub-trie sync request
 	req := &nodeRequest{
-		key:      key,
+		key:      string(iKey),
 		path:     path,
 		callback: callback,
 	}
 	// If this sub-trie has a designated parent, link them together
 	if parent != (common.Hash{}) {
-		parentKey := string(EncodeNodeKey(common.Hash{}, parentPath, parent))
+		parentKey := string(encoding.EncodeInternalKey(encoding.EncodeStorageKey(common.Hash{}, parentPath), parent))
 		ancestor := s.nodeReqs[parentKey]
 		if ancestor == nil {
 			panic(fmt.Sprintf("sub-trie ancestor not found: %x", parent))
@@ -202,7 +203,7 @@ func (s *Sync) AddCodeEntry(hash common.Hash, path []byte, parent common.Hash, p
 	}
 	// If this sub-trie has a designated parent, link them together
 	if parent != (common.Hash{}) {
-		parentKey := string(EncodeNodeKey(common.Hash{}, parentPath, parent))
+		parentKey := string(encoding.EncodeInternalKeyWithPath(common.Hash{}, parentPath, parent))
 		ancestor := s.nodeReqs[parentKey] // the parent of codereq can ONLY be nodereq
 		if ancestor == nil {
 			panic(fmt.Sprintf("raw-entry ancestor not found: %x", parent))
@@ -216,11 +217,11 @@ func (s *Sync) AddCodeEntry(hash common.Hash, path []byte, parent common.Hash, p
 // Missing retrieves the known missing nodes from the trie for retrieval. To aid
 // both eth/6x style fast sync and snap/1x style state sync, the paths of trie
 // nodes are returned too, as well as separate hash list for codes.
-func (s *Sync) Missing(max int) ([]string, []common.Hash, []NodePath, []common.Hash) {
+func (s *Sync) Missing(max int) ([]string, []common.Hash, []encoding.NodePath, []common.Hash) {
 	var (
 		nodeKeys   []string
 		nodeHashes []common.Hash
-		nodePaths  []NodePath
+		nodePaths  []encoding.NodePath
 		codeHashes []common.Hash
 	)
 	for !s.queue.Empty() && (max == 0 || len(nodeHashes)+len(codeHashes) < max) {
@@ -246,16 +247,16 @@ func (s *Sync) Missing(max int) ([]string, []common.Hash, []NodePath, []common.H
 				log.Warn("Missing node request", "key", key)
 				continue // System very wrong, shouldn't happen
 			}
-			_, _, hash := DecodeNodeKey([]byte(key))
+			_, hash := encoding.DecodeInternalKey([]byte(key))
 			nodeKeys = append(nodeKeys, key)
 			nodeHashes = append(nodeHashes, hash)
-			nodePaths = append(nodePaths, newNodePath(req.path))
+			nodePaths = append(nodePaths, encoding.NewNodePath(req.path))
 		}
 	}
 	return nodeKeys, nodeHashes, nodePaths, codeHashes
 }
 
-// Process injects the received data for requested item. Note it can
+// ProcessCode injects the received data for requested item. Note it can
 // happpen that the single response commits two pending requests(e.g.
 // there are two requests one for code and one for node but the hash
 // is same). In this case the second response for the same hash will
@@ -274,7 +275,7 @@ func (s *Sync) ProcessCode(result CodeSyncResult) error {
 	return s.commitCodeRequest(req)
 }
 
-// Process injects the received data for requested item. Note it can
+// ProcessNode injects the received data for requested item. Note it can
 // happpen that the single response commits two pending requests(e.g.
 // there are two requests one for code and one for node but the hash
 // is same). In this case the second response for the same hash will
@@ -290,7 +291,7 @@ func (s *Sync) ProcessNode(result NodeSyncResult) error {
 		return ErrAlreadyProcessed
 	}
 	// Decode the node data content and update the request
-	_, _, hash := DecodeNodeKey([]byte(result.Key))
+	_, hash := encoding.DecodeInternalKey([]byte(result.Key))
 	node, err := decodeNode(hash[:], result.Data)
 	if err != nil {
 		return err
@@ -318,7 +319,8 @@ func (s *Sync) ProcessNode(result NodeSyncResult) error {
 func (s *Sync) Commit(dbw ethdb.Batch) error {
 	// Dump the membatch into a database dbw
 	for key, value := range s.membatch.nodes {
-		rawdb.WriteTrieNode(dbw, []byte(key), value)
+		rawkey, _ := encoding.DecodeInternalKey([]byte(key))
+		rawdb.WriteTrieNode(dbw, rawkey, value)
 		if s.bloom != nil {
 			s.bloom.Add([]byte(key))
 		}
@@ -400,7 +402,7 @@ func (s *Sync) children(req *nodeRequest, hash common.Hash, object node) ([]*nod
 	switch node := (object).(type) {
 	case *shortNode:
 		key := node.Key
-		if hasTerm(key) {
+		if encoding.HasTerm(key) {
 			key = key[:len(key)-1]
 		}
 		children = []child{{
@@ -427,10 +429,10 @@ func (s *Sync) children(req *nodeRequest, hash common.Hash, object node) ([]*nod
 			if node, ok := (child.node).(valueNode); ok {
 				var paths [][]byte
 				if len(child.path) == 2*common.HashLength {
-					paths = append(paths, HexToKeybytes(child.path))
+					paths = append(paths, encoding.HexToKeybytes(child.path))
 				} else if len(child.path) == 4*common.HashLength {
-					paths = append(paths, HexToKeybytes(child.path[:2*common.HashLength]))
-					paths = append(paths, HexToKeybytes(child.path[2*common.HashLength:]))
+					paths = append(paths, encoding.HexToKeybytes(child.path[:2*common.HashLength]))
+					paths = append(paths, encoding.HexToKeybytes(child.path[2*common.HashLength:]))
 				}
 				if err := req.callback(paths, child.path, node, hash, req.path); err != nil {
 					return nil, err
@@ -442,19 +444,20 @@ func (s *Sync) children(req *nodeRequest, hash common.Hash, object node) ([]*nod
 			var owner common.Hash
 			var inner []byte
 			if len(child.path) >= 2*common.HashLength {
-				owner = common.BytesToHash(HexToKeybytes(child.path[:2*common.HashLength]))
+				owner = common.BytesToHash(encoding.HexToKeybytes(child.path[:2*common.HashLength]))
 				inner = child.path[2*common.HashLength:]
 			} else {
 				inner = child.path
 			}
-			childKey := EncodeNodeKey(owner, inner, common.BytesToHash(node))
+			storageKey := encoding.EncodeStorageKey(owner, inner)
+			childKey := encoding.EncodeInternalKey(storageKey, common.BytesToHash(node))
 			// Try to resolve the node from the local database
 			if s.membatch.hasNode(string(childKey)) {
 				continue
 			}
 			if s.bloom == nil || s.bloom.Contains(childKey) {
 				// Bloom filter says this might be a duplicate, double check.
-				if blob := rawdb.ReadTrieNode(s.database, childKey); len(blob) > 0 {
+				if blob, hash := rawdb.ReadTrieNode(s.database, storageKey); len(blob) > 0 && hash == common.BytesToHash(node) {
 					continue
 				}
 				// False positive, bump fault meter

@@ -677,7 +677,9 @@ func (s *PublicBlockChainAPI) GetProof(ctx context.Context, address common.Addre
 			if storageError != nil {
 				return nil, storageError
 			}
-			storageProof[i] = StorageResult{key, (*hexutil.Big)(state.GetState(address, common.HexToHash(key)).Big()), toHexSlice(proof)}
+			state, _ := state.GetState(address, common.HexToHash(key))
+			hbig := state.Big()
+			storageProof[i] = StorageResult{key, (*hexutil.Big)(hbig), toHexSlice(proof)}
 		} else {
 			storageProof[i] = StorageResult{key, &hexutil.Big{}, []string{}}
 		}
@@ -825,7 +827,7 @@ func (s *PublicBlockChainAPI) GetStorageAt(ctx context.Context, address common.A
 	if state == nil || err != nil {
 		return nil, err
 	}
-	res := state.GetState(address, common.HexToHash(key))
+	res, _ := state.GetState(address, common.HexToHash(key))
 	return res[:], state.Error()
 }
 
