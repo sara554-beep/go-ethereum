@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/VictoriaMetrics/fastcache"
@@ -41,6 +42,10 @@ var (
 	// layer had been invalidated due to the chain progressing forward far enough
 	// to not maintain the layer's original state.
 	ErrSnapshotStale = errors.New("snapshot stale")
+
+	// ErrSnapshotReadOnly is returned if the database is opened in read only mode
+	// and mutation is applied.
+	ErrSnapshotReadOnly = errors.New("read only")
 
 	// errSnapshotCycle is returned if a snapshot is attempted to be inserted
 	// that forms a cycle in the snapshot tree.
@@ -92,6 +97,7 @@ type Config struct {
 	Journal   string             // Journal of clean cache to survive node restarts
 	Preimages bool               // Flag whether the preimage of trie key is recorded
 	Archive   bool               // Flag whether the database is opened in archive mode
+	ReadOnly  bool               // Whether open the database in read only mode
 	Fallback  func() common.Hash // Function used to find the fallback base layer root
 }
 
@@ -121,6 +127,11 @@ func (config *Config) getFallback() func() common.Hash {
 // be applied. The deepest reorg can be handled depends on the amount of reverse
 // diffs tracked in the disk.
 type Database struct {
+	// readOnly is the flag whether the mutation is allowed to disk.
+	// It will be set automatically when the database is journalled
+	// during the shutdown.
+	readOnly uint32
+
 	config        *Config
 	lock          sync.RWMutex
 	diskdb        ethdb.KeyValueStore      // Persistent database to store the snapshot
@@ -142,11 +153,16 @@ func New(diskdb ethdb.KeyValueStore, config *Config) *Database {
 			cleans = fastcache.LoadFromFileOrNew(config.Journal, config.Cache*1024*1024)
 		}
 	}
+	var readOnly uint32
+	if config != nil && config.ReadOnly {
+		readOnly = 1
+	}
 	db := &Database{
-		config: config,
-		diskdb: diskdb,
-		cache:  cleans,
-		layers: make(map[common.Hash]snapshot),
+		readOnly: readOnly,
+		config:   config,
+		diskdb:   diskdb,
+		cache:    cleans,
+		layers:   make(map[common.Hash]snapshot),
 	}
 	head := loadSnapshot(diskdb, cleans, config.getFallback())
 	for head != nil {
@@ -208,6 +224,10 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string][]byte) error {
+	// Short circuit if the database is in read only mode.
+	if atomic.LoadUint32(&db.readOnly) == 1 {
+		return ErrSnapshotReadOnly
+	}
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).
@@ -240,6 +260,10 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[s
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
 func (db *Database) Cap(root common.Hash, layers int) error {
+	// Short circuit if the database is in read only mode.
+	if atomic.LoadUint32(&db.readOnly) == 1 {
+		return ErrSnapshotReadOnly
+	}
 	// Retrieve the head snapshot to cap from
 	snap := db.Snapshot(root)
 	if snap == nil {
@@ -393,8 +417,13 @@ func diffToDisk(bottom *diffLayer, archive bool) *diskLayer {
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
 // This is meant to be used during shutdown to persist the snapshot without
-// flattening everything down (bad for reorgs).
+// flattening everything down (bad for reorgs). And this function will mark the
+// database as read-only to prevent all following mutation to disk.
 func (db *Database) Journal(root common.Hash) error {
+	// Short circuit if the database is in read only mode.
+	if atomic.LoadUint32(&db.readOnly) == 1 {
+		return ErrSnapshotReadOnly
+	}
 	// Retrieve the head snapshot to journal from var snap snapshot
 	snap := db.Snapshot(root)
 	if snap == nil {
@@ -424,6 +453,9 @@ func (db *Database) Journal(root common.Hash) error {
 	}
 	// Store the journal into the database and return
 	rawdb.WriteTriesJournal(db.diskdb, journal.Bytes())
+
+	// Set the db in read only mode to reject all following mutations
+	atomic.StoreUint32(&db.readOnly, 1)
 	return nil
 }
 

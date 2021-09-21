@@ -20,6 +20,7 @@ package state
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"sort"
 	"time"
@@ -1024,11 +1025,15 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	// Push the state diffs into the in-memory layer if the root hash is changed.
 	if root != s.originalRoot {
 		if err := s.db.TrieDB().Update(root, s.originalRoot, nodes); err != nil {
-			log.Warn("Failed to commit dirty trie nodes", "err", err)
+			if err != triedb.ErrSnapshotReadOnly {
+				log.Warn("Failed to commit dirty trie nodes", "err", err)
+			}
 			return common.Hash{}, err
 		}
 		if err := s.db.TrieDB().Cap(root, 128); err != nil {
-			log.Warn("Failed to cap node tree", "err", err)
+			if err != triedb.ErrSnapshotReadOnly {
+				log.Warn("Failed to cap node tree", "err", err)
+			}
 			return common.Hash{}, err
 		}
 	}
