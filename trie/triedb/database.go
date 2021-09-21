@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/VictoriaMetrics/fastcache"
@@ -130,7 +129,7 @@ type Database struct {
 	// readOnly is the flag whether the mutation is allowed to disk.
 	// It will be set automatically when the database is journalled
 	// during the shutdown.
-	readOnly uint32
+	readOnly bool
 
 	config        *Config
 	lock          sync.RWMutex
@@ -153,9 +152,9 @@ func New(diskdb ethdb.KeyValueStore, config *Config) *Database {
 			cleans = fastcache.LoadFromFileOrNew(config.Journal, config.Cache*1024*1024)
 		}
 	}
-	var readOnly uint32
-	if config != nil && config.ReadOnly {
-		readOnly = 1
+	var readOnly bool
+	if config != nil {
+		readOnly = config.ReadOnly
 	}
 	db := &Database{
 		readOnly: readOnly,
@@ -224,10 +223,6 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string][]byte) error {
-	// Short circuit if the database is in read only mode.
-	if atomic.LoadUint32(&db.readOnly) == 1 {
-		return ErrSnapshotReadOnly
-	}
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).
@@ -245,8 +240,13 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[s
 	snap := parent.(snapshot).Update(root, nodes)
 
 	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	// Short circuit if the database is in read only mode.
+	if db.readOnly {
+		return ErrSnapshotReadOnly
+	}
 	db.layers[snap.root] = snap
-	db.lock.Unlock()
 	return nil
 }
 
@@ -260,10 +260,6 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[s
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
 func (db *Database) Cap(root common.Hash, layers int) error {
-	// Short circuit if the database is in read only mode.
-	if atomic.LoadUint32(&db.readOnly) == 1 {
-		return ErrSnapshotReadOnly
-	}
 	// Retrieve the head snapshot to cap from
 	snap := db.Snapshot(root)
 	if snap == nil {
@@ -277,6 +273,10 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// Short circuit if the database is in read only mode.
+	if db.readOnly {
+		return ErrSnapshotReadOnly
+	}
 	// Flattening the bottom-most diff layer requires special casing since there's
 	// no child to rewire to the grandparent. In that case we can fake a temporary
 	// child for the capping and then remove it.
@@ -420,10 +420,6 @@ func diffToDisk(bottom *diffLayer, archive bool) *diskLayer {
 // flattening everything down (bad for reorgs). And this function will mark the
 // database as read-only to prevent all following mutation to disk.
 func (db *Database) Journal(root common.Hash) error {
-	// Short circuit if the database is in read only mode.
-	if atomic.LoadUint32(&db.readOnly) == 1 {
-		return ErrSnapshotReadOnly
-	}
 	// Retrieve the head snapshot to journal from var snap snapshot
 	snap := db.Snapshot(root)
 	if snap == nil {
@@ -433,6 +429,10 @@ func (db *Database) Journal(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// Short circuit if the database is in read only mode.
+	if db.readOnly {
+		return ErrSnapshotReadOnly
+	}
 	// Firstly write out the metadata of journal
 	journal := new(bytes.Buffer)
 	if err := rlp.Encode(journal, journalVersion); err != nil {
@@ -455,7 +455,8 @@ func (db *Database) Journal(root common.Hash) error {
 	rawdb.WriteTriesJournal(db.diskdb, journal.Bytes())
 
 	// Set the db in read only mode to reject all following mutations
-	atomic.StoreUint32(&db.readOnly, 1)
+	db.readOnly = true
+	log.Info("Stored snapshot journal", "disk", diskroot)
 	return nil
 }
 
