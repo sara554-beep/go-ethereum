@@ -19,7 +19,6 @@ package state
 import (
 	"bytes"
 	"fmt"
-	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"time"
@@ -179,38 +178,32 @@ func (s *stateObject) getTrie(db Database) Trie {
 }
 
 // GetState retrieves a value from the account storage trie.
-func (s *stateObject) GetState(db Database, key common.Hash) (common.Hash, int) {
+func (s *stateObject) GetState(db Database, key common.Hash) common.Hash {
 	// If the fake storage is set, only lookup the state here(in the debugging mode)
 	if s.fakeStorage != nil {
-		return s.fakeStorage[key], 0
+		return s.fakeStorage[key]
 	}
 	// If we have a dirty value for this state entry, return it
 	value, dirty := s.dirtyStorage[key]
 	if dirty {
-		return value, 1
+		return value
 	}
 	// Otherwise return the entry's original value
-	return s.GetCommittedState(db, key, false)
+	return s.GetCommittedState(db, key)
 }
 
 // GetCommittedState retrieves a value from the committed account storage trie.
-// flag:
-// - 2: pending
-// - 3: origin
-// - 4: snapshot destructed
-// - 5: trie not found
-// - 6: trie found
-func (s *stateObject) GetCommittedState(db Database, key common.Hash, print bool) (common.Hash, int) {
+func (s *stateObject) GetCommittedState(db Database, key common.Hash) common.Hash {
 	// If the fake storage is set, only lookup the state here(in the debugging mode)
 	if s.fakeStorage != nil {
-		return s.fakeStorage[key], 0
+		return s.fakeStorage[key]
 	}
 	// If we have a pending write or clean cached, return that
 	if value, pending := s.pendingStorage[key]; pending {
-		return value, 2
+		return value
 	}
 	if value, cached := s.originStorage[key]; cached {
-		return value, 3
+		return value
 	}
 	// If no live objects are available, attempt to use snapshots
 	var (
@@ -240,7 +233,7 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash, print bool
 		//      have been handles via pendingStorage above.
 		//   2) we don't have new values, and can deliver empty response back
 		if _, destructed := s.db.snapDestructs[s.addrHash]; destructed {
-			return common.Hash{}, 4
+			return common.Hash{}
 		}
 		enc, err = s.db.snap.Storage(s.addrHash, crypto.Keccak256Hash(key.Bytes()))
 	}
@@ -258,9 +251,7 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash, print bool
 		t := s.getTrie(db)
 		if enc, err = t.TryGet(key.Bytes()); err != nil {
 			s.setError(err)
-			msg := fmt.Sprintf("trie: %p", t)
-			log.Info("DEBUG", "error", err, "msg", msg)
-			return common.Hash{}, 5
+			return common.Hash{}
 		}
 	}
 	var value common.Hash
@@ -272,11 +263,7 @@ func (s *stateObject) GetCommittedState(db Database, key common.Hash, print bool
 		value.SetBytes(content)
 	}
 	s.originStorage[key] = value
-	if print {
-		msg := fmt.Sprintf("trie: %p", s.trie)
-		log.Info("DEBUG-trie", "msg", msg)
-	}
-	return value, 6
+	return value
 }
 
 // SetState updates a value in account storage.
@@ -287,7 +274,7 @@ func (s *stateObject) SetState(db Database, key, value common.Hash) {
 		return
 	}
 	// If the new value is the same as old, don't set
-	prev, _ := s.GetState(db, key)
+	prev := s.GetState(db, key)
 	if prev == value {
 		return
 	}

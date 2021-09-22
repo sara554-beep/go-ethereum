@@ -230,8 +230,8 @@ type trienodeHealRequest struct {
 	timeout *time.Timer                // Timer to track delivery timeout
 	stale   chan struct{}              // Channel to signal the request was dropped
 
-	keys   []string        // Trie node keys for identifing trie node
-	hashes []common.Hash   // Trie node hashes to validate responses
+	keys   []string            // Trie node keys for identifing trie node
+	hashes []common.Hash       // Trie node hashes to validate responses
 	paths  []encoding.NodePath // Trie node paths requested for rescheduling
 
 	task *healTask // Task which this request is filling (only access fields through the runloop!!)
@@ -241,10 +241,10 @@ type trienodeHealRequest struct {
 type trienodeHealResponse struct {
 	task *healTask // Task which this request is filling
 
-	keys   []string        // List of trie node identifiers
-	hashes []common.Hash   // Hashes of the trie nodes to avoid double hashing
+	keys   []string            // List of trie node identifiers
+	hashes []common.Hash       // Hashes of the trie nodes to avoid double hashing
 	paths  []encoding.NodePath // Trie node paths requested for rescheduling missing ones
-	nodes  [][]byte        // Actual trie nodes to store into the database (nil = missing)
+	nodes  [][]byte            // Actual trie nodes to store into the database (nil = missing)
 }
 
 // bytecodeHealRequest tracks a pending bytecode request to ensure responses are to

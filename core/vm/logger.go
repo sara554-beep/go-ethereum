@@ -183,8 +183,8 @@ func (l *StructLogger) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost ui
 		// capture SLOAD opcodes and record the read entry in the local storage
 		if op == SLOAD && stack.len() >= 1 {
 			var (
-				address  = common.Hash(stack.data[stack.len()-1].Bytes32())
-				value, _ = env.StateDB.GetState(contract.Address(), address)
+				address = common.Hash(stack.data[stack.len()-1].Bytes32())
+				value   = env.StateDB.GetState(contract.Address(), address)
 			)
 			l.storage[contract.Address()][address] = value
 			storage = l.storage[contract.Address()].Copy()

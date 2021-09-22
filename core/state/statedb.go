@@ -239,19 +239,13 @@ func (s *StateDB) AddRefund(gas uint64) {
 
 // SubRefund removes gas from the refund counter.
 // This method will panic if the refund counter goes below zero
-func (s *StateDB) SubRefund(gas uint64, number uint64, addr common.Address, slot common.Hash, origin common.Hash, current common.Hash, value common.Hash, sflag, flag int) {
+func (s *StateDB) SubRefund(gas uint64) {
 	s.journal.append(refundChange{prev: s.refund})
 	if gas > s.refund {
-		localOrigin, localFlag := s.GetCommittedState2(addr, slot)
-		localCurrent, localSFlag := s.GetState(addr, slot)
-		msg := fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d %s) number: %d, address: %s, slot: %s origin: %s current: %s value: %s sflag %d flag %d localOrigin: %s localCurrent: %s, localSFlag %d localFlag %d %v",
-			gas, s.refund, s.thash.Hex(), number, addr.Hex(), slot.Hex(), origin.Hex(), current.Hex(), value.Hex(), sflag, flag, localOrigin, localCurrent, localSFlag, localFlag, s.Error())
-
 		if s.debugMode {
-			log.Error("Refund counter below zero", "gas", gas, "refund", s.refund, "hash", s.thash.Hex(), "msg", msg)
-		} else {
-			panic(msg)
+			return
 		}
+		panic(fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d)", gas, s.refund))
 	}
 	s.refund -= gas
 }
@@ -317,20 +311,12 @@ func (s *StateDB) GetCodeHash(addr common.Address) common.Hash {
 }
 
 // GetState retrieves a value from the given account's storage trie.
-// flag:
-// - 0: no object
-// - 1: dirty
-// - 2: pending
-// - 3: origin
-// - 4: snapshot destructed
-// - 5: trie not found
-// - 6: trie found
-func (s *StateDB) GetState(addr common.Address, hash common.Hash) (common.Hash, int) {
+func (s *StateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
 		return stateObject.GetState(s.db, hash)
 	}
-	return common.Hash{}, 0
+	return common.Hash{}
 }
 
 // GetProof returns the Merkle proof for a given account.
@@ -357,21 +343,12 @@ func (s *StateDB) GetStorageProof(a common.Address, key common.Hash) ([][]byte, 
 }
 
 // GetCommittedState retrieves a value from the given account's committed storage trie.
-func (s *StateDB) GetCommittedState(addr common.Address, hash common.Hash) (common.Hash, int) {
+func (s *StateDB) GetCommittedState(addr common.Address, hash common.Hash) common.Hash {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
-		return stateObject.GetCommittedState(s.db, hash, false)
+		return stateObject.GetCommittedState(s.db, hash)
 	}
-	return common.Hash{}, 0
-}
-
-// GetCommittedState2 retrieves a value from the given account's committed storage trie.
-func (s *StateDB) GetCommittedState2(addr common.Address, hash common.Hash) (common.Hash, int) {
-	stateObject := s.getStateObject(addr)
-	if stateObject != nil {
-		return stateObject.GetCommittedState(s.db, hash, true)
-	}
-	return common.Hash{}, 0
+	return common.Hash{}
 }
 
 // Database retrieves the low level database supporting the lower level trie ops.
