@@ -235,7 +235,7 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[s
 	// Generate a new snapshot on top of the parent
 	parent := db.Snapshot(parentRoot)
 	if parent == nil {
-		return fmt.Errorf("parent [%#x] snapshot missing", parentRoot)
+		return fmt.Errorf("triedb parent [%#x] snapshot missing", parentRoot)
 	}
 	snap := parent.(snapshot).Update(root, nodes)
 
@@ -263,11 +263,11 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// Retrieve the head snapshot to cap from
 	snap := db.Snapshot(root)
 	if snap == nil {
-		return fmt.Errorf("snapshot [%#x] missing", root)
+		return fmt.Errorf("triedb snapshot [%#x] missing", root)
 	}
 	diff, ok := snap.(*diffLayer)
 	if !ok {
-		return fmt.Errorf("snapshot [%#x] is disk layer", root)
+		return fmt.Errorf("triedb snapshot [%#x] is disk layer", root)
 	}
 	// Run the internal capping and discard all stale layers
 	db.lock.Lock()
@@ -371,7 +371,7 @@ func (db *Database) cap(diff *diffLayer, layers int) *diskLayer {
 			return nil
 		}
 	default:
-		panic(fmt.Sprintf("unknown data layer: %T", parent))
+		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
 	}
 	// If the bottom-most layer is larger than our memory cap, persist to disk
 	bottom := diff.parent.(*diffLayer)
@@ -397,7 +397,7 @@ func diffToDisk(bottom *diffLayer, archive bool) *diskLayer {
 	// Mark the original base as stale as we're going to create a new wrapper
 	base.lock.Lock()
 	if base.stale {
-		panic("parent disk layer is stale") // we've committed into the same base from two children, boo
+		panic("triedb parent disk layer is stale") // we've committed into the same base from two children, boo
 	}
 	base.stale = true
 	base.lock.Unlock()
@@ -417,9 +417,9 @@ func diffToDisk(bottom *diffLayer, archive bool) *diskLayer {
 	// Flush all the updates in the single db operation. Ensure the
 	// disk layer transition is atomic.
 	if err := batch.Write(); err != nil {
-		log.Crit("Failed to write leftover snapshot", "err", err)
+		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
 	}
-	log.Debug("Journalled disk layer", "root", bottom.root)
+	log.Debug("Journalled triedb disk layer", "root", bottom.root)
 	res := &diskLayer{
 		root:   bottom.root,
 		cache:  base.cache,
@@ -436,7 +436,7 @@ func (db *Database) Journal(root common.Hash) error {
 	// Retrieve the head snapshot to journal from var snap snapshot
 	snap := db.Snapshot(root)
 	if snap == nil {
-		return fmt.Errorf("snapshot [%#x] missing", root)
+		return fmt.Errorf("triedb snapshot [%#x] missing", root)
 	}
 	// Run the journaling
 	db.lock.Lock()
@@ -453,7 +453,7 @@ func (db *Database) Journal(root common.Hash) error {
 	}
 	diskroot := db.diskRoot()
 	if diskroot == (common.Hash{}) {
-		return errors.New("invalid disk root")
+		return errors.New("invalid disk root in triedb")
 	}
 	// Secondly write out the disk layer root, ensure the
 	// diff journal is continuous with disk.
@@ -469,7 +469,7 @@ func (db *Database) Journal(root common.Hash) error {
 
 	// Set the db in read only mode to reject all following mutations
 	db.readOnly = true
-	log.Info("Stored snapshot journal", "disk", diskroot)
+	log.Info("Stored snapshot journal in triedb", "disk", diskroot)
 	return nil
 }
 
