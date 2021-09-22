@@ -56,21 +56,21 @@ func (dl *diskLayer) Stale() bool {
 	return dl.stale
 }
 
-func (dl *diskLayer) Node(key string, hash common.Hash) ([]byte, error) {
+func (dl *diskLayer) Node(key string, hash common.Hash, depth int) ([]byte, int, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
-		return nil, fmt.Errorf("%w type: %s", ErrSnapshotStale, "disklayer")
+		return nil, depth, fmt.Errorf("%w type: %s", ErrSnapshotStale, "disklayer")
 	}
 	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, []byte(key))
 	if len(blob) == 0 || nodeHash != hash {
 		blob = rawdb.ReadArchiveTrieNode(dl.diskdb, hash)
 	}
 	if len(blob) > 0 {
-		return blob, nil
+		return blob, depth, nil
 	}
-	return nil, nil
+	return nil, depth, nil
 }
 
 func (dl *diskLayer) Update(blockHash common.Hash, nodes map[string][]byte) *diffLayer {

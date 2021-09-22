@@ -240,7 +240,10 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if exist {
 			return blob, origNode, 1, nil
 		}
-		blob, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, path)), common.BytesToHash(hash))
+		blob, depth, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, path)), common.BytesToHash(hash), 0)
+		if err != nil {
+			err = fmt.Errorf("%w depth: %d", err, depth)
+		}
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -581,9 +584,9 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 		}
 		return mustDecodeNode(hash[:], blob), nil
 	}
-	blob, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, prefix)), hash)
+	blob, depth, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, prefix)), hash, 0)
 	if err != nil {
-		return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, Inner: err}
+		return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, Inner: fmt.Errorf("%w depth %d", err, depth)}
 	}
 	return mustDecodeNode(hash[:], blob), nil
 }

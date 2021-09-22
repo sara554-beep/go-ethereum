@@ -90,25 +90,25 @@ func (dl *diffLayer) Stale() bool {
 }
 
 // Node retrieves the trie node associated with a particular key.
-func (dl *diffLayer) Node(key string, hash common.Hash) ([]byte, error) {
+func (dl *diffLayer) Node(key string, hash common.Hash, depth int) ([]byte, int, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
 	if dl.Stale() {
-		return nil, fmt.Errorf("%w type: %s", ErrSnapshotStale, "difflayer")
+		return nil, depth, fmt.Errorf("%w type: %s", ErrSnapshotStale, "difflayer")
 	}
 	// If the trie node is known locally, return it
 	if data, ok := dl.nodes[key]; ok {
 		// The trie node is marked as deleted, don't bother parent anymore.
 		if data == nil {
-			return nil, nil
+			return nil, depth, nil
 		}
 		// TODO the node hash should be checked.
-		return data, nil
+		return data, depth, nil
 	}
-	return dl.parent.Node(key, hash)
+	return dl.parent.Node(key, hash, depth+1)
 }
 
 // Update creates a new layer on top of the existing snapshot diff tree with

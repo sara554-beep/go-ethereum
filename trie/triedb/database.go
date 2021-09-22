@@ -58,7 +58,7 @@ type Snapshot interface {
 
 	// Node retrieves the trie node associated with a particular key.
 	// The passed key should be encoded in storage format.
-	Node(key string, hash common.Hash) ([]byte, error)
+	Node(key string, hash common.Hash, depth int) ([]byte, int, error)
 }
 
 // snapshot is the internal version of the snapshot data layer that supports some
@@ -518,7 +518,8 @@ func (db *Database) diskRoot() common.Hash {
 	return disklayer.Root()
 }
 
-// DiskLayer returns the disk layer for state accessing.
+// DiskLayer returns the disk layer for state accessing. It's usually used
+// as the fallback to access state in disk directly.
 func (db *Database) DiskLayer() Snapshot {
 	db.lock.RLock()
 	defer db.lock.RUnlock()
