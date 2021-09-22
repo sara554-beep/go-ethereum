@@ -32,6 +32,12 @@ type MissingNodeError struct {
 	err      error       // concrete error for missing trie node
 }
 
+// Unwrap returns the concrete error for missing trie node which
+// allows us for further analysis outside.
+func (err *MissingNodeError) Unwrap() error {
+	return err.err
+}
+
 func (err *MissingNodeError) Error() string {
 	if err.Owner == (common.Hash{}) {
 		return fmt.Sprintf("missing trie node %x (path %x) %v", err.NodeHash, err.Path, err.err)

@@ -20,7 +20,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
 	"io"
 	"math/big"
 	mrand "math/rand"
@@ -45,6 +44,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	lru "github.com/hashicorp/golang-lru"
 )
 
@@ -1785,21 +1785,12 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, er
 
 		// If we have a followup block, run that against the current state to pre-cache
 		// transactions and probabilistically some of the account/storage trie nodes.
-		var (
-			wg                sync.WaitGroup
-			followupInterrupt uint32
-			interrupt         = func() {
-				atomic.StoreUint32(&followupInterrupt, 1)
-				wg.Wait()
-			}
-		)
+		var followupInterrupt uint32
 		if !bc.cacheConfig.TrieCleanNoPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
 				throwaway, _ := state.New(parent.Root, bc.stateCache, bc.snaps)
 
-				wg.Add(1)
 				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *uint32) {
-					defer wg.Done()
 					bc.prefetcher.Prefetch(followup, throwaway, bc.vmConfig, &followupInterrupt)
 
 					blockPrefetchExecuteTimer.Update(time.Since(start))
@@ -1814,7 +1805,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, er
 		receipts, logs, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
-			interrupt()
+			atomic.StoreUint32(&followupInterrupt, 1)
 			return it.index, err
 		}
 		// Update the metrics touched during block processing
@@ -1834,7 +1825,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, er
 		substart = time.Now()
 		if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
 			bc.reportBlock(block, receipts, err)
-			interrupt()
+			atomic.StoreUint32(&followupInterrupt, 1)
 			return it.index, err
 		}
 		proctime := time.Since(start)
@@ -1848,12 +1839,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (int, er
 		// Write the block to the chain and get the status.
 		substart = time.Now()
 		status, err := bc.writeBlockWithState(block, receipts, logs, statedb, false)
+		atomic.StoreUint32(&followupInterrupt, 1)
 		if err != nil {
-			interrupt()
 			return it.index, err
 		}
 		// Update the metrics touched during block commit
-		interrupt()
 		accountCommitTimer.Update(statedb.AccountCommits)   // Account commits are complete, we can mark them
 		storageCommitTimer.Update(statedb.StorageCommits)   // Storage commits are complete, we can mark them
 		snapshotCommitTimer.Update(statedb.SnapshotCommits) // Snapshot commits are complete, we can mark them

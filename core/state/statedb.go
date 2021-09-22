@@ -106,6 +106,11 @@ type StateDB struct {
 	validRevisions []revision
 	nextRevisionId int
 
+	// The flag indicates that state transition can allow an error occurs.
+	// It's used by prefetcher which aims to load states but may enter the
+	// invalid execution path.
+	nonStrict bool
+
 	// Measurements gathered during execution for debugging purposes
 	AccountReads         time.Duration
 	AccountHashes        time.Duration
@@ -242,7 +247,7 @@ func (s *StateDB) AddRefund(gas uint64) {
 func (s *StateDB) SubRefund(gas uint64) {
 	s.journal.append(refundChange{prev: s.refund})
 	if gas > s.refund {
-		if s.debugMode {
+		if s.nonStrict {
 			return
 		}
 		panic(fmt.Sprintf("Refund counter below zero (gas: %d > refund: %d)", gas, s.refund))
@@ -899,8 +904,10 @@ func (s *StateDB) Prepare(thash common.Hash, ti int) {
 	s.accessList = newAccessList()
 }
 
-func (s *StateDB) SetDebugMode() {
-	s.debugMode = true
+// SetNonStrict sets the nonStrict flag as true which allows the invalid
+// state transition.
+func (s *StateDB) SetNonStrict() {
+	s.nonStrict = true
 }
 
 func (s *StateDB) clearJournalAndRefund() {
