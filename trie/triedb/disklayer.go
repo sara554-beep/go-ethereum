@@ -17,6 +17,7 @@
 package triedb
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/VictoriaMetrics/fastcache"
@@ -60,7 +61,7 @@ func (dl *diskLayer) Node(key string, hash common.Hash) ([]byte, error) {
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
-		return nil, ErrSnapshotStale
+		return nil, fmt.Errorf("%w type: %s", ErrSnapshotStale, "disklayer")
 	}
 	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, []byte(key))
 	if len(blob) == 0 || nodeHash != hash {

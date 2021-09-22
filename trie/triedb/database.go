@@ -43,7 +43,7 @@ var (
 	ErrSnapshotStale = errors.New("snapshot stale")
 
 	// ErrSnapshotReadOnly is returned if the database is opened in read only mode
-	// and mutation is applied.
+	// and mutation is requested.
 	ErrSnapshotReadOnly = errors.New("read only")
 
 	// errSnapshotCycle is returned if a snapshot is attempted to be inserted
@@ -126,9 +126,9 @@ func (config *Config) getFallback() func() common.Hash {
 // be applied. The deepest reorg can be handled depends on the amount of reverse
 // diffs tracked in the disk.
 type Database struct {
-	// readOnly is the flag whether the mutation is allowed to disk.
-	// It will be set automatically when the database is journalled
-	// during the shutdown.
+	// readOnly is the flag whether the mutation is allowed to be applied.
+	// It will be set automatically when the database is journalled during
+	// the shutdown.
 	readOnly bool
 
 	config        *Config
@@ -276,6 +276,15 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// Short circuit if the database is in read only mode.
 	if db.readOnly {
 		return ErrSnapshotReadOnly
+	}
+	// Move all of the accumulated preimages into a write batch
+	if db.preimages != nil && db.preimagesSize > 4*1024*1024 {
+		batch := db.diskdb.NewBatch()
+		rawdb.WritePreimages(batch, db.preimages)
+		if err := batch.Write(); err != nil {
+			return err
+		}
+		db.preimages, db.preimagesSize = make(map[common.Hash][]byte), 0
 	}
 	// Flattening the bottom-most diff layer requires special casing since there's
 	// no child to rewire to the grandparent. In that case we can fake a temporary

@@ -17,6 +17,7 @@
 package triedb
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -96,7 +97,7 @@ func (dl *diffLayer) Node(key string, hash common.Hash) ([]byte, error) {
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
 	if dl.Stale() {
-		return nil, ErrSnapshotStale
+		return nil, fmt.Errorf("%w type: %s", ErrSnapshotStale, "difflayer")
 	}
 	// If the trie node is known locally, return it
 	if data, ok := dl.nodes[key]; ok {

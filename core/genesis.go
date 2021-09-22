@@ -182,7 +182,6 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	// but the corresponding state is missing.
 	header := rawdb.ReadHeader(db, stored, 0)
 	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, &triedb.Config{ReadOnly: true}), nil); err != nil {
-		log.Info("Failed to find genesis state", "err", err)
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
 		}
