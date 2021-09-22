@@ -509,6 +509,14 @@ func (db *Database) diskRoot() common.Hash {
 	return disklayer.Root()
 }
 
+// DiskLayer returns the disk layer for state accessing.
+func (db *Database) DiskLayer() Snapshot {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	return db.disklayer()
+}
+
 // Size returns the current storage size of the memory cache in front of the
 // persistent database layer.
 func (db *Database) Size() (common.StorageSize, common.StorageSize) {

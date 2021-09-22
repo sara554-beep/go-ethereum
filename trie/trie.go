@@ -130,7 +130,7 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 	}
 	trie.snap = db.Snapshot(stateRoot)
 	if trie.snap == nil {
-		return nil, errors.New("snapshot not found")
+		trie.snap = db.DiskLayer()
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
