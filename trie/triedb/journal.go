@@ -146,7 +146,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
-		return fmt.Errorf("%w type: %s", ErrSnapshotStale, "disklayer")
+		return ErrSnapshotStale
 	}
 	return nil
 }
@@ -163,7 +163,7 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	defer dl.lock.RUnlock()
 
 	if dl.Stale() {
-		return fmt.Errorf("%w type: %s", ErrSnapshotStale, "difflayer")
+		return ErrSnapshotStale
 	}
 	// Everything below was journalled, persist this layer too
 	if err := rlp.Encode(buffer, dl.root); err != nil {

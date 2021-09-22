@@ -29,12 +29,12 @@ type MissingNodeError struct {
 	Owner    common.Hash // owner of the trie if it's 2-layered trie
 	NodeHash common.Hash // hash of the missing node
 	Path     []byte      // hex-encoded path to the missing node
-	Inner    error
+	err      error       // concrete error for missing trie node
 }
 
 func (err *MissingNodeError) Error() string {
 	if err.Owner == (common.Hash{}) {
-		return fmt.Sprintf("missing trie node %x (path %x) %v", err.NodeHash, err.Path, err.Inner)
+		return fmt.Sprintf("missing trie node %x (path %x) %v", err.NodeHash, err.Path, err.err)
 	}
-	return fmt.Sprintf("missing trie node %x (owner %x) (path %x) %v", err.NodeHash, err.Owner, err.Path, err.Inner)
+	return fmt.Sprintf("missing trie node %x (owner %x) (path %x) %v", err.NodeHash, err.Owner, err.Path, err.err)
 }

@@ -240,10 +240,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if exist {
 			return blob, origNode, 1, nil
 		}
-		blob, depth, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, path)), common.BytesToHash(hash), 0)
-		if err != nil {
-			err = fmt.Errorf("%w depth: %d", err, depth)
-		}
+		blob, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, path)), common.BytesToHash(hash))
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -580,13 +577,13 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 	blob, exist := t.dirty.get(string(encoding.EncodeStorageKey(t.owner, prefix)))
 	if exist {
 		if len(blob) == 0 {
-			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, Inner: errors.New("node is deleted")}
+			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: errors.New("deleted")}
 		}
 		return mustDecodeNode(hash[:], blob), nil
 	}
-	blob, depth, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, prefix)), hash, 0)
+	blob, err := t.snap.Node(string(encoding.EncodeStorageKey(t.owner, prefix)), hash)
 	if err != nil {
-		return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, Inner: fmt.Errorf("%w depth %d", err, depth)}
+		return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: err}
 	}
 	return mustDecodeNode(hash[:], blob), nil
 }

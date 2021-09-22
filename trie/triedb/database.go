@@ -58,7 +58,7 @@ type Snapshot interface {
 
 	// Node retrieves the trie node associated with a particular key.
 	// The passed key should be encoded in storage format.
-	Node(key string, hash common.Hash, depth int) ([]byte, int, error)
+	Node(key string, hash common.Hash) ([]byte, error)
 }
 
 // snapshot is the internal version of the snapshot data layer that supports some
