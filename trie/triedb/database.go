@@ -290,7 +290,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 		db.layers = map[common.Hash]snapshot{base.root: base}
 		return nil
 	}
-	db.cap(diff, layers)
+	persisted := db.cap(diff, layers)
 
 	// Remove any layer that is stale or links into a stale layer
 	children := make(map[common.Hash][]common.Hash)
@@ -312,6 +312,19 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 		if snap.Stale() {
 			remove(root)
 		}
+	}
+	// If the disk layer was modified, regenerate all the cumulative blooms
+	if persisted != nil {
+		var rebloom func(root common.Hash)
+		rebloom = func(root common.Hash) {
+			if diff, ok := db.layers[root].(*diffLayer); ok {
+				diff.origin = persisted
+			}
+			for _, child := range children[root] {
+				rebloom(child)
+			}
+		}
+		rebloom(persisted.root)
 	}
 	return nil
 }
