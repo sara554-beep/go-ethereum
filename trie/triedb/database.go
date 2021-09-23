@@ -367,13 +367,16 @@ func (db *Database) cap(diff *diffLayer, layers int) *diskLayer {
 		return nil
 
 	case *diffLayer:
-		// Flatten the parent into the grandparent. The flattening internally obtains a
-		// write lock on grandparent.
-		flattened := parent.flatten().(*diffLayer)
-		db.layers[flattened.root] = flattened
-
+		// Hold the write lock until the flattened parent is linked correctly.
+		// Otherwise, data race can happen which may lead the read operations to
+		// a stale parent layer.
 		diff.lock.Lock()
 		defer diff.lock.Unlock()
+
+		// Flatten the parent into the grandparent. The flattening internally obtains
+		// a write lock on grandparent.
+		flattened := parent.flatten().(*diffLayer)
+		db.layers[flattened.root] = flattened
 
 		diff.parent = flattened
 		if flattened.memory < aggregatorMemoryLimit {

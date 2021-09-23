@@ -585,6 +585,9 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 	if err != nil {
 		return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: err}
 	}
+	if len(blob) == 0 {
+		return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: errors.New("deleted")}
+	}
 	return mustDecodeNode(hash[:], blob), nil
 }
 
