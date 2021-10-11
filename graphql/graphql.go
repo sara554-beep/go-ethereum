@@ -121,7 +121,8 @@ func (a *Account) Storage(ctx context.Context, args struct{ Slot common.Hash }) 
 	if err != nil {
 		return common.Hash{}, err
 	}
-	return state.GetState(a.address, args.Slot), nil
+	s := state.GetState(a.address, args.Slot)
+	return s, nil
 }
 
 // Log represents an individual log message. All arguments are mandatory.

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie"
 	"os"
 	"runtime"
 	"strconv"
@@ -448,7 +449,7 @@ func dump(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := state.New(root, state.NewDatabase(db), nil)
+	state, err := state.New(root, state.NewDatabaseWithConfig(db, &trie.Config{ReadOnly: true}), nil)
 	if err != nil {
 		return err
 	}
