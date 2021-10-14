@@ -17,6 +17,7 @@
 package core
 
 import (
+	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -271,7 +272,7 @@ func (bc *BlockChain) HasBlockAndState(hash common.Hash, number uint64) bool {
 // TrieNode retrieves a blob of data associated with a trie node
 // either from ephemeral in-memory cache, or from persistent storage.
 func (bc *BlockChain) TrieNode(hash common.Hash) ([]byte, error) {
-	return bc.stateCache.TrieDB().Node(hash)
+	return nil, errors.New("deprecated")
 }
 
 // ContractCode retrieves a blob of data associated with a contract hash

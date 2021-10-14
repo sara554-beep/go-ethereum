@@ -312,7 +312,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			number  uint64
 			traced  uint64
 			failed  error
-			parent  common.Hash
+			//parent  common.Hash
 			statedb *state.StateDB
 		)
 		// Ensure everything is properly cleaned up on any exit path
@@ -341,9 +341,9 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			}
 			// clean out any derefs
 			derefsMu.Lock()
-			for _, h := range derefTodo {
-				statedb.Database().TrieDB().Dereference(h)
-			}
+			//for _, h := range derefTodo {
+			//	statedb.Database().TrieDB().Dereference(h)
+			//}
 			derefTodo = derefTodo[:0]
 			derefsMu.Unlock()
 
@@ -366,21 +366,27 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 				break
 			}
 			if trieDb := statedb.Database().TrieDB(); trieDb != nil {
+				// TODO(FIX ME)
 				// Hold the reference for tracer, will be released at the final stage
-				trieDb.Reference(block.Root(), common.Hash{})
+				//trieDb.Reference(block.Root(), common.Hash{})
+				//
+				//// Release the parent state because it's already held by the tracer
+				//if parent != (common.Hash{}) {
+				//	trieDb.Dereference(parent)
+				//}
+				//// Prefer disk if the trie db memory grows too much
+				//s1, s2 := trieDb.Size()
+				//if !preferDisk && (s1+s2) > defaultTracechainMemLimit {
+				//	log.Info("Switching to prefer-disk mode for tracing", "size", s1+s2)
+				//	preferDisk = true
+				//statedb.Database().TrieDB().Reference(common.Hash{}, block.Root(), common.Hash{}, nil)
 
 				// Release the parent state because it's already held by the tracer
-				if parent != (common.Hash{}) {
-					trieDb.Dereference(parent)
-				}
-				// Prefer disk if the trie db memory grows too much
-				s1, s2 := trieDb.Size()
-				if !preferDisk && (s1+s2) > defaultTracechainMemLimit {
-					log.Info("Switching to prefer-disk mode for tracing", "size", s1+s2)
-					preferDisk = true
-				}
+				//if parent != (common.Hash{}) {
+					//statedb.Database().TrieDB().Dereference(parent)
+				//}
 			}
-			parent = block.Root()
+			//parent = block.Root()
 
 			next, err := api.blockByNumber(localctx, rpc.BlockNumber(number+1))
 			if err != nil {
@@ -416,6 +422,11 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			derefsMu.Lock()
 			derefTodo = append(derefTodo, res.rootref)
 			derefsMu.Unlock()
+
+			// Dereference any parent tries held in memory by this task
+			if res.statedb.Database().TrieDB() != nil {
+				//res.statedb.Database().TrieDB().Dereference(res.rootref)
+			}
 			// Stream completed traces to the user, aborting on the first error
 			for result, ok := done[next]; ok; result, ok = done[next] {
 				if len(result.Traces) > 0 || next == end.NumberU64() {
