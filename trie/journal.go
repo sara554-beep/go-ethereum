@@ -150,12 +150,10 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 // the progress into the database.
 func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	// Ensure the layer didn't get stale
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	if dl.stale {
+	if dl.Stale() {
 		return ErrSnapshotStale
 	}
+	dl.waitCommit()
 	return nil
 }
 
