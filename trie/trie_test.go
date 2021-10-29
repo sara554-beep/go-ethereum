@@ -809,7 +809,7 @@ func TestCommitSequenceRandomBlobs(t *testing.T) {
 		// Flush trie -> database
 		result, _ := trie.Commit(nil)
 		db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
-		db.Cap(result.Root, 0)
+		db.Cap(result.Root, 0, true)
 		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
 			t.Fatalf("test %d, disk write sequence wrong:\ngot %x exp %x\n", i, got, exp)
 		}
@@ -853,7 +853,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 
 		// Flush memdb -> disk (sponge)
 		db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
-		db.Cap(result.Root, 0)
+		db.Cap(result.Root, 0, true)
 
 		// And flush stacktrie -> disk
 		stRoot, err := stTrie.Commit()
@@ -901,7 +901,7 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	root := result.Root
 	// Flush memdb -> disk (sponge)
 	db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
-	db.Cap(result.Root, 0)
+	db.Cap(result.Root, 0, true)
 	// And flush stacktrie -> disk
 	stRoot, err := stTrie.Commit()
 	if err != nil {

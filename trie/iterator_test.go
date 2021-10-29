@@ -316,7 +316,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	result, _ := tr.Commit(nil)
 	tdb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
 	if !memonly {
-		tdb.Cap(result.Root, 0)
+		tdb.Cap(result.Root, 0, true)
 	}
 	wantNodeCount := checkIteratorNoDups(t, tr.NodeIterator(nil), nil)
 
@@ -436,7 +436,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	}
 	if !memonly {
 		triedb.Update(root, common.Hash{}, result.CommitTo(nil))
-		triedb.Cap(root, 0)
+		triedb.Cap(root, 0, true)
 	}
 	var (
 		barNodeBlob []byte
@@ -543,7 +543,7 @@ func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 	}
 	result, _ := trie.Commit(nil)
 	triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
-	triedb.Cap(result.Root, 0)
+	triedb.Cap(result.Root, 0, true)
 	// Return the generated trie
 	return triedb, trie, logDb
 }

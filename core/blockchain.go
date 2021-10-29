@@ -1232,7 +1232,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Forcibly flush all committed nodes into the disk if archive mode
 	// is enabled.
 	if bc.cacheConfig.TrieDirtyDisabled {
-		state.Database().TrieDB().Cap(block.Root(), 0)
+		state.Database().TrieDB().Cap(block.Root(), 0, false)
 	}
 	// If the total difficulty is higher than our known, add it to the canonical chain
 	// Second clause in the if statement reduces the vulnerability to selfish mining.

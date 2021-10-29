@@ -89,11 +89,7 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *C
 	if hash == (common.Hash{}) {
 		hash = emptyRoot
 	}
-	base := &diskLayer{
-		diskdb: diskdb,
-		cache:  cleans,
-		root:   hash,
-	}
+	base := newDiskLayer(hash, nil, cleans, diskdb, false)
 	snapshot, err := loadJournal(diskdb, base)
 	if err != nil {
 		// Print the log for missing trie node journal, but prevent to

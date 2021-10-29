@@ -45,6 +45,9 @@ var (
 	triedbFallbackHitMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/fallback/hit", nil)
 	triedbFallbackReadMeter = metrics.NewRegisteredMeter("trie/triedb/clean/fallback/read", nil)
 
+	triedbFrozenHitMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/frozen/hit", nil)
+	triedbFrozenReadMeter = metrics.NewRegisteredMeter("trie/triedb/clean/frozen/read", nil)
+
 	triedbDirtyHitMeter   = metrics.NewRegisteredMeter("trie/triedb/dirty/hit", nil)
 	triedbDirtyMissMeter  = metrics.NewRegisteredMeter("trie/triedb/dirty/miss", nil)
 	triedbDirtyReadMeter  = metrics.NewRegisteredMeter("trie/triedb/dirty/read", nil)
@@ -434,7 +437,7 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[s
 // which may or may not overflow and cascade to disk. Since this last layer's
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
-func (db *Database) Cap(root common.Hash, layers int) error {
+func (db *Database) Cap(root common.Hash, layers int, sync bool) error {
 	// Retrieve the head snapshot to cap from
 	root = convertEmpty(root)
 	snap := db.Snapshot(root)
@@ -467,15 +470,13 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		diff.lock.RLock()
-		base := diffToDisk(diff.flatten().(*diffLayer), db.config)
-		diff.lock.RUnlock()
+		base := diffToDisk(diff.flatten().(*diffLayer), db.config, sync)
 
 		// Replace the entire snapshot tree with the flat base
 		db.layers = map[common.Hash]snapshot{base.root: base}
 		return nil
 	}
-	persisted := db.cap(diff, layers)
+	persisted := db.cap(diff, layers, sync)
 
 	// Remove any layer that is stale or links into a stale layer
 	children := make(map[common.Hash][]common.Hash)
@@ -525,7 +526,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 // which may or may not overflow and cascade to disk. Since this last layer's
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
-func (db *Database) cap(diff *diffLayer, layers int) *diskLayer {
+func (db *Database) cap(diff *diffLayer, layers int, sync bool) *diskLayer {
 	// Dive until we run out of layers or reach the persistent database
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
@@ -563,10 +564,7 @@ func (db *Database) cap(diff *diffLayer, layers int) *diskLayer {
 	}
 	// If the bottom-most layer is larger than our memory cap, persist to disk
 	bottom := diff.parent.(*diffLayer)
-
-	bottom.lock.RLock()
-	base := diffToDisk(bottom, db.config)
-	bottom.lock.RUnlock()
+	base := diffToDisk(bottom, db.config, sync)
 
 	db.layers[base.root] = base
 	diff.parent = base
@@ -577,16 +575,10 @@ func (db *Database) cap(diff *diffLayer, layers int) *diskLayer {
 // it. The method will panic if called onto a non-bottom-most diff layer. The disk
 // layer persistence should be operated in an atomic way. All updates should be
 // discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
-	defer func(start time.Time) {
-		triedbCommitTimeTimer.Update(time.Since(start))
-	}(time.Now())
-
-	var (
-		base  = bottom.parent.(*diskLayer)
-		batch = base.diskdb.NewBatch()
-	)
+func diffToDisk(bottom *diffLayer, config *Config, sync bool) *diskLayer {
 	// Mark the original base as stale as we're going to create a new wrapper
+	base := bottom.parent.(*diskLayer)
+	base.waitCommit()
 	base.lock.Lock()
 	if base.stale {
 		panic("triedb parent disk layer is stale") // we've committed into the same base from two children, boo
@@ -594,50 +586,11 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	base.stale = true
 	base.lock.Unlock()
 
-	// Push all updated accounts into the database.
-	// TODO all the nodes belong to the same layer should be written
-	// in atomic way. However a huge disk write should be avoid in the
-	// first place. A balance needs to be found to ensure that the bottom
-	// most layer is large enough to combine duplicated writes, and also
-	// the big write can be avoided.
-	var totalSize int64
-	for key, node := range bottom.nodes {
-		var (
-			blob       []byte
-			path, hash = DecodeInternalKey([]byte(key))
-		)
-		if node == nil {
-			rawdb.DeleteTrieNode(batch, path)
-			if base.cache != nil {
-				base.cache.Set([]byte(key), nil)
-			}
-		} else {
-			blob = node.rlp()
-			rawdb.WriteTrieNode(batch, path, blob)
-			if config != nil && config.WriteLegacy {
-				rawdb.WriteArchiveTrieNode(batch, hash, blob)
-			}
-			if base.cache != nil {
-				base.cache.Set([]byte(key), blob)
-			}
-		}
-		totalSize += int64(len(blob) + len(key))
+	dl := newDiskLayer(bottom.root, bottom.nodes, base.cache, base.diskdb, config != nil && config.WriteLegacy)
+	if sync {
+		dl.waitCommit()
 	}
-	triedbCommitSizeMeter.Mark(totalSize)
-	triedbCommitNodesMeter.Mark(int64(len(bottom.nodes)))
-
-	// Flush all the updates in the single db operation. Ensure the
-	// disk layer transition is atomic.
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
-	}
-	log.Debug("Journalled triedb disk layer", "root", bottom.root)
-	res := &diskLayer{
-		root:   bottom.root,
-		cache:  base.cache,
-		diskdb: base.diskdb,
-	}
-	return res
+	return dl
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.

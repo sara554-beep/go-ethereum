@@ -1005,7 +1005,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 			}
 			return common.Hash{}, err
 		}
-		if err := s.db.TrieDB().Cap(root, 128); err != nil {
+		if err := s.db.TrieDB().Cap(root, 128, false); err != nil {
 			if err != trie.ErrSnapshotReadOnly {
 				log.Warn("Failed to cap node tree", "err", err)
 			}
