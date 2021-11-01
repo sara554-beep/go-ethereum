@@ -292,23 +292,34 @@ func (dl *diffLayer) flatten() snapshot {
 		panic("parent diff layer is stale") // we've flattened into the same parent from two children, boo
 	}
 	// Merge nodes of two layers together, overwrite the nodes with same path.
-	storages := make(map[string]string)
+	var (
+		size     = parent.memory
+		storages = make(map[string]string)
+	)
 	for key := range parent.nodes {
 		storage, _ := DecodeInternalKey([]byte(key))
 		storages[string(storage)] = key
 	}
-	for key, data := range dl.nodes {
+	for key, n := range dl.nodes {
+		var sizeDiff int
 		storage, _ := DecodeInternalKey([]byte(key))
-		if internal, ok := storages[string(storage)]; ok {
+		if internal, ok := storages[string(storage)]; !ok {
+			sizeDiff = int(n.size) + len(key) + cachedNodeSize
+		} else {
+			pnode := parent.nodes[internal]
+			if pnode != nil {
+				sizeDiff = int(n.size) - int(pnode.size)
+			}
 			delete(parent.nodes, internal)
 		}
-		parent.nodes[key] = data
+		parent.nodes[key] = n
+		size = uint64(int(size) + sizeDiff)
 	}
 	// Return the combo parent
 	return &diffLayer{
 		origin: parent.origin,
 		parent: parent.parent,
-		memory: parent.memory + dl.memory,
+		memory: size,
 		root:   dl.root,
 		nodes:  parent.nodes,
 		diffed: dl.diffed,
