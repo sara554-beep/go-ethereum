@@ -74,7 +74,7 @@ type diffLayer struct {
 
 	root   common.Hash            // Root hash to which this snapshot diff belongs to
 	stale  uint32                 // Signals that the layer became stale (state progressed)
-	nodes  map[string]*cachedNode // Keyed trie nodes for retrieval (nil means deleted)
+	nodes  map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
 	diffed *bloomfilter.Filter    // Bloom filter tracking all the diffed items up to the disk layer
 	lock   sync.RWMutex
 }
@@ -126,9 +126,8 @@ func (dl *diffLayer) rebloom(origin *diskLayer) {
 	} else {
 		dl.diffed, _ = bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
 	}
-	for key := range dl.nodes {
-		_, hash := DecodeInternalKey([]byte(key))
-		dl.diffed.AddHash(binary.BigEndian.Uint64(hash.Bytes()))
+	for _, node := range dl.nodes {
+		dl.diffed.AddHash(binary.BigEndian.Uint64(node.hash.Bytes()))
 	}
 	// Calculate the current false positive rate and update the error rate meter.
 	// This is a bit cheating because subsequent layers will overwrite it, but it
@@ -157,10 +156,9 @@ func (dl *diffLayer) Stale() bool {
 
 // Node retrieves the trie node associated with a particular key.
 // The given key must be the internal format node key.
-func (dl *diffLayer) Node(key []byte) (node, error) {
+func (dl *diffLayer) Node(storage []byte, hash common.Hash) (node, error) {
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below
-	_, hash := DecodeInternalKey(key)
 	dl.lock.RLock()
 	hit := dl.diffed.ContainsHash(binary.BigEndian.Uint64(hash.Bytes()))
 	var origin *diskLayer
@@ -173,47 +171,45 @@ func (dl *diffLayer) Node(key []byte) (node, error) {
 	// diff layers, reach straight into the bottom persistent disk layer
 	if origin != nil {
 		triedbBloomMissMeter.Mark(1)
-		return origin.Node(key)
+		return origin.Node(storage, hash)
 	}
-	return dl.node(key, 0)
+	return dl.node(storage, hash, 0)
 }
 
 // node is the inner version of Node which counts the accessed layer depth.
-func (dl *diffLayer) node(key []byte, depth int) (node, error) {
+func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, error) {
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
 	if dl.Stale() {
 		return nil, ErrSnapshotStale
 	}
 	// If the trie node is known locally, return it
-	if n, ok := dl.nodes[string(key)]; ok {
+	if n, ok := dl.nodes[string(storage)]; ok && n.hash == hash {
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
 		triedbBloomTrueHitMeter.Mark(1)
+		triedbDirtyReadMeter.Mark(int64(n.size))
 
 		// The trie node is marked as deleted, don't bother parent anymore.
-		if n == nil {
+		if n.node == nil {
 			return nil, nil
 		}
-		triedbDirtyReadMeter.Mark(int64(n.size))
-		_, hash := DecodeInternalKey(key)
 		return n.obj(hash), nil
 	}
 	// Trie node unknown to this diff, resolve from parent
 	if diff, ok := dl.parent.(*diffLayer); ok {
-		return diff.node(key, depth+1)
+		return diff.node(storage, hash, depth+1)
 	}
 	// Failed to resolve through diff layers, mark a bloom error and use the disk
 	triedbBloomFalseHitMeter.Mark(1)
-	return dl.parent.Node(key)
+	return dl.parent.Node(storage, hash)
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.
 // The given key must be the internal format node key.
-func (dl *diffLayer) NodeBlob(key []byte) ([]byte, error) {
+func (dl *diffLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below
-	_, hash := DecodeInternalKey(key)
 	dl.lock.RLock()
 	hit := dl.diffed.ContainsHash(binary.BigEndian.Uint64(hash.Bytes()))
 	var origin *diskLayer
@@ -226,13 +222,13 @@ func (dl *diffLayer) NodeBlob(key []byte) ([]byte, error) {
 	// diff layers, reach straight into the bottom persistent disk layer
 	if origin != nil {
 		triedbBloomMissMeter.Mark(1)
-		return origin.NodeBlob(key)
+		return origin.NodeBlob(storage, hash)
 	}
-	return dl.nodeBlob(key, 0)
+	return dl.nodeBlob(storage, hash, 0)
 }
 
 // nodeBlob is the inner version of NodeBlob which counts the accessed layer depth.
-func (dl *diffLayer) nodeBlob(key []byte, depth int) ([]byte, error) {
+func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]byte, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -242,25 +238,25 @@ func (dl *diffLayer) nodeBlob(key []byte, depth int) ([]byte, error) {
 		return nil, ErrSnapshotStale
 	}
 	// If the trie node is known locally, return it
-	if n, ok := dl.nodes[string(key)]; ok {
+	if n, ok := dl.nodes[string(storage)]; ok && n.hash == hash {
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
 		triedbBloomTrueHitMeter.Mark(1)
+		triedbDirtyReadMeter.Mark(int64(n.size))
 
 		// The trie node is marked as deleted, don't bother parent anymore.
-		if n == nil {
+		if n.node == nil {
 			return nil, nil
 		}
-		triedbDirtyReadMeter.Mark(int64(n.size))
 		return n.rlp(), nil
 	}
 	// Trie node unknown to this diff, resolve from parent
 	if diff, ok := dl.parent.(*diffLayer); ok {
-		return diff.nodeBlob(key, depth+1)
+		return diff.nodeBlob(storage, hash, depth+1)
 	}
 	// Failed to resolve through diff layers, mark a bloom error and use the disk
 	triedbBloomFalseHitMeter.Mark(1)
-	return dl.parent.NodeBlob(key)
+	return dl.parent.NodeBlob(storage, hash)
 }
 
 // Update creates a new layer on top of the existing snapshot diff tree with
@@ -292,28 +288,14 @@ func (dl *diffLayer) flatten() snapshot {
 		panic("parent diff layer is stale") // we've flattened into the same parent from two children, boo
 	}
 	// Merge nodes of two layers together, overwrite the nodes with same path.
-	var (
-		size     = parent.memory
-		storages = make(map[string]string)
-	)
-	for key := range parent.nodes {
-		storage, _ := DecodeInternalKey([]byte(key))
-		storages[string(storage)] = key
-	}
+	size := parent.memory
 	for key, n := range dl.nodes {
-		var sizeDiff int
-		storage, _ := DecodeInternalKey([]byte(key))
-		if internal, ok := storages[string(storage)]; !ok {
-			sizeDiff = int(n.size) + len(key) + cachedNodeSize
-		} else {
-			pnode := parent.nodes[internal]
-			if pnode != nil {
-				sizeDiff = int(n.size) - int(pnode.size)
-			}
-			delete(parent.nodes, internal)
+		diff := int(n.size) + len(key) + cachedNodeSize
+		if pnode, ok := parent.nodes[key]; ok {
+			diff = int(n.size) - int(pnode.size)
 		}
 		parent.nodes[key] = n
-		size = uint64(int(size) + sizeDiff)
+		size = uint64(int(size) + diff)
 	}
 	// Return the combo parent
 	return &diffLayer{

@@ -250,12 +250,15 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		// Always try to look up the dirty node in the temporary set in case they
 		// are not moved into the layers yet. Don't panic for the nil set which is
 		// possible in tests.
-		key := EncodeInternalKeyWithPath(t.owner, path, common.BytesToHash(hash))
-		if n, exist := t.dirty.getBlob(key); exist {
+		var (
+			storage = EncodeStorageKey(t.owner, path)
+			nhash   = common.BytesToHash(hash)
+		)
+		if n, exist := t.dirty.getBlob(storage, nhash); exist {
 			return n, origNode, 1, nil
 		}
 		if t.snap != nil {
-			blob, err := t.snap.NodeBlob(key)
+			blob, err := t.snap.NodeBlob(storage, nhash)
 			return blob, origNode, 1, err
 		}
 		return nil, nil, 0, nil
@@ -581,18 +584,18 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 }
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	var (
-		hash = common.BytesToHash(n)
-		key  = EncodeInternalKeyWithPath(t.owner, prefix, hash)
-	)
 	// Always try to look up the dirty node in the temporary set in case they
 	// are not moved into the layers yet. Don't panic for the nil set which is
 	// possible in tests.
-	if n, exist := t.dirty.get(key); exist {
+	var (
+		hash    = common.BytesToHash(n)
+		storage = EncodeStorageKey(t.owner, prefix)
+	)
+	if n, exist := t.dirty.get(storage, hash); exist {
 		return n, nil
 	}
 	if t.snap != nil {
-		blob, err := t.snap.NodeBlob(EncodeInternalKeyWithPath(t.owner, prefix, hash))
+		blob, err := t.snap.NodeBlob(storage, hash)
 		if err != nil {
 			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: err}
 		}

@@ -73,6 +73,17 @@ func (dl *diskLayer) Stale() bool {
 	return dl.stale
 }
 
+// MarkStale sets the stale flag as true.
+func (dl *diskLayer) MarkStale() {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	if dl.stale == true {
+		panic("triedb disk layer is stale") // we've committed into the same base from two children, boom
+	}
+	dl.stale = true
+}
+
 // waitCommit blocks if the frozen set is still be committing
 func (dl *diskLayer) waitCommit() {
 	dl.lock.RLock()
@@ -87,21 +98,20 @@ func (dl *diskLayer) waitCommit() {
 
 // Node retrieves the trie node associated with a particular key.
 // The given key must be the internal format node key.
-func (dl *diskLayer) Node(key []byte) (node, error) {
-	blob, err := dl.NodeBlob(key)
+func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
+	blob, err := dl.NodeBlob(storage, hash)
 	if err != nil {
 		return nil, err
 	}
 	if len(blob) == 0 {
 		return nil, nil
 	}
-	_, hash := DecodeInternalKey(key)
 	return mustDecodeNode(hash[:], blob), nil
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.
 // The given key must be the internal format node key.
-func (dl *diskLayer) NodeBlob(key []byte) ([]byte, error) {
+func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	if dl.Stale() {
 		return nil, ErrSnapshotStale
 	}
@@ -115,28 +125,28 @@ func (dl *diskLayer) NodeBlob(key []byte) ([]byte, error) {
 	dl.lock.RUnlock()
 
 	if frozen != nil {
-		node, ok := frozen[string(key)]
+		n, ok := frozen[string(storage)]
 		if ok {
 			triedbFrozenHitMeter.Mark(1)
-			if node == nil {
-				return nil, nil
+			if n.node == nil {
+				return nil, nil // node deleted
 			}
-			blob := node.rlp()
+			blob := n.rlp()
 			triedbFrozenReadMeter.Mark(int64(len(blob)))
 			return blob, nil
 		}
 	}
 	// Try to retrieve the trie node from the memory cache
+	ikey := EncodeInternalKey(storage, hash)
 	if dl.cache != nil {
-		if blob, found := dl.cache.HasGet(nil, key); found {
+		if blob, found := dl.cache.HasGet(nil, ikey); found {
 			triedbCleanHitMeter.Mark(1)
 			triedbCleanReadMeter.Mark(int64(len(blob)))
 			return blob, nil
 		}
 		triedbCleanMissMeter.Mark(1)
 	}
-	path, hash := DecodeInternalKey(key)
-	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, path)
+	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, storage)
 	if len(blob) == 0 || nodeHash != hash {
 		blob = rawdb.ReadArchiveTrieNode(dl.diskdb, hash)
 		if len(blob) != 0 {
@@ -145,7 +155,7 @@ func (dl *diskLayer) NodeBlob(key []byte) ([]byte, error) {
 		}
 	}
 	if dl.cache != nil {
-		dl.cache.Set(key, blob)
+		dl.cache.Set(ikey, blob)
 		triedbCleanWriteMeter.Mark(int64(len(blob)))
 	}
 	if len(blob) > 0 {
@@ -184,27 +194,27 @@ func (dl *diskLayer) commit(writeLegacy bool) {
 		nodes     = len(frozen)
 		batch     = dl.diskdb.NewBatch()
 	)
-	for key, node := range frozen {
+	for storage, n := range frozen {
 		var (
-			blob       []byte
-			path, hash = DecodeInternalKey([]byte(key))
+			blob []byte
+			ikey = EncodeInternalKey([]byte(storage), n.hash)
 		)
-		if node == nil {
-			rawdb.DeleteTrieNode(batch, path)
+		if n.node == nil {
+			rawdb.DeleteTrieNode(batch, []byte(storage))
 			if dl.cache != nil {
-				dl.cache.Set([]byte(key), nil)
+				dl.cache.Set(ikey, nil)
 			}
 		} else {
-			blob = node.rlp()
-			rawdb.WriteTrieNode(batch, path, blob)
+			blob = n.rlp()
+			rawdb.WriteTrieNode(batch, []byte(storage), blob)
 			if writeLegacy {
-				rawdb.WriteArchiveTrieNode(batch, hash, blob)
+				rawdb.WriteArchiveTrieNode(batch, n.hash, blob)
 			}
 			if dl.cache != nil {
-				dl.cache.Set([]byte(key), blob)
+				dl.cache.Set(ikey, blob)
 			}
 		}
-		totalSize += int64(len(blob) + len(key))
+		totalSize += int64(len(blob) + len(storage))
 	}
 	triedbCommitSizeMeter.Mark(totalSize)
 	triedbCommitNodesMeter.Mark(int64(len(frozen)))

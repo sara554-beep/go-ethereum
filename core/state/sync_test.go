@@ -230,7 +230,8 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool) {
 					nodeResults[i] = trie.NodeSyncResult{Key: node.key, Data: data}
 				}
 			} else {
-				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob([]byte(node.key))
+				storage, hash := trie.DecodeInternalKey([]byte(node.key))
+				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob(storage, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for key %v", []byte(node.key))
 				}
@@ -324,7 +325,8 @@ func TestIterativeDelayedStateSync(t *testing.T) {
 		if len(nodeElements) > 0 {
 			nodeResults := make([]trie.NodeSyncResult, len(nodeElements)/2+1)
 			for i, element := range nodeElements[:len(nodeResults)] {
-				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob([]byte(element.key))
+				storage, hash := trie.DecodeInternalKey([]byte(element.key))
+				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob(storage, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve contract bytecode for %x", element.code)
 				}
@@ -410,7 +412,8 @@ func testIterativeRandomStateSync(t *testing.T, count int) {
 		if len(nodeQueue) > 0 {
 			results := make([]trie.NodeSyncResult, 0, len(nodeQueue))
 			for key, element := range nodeQueue {
-				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob([]byte(element.key))
+				storage, hash := trie.DecodeInternalKey([]byte(element.key))
+				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob(storage, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x %v %v", element.hash, []byte(element.key), element.path)
 				}
@@ -498,7 +501,8 @@ func TestIterativeRandomDelayedStateSync(t *testing.T) {
 			for key, element := range nodeQueue {
 				delete(nodeQueue, key)
 
-				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob([]byte(element.key))
+				storage, hash := trie.DecodeInternalKey([]byte(element.key))
+				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob(storage, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", element.hash)
 				}
@@ -597,7 +601,8 @@ func TestIncompleteStateSync(t *testing.T) {
 		if len(nodeQueue) > 0 {
 			results := make([]trie.NodeSyncResult, 0, len(nodeQueue))
 			for key, element := range nodeQueue {
-				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob([]byte(element.key))
+				storage, hash := trie.DecodeInternalKey([]byte(element.key))
+				data, err := srcDb.TrieDB().Snapshot(srcRoot).NodeBlob(storage, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", element.hash)
 				}

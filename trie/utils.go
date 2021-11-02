@@ -111,7 +111,7 @@ func (t *tracker) reset() {
 // database for storing immature nodes.
 type nodeSet struct {
 	lock  sync.RWMutex
-	nodes map[string]*cachedNode // Set of dirty nodes, indexed by **internal** key
+	nodes map[string]*cachedNode // Set of dirty nodes, indexed by **storage** key
 }
 
 // newNodeSet initializes the dirty set.
@@ -121,9 +121,9 @@ func newNodeSet() *nodeSet {
 	}
 }
 
-// get retrieves the trie node in the set with **internal** format key.
+// get retrieves the trie node in the set with **storage** format key.
 // Note the returned value shouldn't be changed by callers.
-func (set *nodeSet) get(key []byte) (node, bool) {
+func (set *nodeSet) get(storage []byte, hash common.Hash) (node, bool) {
 	// Don't panic on uninitialized set, it's possible in testing.
 	if set == nil {
 		return nil, false
@@ -131,16 +131,15 @@ func (set *nodeSet) get(key []byte) (node, bool) {
 	set.lock.RLock()
 	defer set.lock.RUnlock()
 
-	if blob, ok := set.nodes[string(key)]; ok {
-		_, hash := DecodeInternalKey(key)
-		return blob.obj(hash), true
+	if node, ok := set.nodes[string(storage)]; ok && node.hash == hash {
+		return node.obj(hash), true
 	}
 	return nil, false
 }
 
-// getBlob retrieves the encoded trie node in the set with **internal** format key.
+// getBlob retrieves the encoded trie node in the set with **storage** format key.
 // Note the returned value shouldn't be changed by callers.
-func (set *nodeSet) getBlob(key []byte) ([]byte, bool) {
+func (set *nodeSet) getBlob(storage []byte, hash common.Hash) ([]byte, bool) {
 	// Don't panic on uninitialized set, it's possible in testing.
 	if set == nil {
 		return nil, false
@@ -148,16 +147,15 @@ func (set *nodeSet) getBlob(key []byte) ([]byte, bool) {
 	set.lock.RLock()
 	defer set.lock.RUnlock()
 
-	if blob, ok := set.nodes[string(key)]; ok {
-		return blob.rlp(), true
+	if node, ok := set.nodes[string(storage)]; ok && node.hash == hash {
+		return node.rlp(), true
 	}
 	return nil, false
 }
 
-// put stores the given state entry in the set. If the val is nil which means
-// the state is deleted. The given key should be encoded in the internal format.
-// Note the val shouldn't be changed by caller later.
-func (set *nodeSet) put(key []byte, n node, size int) {
+// put stores the given state entry in the set. The given key should be encoded in
+// the storage format. Note the val shouldn't be changed by caller later.
+func (set *nodeSet) put(storage []byte, n node, size int, hash common.Hash) {
 	// Don't panic on uninitialized set, it's possible in testing.
 	if set == nil {
 		return
@@ -165,13 +163,15 @@ func (set *nodeSet) put(key []byte, n node, size int) {
 	set.lock.Lock()
 	defer set.lock.Unlock()
 
-	set.nodes[string(key)] = &cachedNode{
+	set.nodes[string(storage)] = &cachedNode{
+		hash: hash,
 		node: n,
 		size: uint16(size),
 	}
 }
 
-// merge merges the dirty nodes from the other set.
+// merge merges the dirty nodes from the other set. If there are two
+// nodes with same key, then update with the node in other set.
 func (set *nodeSet) merge(other *nodeSet) {
 	// Don't panic on uninitialized set, it's possible in testing.
 	if set == nil || other == nil {
@@ -269,7 +269,7 @@ func (result *CommitResult) Merge(other *CommitResult) {
 	result.UpdatedNodes.merge(other.UpdatedNodes)
 }
 
-// Nodes returns all contained nodes in RLP-encoded format.
+// Nodes returns all contained nodes, key in storage format and value in RLP-encoded format.
 func (result *CommitResult) Nodes() map[string][]byte {
 	ret := make(map[string][]byte)
 	result.UpdatedNodes.forEachBlob(func(k string, v []byte) {

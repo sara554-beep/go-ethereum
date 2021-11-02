@@ -187,11 +187,12 @@ func (c *committer) store(path []byte, n node) node {
 	var (
 		// We have the hash already, estimate the RLP encoding-size of the node.
 		// The size is used for mem tracking, does not need to be exact
-		size = estimateSize(n)
-		slim = simplifyNode(n)
-		key  = EncodeInternalKeyWithPath(c.owner, path, common.BytesToHash(hash))
+		size    = estimateSize(n)
+		slim    = simplifyNode(n)
+		storage = EncodeStorageKey(c.owner, path)
+		nhash   = common.BytesToHash(hash)
 	)
-	c.committed.put(key, slim, size)
+	c.committed.put(storage, slim, size, nhash)
 
 	// If we're using channel-based leaf-reporting, send to channel.
 	// The leaf channel will be active only when there an active leaf-callback

@@ -149,7 +149,8 @@ func testIterativeSync(t *testing.T, count int, bypath bool) {
 		results := make([]NodeSyncResult, len(elements))
 		if !bypath {
 			for i, element := range elements {
-				data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob([]byte(element.key))
+				storage, hash := DecodeInternalKey([]byte(element.key))
+				data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for hash %x: %v", element.hash, err)
 				}
@@ -215,8 +216,8 @@ func TestIterativeDelayedSync(t *testing.T) {
 		// Sync only half of the scheduled nodes
 		results := make([]NodeSyncResult, len(elements)/2+1)
 		for i, element := range elements[:len(results)] {
-			storageKey, hash := DecodeInternalKey([]byte(element.key))
-			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(EncodeInternalKey(storageKey, hash))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for %x: %v", element.hash, err)
 			}
@@ -277,8 +278,8 @@ func testIterativeRandomSync(t *testing.T, count int) {
 		// Fetch all the queued nodes in a random order
 		results := make([]NodeSyncResult, 0, len(queue))
 		for key, element := range queue {
-			storageKey, hash := DecodeInternalKey([]byte(element.key))
-			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(EncodeInternalKey(storageKey, hash))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for %x: %v", element.hash, err)
 			}
@@ -336,8 +337,8 @@ func TestIterativeRandomDelayedSync(t *testing.T) {
 		// Sync only half of the scheduled nodes, even those in random order
 		results := make([]NodeSyncResult, 0, len(queue)/2+1)
 		for key, element := range queue {
-			storageKey, hash := DecodeInternalKey([]byte(element.key))
-			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(EncodeInternalKey(storageKey, hash))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for %x: %v", element.hash, err)
 			}
@@ -401,8 +402,8 @@ func TestDuplicateAvoidanceSync(t *testing.T) {
 	for len(elements) > 0 {
 		results := make([]NodeSyncResult, len(elements))
 		for i, element := range elements {
-			storageKey, hash := DecodeInternalKey([]byte(element.key))
-			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(EncodeInternalKey(storageKey, hash))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for %x: %v", element.hash, err)
 			}
@@ -468,8 +469,8 @@ func TestIncompleteSync(t *testing.T) {
 		// Fetch a batch of trie nodes
 		results := make([]NodeSyncResult, len(elements))
 		for i, element := range elements {
-			storageKey, hash := DecodeInternalKey([]byte(element.key))
-			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(EncodeInternalKey(storageKey, hash))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for %x: %v", element.hash, err)
 			}
@@ -546,8 +547,8 @@ func TestSyncOrdering(t *testing.T) {
 	for len(elements) > 0 {
 		results := make([]NodeSyncResult, len(elements))
 		for i, element := range elements {
-			storageKey, hash := DecodeInternalKey([]byte(element.key))
-			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(EncodeInternalKey(storageKey, hash))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(srcTrie.Hash()).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for %x: %v", element.hash, err)
 			}
@@ -609,7 +610,8 @@ func syncWith(t *testing.T, root common.Hash, destDb *Database, srcDb *Database)
 	for len(elements) > 0 {
 		results := make([]NodeSyncResult, len(elements))
 		for i, element := range elements {
-			data, err := srcDb.Snapshot(root).NodeBlob([]byte(element.key))
+			storage, hash := DecodeInternalKey([]byte(element.key))
+			data, err := srcDb.Snapshot(root).NodeBlob(storage, hash)
 			if err != nil {
 				t.Fatalf("failed to retrieve node data for hash %x: %v", element.hash, err)
 			}

@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"math/big"
 	"time"
 
@@ -224,8 +225,8 @@ func (c *ChtIndexerBackend) Commit() error {
 	root, hashes := result.Root, make(map[common.Hash]struct{})
 
 	batch := c.trieTable.NewBatch()
-	for k, v := range result.Nodes() {
-		_, hash := trie.DecodeInternalKey([]byte(k))
+	for _, v := range result.Nodes() {
+		hash := crypto.Keccak256Hash(v)
 		batch.Put(hash.Bytes(), v)
 		hashes[hash] = struct{}{}
 	}
@@ -475,8 +476,8 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 	root, hashes := result.Root, make(map[common.Hash]struct{})
 
 	batch := b.trieTable.NewBatch()
-	for k, v := range result.Nodes() {
-		_, hash := trie.DecodeInternalKey([]byte(k))
+	for _, v := range result.Nodes() {
+		hash := crypto.Keccak256Hash(v)
 		batch.Put(hash.Bytes(), v)
 		hashes[hash] = struct{}{}
 	}

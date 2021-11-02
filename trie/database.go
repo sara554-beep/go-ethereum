@@ -89,9 +89,10 @@ type Snapshot interface {
 	Root() common.Hash
 
 	// NodeBlob retrieves the RLP-encoded trie node blob associated with
-	// a particular key. The passed key should be encoded in internal format
-	// with hash encoded. No error will be returned if the node is not found.
-	NodeBlob(internalKey []byte) ([]byte, error)
+	// a particular key and the corresponding node hash. The passed key
+	// should be encoded in storage format. No error will be returned if
+	// the node is not found.
+	NodeBlob(storage []byte, hash common.Hash) ([]byte, error)
 }
 
 // snapshot is the internal version of the snapshot data layer that supports some
@@ -99,10 +100,10 @@ type Snapshot interface {
 type snapshot interface {
 	Snapshot
 
-	// Node retrieves the trie node associated with a particular key. The
-	// passed key should be encoded in internal format with hash encoded.
-	// No error will be returned if the node is not found.
-	Node(internalKey []byte) (node, error)
+	// Node retrieves the trie node associated with a particular key and the
+	// corresponding node hash. The passed key should be encoded in storage
+	// format. No error will be returned if the node is not found.
+	Node(storage []byte, hash common.Hash) (node, error)
 
 	// Parent returns the subsequent layer of a snapshot, or nil if the base was
 	// reached.
@@ -112,8 +113,9 @@ type snapshot interface {
 	Parent() snapshot
 
 	// Update creates a new layer on top of the existing snapshot diff tree with
-	// the given dirty trie node set. The deleted trie nodes are also included
-	// with the nil as the value.
+	// the given dirty trie node set. All dirty nodes are indexed with the storage
+	// format key. The deleted trie nodes are also included with the nil as the
+	// node object.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
 	Update(blockRoot common.Hash, nodes map[string]*cachedNode) *diffLayer
@@ -176,8 +178,9 @@ func (n rawShortNode) fstring(ind string) string { panic("this should never end 
 // cachedNode is all the information we know about a single cached trie node
 // in the memory database write layer.
 type cachedNode struct {
-	node node   // Cached collapsed trie node, or raw rlp data
-	size uint16 // Byte size of the useful cached data
+	hash common.Hash // Node hash, derived by node value hashing, always non-empty
+	node node        // Cached collapsed trie node, or raw rlp data, nil for deleted node
+	size uint16      // Byte size of the useful cached data, 0 for deleted node
 }
 
 // cachedNodeSize is the raw size of a cachedNode data structure without any
@@ -396,7 +399,7 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
-// The passed keys must all be encoded in the internal format.
+// The passed keys must all be encoded in the **storage** format.
 func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*cachedNode) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
@@ -579,13 +582,7 @@ func diffToDisk(bottom *diffLayer, config *Config, sync bool) *diskLayer {
 	// Mark the original base as stale as we're going to create a new wrapper
 	base := bottom.parent.(*diskLayer)
 	base.waitCommit()
-	base.lock.Lock()
-	if base.stale {
-		panic("triedb parent disk layer is stale") // we've committed into the same base from two children, boo
-	}
-	base.stale = true
-	base.lock.Unlock()
-
+	base.MarkStale()
 	dl := newDiskLayer(bottom.root, bottom.nodes, base.cache, base.diskdb, config != nil && config.WriteLegacy)
 	if sync {
 		dl.waitCommit()

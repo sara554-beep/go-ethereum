@@ -18,6 +18,7 @@ package snapshot
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"math/big"
 	"os"
 	"testing"
@@ -399,8 +400,8 @@ func TestGenerateCorruptAccountTrie(t *testing.T) {
 
 	nodes := result.Nodes()
 	for k := range nodes {
-		storage, _ := trie.DecodeInternalKey([]byte(k))
-		deletionKey = append([]byte{}, storage...)
+		deletionKey = append([]byte{}, []byte(k)...)
+		break
 	}
 	rawdb.DeleteTrieNode(helper.diskdb, deletionKey)
 
@@ -482,10 +483,10 @@ func TestGenerateCorruptStorageTrie(t *testing.T) {
 	result, _ := helper.CommitAndGenerate(false)
 	root := result.Root
 
-	for k := range result.Nodes() {
-		storage, hash := trie.DecodeInternalKey([]byte(k))
+	for key, n := range result.Nodes() {
+		hash := crypto.Keccak256Hash(n)
 		if hash == common.HexToHash("0x18a0f4d79cff4459642dd7604f303886ad9d77c30cf3d7d7cedb3a693ab6d371") {
-			storageKey = append([]byte{}, storage...)
+			storageKey = append([]byte{}, []byte(key)...)
 		}
 	}
 	// Delete a node in the storage trie.

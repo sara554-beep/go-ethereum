@@ -23,6 +23,7 @@ import (
 
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
@@ -36,9 +37,11 @@ func randomHash() common.Hash {
 }
 
 func randomNode() *cachedNode {
+	val := randBytes(100)
 	return &cachedNode{
-		node: rawNode(randomHash().Bytes()),
-		size: 400,
+		hash: crypto.Keccak256Hash(val),
+		node: rawNode(val),
+		size: 100,
 	}
 }
 
@@ -50,21 +53,25 @@ func emptyLayer() *diskLayer {
 }
 
 func benchmarkSearch(b *testing.B, depth int) {
-	var target []byte
-	var want []byte
+	var (
+		target     []byte
+		targetHash common.Hash
+		want       []byte
+	)
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot, index int) *diffLayer {
 		var nodes = make(map[string]*cachedNode)
 		for i := 0; i < 3000; i++ {
-			hash := randomHash()
-			path := randomHash().Bytes()
-			key := EncodeInternalKey(path, hash)
-			val := randomNode()
-			nodes[string(key)] = val
-
+			var (
+				path    = randomHash().Bytes()
+				storage = EncodeStorageKey(common.Hash{}, path)
+				val     = randomNode()
+			)
+			nodes[string(storage)] = val
 			if target == nil && depth == index {
 				want = val.rlp()
-				target = append([]byte{}, key...)
+				target = append([]byte{}, storage...)
+				targetHash = val.hash
 			}
 		}
 		return newDiffLayer(parent, common.Hash{}, nodes)
@@ -80,7 +87,7 @@ func benchmarkSearch(b *testing.B, depth int) {
 		err  error
 	)
 	for i := 0; i < b.N; i++ {
-		have, err = layer.NodeBlob(target)
+		have, err = layer.NodeBlob(target, targetHash)
 		if err != nil {
 			b.Fatal(err)
 		}

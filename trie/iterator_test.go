@@ -120,8 +120,8 @@ func TestNodeIteratorCoverage(t *testing.T) {
 		}
 	}
 	// Cross check the hashes and the database itself
-	for key, element := range elements {
-		if _, err := db.Snapshot(trie.Hash()).NodeBlob([]byte(key)); err != nil {
+	for _, element := range elements {
+		if _, err := db.Snapshot(trie.Hash()).NodeBlob(element.key, element.hash); err != nil {
 			t.Errorf("failed to retrieve reported node %x: %v", element.hash, err)
 		}
 	}
@@ -428,8 +428,8 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	result, _ := ctr.Commit(nil)
 	root := result.Root
 
-	for key := range result.Nodes() {
-		_, hash := DecodeInternalKey([]byte(key))
+	for key, val := range result.Nodes() {
+		hash := crypto.Keccak256Hash(val)
 		if hash == barNodeHash {
 			barNodeKey = []byte(key)
 		}
@@ -443,9 +443,8 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	)
 	if memonly {
 	} else {
-		storage, _ := DecodeInternalKey(barNodeKey)
-		blob, _ := rawdb.ReadTrieNode(diskdb, storage)
-		rawdb.DeleteTrieNode(diskdb, storage)
+		blob, _ := rawdb.ReadTrieNode(diskdb, barNodeKey)
+		rawdb.DeleteTrieNode(diskdb, barNodeKey)
 		barNodeBlob = blob
 	}
 	// Create a new iterator that seeks to "bars". Seeking can't proceed because
@@ -461,8 +460,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	// Reinsert the missing node.
 	if memonly {
 	} else {
-		storage, _ := DecodeInternalKey(barNodeKey)
-		rawdb.WriteTrieNode(diskdb, storage, barNodeBlob)
+		rawdb.WriteTrieNode(diskdb, barNodeKey, barNodeBlob)
 	}
 	// Check that iteration produces the right set of values.
 	if err := checkIteratorOrder(testdata1[2:], NewIterator(it)); err != nil {

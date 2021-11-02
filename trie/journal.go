@@ -25,6 +25,7 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -136,6 +137,7 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 	for _, entry := range encoded {
 		if len(entry.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 			nodes[entry.Key] = &cachedNode{
+				hash: crypto.Keccak256Hash(entry.Val),
 				node: rawNode(entry.Val),
 				size: uint16(len(entry.Val)),
 			}
@@ -182,6 +184,6 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err
 	}
-	log.Debug("Journalled diff layer", "root", dl.root, "parent", dl.parent.Root())
+	log.Debug("Journaled diff layer", "root", dl.root, "parent", dl.parent.Root())
 	return nil
 }
