@@ -75,7 +75,7 @@ type Trie struct {
 	// nodes will be checked by hash.
 	// All subsequent new states introduced by the trie operation can be accessed
 	// in the accumulated dirty node set.
-	snap Snapshot
+	snap snapshot
 
 	// Diff is the state diff tracker can ba used to capture newly added/deleted
 	// trie node. It will be reset after each commit operation.
@@ -134,10 +134,14 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 		diff:  newTracker(),
 		dirty: newNodeSet(),
 	}
-	trie.snap = db.Snapshot(stateRoot)
-	if trie.snap == nil {
-		trie.snap = db.DiskLayer()
+	// Retrieve the node reader via given state handler, or
+	// fallback to raw disk reader if it's not existent.
+	snap := db.Snapshot(stateRoot)
+	if snap == nil {
+		snap = db.DiskLayer()
 	}
+	trie.snap = snap.(snapshot)
+
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
 		if err != nil {
@@ -595,14 +599,14 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 		return n, nil
 	}
 	if t.snap != nil {
-		blob, err := t.snap.NodeBlob(storage, hash)
+		node, err := t.snap.Node(storage, hash)
 		if err != nil {
 			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: err}
 		}
-		if len(blob) == 0 {
+		if node == nil {
 			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: errors.New("deleted")}
 		}
-		return mustDecodeNode(hash[:], blob), nil
+		return node, nil
 	}
 	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
 }
