@@ -113,13 +113,13 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 
 	if frozen != nil {
 		n, ok := frozen[string(storage)]
-		if ok {
+		if ok && n.hash == hash {
 			triedbFrozenHitMeter.Mark(1)
 			if n.node == nil {
 				return nil, nil // node deleted
 			}
 			triedbFrozenReadMeter.Mark(int64(n.size))
-			return n.node, nil
+			return n.obj(hash), nil
 		}
 	}
 	// Try to retrieve the trie node from the memory cache
@@ -170,7 +170,7 @@ func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 
 	if frozen != nil {
 		n, ok := frozen[string(storage)]
-		if ok {
+		if ok && n.hash == hash {
 			triedbFrozenHitMeter.Mark(1)
 			if n.node == nil {
 				return nil, nil // node deleted
