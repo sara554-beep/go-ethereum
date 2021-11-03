@@ -103,9 +103,7 @@ func (c *committer) commit(path []byte, n node) (node, error) {
 		// If the child is fullNode, recursively commit,
 		// otherwise it can only be hashNode or valueNode.
 		if _, ok := cn.Val.(*fullNode); ok {
-			// Use concat here instead of append since the passed path
-			// might be mutated.
-			childV, err := c.commit(concat(path, cn.Key...), cn.Val)
+			childV, err := c.commit(append(path, cn.Key...), cn.Val)
 			if err != nil {
 				return nil, err
 			}
@@ -157,7 +155,7 @@ func (c *committer) commitChildren(path []byte, n *fullNode) ([17]node, error) {
 		// Commit the child recursively and store the "hashed" value.
 		// Note the returned node can be some embedded nodes, so it's
 		// possible the type is not hashNode.
-		hashed, err := c.commit(concat(path, byte(i)), child)
+		hashed, err := c.commit(append(path, byte(i)), child)
 		if err != nil {
 			return children, err
 		}
@@ -225,7 +223,7 @@ func (c *committer) commitLoop() {
 					}
 					var (
 						keys     [][]byte
-						leafPath = append(append([]byte(nil), path...), key...)
+						leafPath = append(path, key...)
 					)
 					if len(leafPath) == 2*common.HashLength {
 						keys = append(keys, hexToKeybytes(leafPath))
