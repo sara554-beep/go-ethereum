@@ -99,14 +99,58 @@ func (dl *diskLayer) waitCommit() {
 // Node retrieves the trie node associated with a particular key.
 // The given key must be the internal format node key.
 func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
-	blob, err := dl.NodeBlob(storage, hash)
-	if err != nil {
-		return nil, err
+	if dl.Stale() {
+		return nil, ErrSnapshotStale
 	}
-	if len(blob) == 0 {
-		return nil, nil
+	// If we're in the disk layer, all diff layers missed
+	triedbDirtyMissMeter.Mark(1)
+
+	// Try to retrieve the trie node from the uncommitted
+	// node set.
+	dl.lock.RLock()
+	frozen := dl.frozen
+	dl.lock.RUnlock()
+
+	if frozen != nil {
+		n, ok := frozen[string(storage)]
+		if ok {
+			triedbFrozenHitMeter.Mark(1)
+			if n.node == nil {
+				return nil, nil // node deleted
+			}
+			triedbFrozenReadMeter.Mark(int64(n.size))
+			return n.node, nil
+		}
 	}
-	return mustDecodeNode(hash[:], blob), nil
+	// Try to retrieve the trie node from the memory cache
+	ikey := EncodeInternalKey(storage, hash)
+	if dl.cache != nil {
+		if blob, found := dl.cache.HasGet(nil, ikey); found {
+			triedbCleanHitMeter.Mark(1)
+			triedbCleanReadMeter.Mark(int64(len(blob)))
+			if len(blob) == 0 {
+				return nil, nil
+			}
+			return mustDecodeNode(hash.Bytes(), blob), nil
+		}
+		triedbCleanMissMeter.Mark(1)
+	}
+	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, storage)
+	if len(blob) == 0 || nodeHash != hash {
+		blob = rawdb.ReadArchiveTrieNode(dl.diskdb, hash)
+		if len(blob) != 0 {
+			triedbFallbackHitMeter.Mark(1)
+			triedbFallbackReadMeter.Mark(int64(len(blob)))
+		}
+	}
+	if dl.cache != nil {
+		dl.cache.Set(ikey, blob)
+		triedbCleanWriteMeter.Mark(int64(len(blob)))
+	}
+	if len(blob) > 0 {
+		return mustDecodeNode(hash.Bytes(), blob), nil
+	}
+	return nil, nil
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.
