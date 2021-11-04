@@ -155,7 +155,6 @@ func (dl *diffLayer) Stale() bool {
 }
 
 // Node retrieves the trie node associated with a particular key.
-// The given key must be the internal format node key.
 func (dl *diffLayer) Node(storage []byte, hash common.Hash) (node, error) {
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below
@@ -206,7 +205,6 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, er
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.
-// The given key must be the internal format node key.
 func (dl *diffLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below

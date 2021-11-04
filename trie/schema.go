@@ -56,7 +56,7 @@ func NewNodePath(path []byte) NodePath {
 // EncodeStorageKey combines the node owner and node path together to act as
 // the unique database key for the trie node.
 //
-// The path part is encoded as the REVERSE-COMPACT format. It encodes all
+// The path part is encoded as the SUFFIX-COMPACT format. It encodes all
 // the nibbles into the hexary format and put the oddness flag in the end.
 //
 // The benefits of this key scheme are that:

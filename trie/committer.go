@@ -197,7 +197,7 @@ func (c *committer) store(path []byte, n node) node {
 	if c.leafCh != nil {
 		c.leafCh <- &leaf{
 			size: size,
-			hash: common.BytesToHash(hash),
+			hash: nhash,
 			node: n,
 			path: path,
 		}

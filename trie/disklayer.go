@@ -97,7 +97,6 @@ func (dl *diskLayer) waitCommit() {
 }
 
 // Node retrieves the trie node associated with a particular key.
-// The given key must be the internal format node key.
 func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 	if dl.Stale() {
 		return nil, ErrSnapshotStale
@@ -154,7 +153,6 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.
-// The given key must be the internal format node key.
 func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	if dl.Stale() {
 		return nil, ErrSnapshotStale
@@ -228,7 +226,7 @@ func (dl *diskLayer) commit(writeLegacy bool) {
 
 	// Push all updated accounts into the database.
 	// TODO all the nodes belong to the same layer should be written
-	// in atomic way. However a huge disk write should be avoid in the
+	// in atomic way. However a huge disk write should be avoided in the
 	// first place. A balance needs to be found to ensure that the bottom
 	// most layer is large enough to combine duplicated writes, and also
 	// the big write can be avoided.
