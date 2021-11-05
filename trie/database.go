@@ -59,13 +59,6 @@ var (
 	triedbCommitNodesMeter = metrics.NewRegisteredMeter("trie/triedb/commit/nodes", nil)
 	triedbCommitSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/commit/size", nil)
 
-	triedbBloomIndexTimer = metrics.NewRegisteredResettingTimer("trie/triedb/bloom/index", nil)
-	triedbBloomErrorGauge = metrics.NewRegisteredGaugeFloat64("trie/triedb/bloom/error", nil)
-
-	triedbBloomTrueHitMeter  = metrics.NewRegisteredMeter("trie/triedb/bloom/truehit", nil)
-	triedbBloomFalseHitMeter = metrics.NewRegisteredMeter("trie/triedb/bloom/falsehit", nil)
-	triedbBloomMissMeter     = metrics.NewRegisteredMeter("trie/triedb/bloom/miss", nil)
-
 	triedbDiffLayerSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/diff/size", nil)
 	triedbDiffLayerNodesMeter = metrics.NewRegisteredMeter("trie/triedb/diff/nodes", nil)
 
