@@ -2005,7 +2005,7 @@ func testSetHead(t *testing.T, tt *rewindTest, snapshots bool) {
 		t.Fatalf("Failed to import canonical chain start: %v", err)
 	}
 	if tt.commitBlock > 0 {
-		chain.stateCache.TrieDB().Cap(canonblocks[tt.commitBlock-1].Root(), 0, true)
+		chain.stateCache.TrieDB().Cap(canonblocks[tt.commitBlock-1].Root(), 0)
 		if snapshots {
 			if err := chain.snaps.Cap(canonblocks[tt.commitBlock-1].Root(), 0); err != nil {
 				t.Fatalf("Failed to flatten snapshots: %v", err)

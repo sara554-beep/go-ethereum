@@ -1754,6 +1754,7 @@ func TestInsertReceiptChainRollback(t *testing.T) {
 //  - https://github.com/ethereum/go-ethereum/issues/18977
 //  - https://github.com/ethereum/go-ethereum/pull/18988
 func TestLowDiffLongChain(t *testing.T) {
+	t.Skip("Need reverse diff set")
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
 	db := rawdb.NewMemoryDatabase()

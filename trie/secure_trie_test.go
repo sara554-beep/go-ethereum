@@ -59,7 +59,7 @@ func makeTestSecureTrie() (*Database, *SecureTrie, map[string][]byte) {
 	}
 	result, _ := trie.Commit(nil)
 	triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
-	triedb.Cap(result.Root, 0, true)
+	triedb.Cap(result.Root, 0)
 
 	// Return the generated trie
 	return triedb, trie, content

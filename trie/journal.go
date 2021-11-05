@@ -90,7 +90,7 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *C
 	if hash == (common.Hash{}) {
 		hash = emptyRoot
 	}
-	base := newDiskLayer(hash, nil, cleans, diskdb, false)
+	base := newDiskLayer(hash, cleans, diskdb)
 	snapshot, err := loadJournal(diskdb, base)
 	if err != nil {
 		// Print the log for missing trie node journal, but prevent to
@@ -155,21 +155,19 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	if dl.Stale() {
 		return ErrSnapshotStale
 	}
-	dl.waitCommit()
 	return nil
 }
 
 // Journal writes the memory layer contents into a buffer to be stored in the
 // database as the snapshot journal.
 func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
 	// Journal the parent first
 	if err := dl.parent.Journal(buffer); err != nil {
 		return err
 	}
-	// Ensure the layer didn't get stale
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
 	if dl.Stale() {
 		return ErrSnapshotStale
 	}

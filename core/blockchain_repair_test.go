@@ -1805,7 +1805,7 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 		t.Fatalf("Failed to import canonical chain start: %v", err)
 	}
 	if tt.commitBlock > 0 {
-		if err := chain.stateCache.TrieDB().Cap(canonblocks[tt.commitBlock-1].Root(), 0, true); err != nil {
+		if err := chain.stateCache.TrieDB().Cap(canonblocks[tt.commitBlock-1].Root(), 0); err != nil {
 			t.Fatalf("Failed to flush trie state: %v", err)
 		}
 		if snapshots {

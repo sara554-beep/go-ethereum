@@ -58,7 +58,7 @@ func makeTestTrie() (*Database, *SecureTrie, map[string][]byte) {
 	if err := triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil)); err != nil {
 		panic(err)
 	}
-	if err := triedb.Cap(result.Root, 0, true); err != nil {
+	if err := triedb.Cap(result.Root, 0); err != nil {
 		panic(err)
 	}
 	// Return the generated trie
@@ -670,7 +670,7 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	if err := srcDb.Update(result.Root, preRoot, result.CommitTo(nil)); err != nil {
 		panic(err)
 	}
-	if err := srcDb.Cap(result.Root, 0, true); err != nil {
+	if err := srcDb.Cap(result.Root, 0); err != nil {
 		panic(err)
 	}
 	preRoot = result.Root
@@ -696,7 +696,7 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	if err := srcDb.Update(result.Root, preRoot, result.CommitTo(nil)); err != nil {
 		panic(err)
 	}
-	if err := srcDb.Cap(result.Root, 0, true); err != nil {
+	if err := srcDb.Cap(result.Root, 0); err != nil {
 		panic(err)
 	}
 	preRoot = result.Root

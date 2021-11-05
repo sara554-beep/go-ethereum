@@ -208,7 +208,7 @@ func (t *testHelper) CommitAndGenerate(runGen bool) (*trie.CommitResult, *diskLa
 	t.uncommitted = t.uncommitted[:0]
 
 	t.triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
-	t.triedb.Cap(result.Root, 0, true)
+	t.triedb.Cap(result.Root, 0)
 
 	if runGen {
 		snap := generateSnapshot(t.diskdb, t.triedb, 16, result.Root)
@@ -396,7 +396,7 @@ func TestGenerateCorruptAccountTrie(t *testing.T) {
 	// Delete an account trie leaf and ensure the generator chokes
 	result, _ := helper.accTrie.Commit(nil) // Root: 0xa04693ea110a31037fb5ee814308a6f1d76bdab0b11676bdf4541d2de55ba978
 	helper.triedb.Update(common.Hash{}, result.Root, result.CommitTo(nil))
-	helper.triedb.Cap(result.Root, 0, true)
+	helper.triedb.Cap(result.Root, 0)
 
 	nodes := result.Nodes()
 	for k := range nodes {
