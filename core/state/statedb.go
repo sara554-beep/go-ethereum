@@ -933,6 +933,20 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				storageDeleted += len(result.DeletedNodes)
 				committed = append(committed, result)
 			}
+		} else {
+			// Account is deleted, nuke out the storage data as well.
+			var (
+				set  = make(map[common.Hash][]byte)
+				iter = obj.getTrie(s.db).NodeIterator(nil)
+			)
+			for iter.Next(true) {
+				if iter.Hash() == (common.Hash{}) {
+					continue
+				}
+				set[iter.Hash()] = iter.StorageKey()
+			}
+			storageDeleted += len(set)
+			committed = append(committed, trie.NewResultFromDeletionSet(set))
 		}
 	}
 	if len(s.stateObjectsDirty) > 0 {

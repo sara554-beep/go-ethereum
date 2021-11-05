@@ -277,3 +277,15 @@ func (result *CommitResult) Nodes() map[string][]byte {
 	})
 	return ret
 }
+
+// NewResultFromDeletionSet constructs a commit result with the given dirty node set.
+func NewResultFromDeletionSet(set map[common.Hash][]byte) *CommitResult {
+	updated := newNodeSet()
+	for hash, storage := range set {
+		updated.put(storage, nil, 0, hash)
+	}
+	return &CommitResult{
+		Root:         common.Hash{},
+		UpdatedNodes: updated,
+	}
+}
