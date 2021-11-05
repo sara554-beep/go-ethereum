@@ -18,11 +18,13 @@ package trie
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math/rand"
 	"testing"
 
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
@@ -110,3 +112,45 @@ func BenchmarkSearchBottom(b *testing.B) { benchmarkSearch(b, 0) }
 // BenchmarkSearchTop
 // BenchmarkSearchTop-4   	10910677	       111.8 ns/op
 func BenchmarkSearchTop(b *testing.B) { benchmarkSearch(b, 127) }
+
+// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
+// BenchmarkGetNode
+// BenchmarkGetNode-4   	 3279104	       349.2 ns/op
+func BenchmarkGetNode(b *testing.B) { benchmarkGetNode(b, false) }
+
+// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
+// BenchmarkGetNodeBlob
+// BenchmarkGetNodeBlob-4   	 2166842	       479.8 ns/op
+func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
+
+func benchmarkGetNode(b *testing.B, getBlob bool) {
+	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	trie, _ := New(common.Hash{}, db)
+
+	k := make([]byte, 32)
+	for i := 0; i < benchElemCount; i++ {
+		binary.LittleEndian.PutUint64(k, uint64(i))
+		trie.Update(k, randBytes(100))
+	}
+	result, _ := trie.Commit(nil)
+	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+
+	var (
+		target     []byte
+		targetHash common.Hash
+	)
+	result.UpdatedNodes.forEach(func(storage string, node *cachedNode) {
+		if target == nil {
+			target = []byte(storage)
+			targetHash = node.hash
+		}
+	})
+	layer := db.Snapshot(result.Root).(snapshot)
+	for i := 0; i < b.N; i++ {
+		if getBlob {
+			layer.NodeBlob(target, targetHash)
+		} else {
+			layer.Node(target, targetHash)
+		}
+	}
+}
