@@ -76,7 +76,7 @@ func benchmarkSearch(b *testing.B, depth int) {
 				targetHash = val.hash
 			}
 		}
-		return newDiffLayer(parent, common.Hash{}, nodes)
+		return newDiffLayer(parent, common.Hash{}, 0, nodes)
 	}
 	var layer snapshot
 	layer = emptyLayer()
@@ -133,7 +133,7 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		trie.Update(k, randBytes(100))
 	}
 	result, _ := trie.Commit(nil)
-	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	trie.db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 
 	var (
 		target     []byte

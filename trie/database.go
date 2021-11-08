@@ -108,7 +108,7 @@ type snapshot interface {
 	// node object.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, nodes map[string]*cachedNode) *diffLayer
+	Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*cachedNode) *diffLayer
 
 	// Journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the snapshot without
@@ -390,7 +390,7 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 // The passed keys must all be encoded in the **storage** format.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*cachedNode) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, parentNumber uint64, nodes map[string]*cachedNode) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).
@@ -416,7 +416,7 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[s
 	if db.readOnly {
 		return ErrSnapshotReadOnly
 	}
-	snap := parent.(snapshot).Update(root, nodes)
+	snap := parent.(snapshot).Update(root, parentNumber+1, nodes)
 	db.layers[snap.root] = snap
 	return nil
 }

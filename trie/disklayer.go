@@ -149,6 +149,6 @@ func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 	return nil, nil
 }
 
-func (dl *diskLayer) Update(blockHash common.Hash, nodes map[string]*cachedNode) *diffLayer {
-	return newDiffLayer(dl, blockHash, nodes)
+func (dl *diskLayer) Update(blockHash common.Hash, blockNumber uint64, nodes map[string]*cachedNode) *diffLayer {
+	return newDiffLayer(dl, blockHash, blockNumber, nodes)
 }

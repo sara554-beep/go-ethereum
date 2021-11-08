@@ -238,7 +238,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		return nil, nil
 	}
 	for i := 0; i < n; i++ {
-		statedb, err := state.New(parent.Root(), state.NewDatabase(db), nil)
+		statedb, err := state.New(parent.Root(), parent.NumberU64(), state.NewDatabase(db), nil)
 		if err != nil {
 			panic(err)
 		}
@@ -293,7 +293,7 @@ func GenerateChainWithInMemoryDB(config *params.ChainConfig, parent *types.Block
 		return nil, nil
 	}
 	for i := 0; i < n; i++ {
-		statedb, err := state.New(parent.Root(), db, nil)
+		statedb, err := state.New(parent.Root(), parent.NumberU64(), db, nil)
 		if err != nil {
 			panic(err)
 		}

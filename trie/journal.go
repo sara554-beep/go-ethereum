@@ -25,7 +25,6 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -41,9 +40,11 @@ var (
 
 const journalVersion uint64 = 0
 
+// journalNode represents a trie node persisted in the journal.
 type journalNode struct {
-	Key string
-	Val []byte
+	Key  string      // Storage format trie node key
+	Val  []byte      // RLP-encoded trie node blob, nil means the node is deleted
+	Hash common.Hash // Trie node hash
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
@@ -129,6 +130,14 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 		}
 		return nil, fmt.Errorf("load diff root: %v", err)
 	}
+	var number uint64
+	if err := r.Decode(&number); err != nil {
+		// The first read may fail with EOF, marking the end of the journal
+		if err == io.EOF {
+			return parent, nil
+		}
+		return nil, fmt.Errorf("load diff number: %v", err)
+	}
 	var encoded []journalNode
 	if err := r.Decode(&encoded); err != nil {
 		return nil, fmt.Errorf("load diff accounts: %v", err)
@@ -137,15 +146,19 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 	for _, entry := range encoded {
 		if len(entry.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 			nodes[entry.Key] = &cachedNode{
-				hash: crypto.Keccak256Hash(entry.Val),
+				hash: entry.Hash,
 				node: rawNode(entry.Val),
 				size: uint16(len(entry.Val)),
 			}
 		} else {
-			nodes[entry.Key] = nil
+			nodes[entry.Key] = &cachedNode{
+				hash: entry.Hash,
+				node: nil,
+				size: 0,
+			}
 		}
 	}
-	return loadDiffLayer(newDiffLayer(parent, root, nodes), r)
+	return loadDiffLayer(newDiffLayer(parent, root, number, nodes), r)
 }
 
 // Journal terminates any in-progress snapshot generation, also implicitly pushing
@@ -175,9 +188,19 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, dl.root); err != nil {
 		return err
 	}
+	if err := rlp.Encode(buffer, dl.number); err != nil {
+		return err
+	}
 	nodes := make([]journalNode, 0, len(dl.nodes))
 	for key, node := range dl.nodes {
-		nodes = append(nodes, journalNode{Key: key, Val: node.rlp()})
+		jnode := journalNode{
+			Key:  key,
+			Hash: node.hash,
+		}
+		if node.node != nil {
+			jnode.Val = node.rlp()
+		}
+		nodes = append(nodes, jnode)
 	}
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err

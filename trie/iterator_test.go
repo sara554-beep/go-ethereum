@@ -314,7 +314,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
 	result, _ := tr.Commit(nil)
-	tdb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	tdb.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 	if !memonly {
 		tdb.Cap(result.Root, 0)
 	}
@@ -435,7 +435,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 		}
 	}
 	if !memonly {
-		triedb.Update(root, common.Hash{}, result.CommitTo(nil))
+		triedb.Update(root, common.Hash{}, 0, result.CommitTo(nil))
 		triedb.Cap(root, 0)
 	}
 	var (
@@ -540,7 +540,7 @@ func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 		trie.Update(key, val)
 	}
 	result, _ := trie.Commit(nil)
-	triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	triedb.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 	triedb.Cap(result.Root, 0)
 	// Return the generated trie
 	return triedb, trie, logDb

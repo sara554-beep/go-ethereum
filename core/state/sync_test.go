@@ -43,7 +43,7 @@ type testAccount struct {
 func makeTestState() (Database, common.Hash, []*testAccount) {
 	// Create an empty state
 	db := NewDatabase(rawdb.NewMemoryDatabase())
-	state, _ := New(common.Hash{}, db, nil)
+	state, _ := New(common.Hash{}, 0, db, nil)
 
 	// Fill it with some arbitrary data
 	var accounts []*testAccount
@@ -80,7 +80,7 @@ func makeTestState() (Database, common.Hash, []*testAccount) {
 // account array.
 func checkStateAccounts(t *testing.T, db ethdb.Database, root common.Hash, accounts []*testAccount) {
 	// Check root availability and state contents
-	state, err := New(root, NewDatabase(db), nil)
+	state, err := New(root, 0, NewDatabase(db), nil)
 	if err != nil {
 		t.Fatalf("failed to create state trie at %x: %v", root, err)
 	}
@@ -117,7 +117,7 @@ func checkTrieConsistency(db ethdb.Database, root common.Hash) error {
 
 // checkStateConsistency checks that all data of a state root is present.
 func checkStateConsistency(db ethdb.Database, root common.Hash) error {
-	state, err := New(root, NewDatabase(db), nil)
+	state, err := New(root, 0, NewDatabase(db), nil)
 	if err != nil {
 		return err
 	}

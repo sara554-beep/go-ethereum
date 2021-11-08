@@ -277,7 +277,7 @@ func TestReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit error: %v", err)
 	}
-	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	trie.db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 
 	// create a new trie on top of the database and check that lookups work.
 	exp := result.Root
@@ -454,7 +454,7 @@ func runRandTest(rt randTest) bool {
 			diffs = result.CommitTo(diffs)
 
 			if result.Root != original {
-				err = triedb.Update(result.Root, original, diffs)
+				err = triedb.Update(result.Root, original, 0, diffs)
 				if err != nil {
 					rt[i].err = err
 					return false
@@ -808,7 +808,7 @@ func TestCommitSequenceRandomBlobs(t *testing.T) {
 		}
 		// Flush trie -> database
 		result, _ := trie.Commit(nil)
-		db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+		db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 		db.Cap(result.Root, 0)
 		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
 			t.Fatalf("test %d, disk write sequence wrong:\ngot %x exp %x\n", i, got, exp)
@@ -852,7 +852,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 		root := result.Root
 
 		// Flush memdb -> disk (sponge)
-		db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+		db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 		db.Cap(result.Root, 0)
 
 		// And flush stacktrie -> disk
@@ -900,7 +900,7 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	result, _ := trie.Commit(nil)
 	root := result.Root
 	// Flush memdb -> disk (sponge)
-	db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 	db.Cap(result.Root, 0)
 	// And flush stacktrie -> disk
 	stRoot, err := stTrie.Commit()

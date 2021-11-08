@@ -33,18 +33,20 @@ type diffLayer struct {
 	parent snapshot // Parent snapshot modified by this one, never nil
 	memory uint64   // Approximate guess as to how much memory we use
 
-	root  common.Hash            // Root hash to which this snapshot diff belongs to
-	stale uint32                 // Signals that the layer became stale (state progressed)
-	nodes map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
-	lock  sync.RWMutex           // Lock used to protect parent and stale fields.
+	root   common.Hash            // Root hash to which this snapshot diff belongs to
+	number uint64                 // Block number to which this snapshot diff belongs to
+	stale  uint32                 // Signals that the layer became stale (state progressed)
+	nodes  map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
+	lock   sync.RWMutex           // Lock used to protect parent and stale fields.
 }
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, nodes map[string]*cachedNode) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, number uint64, nodes map[string]*cachedNode) *diffLayer {
 	dl := &diffLayer{
 		parent: parent,
 		root:   root,
+		number: number,
 		nodes:  nodes,
 	}
 	for key, node := range nodes {
@@ -140,8 +142,8 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, nodes map[string]*cachedNode) *diffLayer {
-	return newDiffLayer(dl, blockRoot, nodes)
+func (dl *diffLayer) Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*cachedNode) *diffLayer {
+	return newDiffLayer(dl, blockRoot, blockNumber, nodes)
 }
 
 // persist persists the diff layer and all its parent diff layers to disk.

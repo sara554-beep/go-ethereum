@@ -437,7 +437,7 @@ func (dl *diskLayer) generateRange(state common.Hash, owner common.Hash, root co
 		}
 		result, err := snapTrie.Commit(nil)
 		if err == nil {
-			db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+			db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
 			db.Cap(result.Root, 0)
 		}
 	}
