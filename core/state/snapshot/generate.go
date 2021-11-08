@@ -437,8 +437,9 @@ func (dl *diskLayer) generateRange(state common.Hash, owner common.Hash, root co
 		}
 		result, err := snapTrie.Commit(nil)
 		if err == nil {
-			db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
-			db.Cap(result.Root, 0)
+			for storage, blob := range result.Nodes() {
+				rawdb.WriteTrieNode(snapNodeCache, []byte(storage), blob)
+			}
 		}
 	}
 	tr := result.tr

@@ -17,6 +17,9 @@
 package rawdb
 
 import (
+	"bytes"
+	"encoding/binary"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -110,7 +113,7 @@ func ReadArchiveTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	return data
 }
 
-// WriteArchiveTrieNode writes the provided archived trie node database.
+// WriteArchiveTrieNode writes the provided archived trie node to database.
 func WriteArchiveTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
 	if err := db.Put(hash.Bytes(), node); err != nil {
 		log.Crit("Failed to store archived trie node", "err", err)
@@ -121,5 +124,62 @@ func WriteArchiveTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte
 func DeleteArchiveTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Delete(hash.Bytes()); err != nil {
 		log.Crit("Failed to delete archived trie node", "err", err)
+	}
+}
+
+// ReadReverseDiff retrieves the state reverse diff with the given associated
+// block hash and number.
+func ReadReverseDiff(db ethdb.KeyValueReader, number uint64, hash common.Hash) []byte {
+	data, err := db.Get(reverseDiffKey(number, hash))
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// ReadReverseDiffsBelow retrieves the stored reverse diffs whose block number
+// fall in the range of given parameters where from is included while to
+// is excluded. The maximum returned elements respect the given limit value.
+func ReadReverseDiffsBelow(db ethdb.Iteratee, from, to uint64, limit int) ([]uint64, []common.Hash) {
+	// Short circuit if the limit is 0.
+	if limit == 0 {
+		return nil, nil
+	}
+	var (
+		numbers []uint64
+		hashes  []common.Hash
+	)
+	// Construct the key prefix of start point.
+	start, end := reverseDiffKey(from, common.Hash{}), reverseDiffKey(to, common.Hash{})
+	it := db.NewIterator(nil, start)
+	defer it.Release()
+
+	for it.Next() {
+		if bytes.Compare(it.Key(), end) >= 0 {
+			break
+		}
+		if key := it.Key(); len(key) == len(ReverseDiffPrefix)+8+common.HashLength {
+			numbers = append(numbers, binary.BigEndian.Uint64(key[len(ReverseDiffPrefix):len(ReverseDiffPrefix)+8]))
+			hashes = append(hashes, common.BytesToHash(key[len(ReverseDiffPrefix)+8:]))
+			// If the accumulated entries reaches the limit threshold, return.
+			if len(numbers) >= limit {
+				break
+			}
+		}
+	}
+	return numbers, hashes
+}
+
+// WriteReverseDiff writes the provided reverse diff to database.
+func WriteReverseDiff(db ethdb.KeyValueWriter, number uint64, hash common.Hash, blob []byte) {
+	if err := db.Put(reverseDiffKey(number, hash), blob); err != nil {
+		log.Crit("Failed to store reverse diff", "err", err)
+	}
+}
+
+// DeleteReverseDiff deletes the specified reverse diff from the database.
+func DeleteReverseDiff(db ethdb.KeyValueWriter, number uint64, hash common.Hash) {
+	if err := db.Delete(reverseDiffKey(number, hash)); err != nil {
+		log.Crit("Failed to delete reverse diff", "err", err)
 	}
 }

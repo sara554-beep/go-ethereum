@@ -59,6 +59,9 @@ var (
 	triedbDiffLayerSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/diff/size", nil)
 	triedbDiffLayerNodesMeter = metrics.NewRegisteredMeter("trie/triedb/diff/nodes", nil)
 
+	triedbReverseDiffTimeTimer = metrics.NewRegisteredTimer("trie/triedb/reversediff/time", nil)
+	triedbReverseDiffSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/reversediff/size", nil)
+
 	// ErrSnapshotStale is returned from data accessors if the underlying snapshot
 	// layer had been invalidated due to the chain progressing forward far enough
 	// to not maintain the layer's original state.
@@ -545,10 +548,6 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 // layer persistence should be operated in an atomic way. All updates should be
 // discarded if the whole transition if not finished.
 func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
-	defer func(start time.Time) {
-		triedbCommitTimeTimer.Update(time.Since(start))
-	}(time.Now())
-
 	var (
 		totalSize int64
 		base      = bottom.parent.(*diskLayer)
@@ -556,7 +555,15 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 		nodes     = len(bottom.nodes)
 		batch     = base.diskdb.NewBatch()
 	)
+	if err := storeAndPrunedReverseDiff(bottom, 90000); err != nil {
+		log.Error("Failed to store reverse diff", "err", err)
+	}
 	base.MarkStale()
+
+	defer func(start time.Time) {
+		triedbCommitTimeTimer.Update(time.Since(start))
+	}(time.Now())
+
 	for storage, n := range bottom.nodes {
 		var (
 			blob []byte

@@ -316,6 +316,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		hashNumPairings stat
 		tries           stat
 		archiveTries    stat
+		reverseDiffs    stat
 		codes           stat
 		txLookups       stat
 		accountSnaps    stat
@@ -366,6 +367,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			tries.Add(size)
 		case len(key) == common.HashLength:
 			archiveTries.Add(size)
+		case bytes.HasPrefix(key, ReverseDiffPrefix) && len(key) == len(ReverseDiffPrefix) + common.HashLength + 8:
+			reverseDiffs.Add(size)
 		case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
 			codes.Add(size)
 		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):

@@ -20,6 +20,7 @@ package rawdb
 import (
 	"bytes"
 	"encoding/binary"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/metrics"
 )
@@ -92,6 +93,7 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
+	ReverseDiffPrefix     = []byte("R") // ReverseDiffPrefix + block number + block hash -> reverse diff
 
 	PreimagePrefix = []byte("secure-key-")      // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-") // config prefix for the db
@@ -250,6 +252,13 @@ func IsTrieNodeKey(key []byte) (bool, []byte) {
 		return false, nil
 	}
 	return false, nil
+}
+
+// reverseDiffKey = ReverseDiffPrefix + block number (uint64 big endian) + block hash
+func reverseDiffKey(number uint64, hash common.Hash) []byte {
+	var buff [8]byte
+	binary.BigEndian.PutUint64(buff[:], number)
+	return append(ReverseDiffPrefix, append(buff[:], hash.Bytes()...)...)
 }
 
 // configKey = configPrefix + hash
