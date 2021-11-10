@@ -70,11 +70,8 @@ func storeAndPrunedReverseDiff(dl *diffLayer, limit uint64) error {
 		base   = dl.parent.(*diskLayer)
 		states []stateDiff
 	)
-	for key, node := range dl.nodes {
-		pre, err := base.NodeBlob([]byte(key), node.hash)
-		if err != nil {
-			return err
-		}
+	for key := range dl.nodes {
+		pre, _ := rawdb.ReadTrieNode(base.diskdb, []byte(key))
 		states = append(states, stateDiff{
 			Key: []byte(key),
 			Val: pre,

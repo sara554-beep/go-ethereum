@@ -261,6 +261,15 @@ func reverseDiffKey(number uint64, hash common.Hash) []byte {
 	return append(ReverseDiffPrefix, append(buff[:], hash.Bytes()...)...)
 }
 
+// IsReverseDiffKey reports whether the given byte slice is the key of reverse diff.
+func IsReverseDiffKey(key []byte) (bool, []byte) {
+	if bytes.HasPrefix(key, ReverseDiffPrefix) {
+		rkey := key[len(ReverseDiffPrefix):]
+		return true, rkey
+	}
+	return false, nil
+}
+
 // configKey = configPrefix + hash
 func configKey(hash common.Hash) []byte {
 	return append(configPrefix, hash.Bytes()...)

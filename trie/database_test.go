@@ -58,6 +58,9 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 					continue
 				}
 				pkeys := testKeys[parentNumber-1]
+				if len(pkeys) == 0 {
+					continue
+				}
 				storage = []byte(pkeys[rand.Intn(len(pkeys))])
 				val = randomNode()
 			} else {
@@ -66,6 +69,9 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 					continue
 				}
 				pkeys, pvals := testKeys[parentNumber-1], testVals[parentNumber-1]
+				if len(pkeys) == 0 {
+					continue
+				}
 				index := rand.Intn(len(pkeys))
 				if len(pvals[index]) == 0 {
 					continue

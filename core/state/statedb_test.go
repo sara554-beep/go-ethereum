@@ -116,6 +116,9 @@ func TestIntermediateLeaks(t *testing.T) {
 
 	it := finalDb.NewIterator(nil, nil)
 	for it.Next() {
+		if ok, _ := rawdb.IsReverseDiffKey(it.Key()); ok {
+			continue
+		}
 		key, fvalue := it.Key(), it.Value()
 		tvalue, err := transDb.Get(key)
 		if err != nil {
@@ -129,6 +132,9 @@ func TestIntermediateLeaks(t *testing.T) {
 
 	it = transDb.NewIterator(nil, nil)
 	for it.Next() {
+		if ok, _ := rawdb.IsReverseDiffKey(it.Key()); ok {
+			continue
+		}
 		key, tvalue := it.Key(), it.Value()
 		fvalue, err := finalDb.Get(key)
 		if err != nil {

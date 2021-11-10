@@ -376,6 +376,7 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 func TestGetNodeData66(t *testing.T) { testGetNodeData(t, ETH66) }
 
 func testGetNodeData(t *testing.T, protocol uint) {
+	t.Skip("GetNodeData is not supported anymore")
 	t.Parallel()
 
 	// Define three accounts to simulate transactions with

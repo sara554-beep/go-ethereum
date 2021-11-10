@@ -308,10 +308,10 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 
 	go func() {
 		var (
-			logged  time.Time
-			number  uint64
-			traced  uint64
-			failed  error
+			logged time.Time
+			number uint64
+			traced uint64
+			failed error
 			//parent  common.Hash
 			statedb *state.StateDB
 		)
@@ -383,7 +383,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 
 				// Release the parent state because it's already held by the tracer
 				//if parent != (common.Hash{}) {
-					//statedb.Database().TrieDB().Dereference(parent)
+				//statedb.Database().TrieDB().Dereference(parent)
 				//}
 			}
 			//parent = block.Root()
