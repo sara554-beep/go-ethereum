@@ -17,16 +17,44 @@
 package trie
 
 import (
+	"errors"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
+// stateDiff represents a reverse change of a state data. The value refers to the
+// content before the change is applied.
 type stateDiff struct {
 	Key []byte // Storage format node key
-	Val []byte // RLP-encoded node blob, nil means the node is null previously
+	Val []byte // RLP-encoded node blob, nil means the node is previously non-existent
+}
+
+// reverseDiff represents a set of state diffs belong to the same block. The root
+// and number refer to the corresponding state root and block number.
+type reverseDiff struct {
+	root   common.Hash
+	number uint64
+	states []stateDiff
+}
+
+func loadReverseDiff(db ethdb.KeyValueReader, number uint64, hash common.Hash) (*reverseDiff, error) {
+	blob := rawdb.ReadReverseDiff(db, number, hash)
+	if len(blob) == 0 {
+		return nil, errors.New("reverse diff not found")
+	}
+	var states []stateDiff
+	if err := rlp.DecodeBytes(blob, &states); err != nil {
+		return nil, err
+	}
+	return &reverseDiff{
+		root:   hash,
+		number: number,
+		states: states,
+	}, nil
 }
 
 // storeAndPrunedReverseDiff extracts the reverse state diff by the passed

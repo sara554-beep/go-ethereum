@@ -47,6 +47,14 @@ func randomNode() *cachedNode {
 	}
 }
 
+func randomEmptyNode(hash common.Hash) *cachedNode {
+	return &cachedNode{
+		hash: hash,
+		node: nil,
+		size: 0,
+	}
+}
+
 func emptyLayer() *diskLayer {
 	return &diskLayer{
 		diskdb: memorydb.New(),
@@ -113,16 +121,6 @@ func BenchmarkSearchBottom(b *testing.B) { benchmarkSearch(b, 0) }
 // BenchmarkSearchTop-4   	10910677	       111.8 ns/op
 func BenchmarkSearchTop(b *testing.B) { benchmarkSearch(b, 127) }
 
-// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
-// BenchmarkGetNode
-// BenchmarkGetNode-4   	 3279104	       349.2 ns/op
-func BenchmarkGetNode(b *testing.B) { benchmarkGetNode(b, false) }
-
-// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
-// BenchmarkGetNodeBlob
-// BenchmarkGetNodeBlob-4   	 2166842	       479.8 ns/op
-func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
-
 func benchmarkGetNode(b *testing.B, getBlob bool) {
 	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie, _ := New(common.Hash{}, db)
@@ -154,3 +152,13 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		}
 	}
 }
+
+// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
+// BenchmarkGetNode
+// BenchmarkGetNode-4   	 3279104	       349.2 ns/op
+func BenchmarkGetNode(b *testing.B) { benchmarkGetNode(b, false) }
+
+// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
+// BenchmarkGetNodeBlob
+// BenchmarkGetNodeBlob-4   	 2166842	       479.8 ns/op
+func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
