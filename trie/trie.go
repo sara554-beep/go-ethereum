@@ -138,7 +138,7 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 	// fallback to raw disk reader if it's not existent.
 	snap := db.Snapshot(stateRoot)
 	if snap == nil {
-		snap = db.DiskLayer()
+		return nil, &MissingNodeError{NodeHash: stateRoot}
 	}
 	trie.snap = snap.(snapshot)
 

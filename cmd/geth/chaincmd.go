@@ -454,7 +454,7 @@ func dump(ctx *cli.Context) error {
 		return err
 	}
 	// Using a fake block number here for initializing statedb.
-	state, err := state.New(root, 0, state.NewDatabaseWithConfig(db, &trie.Config{ReadOnly: true}), nil)
+	state, err := state.New(root, state.NewDatabaseWithConfig(db, &trie.Config{ReadOnly: true}), nil)
 	if err != nil {
 		return err
 	}

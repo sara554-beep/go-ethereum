@@ -33,35 +33,33 @@ type stateDiff struct {
 	Val []byte // RLP-encoded node blob, nil means the node is previously non-existent
 }
 
-// reverseDiff represents a set of state diffs belong to the same block. The root
-// and number refer to the corresponding state root and block number.
+// reverseDiff represents a set of state diffs belong to the same block. All the
+// reverse-diffs in disk are linked with each other by a unique id(8byte integer),
+// the head reverse-diff will be pruned in order to control the storage size.
 type reverseDiff struct {
-	root   common.Hash
-	number uint64
-	states []stateDiff
+	Parent common.Hash // The corresponding state root of parent block
+	Root   common.Hash // The corresponding state root which these diffs belong to
+	States []stateDiff // The list of state changes
 }
 
-func loadReverseDiff(db ethdb.KeyValueReader, number uint64, hash common.Hash) (*reverseDiff, error) {
-	blob := rawdb.ReadReverseDiff(db, number, hash)
+// loadReverseDiff reads and decodes the reverse diff by the given id.
+func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
+	blob := rawdb.ReadReverseDiff(db, id)
 	if len(blob) == 0 {
 		return nil, errors.New("reverse diff not found")
 	}
-	var states []stateDiff
-	if err := rlp.DecodeBytes(blob, &states); err != nil {
+	var diff reverseDiff
+	if err := rlp.DecodeBytes(blob, &diff); err != nil {
 		return nil, err
 	}
-	return &reverseDiff{
-		root:   hash,
-		number: number,
-		states: states,
-	}, nil
+	return &diff, nil
 }
 
-// storeAndPrunedReverseDiff extracts the reverse state diff by the passed
+// storeAndPruneReverseDiff extracts the reverse state diff by the passed
 // bottom-most diff layer and its parent, stores the diff set into the disk
 // and prunes the over-old diffs as well.
 // This function will panic if it's called for non-bottom-most diff layer.
-func storeAndPrunedReverseDiff(dl *diffLayer, limit uint64) error {
+func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 	defer func(start time.Time) {
 		triedbReverseDiffTimeTimer.Update(time.Since(start))
 	}(time.Now())
@@ -69,6 +67,7 @@ func storeAndPrunedReverseDiff(dl *diffLayer, limit uint64) error {
 	var (
 		base   = dl.parent.(*diskLayer)
 		states []stateDiff
+		batch  = base.diskdb.NewBatch()
 	)
 	for key := range dl.nodes {
 		pre, _ := rawdb.ReadTrieNode(base.diskdb, []byte(key))
@@ -77,29 +76,44 @@ func storeAndPrunedReverseDiff(dl *diffLayer, limit uint64) error {
 			Val: pre,
 		})
 	}
-	blob, err := rlp.EncodeToBytes(states)
+	diff := &reverseDiff{
+		Parent: base.root,
+		Root:   dl.root,
+		States: states,
+	}
+	blob, err := rlp.EncodeToBytes(diff)
 	if err != nil {
 		return err
 	}
-	rawdb.WriteReverseDiff(base.diskdb, dl.number, dl.root, blob)
+	rawdb.WriteReverseDiff(batch, dl.rid, blob)
+	rawdb.WriteReverseDiffLookup(batch, base.root, dl.rid)
+	if err := batch.Write(); err != nil {
+		return err
+	}
+	batch.Reset()
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
 	// Prune the reverse diffs if they are too old
-	if dl.number < limit {
+	if dl.rid < limit {
 		return nil
 	}
 	var (
 		start uint64
-		end   = dl.number - limit
-		batch = base.diskdb.NewBatch()
+		end   = dl.rid - limit
 	)
 	for {
-		numbers, hashes := rawdb.ReadReverseDiffsBelow(base.diskdb, start, end, 10240)
-		if len(numbers) == 0 {
+		ids := rawdb.ReadReverseDiffsBelow(base.diskdb, start, end, 10240)
+		if len(ids) == 0 {
 			break
 		}
-		for i := 0; i < len(numbers); i++ {
-			rawdb.DeleteReverseDiff(batch, numbers[i], hashes[i])
+		for i := 0; i < len(ids); i++ {
+			// TODO resolve the first field(parent root) from the RLP stream
+			diff, err := loadReverseDiff(base.diskdb, ids[i])
+			if err != nil {
+				break
+			}
+			rawdb.DeleteReverseDiff(batch, ids[i])
+			rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
 		}
 		if batch.ValueSize() > ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
@@ -107,7 +121,7 @@ func storeAndPrunedReverseDiff(dl *diffLayer, limit uint64) error {
 			}
 			batch.Reset()
 		}
-		start = numbers[len(numbers)-1] + 1
+		start = ids[len(ids)-1] + 1
 	}
 	if err := batch.Write(); err != nil {
 		return err

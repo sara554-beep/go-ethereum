@@ -681,7 +681,7 @@ func (w *worker) resultLoop() {
 func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 	// Retrieve the parent state to execute on top and start a prefetcher for
 	// the miner to speed block sealing up a bit
-	state, err := w.chain.StateAt(parent.Root(), parent.NumberU64())
+	state, err := w.chain.StateAt(parent.Root())
 	if err != nil {
 		return err
 	}

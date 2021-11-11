@@ -88,7 +88,7 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 			vals = append(vals, common.CopyBytes(val.rlp()))
 		}
 		hash := randomHash()
-		db.Update(hash, parentHash, parentNumber, nodes)
+		db.Update(hash, parentHash, nodes)
 		db.Cap(hash, 128)
 
 		numbers = append(numbers, parentNumber+1)
@@ -121,22 +121,27 @@ func TestDatabaseRollback(t *testing.T) {
 		}
 	}
 	// Ensure all the reverse diffs are stored properly
+	var parent = emptyRoot
 	for i := 0; i <= diskIndex; i++ {
-		blob := rawdb.ReadReverseDiff(db.diskdb, numbers[i], roots[i])
-		if len(blob) == 0 {
-			t.Error("Reverse diff missing", "index", i)
+		diff, err := loadReverseDiff(db.diskdb, uint64(i+1))
+		if err != nil {
+			t.Error("Failed to load reverse diff", "err", err)
 		}
+		if diff.Parent != parent {
+			t.Error("Reverse diff is not continuous")
+		}
+		parent = diff.Root
 	}
 	// Ensure immature reverse diffs are not present
 	for i := diskIndex + 1; i < len(numbers); i++ {
-		blob := rawdb.ReadReverseDiff(db.diskdb, numbers[i], roots[i])
+		blob := rawdb.ReadReverseDiff(db.diskdb, uint64(i+1))
 		if len(blob) != 0 {
 			t.Error("Unexpected reverse diff", "index", i)
 		}
 	}
 	// Revert the db to historical point with reverse state available
 	for i := diskIndex; i > 0; i-- {
-		if err := db.Rollback(roots[i-1], []uint64{numbers[i]}, []common.Hash{roots[i]}); err != nil {
+		if err := db.Rollback(roots[i-1]); err != nil {
 			t.Error("Failed to revert db status", "err", err)
 		}
 		dl := db.disklayer()
@@ -162,9 +167,9 @@ func TestDatabaseRollback(t *testing.T) {
 
 func TestDatabaseBatchRollback(t *testing.T) {
 	var (
-		db, numbers, roots, testKeys, testVals = fillDB()
-		dl                                     = db.disklayer()
-		diskIndex                              int
+		db, _, roots, testKeys, testVals = fillDB()
+		dl                               = db.disklayer()
+		diskIndex                        int
 	)
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
@@ -172,24 +177,16 @@ func TestDatabaseBatchRollback(t *testing.T) {
 		}
 	}
 	// Revert the db to historical point with reverse state available
-	var (
-		diffNumbers []uint64
-		diffRoots   []common.Hash
-	)
-	for i := 0; i <= diskIndex; i++ {
-		diffNumbers = append(diffNumbers, numbers[i])
-		diffRoots = append(diffRoots, roots[i])
-	}
-	if err := db.Rollback(common.Hash{}, diffNumbers, diffRoots); err != nil {
+	if err := db.Rollback(common.Hash{}); err != nil {
 		t.Error("Failed to revert db status", "err", err)
 	}
 	ndl := db.disklayer()
-	if ndl.Root() != (common.Hash{}) {
+	if ndl.Root() != emptyRoot {
 		t.Error("Unexpected disk layer root")
 	}
 	// Ensure all the in-memory diff layers are maintained correctly
-	if len(db.layers) != len(diffNumbers)+1 {
-		t.Error("Diff layer number mismatch", "want", len(diffNumbers)+1, "got", len(db.layers))
+	if len(db.layers) != 128 {
+		t.Error("Diff layer number mismatch", "want", 128, "got", len(db.layers))
 	}
 	for i, keys := range testKeys {
 		vals := testVals[i]

@@ -33,20 +33,20 @@ type diffLayer struct {
 	parent snapshot // Parent snapshot modified by this one, never nil
 	memory uint64   // Approximate guess as to how much memory we use
 
-	root   common.Hash            // Root hash to which this snapshot diff belongs to
-	number uint64                 // Block number to which this snapshot diff belongs to
-	stale  uint32                 // Signals that the layer became stale (state progressed)
-	nodes  map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
-	lock   sync.RWMutex           // Lock used to protect parent and stale fields.
+	root  common.Hash            // Root hash to which this snapshot diff belongs to
+	rid   uint64                 // Corresponding reverse diff id
+	stale uint32                 // Signals that the layer became stale (state progressed)
+	nodes map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
+	lock  sync.RWMutex           // Lock used to protect parent and stale fields.
 }
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, number uint64, nodes map[string]*cachedNode) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, rid uint64, nodes map[string]*cachedNode) *diffLayer {
 	dl := &diffLayer{
 		parent: parent,
 		root:   root,
-		number: number,
+		rid:    rid,
 		nodes:  nodes,
 	}
 	for key, node := range nodes {
@@ -73,6 +73,11 @@ func (dl *diffLayer) Parent() snapshot {
 // it's still live.
 func (dl *diffLayer) Stale() bool {
 	return atomic.LoadUint32(&dl.stale) != 0
+}
+
+// ID returns the id of associated reverse diff.
+func (dl *diffLayer) ID() uint64 {
+	return dl.rid
 }
 
 // Node retrieves the trie node associated with a particular key.

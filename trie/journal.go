@@ -91,7 +91,20 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *C
 	if hash == (common.Hash{}) {
 		hash = emptyRoot
 	}
-	base := newDiskLayer(hash, cleans, diskdb)
+	// Retrieve the latest stored reverse diff
+	var head uint64
+	if ret := rawdb.ReadReverseDiffHead(diskdb); ret != nil {
+		head = *ret
+	}
+	if head != 0 {
+		diff, err := loadReverseDiff(diskdb, head)
+		if err != nil || diff.Root != hash {
+			head = 0 // nuke out entire reverse diff history
+		}
+	}
+	base := newDiskLayer(hash, head, cleans, diskdb)
+
+	// Load the in-memory diff layers by resolving the journal
 	snapshot, err := loadJournal(diskdb, base)
 	if err != nil {
 		// Print the log for missing trie node journal, but prevent to
@@ -111,8 +124,8 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *C
 					hash = fallback
 				}
 			}
+			base.root = hash
 		}
-		base.root = hash
 		return base
 	}
 	return snapshot
@@ -129,14 +142,6 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 			return parent, nil
 		}
 		return nil, fmt.Errorf("load diff root: %v", err)
-	}
-	var number uint64
-	if err := r.Decode(&number); err != nil {
-		// The first read may fail with EOF, marking the end of the journal
-		if err == io.EOF {
-			return parent, nil
-		}
-		return nil, fmt.Errorf("load diff number: %v", err)
 	}
 	var encoded []journalNode
 	if err := r.Decode(&encoded); err != nil {
@@ -158,7 +163,7 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 			}
 		}
 	}
-	return loadDiffLayer(newDiffLayer(parent, root, number, nodes), r)
+	return loadDiffLayer(newDiffLayer(parent, root, parent.ID(), nodes), r)
 }
 
 // Journal terminates any in-progress snapshot generation, also implicitly pushing
@@ -186,9 +191,6 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	}
 	// Everything below was journalled, persist this layer too
 	if err := rlp.Encode(buffer, dl.root); err != nil {
-		return err
-	}
-	if err := rlp.Encode(buffer, dl.number); err != nil {
 		return err
 	}
 	nodes := make([]journalNode, 0, len(dl.nodes))

@@ -93,7 +93,10 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
-	ReverseDiffPrefix     = []byte("R") // ReverseDiffPrefix + block number + block hash -> reverse diff
+
+	ReverseDiffPrefix       = []byte("RD")    // ReverseDiffPrefix + reverse-diff-id(uint64 big endian) -> reverse diff
+	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
+	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
 
 	PreimagePrefix = []byte("secure-key-")      // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-") // config prefix for the db
@@ -254,18 +257,36 @@ func IsTrieNodeKey(key []byte) (bool, []byte) {
 	return false, nil
 }
 
-// reverseDiffKey = ReverseDiffPrefix + block number (uint64 big endian) + block hash
-func reverseDiffKey(number uint64, hash common.Hash) []byte {
+// reverseDiffKey = ReverseDiffPrefix + id (uint64 big endian)
+func reverseDiffKey(id uint64) []byte {
 	var buff [8]byte
-	binary.BigEndian.PutUint64(buff[:], number)
-	return append(ReverseDiffPrefix, append(buff[:], hash.Bytes()...)...)
+	binary.BigEndian.PutUint64(buff[:], id)
+	return append(ReverseDiffPrefix, buff[:]...)
 }
 
 // IsReverseDiffKey reports whether the given byte slice is the key of reverse diff.
 func IsReverseDiffKey(key []byte) (bool, []byte) {
 	if bytes.HasPrefix(key, ReverseDiffPrefix) {
 		rkey := key[len(ReverseDiffPrefix):]
-		return true, rkey
+		if len(rkey) == 8 {
+			return true, rkey
+		}
+	}
+	return false, nil
+}
+
+// reverseDiffLookupKey = ReverseDiffLookupPrefix + root (32 bytes)
+func reverseDiffLookupKey(root common.Hash) []byte {
+	return append(ReverseDiffLookupPrefix, root.Bytes()...)
+}
+
+// IsReverseDiffLookup reports whether the given byte slice is the key of reverse diff lookup.
+func IsReverseDiffLookup(key []byte) (bool, []byte) {
+	if bytes.HasPrefix(key, ReverseDiffLookupPrefix) {
+		rkey := key[len(ReverseDiffLookupPrefix):]
+		if len(rkey) == common.HashLength {
+			return true, rkey
+		}
 	}
 	return false, nil
 }

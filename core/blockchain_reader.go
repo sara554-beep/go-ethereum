@@ -269,6 +269,15 @@ func (bc *BlockChain) HasBlockAndState(hash common.Hash, number uint64) bool {
 	return bc.HasState(block.Root())
 }
 
+// StateRecoverable checks if the current state db is able to revert to the
+// specific state point.
+func (bc *BlockChain) StateRecoverable(root common.Hash) bool {
+	if _, err := bc.stateCache.OpenTrie(root); err == nil {
+		return true // state available
+	}
+	return rawdb.ReadReverseDiffLookup(bc.db, root) != nil
+}
+
 // TrieNode retrieves a blob of data associated with a trie node
 // either from ephemeral in-memory cache, or from persistent storage.
 func (bc *BlockChain) TrieNode(hash common.Hash) ([]byte, error) {
@@ -295,12 +304,12 @@ func (bc *BlockChain) ContractCodeWithPrefix(hash common.Hash) ([]byte, error) {
 
 // State returns a new mutable state based on the current HEAD block.
 func (bc *BlockChain) State() (*state.StateDB, error) {
-	return bc.StateAt(bc.CurrentBlock().Root(), bc.CurrentBlock().NumberU64())
+	return bc.StateAt(bc.CurrentBlock().Root())
 }
 
 // StateAt returns a new mutable state based on a particular point in time.
-func (bc *BlockChain) StateAt(root common.Hash, number uint64) (*state.StateDB, error) {
-	return state.New(root, number, bc.stateCache, bc.snaps)
+func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
+	return state.New(root, bc.stateCache, bc.snaps)
 }
 
 // Config retrieves the chain's fork configuration.

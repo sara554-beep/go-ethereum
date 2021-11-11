@@ -71,9 +71,6 @@ type StateDB struct {
 	// It will be updated when the Commit is called.
 	originalRoot common.Hash
 
-	// originalNumber is the associate block number since stateDB is created.
-	originalNumber uint64
-
 	snaps         *snapshot.Tree
 	snap          snapshot.Snapshot
 	snapDestructs map[common.Hash]struct{}
@@ -132,7 +129,7 @@ type StateDB struct {
 }
 
 // New creates a new state from a given trie.
-func New(root common.Hash, number uint64, db Database, snaps *snapshot.Tree) (*StateDB, error) {
+func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) {
 	tr, err := db.OpenTrie(root)
 	if err != nil {
 		return nil, err
@@ -141,7 +138,6 @@ func New(root common.Hash, number uint64, db Database, snaps *snapshot.Tree) (*S
 		db:                  db,
 		trie:                tr,
 		originalRoot:        root,
-		originalNumber:      number,
 		snaps:               snaps,
 		stateObjects:        make(map[common.Address]*stateObject),
 		stateObjectsPending: make(map[common.Address]struct{}),
@@ -1017,7 +1013,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	if root != s.originalRoot {
 		start := time.Now()
-		if err := s.db.TrieDB().Update(root, s.originalRoot, s.originalNumber, result.CommitTo(nil)); err != nil {
+		if err := s.db.TrieDB().Update(root, s.originalRoot, result.CommitTo(nil)); err != nil {
 			if err != trie.ErrSnapshotReadOnly {
 				log.Warn("Failed to commit dirty trie nodes", "err", err)
 			}

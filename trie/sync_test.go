@@ -55,7 +55,7 @@ func makeTestTrie() (*Database, *SecureTrie, map[string][]byte) {
 	if err != nil {
 		panic(err)
 	}
-	if err := triedb.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil)); err != nil {
+	if err := triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil)); err != nil {
 		panic(err)
 	}
 	if err := triedb.Cap(result.Root, 0); err != nil {
@@ -187,6 +187,7 @@ func testIterativeSync(t *testing.T, count int, bypath bool) {
 		}
 	}
 	// Cross check that the two tries are in sync
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 }
 
@@ -245,6 +246,7 @@ func TestIterativeDelayedSync(t *testing.T) {
 		}
 	}
 	// Cross check that the two tries are in sync
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 }
 
@@ -308,6 +310,7 @@ func testIterativeRandomSync(t *testing.T, count int) {
 		}
 	}
 	// Cross check that the two tries are in sync
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 }
 
@@ -372,6 +375,7 @@ func TestIterativeRandomDelayedSync(t *testing.T) {
 		}
 	}
 	// Cross check that the two tries are in sync
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 }
 
@@ -436,6 +440,7 @@ func TestDuplicateAvoidanceSync(t *testing.T) {
 		}
 	}
 	// Cross check that the two tries are in sync
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 }
 
@@ -509,6 +514,7 @@ func TestIncompleteSync(t *testing.T) {
 		}
 	}
 	// Sanity check that removing any node from the database is detected
+	triedb.Clean(srcTrie.Hash())
 	for _, key := range addedKeys {
 		nodeKey, _ := DecodeInternalKey([]byte(key))
 		value, _ := rawdb.ReadTrieNode(diskdb, nodeKey)
@@ -577,6 +583,7 @@ func TestSyncOrdering(t *testing.T) {
 		reqs = append(reqs, paths...)
 	}
 	// Cross check that the two tries are in sync
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 
 	// Check that the trie nodes have been requested path-ordered
@@ -650,6 +657,7 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb, nil)
 	syncWith(t, srcTrie.Hash(), triedb, srcDb)
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), srcData)
 
 	// Push more modifications into the src trie, to see if dest trie can still
@@ -667,7 +675,7 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	if err := srcDb.Update(result.Root, preRoot, 0, result.CommitTo(nil)); err != nil {
+	if err := srcDb.Update(result.Root, preRoot, result.CommitTo(nil)); err != nil {
 		panic(err)
 	}
 	if err := srcDb.Cap(result.Root, 0); err != nil {
@@ -675,6 +683,7 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	}
 	preRoot = result.Root
 	syncWith(t, srcTrie.Hash(), triedb, srcDb)
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), diff)
 
 	// Revert added modifications from the src trie, to see if dest trie can still
@@ -693,7 +702,7 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	if err := srcDb.Update(result.Root, preRoot, 0, result.CommitTo(nil)); err != nil {
+	if err := srcDb.Update(result.Root, preRoot, result.CommitTo(nil)); err != nil {
 		panic(err)
 	}
 	if err := srcDb.Cap(result.Root, 0); err != nil {
@@ -701,5 +710,6 @@ func TestSyncWithDynamicTarget(t *testing.T) {
 	}
 	preRoot = result.Root
 	syncWith(t, srcTrie.Hash(), triedb, srcDb)
+	triedb.Clean(srcTrie.Hash())
 	checkTrieContents(t, triedb, srcTrie.Hash().Bytes(), reverted)
 }

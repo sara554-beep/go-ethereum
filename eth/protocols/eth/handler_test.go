@@ -466,9 +466,9 @@ func testGetNodeData(t *testing.T, protocol uint) {
 	accounts := []common.Address{testAddr, acc1Addr, acc2Addr}
 	for i := uint64(0); i <= backend.chain.CurrentBlock().NumberU64(); i++ {
 		block := backend.chain.GetBlockByNumber(i)
-		reconstructed, _ := state.New(block.Root(), block.NumberU64(), state.NewDatabase(reconstructDB), nil)
+		reconstructed, _ := state.New(block.Root(), state.NewDatabase(reconstructDB), nil)
 		for j, acc := range accounts {
-			state, _ := backend.chain.StateAt(block.Root(), block.NumberU64())
+			state, _ := backend.chain.StateAt(block.Root())
 			bw := state.GetBalance(acc)
 			bh := reconstructed.GetBalance(acc)
 

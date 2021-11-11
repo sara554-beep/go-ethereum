@@ -131,7 +131,7 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		trie.Update(k, randBytes(100))
 	}
 	result, _ := trie.Commit(nil)
-	trie.db.Update(result.Root, common.Hash{}, 0, result.CommitTo(nil))
+	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
 
 	var (
 		target     []byte

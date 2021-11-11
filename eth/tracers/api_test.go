@@ -139,7 +139,7 @@ func (b *testBackend) ChainDb() ethdb.Database {
 }
 
 func (b *testBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, checkLive bool, preferDisk bool) (*state.StateDB, error) {
-	statedb, err := b.chain.StateAt(block.Root(), block.NumberU64())
+	statedb, err := b.chain.StateAt(block.Root())
 	if err != nil {
 		return nil, errStateNotFound
 	}
@@ -151,7 +151,7 @@ func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block
 	if parent == nil {
 		return nil, vm.BlockContext{}, nil, errBlockNotFound
 	}
-	statedb, err := b.chain.StateAt(parent.Root(), parent.NumberU64())
+	statedb, err := b.chain.StateAt(parent.Root())
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, errStateNotFound
 	}

@@ -79,6 +79,14 @@ var (
 	// errUnmatchedReverseDiff is returned if an unmatched reverse-diff is applied
 	// to the database for state rollback.
 	errUnmatchedReverseDiff = errors.New("reverse diff is not matched")
+
+	// errStateUnrecoverable is returned if state is required to be reverted to
+	// a destination without associated reverse diff available.
+	errStateUnrecoverable = errors.New("state is unrecoverable")
+
+	// errImmatureState is returned if state is required to be reverted to an
+	// immature destination.
+	errImmatureState = errors.New("immature state")
 )
 
 // Snapshot represents the functionality supported by a snapshot storage layer.
@@ -123,9 +131,12 @@ type snapshot interface {
 	// flattening everything down (bad for reorgs).
 	Journal(buffer *bytes.Buffer) error
 
-	// Stale return whether this layer has become stale (was flattened across) or
+	// Stale returns whether this layer has become stale (was flattened across) or
 	// if it's still live.
 	Stale() bool
+
+	// ID returns the id of associated reverse diff.
+	ID() uint64
 }
 
 // rawNode is a simple binary blob used to differentiate between collapsed trie
@@ -401,7 +412,7 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 // The passed keys must all be encoded in the **storage** format.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, parentNumber uint64, nodes map[string]*cachedNode) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*cachedNode) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).
@@ -427,7 +438,7 @@ func (db *Database) Update(root common.Hash, parentRoot common.Hash, parentNumbe
 	if db.readOnly {
 		return ErrSnapshotReadOnly
 	}
-	snap := parent.(snapshot).Update(root, parentNumber+1, nodes)
+	snap := parent.(snapshot).Update(root, parent.(snapshot).ID()+1, nodes)
 	db.layers[snap.root] = snap
 	return nil
 }
@@ -563,7 +574,10 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 		nodes     = len(bottom.nodes)
 		batch     = base.diskdb.NewBatch()
 	)
-	if err := storeAndPrunedReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
+	// Construct and store the reverse diff as the first step. If crash happens
+	// after storing the reverse diff but without flushing the corresponding states,
+	// rewind the head reverse diff during the next restart.
+	if err := storeAndPruneReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
 		log.Error("Failed to store reverse diff", "err", err)
 	}
 	base.MarkStale()
@@ -594,6 +608,8 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 		}
 		totalSize += int64(len(blob) + len(storage))
 	}
+	rawdb.WriteReverseDiffHead(batch, bottom.rid)
+
 	triedbCommitSizeMeter.Mark(totalSize)
 	triedbCommitNodesMeter.Mark(int64(len(bottom.nodes)))
 
@@ -603,11 +619,8 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
 	}
 	log.Info("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
-	return &diskLayer{
-		root:   bottom.root,
-		cache:  base.cache,
-		diskdb: base.diskdb,
-	}
+
+	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
@@ -658,7 +671,7 @@ func (db *Database) Journal(root common.Hash) error {
 }
 
 // clean is the internal version of Clean which requires the lock to be held.
-func (db *Database) clean(root common.Hash) {
+func (db *Database) clean(root common.Hash, headReverse uint64) {
 	rawdb.DeleteTrieJournal(db.diskdb)
 
 	// Iterate over all layers and mark them as stale
@@ -686,11 +699,7 @@ func (db *Database) clean(root common.Hash) {
 		cleans = fastcache.New(db.config.Cache * 1024 * 1024)
 	}
 	db.layers = map[common.Hash]snapshot{
-		root: &diskLayer{
-			diskdb: db.diskdb,
-			cache:  cleans,
-			root:   root,
-		},
+		root: newDiskLayer(root, headReverse, cleans, db.diskdb),
 	}
 	log.Info("Rebuild triedb", "root", root)
 }
@@ -701,25 +710,28 @@ func (db *Database) Clean(root common.Hash) {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	db.clean(root)
+	db.clean(root, 0)
 }
 
 // revert applies the reverse diffs to the database by separating the disk layer
 // to two sub layers: diff layer and the modified disk layer.
 // This function assumes the lock in db is already held.
-func (db *Database) revert(parentRoot common.Hash, diff *reverseDiff) error {
+func (db *Database) revert(diff *reverseDiff) error {
 	var (
 		dl    = db.disklayer()
 		root  = dl.Root()
 		batch = dl.diskdb.NewBatch()
 	)
-	if diff.root != root {
+	if diff.Root != root {
 		return errUnmatchedReverseDiff
+	}
+	if dl.rid == 0 {
+		return fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
 	}
 	dl.MarkStale()
 
 	nodes := make(map[string]*cachedNode)
-	for _, state := range diff.states {
+	for _, state := range diff.States {
 		current, hash := rawdb.ReadTrieNode(dl.diskdb, state.Key)
 		if len(current) > 0 {
 			node := &cachedNode{
@@ -735,17 +747,18 @@ func (db *Database) revert(parentRoot common.Hash, diff *reverseDiff) error {
 			rawdb.DeleteTrieNode(batch, state.Key)
 		}
 	}
+	// Delete the reverse-diff entries from the disk
+	rawdb.DeleteReverseDiff(batch, dl.rid)
+	rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+	rawdb.WriteReverseDiffHead(batch, dl.rid-1)
+
 	// Flush all state changes in an atomic batch write
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write reverse diff", "err", err)
 	}
-	ndl := &diskLayer{
-		diskdb: dl.diskdb,
-		cache:  dl.cache,
-		root:   parentRoot,
-	}
+	ndl := newDiskLayer(diff.Parent, dl.rid-1, dl.cache, dl.diskdb)
 	db.layers[ndl.root] = ndl
-	bottom := newDiffLayer(ndl, diff.root, diff.number, nodes)
+	bottom := newDiffLayer(ndl, diff.Root, dl.rid, nodes)
 
 	// Link all existent layers with the new parent.
 	for _, snap := range db.layers {
@@ -758,40 +771,52 @@ func (db *Database) revert(parentRoot common.Hash, diff *reverseDiff) error {
 		}
 	}
 	db.layers[bottom.root] = bottom
+
+	// Truncate layers if the maximum depth maintained exceeds the threshold
+	var (
+		deepest = ndl.rid
+		highest = deepest + 128
+	)
+	for root, snap := range db.layers {
+		if snap.ID() >= highest {
+			delete(db.layers, root)
+		}
+	}
 	return nil
 }
 
 // Rollback rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding reverse diffs are existent.
-//
-// - root: the block state root of revert destination
-// - diffNumbers, diffHashes: a batch of reverse diff identifiers, these
-//                            reverse diffs are assumed to be continuous
-//                            and all canonical.
-func (db *Database) Rollback(root common.Hash, diffNumbers []uint64, diffHashes []common.Hash) error {
+func (db *Database) Rollback(target common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// Ensure the destination is recoverable
+	target = convertEmpty(target)
+	id := rawdb.ReadReverseDiffLookup(db.diskdb, target)
+	if id == nil {
+		return errStateUnrecoverable
+	}
+	current := db.disklayer().ID()
+	if *id > current {
+		return fmt.Errorf("%w dest: %d head: %d", errImmatureState, *id, current)
+	}
 	// Discard all the in-memory diff layers, relevant state journal and
 	// all caches first. The reverse diffs are all applied on the disk layer,
 	// it doesn't make sense to maintain the in-memory diffs anymore.
-	db.clean(db.disklayer().root)
+	db.clean(db.disklayer().root, current)
 
 	// Apply the reverse diffs with the given order.
-	for i := len(diffNumbers) - 1; i >= 0; i-- {
-		diffNumber, diffHash := diffNumbers[i], diffHashes[i]
-		diff, err := loadReverseDiff(db.diskdb, diffNumber, diffHash)
+	for current >= *id {
+		diff, err := loadReverseDiff(db.diskdb, current)
 		if err != nil {
 			return err
 		}
-		parent := root
-		if i != 0 {
-			parent = diffHashes[i-1]
-		}
-		if err := db.revert(parent, diff); err != nil {
+		if err := db.revert(diff); err != nil {
 			return err
 		}
+		current -= 1
 	}
 	return nil
 }

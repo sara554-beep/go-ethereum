@@ -30,16 +30,18 @@ type diskLayer struct {
 	diskdb ethdb.KeyValueStore // Key-value store containing the base snapshot
 	cache  *fastcache.Cache    // Cache to avoid hitting the disk for direct access
 	root   common.Hash         // Root hash of the base snapshot
+	rid    uint64              // Corresponding reverse diff id
 	stale  bool                // Signals that the layer became stale (state progressed)
 	lock   sync.RWMutex        // Lock used to prevent stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, cache *fastcache.Cache, diskdb ethdb.KeyValueStore) *diskLayer {
+func newDiskLayer(root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.KeyValueStore) *diskLayer {
 	dl := &diskLayer{
 		diskdb: diskdb,
 		cache:  cache,
 		root:   root,
+		rid:    rid,
 	}
 	return dl
 }
@@ -61,6 +63,11 @@ func (dl *diskLayer) Stale() bool {
 	defer dl.lock.RUnlock()
 
 	return dl.stale
+}
+
+// ID returns the id of associated reverse diff.
+func (dl *diskLayer) ID() uint64 {
+	return dl.rid
 }
 
 // MarkStale sets the stale flag as true.
