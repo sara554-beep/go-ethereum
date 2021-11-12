@@ -431,7 +431,7 @@ func (dl *diskLayer) generateRange(state common.Hash, owner common.Hash, root co
 	if len(result.keys) > 0 {
 		snapNodeCache = memorydb.New()
 		db := trie.NewDatabase(snapNodeCache, nil)
-		snapTrie, _ := trie.NewWithOwner(state, owner, common.Hash{}, db)
+		snapTrie, _ := trie.NewWithOwner(common.Hash{}, owner, common.Hash{}, db)
 		for i, key := range result.keys {
 			snapTrie.Update(key, result.vals[i])
 		}

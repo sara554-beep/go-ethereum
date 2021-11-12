@@ -136,12 +136,13 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 	}
 	// Retrieve the node reader via given state handler, or
 	// fallback to raw disk reader if it's not existent.
-	snap := db.Snapshot(stateRoot)
-	if snap == nil {
-		return nil, &MissingNodeError{NodeHash: stateRoot}
+	if stateRoot != (common.Hash{}) && stateRoot != emptyState {
+		snap := db.Snapshot(stateRoot)
+		if snap == nil {
+			return nil, &MissingNodeError{NodeHash: stateRoot}
+		}
+		trie.snap = snap.(snapshot)
 	}
-	trie.snap = snap.(snapshot)
-
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
 		if err != nil {

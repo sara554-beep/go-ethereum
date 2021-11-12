@@ -89,6 +89,13 @@ var (
 	errImmatureState = errors.New("immature state")
 )
 
+const (
+	// maximumLayerDistance represents the maximum distance between the top
+	// difflayer and disklayer. It also represents the maximum reorg depth
+	// can be supported by trie.Database **without** reverts the disk status.
+	maximumLayerDistance = 128
+)
+
 // Snapshot represents the functionality supported by a snapshot storage layer.
 type Snapshot interface {
 	// Root returns the root hash for which this snapshot was made.
@@ -400,13 +407,28 @@ func (db *Database) Preimage(hash common.Hash) []byte {
 	return rawdb.ReadPreimage(db.diskdb, hash)
 }
 
-// Snapshot retrieves a snapshot belonging to the given block root, or nil if no
-// snapshot is maintained for that block.
+// Snapshot retrieves a snapshot belonging to the given block root, or fallback
+// to legacy/archive format node in disk if no snapshot is maintained for that
+// block.
 func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
-	db.lock.RLock()
-	defer db.lock.RUnlock()
+	db.lock.Lock()
+	defer db.lock.Unlock()
 
-	return db.layers[convertEmpty(blockRoot)]
+	layer := db.layers[convertEmpty(blockRoot)]
+	if layer != nil {
+		return layer
+	}
+	blob := rawdb.ReadArchiveTrieNode(db.diskdb, blockRoot)
+	if len(blob) == 0 {
+		return nil
+	}
+	// If the legacy/archive format root node indeed exists,
+	// create a shadow diff layer with empty diffs, to act
+	// as the state reader.
+	dl := db.disklayer()
+	diff := newDiffLayer(dl, blockRoot, dl.rid+1, nil)
+	db.layers[blockRoot] = diff
+	return diff
 }
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing
@@ -574,9 +596,9 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 		nodes     = len(bottom.nodes)
 		batch     = base.diskdb.NewBatch()
 	)
-	// Construct and store the reverse diff as the first step. If crash happens
-	// after storing the reverse diff but without flushing the corresponding states,
-	// rewind the head reverse diff during the next restart.
+	// Construct and store the reverse diff firstly. If crash happens
+	// after storing the reverse diff but without flushing the corresponding
+	// states, the stored reverse diff won't be used at all.
 	if err := storeAndPruneReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
 		log.Error("Failed to store reverse diff", "err", err)
 	}
@@ -670,8 +692,12 @@ func (db *Database) Journal(root common.Hash) error {
 	return nil
 }
 
-// clean is the internal version of Clean which requires the lock to be held.
-func (db *Database) clean(root common.Hash, headReverse uint64) {
+// Clean wipes all available journal from the persistent database and discard
+// all caches and diff layers. Using the given root to create a new disk layer.
+func (db *Database) Clean(root common.Hash) {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
 	rawdb.DeleteTrieJournal(db.diskdb)
 
 	// Iterate over all layers and mark them as stale
@@ -699,24 +725,15 @@ func (db *Database) clean(root common.Hash, headReverse uint64) {
 		cleans = fastcache.New(db.config.Cache * 1024 * 1024)
 	}
 	db.layers = map[common.Hash]snapshot{
-		root: newDiskLayer(root, headReverse, cleans, db.diskdb),
+		root: newDiskLayer(root, 0, cleans, db.diskdb),
 	}
 	log.Info("Rebuild triedb", "root", root)
-}
-
-// Clean wipes all available journal from the persistent database and discard
-// all caches and diff layers. Using the given root to create a new disk layer.
-func (db *Database) Clean(root common.Hash) {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	db.clean(root, 0)
 }
 
 // revert applies the reverse diffs to the database by separating the disk layer
 // to two sub layers: diff layer and the modified disk layer.
 // This function assumes the lock in db is already held.
-func (db *Database) revert(diff *reverseDiff) error {
+func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	var (
 		dl    = db.disklayer()
 		root  = dl.Root()
@@ -756,8 +773,13 @@ func (db *Database) revert(diff *reverseDiff) error {
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write reverse diff", "err", err)
 	}
-	ndl := newDiskLayer(diff.Parent, dl.rid-1, dl.cache, dl.diskdb)
+	// Recreate the disk layer with newly created clean cache
+	ndl := newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.diskdb)
 	db.layers[ndl.root] = ndl
+
+	// Create the bottom most diff layer based on the new disk
+	// layer. All the states which are reverted in the disk are
+	// maintained here.
 	bottom := newDiffLayer(ndl, diff.Root, dl.rid, nodes)
 
 	// Link all existent layers with the new parent.
@@ -775,7 +797,7 @@ func (db *Database) revert(diff *reverseDiff) error {
 	// Truncate layers if the maximum depth maintained exceeds the threshold
 	var (
 		deepest = ndl.rid
-		highest = deepest + 128
+		highest = deepest + uint64(maximumLayerDistance)
 	)
 	for root, snap := range db.layers {
 		if snap.ID() >= highest {
@@ -802,23 +824,35 @@ func (db *Database) Rollback(target common.Hash) error {
 	if *id > current {
 		return fmt.Errorf("%w dest: %d head: %d", errImmatureState, *id, current)
 	}
-	// Discard all the in-memory diff layers, relevant state journal and
-	// all caches first. The reverse diffs are all applied on the disk layer,
-	// it doesn't make sense to maintain the in-memory diffs anymore.
-	db.clean(db.disklayer().root, current)
-
 	// Apply the reverse diffs with the given order.
+	var cleans *fastcache.Cache
+	if db.config != nil && db.config.Cache > 0 {
+		cleans = fastcache.New(db.config.Cache * 1024 * 1024)
+	}
 	for current >= *id {
 		diff, err := loadReverseDiff(db.diskdb, current)
 		if err != nil {
 			return err
 		}
-		if err := db.revert(diff); err != nil {
+		if err := db.revert(diff, cleans); err != nil {
 			return err
 		}
 		current -= 1
 	}
 	return nil
+}
+
+// StateRecoverable returns the indicator if the specified state is enabled to be recovered.
+func (db *Database) StateRecoverable(root common.Hash) bool {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	root = convertEmpty(root)
+	id := rawdb.ReadReverseDiffLookup(db.diskdb, root)
+	if id == nil {
+		return false
+	}
+	return db.disklayer().ID() >= *id
 }
 
 // DiskDB retrieves the persistent storage backing the trie database.

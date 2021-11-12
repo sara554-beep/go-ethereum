@@ -160,8 +160,8 @@ func TestDatabaseRollback(t *testing.T) {
 			}
 		}
 	}
-	if len(db.layers) != 2 {
-		t.Error("Only two layers are expected")
+	if len(db.layers) != maximumLayerDistance {
+		t.Error("Only two layers are expected", maximumLayerDistance)
 	}
 }
 

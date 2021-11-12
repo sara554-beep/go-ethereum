@@ -275,7 +275,7 @@ func (bc *BlockChain) StateRecoverable(root common.Hash) bool {
 	if _, err := bc.stateCache.OpenTrie(root); err == nil {
 		return true // state available
 	}
-	return rawdb.ReadReverseDiffLookup(bc.db, root) != nil
+	return bc.stateCache.TrieDB().StateRecoverable(root)
 }
 
 // TrieNode retrieves a blob of data associated with a trie node

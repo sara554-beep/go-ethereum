@@ -96,10 +96,12 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *C
 	if ret := rawdb.ReadReverseDiffHead(diskdb); ret != nil {
 		head = *ret
 	}
+	// Ensure the head reverse diff matches with the disk layer,
+	// otherwise invalidate the entire reverse diff list.
 	if head != 0 {
 		diff, err := loadReverseDiff(diskdb, head)
 		if err != nil || diff.Root != hash {
-			head = 0 // nuke out entire reverse diff history
+			head = 0
 		}
 	}
 	base := newDiskLayer(hash, head, cleans, diskdb)
