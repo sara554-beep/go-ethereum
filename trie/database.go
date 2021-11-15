@@ -307,6 +307,9 @@ type Config struct {
 	// All the mutations like journaling, updating disk layer will all be rejected.
 	ReadOnly bool
 
+	// Shadow
+	Shadow bool
+
 	// Fallback is the function used to find the fallback base layer root. It's pretty
 	// common that there is no singleton trie persisted in the disk(e.g. migrated from
 	// the legacy database) so the function provided can find the alternative root as
