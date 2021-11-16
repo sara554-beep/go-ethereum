@@ -654,7 +654,7 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
 	}
-	log.Info("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Debug("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
 
 	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
 }
