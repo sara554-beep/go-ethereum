@@ -127,6 +127,46 @@ func DeleteArchiveTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
+// ReadShadowTrieNode retrieves the shadowy trie node with the given
+// associated node hash. The additional flag is returned to represent
+// the node is non-existent or just has empty value.
+func ReadShadowTrieNode(db ethdb.KeyValueReader, id []byte, key []byte) ([]byte, common.Hash, bool) {
+	data, err := db.Get(shadowTrieNodeKey(id, key))
+	if err != nil {
+		return nil, common.Hash{}, false
+	}
+	return data, crypto.Keccak256Hash(data), true
+}
+
+// WriteShadowTrieNode writes the provided shadowy trie node to database.
+func WriteShadowTrieNode(db ethdb.KeyValueWriter, id []byte, key []byte, node []byte) {
+	if err := db.Put(shadowTrieNodeKey(id, key), node); err != nil {
+		log.Crit("Failed to store archived trie node", "err", err)
+	}
+}
+
+// DeleteShadowTrieNodes deletes all the shadowy trie nodes under the given namespace
+// from the disk.
+func DeleteShadowTrieNodes(db ethdb.KeyValueStore, id []byte) {
+	var (
+		batch = db.NewBatch()
+		iter  = db.NewIterator(append(ShadowTrieNodePrefix, id...), nil)
+	)
+	for iter.Next() {
+		batch.Delete(iter.Key())
+		if batch.ValueSize() > ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				log.Crit("Failed to delete shadow nodes", "err", err)
+			}
+			batch.Reset()
+		}
+	}
+	if err := batch.Write(); err != nil {
+		log.Crit("Failed to delete shadow nodes", "err", err)
+	}
+	iter.Release()
+}
+
 // ReadReverseDiff retrieves the state reverse diff with the given associated
 // block hash and number.
 func ReadReverseDiff(db ethdb.KeyValueReader, id uint64) []byte {

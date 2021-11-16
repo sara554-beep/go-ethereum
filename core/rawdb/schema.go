@@ -98,6 +98,8 @@ var (
 	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
 	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
 
+	ShadowTrieNodePrefix = []byte("S") // ShadowTrieNodePrefix + random number(8 bytes) + node path -> trie node
+
 	PreimagePrefix = []byte("secure-key-")      // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-") // config prefix for the db
 
@@ -255,6 +257,11 @@ func IsTrieNodeKey(key []byte) (bool, []byte) {
 		return false, nil
 	}
 	return false, nil
+}
+
+// shadowTrieNodeKey = ShadowTrieNodePrefix + prefix (8 bytes) +  encoded node key
+func shadowTrieNodeKey(id []byte, key []byte) []byte {
+	return append(append(ShadowTrieNodePrefix, id...), key...)
 }
 
 // reverseDiffKey = ReverseDiffPrefix + id (uint64 big endian)

@@ -27,6 +27,7 @@ import (
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
 type diskLayer struct {
+	prefix []byte              // Prefix of the state storage key, only for anonymous state
 	diskdb ethdb.KeyValueStore // Key-value store containing the base snapshot
 	cache  *fastcache.Cache    // Cache to avoid hitting the disk for direct access
 	root   common.Hash         // Root hash of the base snapshot
@@ -38,6 +39,22 @@ type diskLayer struct {
 // newDiskLayer creates a new disk layer based on the passing arguments.
 func newDiskLayer(root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.KeyValueStore) *diskLayer {
 	dl := &diskLayer{
+		diskdb: diskdb,
+		cache:  cache,
+		root:   root,
+		rid:    rid,
+	}
+	return dl
+}
+
+// newShadowyDiskLayer creates a special disk layer. The special feature is that
+// this disklayer also contains an additional layer of shadowy disk layer. States
+// can be stored in shadowy disk layer temporarily and all be pruned from the disk
+// afterwards. This feature is mainly prepared for tracer which requires the past
+// state for tracing.
+func newShadowyDiskLayer(prefix []byte, root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.KeyValueStore) *diskLayer {
+	dl := &diskLayer{
+		prefix: prefix,
 		diskdb: diskdb,
 		cache:  cache,
 		root:   root,
@@ -86,6 +103,16 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 	if dl.Stale() {
 		return nil, ErrSnapshotStale
 	}
+	// Try to look up the state in the shadowy layer first
+	if dl.prefix != nil {
+		blob, nhash, exist := rawdb.ReadShadowTrieNode(dl.diskdb, dl.prefix, storage)
+		if exist {
+			if len(blob) == 0 || hash != nhash {
+				return nil, nil
+			}
+			return mustDecodeNode(hash.Bytes(), blob), nil
+		}
+	}
 	// If we're in the disk layer, all diff layers missed
 	triedbDirtyMissMeter.Mark(1)
 
@@ -124,6 +151,16 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	if dl.Stale() {
 		return nil, ErrSnapshotStale
+	}
+	// Try to look up the state in the shadowy layer first
+	if dl.prefix != nil {
+		blob, nhash, exist := rawdb.ReadShadowTrieNode(dl.diskdb, dl.prefix, storage)
+		if exist {
+			if len(blob) == 0 || hash != nhash {
+				return nil, nil
+			}
+			return blob, nil
+		}
 	}
 	// If we're in the disk layer, all diff layers missed
 	triedbDirtyMissMeter.Mark(1)

@@ -18,9 +18,11 @@ package trie
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"reflect"
 	"runtime"
 	"sync"
@@ -307,8 +309,11 @@ type Config struct {
 	// All the mutations like journaling, updating disk layer will all be rejected.
 	ReadOnly bool
 
-	// Shadow
-	Shadow bool
+	// Anonymous mode will open the trie database based on the disk content, but
+	// all the mutations will not be saved into main disk, but store them at a separate
+	// database area instead. Different with *ReadOnly* mode, this mode allows mutations
+	// but it won't change the status of main disk.
+	Anonymous bool
 
 	// Fallback is the function used to find the fallback base layer root. It's pretty
 	// common that there is no singleton trie persisted in the disk(e.g. migrated from
@@ -331,6 +336,7 @@ type Database struct {
 	readOnly      bool
 	config        *Config
 	lock          sync.RWMutex
+	namespace     []byte                   // State storage prefix, non-nil only for anonymous mode
 	diskdb        ethdb.KeyValueStore      // Persistent database to store the snapshot
 	cleans        *fastcache.Cache         // Megabytes permitted using for read caches
 	layers        map[common.Hash]snapshot // Collection of all known layers
@@ -369,6 +375,12 @@ func NewDatabase(diskdb ethdb.KeyValueStore, config *Config) *Database {
 	}
 	if config == nil || config.Preimages {
 		db.preimages = make(map[common.Hash][]byte)
+	}
+	if db.config != nil && db.config.Anonymous {
+		var prefix [8]byte
+		binary.BigEndian.PutUint64(prefix[:], rand.Uint64())
+		db.namespace = prefix[:]
+		// TODO(rjl493456442) check if this namespace is already occupied.
 	}
 	return db
 }
@@ -426,8 +438,8 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 		return nil
 	}
 	// If the legacy/archive format root node indeed exists,
-	// create a shadow diff layer with empty diffs, to act
-	// as the state reader.
+	// create a shadow diff layer with empty diffs for state
+	// accessing.
 	dl := db.disklayer()
 	diff := newDiffLayer(dl, blockRoot, dl.rid+1, nil)
 	db.layers[blockRoot] = diff
@@ -738,9 +750,10 @@ func (db *Database) Clean(root common.Hash) {
 // This function assumes the lock in db is already held.
 func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	var (
-		dl    = db.disklayer()
-		root  = dl.Root()
-		batch = dl.diskdb.NewBatch()
+		dl        = db.disklayer()
+		root      = dl.Root()
+		batch     = dl.diskdb.NewBatch()
+		anonymous = db.namespace != nil
 	)
 	if diff.Root != root {
 		return errUnmatchedReverseDiff
@@ -752,32 +765,64 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 
 	nodes := make(map[string]*cachedNode)
 	for _, state := range diff.States {
-		current, hash := rawdb.ReadTrieNode(dl.diskdb, state.Key)
-		if len(current) > 0 {
-			node := &cachedNode{
-				hash: hash,
-				size: uint16(len(current)),
-				node: rawNode(current),
+		if anonymous {
+			// Here we use the flag returned by database to distinguish
+			// empty-value nodes and non-existent nodes. Only fallback
+			// to main database for non-existent nodes.
+			current, hash, exist := rawdb.ReadShadowTrieNode(dl.diskdb, db.namespace, state.Key)
+			if !exist {
+				current, hash = rawdb.ReadTrieNode(dl.diskdb, state.Key)
 			}
-			nodes[string(state.Key)] = node
-		}
-		if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
-			rawdb.WriteTrieNode(batch, state.Key, state.Val)
+			if len(current) > 0 {
+				node := &cachedNode{
+					hash: hash,
+					size: uint16(len(current)),
+					node: rawNode(current),
+				}
+				nodes[string(state.Key)] = node
+			}
+			if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
+				rawdb.WriteShadowTrieNode(batch, db.namespace, state.Key, state.Val)
+			} else {
+				// In order to distinguish deleted nodes and non-existent nodes
+				// in shadowy layer, write the empty value instead of deleting
+				// state entries.
+				rawdb.WriteShadowTrieNode(batch, db.namespace, state.Key, []byte{})
+			}
 		} else {
-			rawdb.DeleteTrieNode(batch, state.Key)
+			current, hash := rawdb.ReadTrieNode(dl.diskdb, state.Key)
+			if len(current) > 0 {
+				node := &cachedNode{
+					hash: hash,
+					size: uint16(len(current)),
+					node: rawNode(current),
+				}
+				nodes[string(state.Key)] = node
+			}
+			if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
+				rawdb.WriteTrieNode(batch, state.Key, state.Val)
+			} else {
+				rawdb.DeleteTrieNode(batch, state.Key)
+			}
 		}
 	}
 	// Delete the reverse-diff entries from the disk
-	rawdb.DeleteReverseDiff(batch, dl.rid)
-	rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-	rawdb.WriteReverseDiffHead(batch, dl.rid-1)
-
+	if !anonymous {
+		rawdb.DeleteReverseDiff(batch, dl.rid)
+		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+		rawdb.WriteReverseDiffHead(batch, dl.rid-1)
+	}
 	// Flush all state changes in an atomic batch write
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write reverse diff", "err", err)
 	}
 	// Recreate the disk layer with newly created clean cache
-	ndl := newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.diskdb)
+	var ndl *diskLayer
+	if anonymous {
+		ndl = newShadowyDiskLayer(db.namespace, diff.Parent, dl.rid-1, cleans, dl.diskdb)
+	} else {
+		ndl = newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.diskdb)
+	}
 	db.layers[ndl.root] = ndl
 
 	// Create the bottom most diff layer based on the new disk
@@ -813,6 +858,12 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 // Rollback rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding reverse diffs are existent.
+//
+// If the database is opened in Anonymous mode, then the reverted state
+// won't be pushed into disk directly, instead a shadowy "disk layer"
+// will be created maintaining all changed states on the top of the
+// real disk layer. The shadowy disk layer can be deleted afterward
+// by calling CleanJunks.
 func (db *Database) Rollback(target common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -959,6 +1010,17 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 // Config returns the configures used by db.
 func (db *Database) Config() *Config {
 	return db.config
+}
+
+// CleanJunks cleans out the junks accumulated in the disk in Anonymous mode.
+func (db *Database) CleanJunks() {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.namespace == nil || len(db.namespace) != 8 {
+		return
+	}
+	rawdb.DeleteShadowTrieNodes(db.diskdb, db.namespace)
 }
 
 // convertEmpty converts the given hash to predefined emptyHash if it's empty.

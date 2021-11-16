@@ -321,6 +321,9 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 				log.Info("Chain tracing finished", "start", start.NumberU64(), "end", end.NumberU64(), "transactions", traced, "elapsed", time.Since(begin))
 			}
 			close(results)
+
+			// Release the junks(shadowy states) created during the tracing.
+			statedb.Database().TrieDB().CleanJunks()
 		}()
 		// Feed all the blocks both into the tracer, as well as fast process concurrently
 		for number = start.NumberU64(); number < end.NumberU64(); number++ {
@@ -474,6 +477,8 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 	if err != nil {
 		return nil, err
 	}
+	defer statedb.Database().TrieDB().CleanJunks()
+
 	var (
 		roots              []common.Hash
 		signer             = types.MakeSigner(api.backend.ChainConfig(), block.Number())
@@ -531,6 +536,8 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	if err != nil {
 		return nil, err
 	}
+	defer statedb.Database().TrieDB().CleanJunks()
+
 	// Execute all the transaction contained within the block concurrently
 	var (
 		signer  = types.MakeSigner(api.backend.ChainConfig(), block.Number())
@@ -616,6 +623,8 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 	if err != nil {
 		return nil, err
 	}
+	defer statedb.Database().TrieDB().CleanJunks()
+
 	// Retrieve the tracing configurations, or use default values
 	var (
 		logConfig vm.LogConfig
@@ -739,6 +748,8 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 	if err != nil {
 		return nil, err
 	}
+	defer statedb.Database().TrieDB().CleanJunks()
+
 	txctx := &Context{
 		BlockHash: blockHash,
 		TxIndex:   int(index),
@@ -771,6 +782,8 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if err != nil {
 		return nil, err
 	}
+	defer statedb.Database().TrieDB().CleanJunks()
+
 	// Apply the customized state rules if required.
 	if config != nil {
 		if err := config.StateOverrides.Apply(statedb); err != nil {

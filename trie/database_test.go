@@ -87,13 +87,16 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 			keys = append(keys, string(storage))
 			vals = append(vals, common.CopyBytes(val.rlp()))
 		}
-		hash := randomHash()
-		db.Update(hash, parentHash, nodes)
-		db.Cap(hash, 128)
+		// Add the root node
+		root := randomNode()
+		nodes[string(EncodeStorageKey(common.Hash{}, nil))] = root
+
+		db.Update(root.hash, parentHash, nodes)
+		db.Cap(root.hash, 128)
 
 		numbers = append(numbers, parentNumber+1)
-		roots = append(roots, hash)
-		return hash, keys, vals
+		roots = append(roots, root.hash)
+		return root.hash, keys, vals
 	}
 	// Construct a database with enough reverse diffs stored
 	var (
@@ -200,5 +203,59 @@ func TestDatabaseBatchRollback(t *testing.T) {
 				t.Error("Unexpected state")
 			}
 		}
+	}
+}
+
+func TestAnonymousDatabase(t *testing.T) {
+	var (
+		db, _, roots, testKeys, testVals = fillDB()
+		dl                               = db.disklayer()
+		diskIndex                        int
+	)
+	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
+		if roots[diskIndex] == dl.root {
+			break
+		}
+	}
+	// Reopen the database in Anonymous mode, ensure state rollback still works
+	adb := NewDatabase(db.diskdb, &Config{Anonymous: true})
+	for i := diskIndex; i > 0; i-- {
+		if err := adb.Rollback(roots[i-1]); err != nil {
+			t.Error("Failed to revert db status", "index", i, "err", err)
+		}
+		dl := adb.disklayer()
+		if dl.Root() != roots[i-1] {
+			t.Error("Unexpected disk layer root")
+		}
+		keys, vals := testKeys[i], testVals[i]
+		for j := 0; j < len(keys); j++ {
+			layer := adb.Snapshot(roots[i])
+			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
+			if err != nil {
+				t.Error("Failed to retrieve state", "err", err)
+			}
+			if !bytes.Equal(blob, vals[j]) {
+				t.Fatal("Unexpected state", "key", []byte(keys[j]), "want", vals[j], "got", blob)
+			}
+		}
+	}
+	// Iterate the main db, ensure the state is not modified at all.
+	mainLayer := db.Snapshot(roots[diskIndex])
+	keys, vals := testKeys[diskIndex], testVals[diskIndex]
+	for j := 0; j < len(keys); j++ {
+		blob, err := mainLayer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
+		if err != nil {
+			t.Error("Failed to retrieve state", "err", err)
+		}
+		if !bytes.Equal(blob, vals[j]) {
+			t.Fatal("Unexpected state", "key", []byte(keys[j]), "want", vals[j], "got", blob)
+		}
+	}
+	// Clean out junks for shadow rollback, ensure nothing is leaked out
+	adb.CleanJunks()
+	iter := adb.diskdb.NewIterator(append(rawdb.ShadowTrieNodePrefix, adb.namespace...), nil)
+	defer iter.Release()
+	for iter.Next() {
+		t.Fatal("Unexpected state")
 	}
 }

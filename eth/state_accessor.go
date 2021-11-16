@@ -19,6 +19,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -69,11 +70,15 @@ func (eth *Ethereum) stateAtBlock(block *types.Block, parent *state.StateDB) (*s
 	}
 	// Create an ephemeral shadow trie.Database for isolating the live one. Otherwise,
 	// the live disk state will be destroyed because the state rollback.
-	database := state.NewDatabaseWithConfig(eth.chainDb, &trie.Config{Cache: 16, Shadow: true})
+	database := state.NewDatabaseWithConfig(eth.chainDb, &trie.Config{Cache: 16, Anonymous: true})
 	if err := database.TrieDB().Rollback(block.Root()); err != nil {
 		return nil, err
 	}
-	return state.New(block.Root(), database, nil)
+	statedb, err = state.New(block.Root(), database, nil)
+	if err != nil {
+		return nil, err
+	}
+	return statedb, nil
 }
 
 // stateAtTransaction returns the execution environment of a certain transaction.
