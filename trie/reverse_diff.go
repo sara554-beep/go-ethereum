@@ -56,11 +56,10 @@ func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
 	return &diff, nil
 }
 
-// storeAndPruneReverseDiff extracts the reverse state diff by the passed
-// bottom-most diff layer and its parent, stores the diff set into the disk
-// and prunes the over-old diffs as well.
+// storeReverseDiff extracts the reverse state diff by the passed bottom-most
+// diff layer and its parent.
 // This function will panic if it's called for non-bottom-most diff layer.
-func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
+func storeReverseDiff(dl *diffLayer) error {
 	var (
 		startTime = time.Now()
 		base      = dl.parent.(*diskLayer)
@@ -91,43 +90,44 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 	batch.Reset()
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
-	// Prune the reverse diffs if they are too old
-	if dl.rid < limit {
-		return nil
-	}
-	var (
-		start  uint64
-		stales int
-		end    = dl.rid - limit
-	)
-	for {
-		ids := rawdb.ReadReverseDiffsBelow(base.diskdb, start, end, 10240)
-		if len(ids) == 0 {
-			break
-		}
-		for i := 0; i < len(ids); i++ {
-			// TODO resolve the first field(parent root) from the RLP stream
-			diff, err := loadReverseDiff(base.diskdb, ids[i])
-			if err != nil {
-				break
-			}
-			stales += 1
-			rawdb.DeleteReverseDiff(batch, ids[i])
-			rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-		}
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				return err
-			}
-			batch.Reset()
-		}
-		start = ids[len(ids)-1] + 1
-	}
-	if err := batch.Write(); err != nil {
-		return err
-	}
 	duration := time.Since(startTime)
 	triedbReverseDiffTimeTimer.Update(duration)
-	log.Info("Stored the reverse diff", "id", dl.rid, "stales", stales, "elapsed", common.PrettyDuration(duration))
+	log.Debug("Stored the reverse diff", "id", dl.rid, "elapsed", common.PrettyDuration(duration))
 	return nil
+
+	//// Prune the reverse diffs if they are too old
+	//if dl.rid < limit {
+	//	return nil
+	//}
+	//var (
+	//	start  uint64
+	//	stales int
+	//	end    = dl.rid - limit
+	//)
+	//for {
+	//	ids := rawdb.ReadReverseDiffsBelow(base.diskdb, start, end, 10240)
+	//	if len(ids) == 0 {
+	//		break
+	//	}
+	//	for i := 0; i < len(ids); i++ {
+	//		// TODO resolve the first field(parent root) from the RLP stream
+	//		diff, err := loadReverseDiff(base.diskdb, ids[i])
+	//		if err != nil {
+	//			break
+	//		}
+	//		stales += 1
+	//		rawdb.DeleteReverseDiff(batch, ids[i])
+	//		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+	//	}
+	//	if batch.ValueSize() > ethdb.IdealBatchSize {
+	//		if err := batch.Write(); err != nil {
+	//			return err
+	//		}
+	//		batch.Reset()
+	//	}
+	//	start = ids[len(ids)-1] + 1
+	//}
+	//if err := batch.Write(); err != nil {
+	//	return err
+	//}
 }

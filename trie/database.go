@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -614,7 +613,7 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
 	// states, the stored reverse diff won't be used at all.
-	if err := storeAndPruneReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
+	if err := storeReverseDiff(bottom); err != nil {
 		log.Error("Failed to store reverse diff", "err", err)
 	}
 	base.MarkStale()
