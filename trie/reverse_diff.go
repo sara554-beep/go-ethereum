@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -60,9 +61,11 @@ func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
 // and prunes the over-old diffs as well.
 // This function will panic if it's called for non-bottom-most diff layer.
 func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
-	defer func(start time.Time) {
-		triedbReverseDiffTimeTimer.Update(time.Since(start))
-	}(time.Now())
+	defer func(start time.Time, id uint64) {
+		duration := time.Since(start)
+		triedbReverseDiffTimeTimer.Update(duration)
+		log.Info("Stored the reverse diff", "id", id, "elapsed", common.PrettyDuration(duration))
+	}(time.Now(), dl.rid)
 
 	var (
 		base   = dl.parent.(*diskLayer)
