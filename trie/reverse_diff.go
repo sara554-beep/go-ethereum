@@ -74,8 +74,6 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 			Val: pre,
 		})
 	}
-	stateRead := time.Since(startTime)
-
 	diff := &reverseDiff{
 		Parent: base.root,
 		Root:   dl.root,
@@ -128,6 +126,6 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 	}
 	duration := time.Since(startTime)
 	triedbReverseDiffTimeTimer.Update(duration)
-	log.Info("Stored the reverse diff", "id", dl.rid, "stateRead", common.PrettyDuration(stateRead), "elapsed", common.PrettyDuration(duration))
+	log.Info("Stored the reverse diff", "id", dl.rid, "elapsed", common.PrettyDuration(duration))
 	return nil
 }

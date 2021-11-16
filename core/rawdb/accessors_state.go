@@ -196,7 +196,7 @@ func ReadReverseDiffsBelow(db ethdb.Iteratee, from, to uint64, limit int) []uint
 		if bytes.Compare(it.Key(), end) >= 0 {
 			break
 		}
-		if key := it.Key(); len(key) == len(ReverseDiffPrefix) {
+		if key := it.Key(); len(key) == len(ReverseDiffPrefix)+8 {
 			ids = append(ids, binary.BigEndian.Uint64(key[len(ReverseDiffPrefix):]))
 			if len(ids) >= limit {
 				break
