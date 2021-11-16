@@ -96,8 +96,9 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 		return nil
 	}
 	var (
-		start uint64
-		end   = dl.rid - limit
+		start  uint64
+		stales int
+		end    = dl.rid - limit
 	)
 	for {
 		ids := rawdb.ReadReverseDiffsBelow(base.diskdb, start, end, 10240)
@@ -110,6 +111,7 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 			if err != nil {
 				break
 			}
+			stales += 1
 			rawdb.DeleteReverseDiff(batch, ids[i])
 			rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
 		}
@@ -126,6 +128,6 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 	}
 	duration := time.Since(startTime)
 	triedbReverseDiffTimeTimer.Update(duration)
-	log.Info("Stored the reverse diff", "id", dl.rid, "elapsed", common.PrettyDuration(duration))
+	log.Info("Stored the reverse diff", "id", dl.rid, "stales", stales, "elapsed", common.PrettyDuration(duration))
 	return nil
 }
