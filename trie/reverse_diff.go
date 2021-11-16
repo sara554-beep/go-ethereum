@@ -61,16 +61,11 @@ func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
 // and prunes the over-old diffs as well.
 // This function will panic if it's called for non-bottom-most diff layer.
 func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
-	defer func(start time.Time, id uint64) {
-		duration := time.Since(start)
-		triedbReverseDiffTimeTimer.Update(duration)
-		log.Info("Stored the reverse diff", "id", id, "elapsed", common.PrettyDuration(duration))
-	}(time.Now(), dl.rid)
-
 	var (
-		base   = dl.parent.(*diskLayer)
-		states []stateDiff
-		batch  = base.diskdb.NewBatch()
+		startTime = time.Now()
+		base      = dl.parent.(*diskLayer)
+		states    []stateDiff
+		batch     = base.diskdb.NewBatch()
 	)
 	for key := range dl.nodes {
 		pre, _ := rawdb.ReadTrieNode(base.diskdb, []byte(key))
@@ -79,6 +74,8 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 			Val: pre,
 		})
 	}
+	stateRead := time.Since(startTime)
+
 	diff := &reverseDiff{
 		Parent: base.root,
 		Root:   dl.root,
@@ -129,5 +126,8 @@ func storeAndPruneReverseDiff(dl *diffLayer, limit uint64) error {
 	if err := batch.Write(); err != nil {
 		return err
 	}
+	duration := time.Since(startTime)
+	triedbReverseDiffTimeTimer.Update(duration)
+	log.Info("Stored the reverse diff", "id", dl.rid, "stateRead", common.PrettyDuration(stateRead), "elapsed", common.PrettyDuration(duration))
 	return nil
 }

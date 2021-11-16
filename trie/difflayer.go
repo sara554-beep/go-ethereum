@@ -147,8 +147,8 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*cachedNode) *diffLayer {
-	return newDiffLayer(dl, blockRoot, blockNumber, nodes)
+func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*cachedNode) *diffLayer {
+	return newDiffLayer(dl, blockRoot, id, nodes)
 }
 
 // persist persists the diff layer and all its parent diff layers to disk.
