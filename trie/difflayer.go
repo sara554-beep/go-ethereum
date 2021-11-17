@@ -153,14 +153,14 @@ func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*
 
 // persist persists the diff layer and all its parent diff layers to disk.
 // The order should be strictly from bottom to top.
-func (dl *diffLayer) persist(config *Config) snapshot {
+func (dl *diffLayer) persist(config *Config, newDiff chan uint64) snapshot {
 	parent, ok := dl.parent.(*diffLayer)
 	if ok {
 		// Hold the lock to prevent any read operations until the new
 		// parent is linked correctly.
 		dl.lock.Lock()
-		dl.parent = parent.persist(config)
+		dl.parent = parent.persist(config, newDiff)
 		dl.lock.Unlock()
 	}
-	return diffToDisk(dl, config)
+	return diffToDisk(dl, config, newDiff)
 }

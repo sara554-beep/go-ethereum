@@ -424,18 +424,25 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 
 	// If periodic cache journal is required, spin it up.
+	triedb := bc.stateCache.TrieDB()
 	if bc.cacheConfig.TrieCleanRejournal > 0 {
 		if bc.cacheConfig.TrieCleanRejournal < time.Minute {
 			log.Warn("Sanitizing invalid trie cache journal time", "provided", bc.cacheConfig.TrieCleanRejournal, "updated", time.Minute)
 			bc.cacheConfig.TrieCleanRejournal = time.Minute
 		}
-		triedb := bc.stateCache.TrieDB()
 		bc.wg.Add(1)
 		go func() {
 			defer bc.wg.Done()
 			triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
 		}()
 	}
+
+	// Spin up the reverse diff pruners by default
+	bc.wg.Add(1)
+	go func() {
+		defer bc.wg.Done()
+		triedb.PruneReverseDiffs(params.FullImmutabilityThreshold, bc.quit)
+	}()
 	return bc, nil
 }
 

@@ -341,6 +341,9 @@ type Database struct {
 	layers        map[common.Hash]snapshot // Collection of all known layers
 	preimages     map[common.Hash][]byte   // Preimages of nodes from the secure trie
 	preimagesSize common.StorageSize       // Storage size of the preimages cache
+
+	// Channels
+	newDiff chan uint64 // Channel used to send signal if new reverse diff is stored
 }
 
 // NewDatabase attempts to load an already existing snapshot from a persistent
@@ -366,6 +369,7 @@ func NewDatabase(diskdb ethdb.KeyValueStore, config *Config) *Database {
 		diskdb:   diskdb,
 		cleans:   cleans,
 		layers:   make(map[common.Hash]snapshot),
+		newDiff:  make(chan uint64),
 	}
 	head := loadSnapshot(diskdb, cleans, config)
 	for head != nil {
@@ -521,7 +525,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		base := diff.persist(db.config).(*diskLayer)
+		base := diff.persist(db.config, db.newDiff).(*diskLayer)
 
 		// Replace the entire snapshot tree with the flat base
 		db.layers = map[common.Hash]snapshot{base.root: base}
@@ -588,7 +592,7 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 		diff.lock.Lock()
 		defer diff.lock.Unlock()
 
-		base := parent.persist(db.config)
+		base := parent.persist(db.config, db.newDiff)
 		db.layers[base.Root()] = base
 		diff.parent = base
 		return
@@ -602,7 +606,7 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 // it. The method will panic if called onto a non-bottom-most diff layer. The disk
 // layer persistence should be operated in an atomic way. All updates should be
 // discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
+func diffToDisk(bottom *diffLayer, config *Config, newDiff chan uint64) *diskLayer {
 	var (
 		totalSize int64
 		base      = bottom.parent.(*diskLayer)
@@ -656,6 +660,11 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	}
 	log.Debug("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
 
+	// Send signal that new reverse diff has been stored.
+	select {
+	case newDiff <- bottom.rid:
+	default:
+	}
 	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
 }
 
@@ -1001,6 +1010,82 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 		case <-ticker.C:
 			db.saveCache(dir, 1)
 		case <-stopCh:
+			return
+		}
+	}
+}
+
+// pruneReverseDiffs prunes the stale revere diffs which fall in the specified range.
+func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct{}) {
+	defer close(done)
+
+	if rid < limit {
+		return
+	}
+	var (
+		start uint64
+		end   = rid - limit
+		batch = db.diskdb.NewBatch()
+
+		// Statistics
+		stales    int
+		logged    = time.Now()
+		startTime = time.Now()
+	)
+	for {
+		ids := rawdb.ReadReverseDiffsBelow(db.diskdb, start, end, 10240)
+		if len(ids) == 0 {
+			break
+		}
+		for i := 0; i < len(ids); i++ {
+			// TODO resolve the first field(parent root) from the RLP stream
+			diff, err := loadReverseDiff(db.diskdb, ids[i])
+			if err != nil {
+				break
+			}
+			stales += 1
+			rawdb.DeleteReverseDiff(batch, ids[i])
+			rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+
+			if time.Since(logged) > 8*time.Second {
+				logged = time.Now()
+				log.Info("Pruning stale reverse diffs", "count", stales, "current", ids[i], "elapsed", common.PrettyDuration(time.Since(startTime)))
+			}
+		}
+		if batch.ValueSize() > ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				log.Error("Failed to flush batch in reverse diff pruner", "err", err)
+				return
+			}
+			batch.Reset()
+		}
+		start = ids[len(ids)-1] + 1
+	}
+	if err := batch.Write(); err != nil {
+		log.Error("Failed to flush batch in reverse diff pruner", "err", err)
+		return
+	}
+	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "elapsed", common.PrettyDuration(time.Since(startTime)))
+}
+
+// PruneReverseDiffs deletes the stale reverse diffs from the database.
+func (db *Database) PruneReverseDiffs(limit uint64, stopCh <-chan struct{}) {
+	var done chan struct{} // Non-nil if background pruning routine is active.
+
+	for {
+		select {
+		case rid := <-db.newDiff:
+			if done == nil {
+				done = make(chan struct{})
+				go db.pruneReverseDiffs(rid, limit, done)
+			}
+		case <-done:
+			done = nil
+		case <-stopCh:
+			if done != nil {
+				log.Info("Waiting background reverse diff pruner to exit")
+				<-done
+			}
 			return
 		}
 	}

@@ -95,39 +95,4 @@ func storeReverseDiff(dl *diffLayer) error {
 	log.Debug("Stored the reverse diff", "id", dl.rid, "elapsed", common.PrettyDuration(duration))
 	return nil
 
-	//// Prune the reverse diffs if they are too old
-	//if dl.rid < limit {
-	//	return nil
-	//}
-	//var (
-	//	start  uint64
-	//	stales int
-	//	end    = dl.rid - limit
-	//)
-	//for {
-	//	ids := rawdb.ReadReverseDiffsBelow(base.diskdb, start, end, 10240)
-	//	if len(ids) == 0 {
-	//		break
-	//	}
-	//	for i := 0; i < len(ids); i++ {
-	//		// TODO resolve the first field(parent root) from the RLP stream
-	//		diff, err := loadReverseDiff(base.diskdb, ids[i])
-	//		if err != nil {
-	//			break
-	//		}
-	//		stales += 1
-	//		rawdb.DeleteReverseDiff(batch, ids[i])
-	//		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-	//	}
-	//	if batch.ValueSize() > ethdb.IdealBatchSize {
-	//		if err := batch.Write(); err != nil {
-	//			return err
-	//		}
-	//		batch.Reset()
-	//	}
-	//	start = ids[len(ids)-1] + 1
-	//}
-	//if err := batch.Write(); err != nil {
-	//	return err
-	//}
 }
