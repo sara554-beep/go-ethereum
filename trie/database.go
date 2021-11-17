@@ -1038,14 +1038,13 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 			break
 		}
 		for i := 0; i < len(ids); i++ {
-			// TODO resolve the first field(parent root) from the RLP stream
-			diff, err := loadReverseDiff(db.diskdb, ids[i])
+			parent, err := loadReverseDiffParent(db.diskdb, ids[i])
 			if err != nil {
 				break
 			}
 			stales += 1
 			rawdb.DeleteReverseDiff(batch, ids[i])
-			rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+			rawdb.DeleteReverseDiffLookup(batch, parent)
 
 			if time.Since(logged) > 8*time.Second {
 				logged = time.Now()

@@ -134,8 +134,6 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 		diff:  newTracker(),
 		dirty: newNodeSet(),
 	}
-	// Retrieve the node reader via given state handler, or
-	// fallback to raw disk reader if it's not existent.
 	if stateRoot != (common.Hash{}) && stateRoot != emptyState {
 		snap := db.Snapshot(stateRoot)
 		if snap == nil {

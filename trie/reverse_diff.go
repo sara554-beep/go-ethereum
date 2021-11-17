@@ -56,6 +56,31 @@ func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
 	return &diff, nil
 }
 
+// loadReverseDiffParent reads the specified reverse diff blob from the disk
+// and resolves the parent field from it. The trick is applied here, instead
+// of decoding the entire RLP-encoded blob which is super expensive, we only
+// extract the first field from the binary blob.
+func loadReverseDiffParent(db ethdb.KeyValueReader, id uint64) (common.Hash, error) {
+	blob := rawdb.ReadReverseDiff(db, id)
+	if len(blob) == 0 {
+		return common.Hash{}, errors.New("reverse diff not found")
+	}
+	// The parentHash is the first RLP element, thus preceded only by the
+	// envelope RLP size.
+	listContent, _, err := rlp.SplitList(blob)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	parentHash, _, err := rlp.SplitString(listContent)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if len(parentHash) != common.HashLength {
+		return common.Hash{}, errors.New("invalid parent hash length")
+	}
+	return common.BytesToHash(parentHash), nil
+}
+
 // storeReverseDiff extracts the reverse state diff by the passed bottom-most
 // diff layer and its parent.
 // This function will panic if it's called for non-bottom-most diff layer.
