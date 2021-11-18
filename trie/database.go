@@ -342,8 +342,10 @@ type Database struct {
 	preimages     map[common.Hash][]byte   // Preimages of nodes from the secure trie
 	preimagesSize common.StorageSize       // Storage size of the preimages cache
 
-	// Channels
-	newDiff chan uint64 // Channel used to send signal if new reverse diff is stored
+	// new diff is the channel used to send signal if new reverse diff is stored.
+	// Note there is no guarantee the channel will always be checked, don't send
+	// signal in blocking way.
+	newDiff chan uint64
 }
 
 // NewDatabase attempts to load an already existing snapshot from a persistent
@@ -537,7 +539,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	children := make(map[common.Hash][]common.Hash)
 	for root, snap := range db.layers {
 		if diff, ok := snap.(*diffLayer); ok {
-			parent := diff.parent.Root()
+			parent := diff.Parent().Root()
 			children[parent] = append(children[parent], root)
 		}
 	}
@@ -572,7 +574,7 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 	// Dive until we run out of layers or reach the persistent database
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
-		if parent, ok := diff.parent.(*diffLayer); ok {
+		if parent, ok := diff.Parent().(*diffLayer); ok {
 			diff = parent
 		} else {
 			// Diff stack too shallow, return without modifications
@@ -581,91 +583,21 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 	}
 	// We're out of layers, flatten anything below, stopping if it's the disk or if
 	// the memory limit is not yet exceeded.
-	switch parent := diff.parent.(type) {
+	switch parent := diff.Parent().(type) {
 	case *diskLayer:
 		return
 
 	case *diffLayer:
-		// Hold the write lock until the flattened parent is linked correctly.
-		// Otherwise, data race can happen which may lead the read operations to
-		// a stale parent layer.
-		diff.lock.Lock()
-		defer diff.lock.Unlock()
-
 		base := parent.persist(db.config, db.newDiff)
 		db.layers[base.Root()] = base
+		diff.lock.Lock()
 		diff.parent = base
+		diff.lock.Unlock()
 		return
 
 	default:
 		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
 	}
-}
-
-// diffToDisk merges a bottom-most diff into the persistent disk layer underneath
-// it. The method will panic if called onto a non-bottom-most diff layer. The disk
-// layer persistence should be operated in an atomic way. All updates should be
-// discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, config *Config, newDiff chan uint64) *diskLayer {
-	var (
-		totalSize int64
-		base      = bottom.parent.(*diskLayer)
-		start     = time.Now()
-		nodes     = len(bottom.nodes)
-		batch     = base.diskdb.NewBatch()
-	)
-	// Construct and store the reverse diff firstly. If crash happens
-	// after storing the reverse diff but without flushing the corresponding
-	// states, the stored reverse diff won't be used at all.
-	if err := storeReverseDiff(bottom); err != nil {
-		log.Error("Failed to store reverse diff", "err", err)
-	}
-	base.MarkStale()
-
-	defer func(start time.Time) {
-		triedbCommitTimeTimer.Update(time.Since(start))
-	}(time.Now())
-
-	for storage, n := range bottom.nodes {
-		var (
-			blob []byte
-			ikey = EncodeInternalKey([]byte(storage), n.hash)
-		)
-		if n.node == nil {
-			rawdb.DeleteTrieNode(batch, []byte(storage))
-			if base.cache != nil {
-				base.cache.Set(ikey, nil)
-			}
-		} else {
-			blob = n.rlp()
-			rawdb.WriteTrieNode(batch, []byte(storage), blob)
-			if config != nil && config.WriteLegacy {
-				rawdb.WriteArchiveTrieNode(batch, n.hash, blob)
-			}
-			if base.cache != nil {
-				base.cache.Set(ikey, blob)
-			}
-		}
-		totalSize += int64(len(blob) + len(storage))
-	}
-	rawdb.WriteReverseDiffHead(batch, bottom.rid)
-
-	triedbCommitSizeMeter.Mark(totalSize)
-	triedbCommitNodesMeter.Mark(int64(len(bottom.nodes)))
-
-	// Flush all the updates in the single db operation. Ensure the
-	// disk layer transition is atomic.
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
-	}
-	log.Debug("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
-
-	// Send signal that new reverse diff has been stored.
-	select {
-	case newDiff <- bottom.rid:
-	default:
-	}
-	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
@@ -841,7 +773,7 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	// Link all existent layers with the new parent.
 	for _, snap := range db.layers {
 		if diff, ok := snap.(*diffLayer); ok {
-			if parent := diff.parent.Root(); parent == dl.root {
+			if parent := diff.Parent().Root(); parent == dl.root {
 				diff.lock.Lock()
 				diff.parent = bottom
 				diff.lock.Unlock()

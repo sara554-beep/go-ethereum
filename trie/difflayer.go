@@ -19,8 +19,10 @@ package trie
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -30,24 +32,25 @@ import (
 // The goal of a diff layer is to act as a journal, tracking recent modifications
 // made to the state, that have not yet graduated into a semi-immutable state.
 type diffLayer struct {
-	parent snapshot // Parent snapshot modified by this one, never nil
-	memory uint64   // Approximate guess as to how much memory we use
-
+	// Immutables
 	root  common.Hash            // Root hash to which this snapshot diff belongs to
 	rid   uint64                 // Corresponding reverse diff id
-	stale uint32                 // Signals that the layer became stale (state progressed)
 	nodes map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
-	lock  sync.RWMutex           // Lock used to protect parent and stale fields.
+
+	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
+	memory uint64       // Approximate guess as to how much memory we use
+	stale  uint32       // Signals that the layer became stale (state progressed)
+	lock   sync.RWMutex // Lock used to protect parent and stale fields.
 }
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
 func newDiffLayer(parent snapshot, root common.Hash, rid uint64, nodes map[string]*cachedNode) *diffLayer {
 	dl := &diffLayer{
-		parent: parent,
 		root:   root,
 		rid:    rid,
 		nodes:  nodes,
+		parent: parent,
 	}
 	for key, node := range nodes {
 		dl.memory += uint64(len(key) + int(node.size) + cachedNodeSize)
@@ -64,8 +67,16 @@ func (dl *diffLayer) Root() common.Hash {
 	return dl.root
 }
 
+// ID returns the id of associated reverse diff.
+func (dl *diffLayer) ID() uint64 {
+	return dl.rid
+}
+
 // Parent returns the subsequent layer of a diff layer.
 func (dl *diffLayer) Parent() snapshot {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
 	return dl.parent
 }
 
@@ -75,11 +86,6 @@ func (dl *diffLayer) Stale() bool {
 	return atomic.LoadUint32(&dl.stale) != 0
 }
 
-// ID returns the id of associated reverse diff.
-func (dl *diffLayer) ID() uint64 {
-	return dl.rid
-}
-
 // Node retrieves the trie node associated with a particular key.
 func (dl *diffLayer) Node(storage []byte, hash common.Hash) (node, error) {
 	return dl.node(storage, hash, 0)
@@ -87,6 +93,11 @@ func (dl *diffLayer) Node(storage []byte, hash common.Hash) (node, error) {
 
 // node is the inner version of Node which counts the accessed layer depth.
 func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, error) {
+	// Hold the lock, ensure the parent won't be changed during the
+	// state accessing.
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
 	if dl.Stale() {
@@ -118,6 +129,8 @@ func (dl *diffLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 
 // nodeBlob is the inner version of NodeBlob which counts the accessed layer depth.
 func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]byte, error) {
+	// Hold the lock, ensure the parent won't be changed during the
+	// state accessing.
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -154,7 +167,7 @@ func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*
 // persist persists the diff layer and all its parent diff layers to disk.
 // The order should be strictly from bottom to top.
 func (dl *diffLayer) persist(config *Config, newDiff chan uint64) snapshot {
-	parent, ok := dl.parent.(*diffLayer)
+	parent, ok := dl.Parent().(*diffLayer)
 	if ok {
 		// Hold the lock to prevent any read operations until the new
 		// parent is linked correctly.
@@ -163,4 +176,73 @@ func (dl *diffLayer) persist(config *Config, newDiff chan uint64) snapshot {
 		dl.lock.Unlock()
 	}
 	return diffToDisk(dl, config, newDiff)
+}
+
+// diffToDisk merges a bottom-most diff into the persistent disk layer underneath
+// it. The method will panic if called onto a non-bottom-most diff layer. The disk
+// layer persistence should be operated in an atomic way. All updates should be
+// discarded if the whole transition if not finished.
+func diffToDisk(bottom *diffLayer, config *Config, newDiff chan uint64) *diskLayer {
+	var (
+		totalSize int64
+		base      = bottom.Parent().(*diskLayer)
+		start     = time.Now()
+		nodes     = len(bottom.nodes)
+		batch     = base.diskdb.NewBatch()
+	)
+	// Construct and store the reverse diff firstly. If crash happens
+	// after storing the reverse diff but without flushing the corresponding
+	// states, the stored reverse diff won't be used at all.
+	if err := storeReverseDiff(bottom); err != nil {
+		log.Error("Failed to store reverse diff", "err", err)
+	}
+	// Mark the base layer(disk layer) as stale since we are pushing
+	// new nodes into the disk. A new disk layer needed to be created
+	// and be linked to all existent bottom diff layers later.
+	base.MarkStale()
+
+	defer func(start time.Time) {
+		triedbCommitTimeTimer.Update(time.Since(start))
+	}(time.Now())
+
+	for storage, n := range bottom.nodes {
+		var (
+			blob []byte
+			ikey = EncodeInternalKey([]byte(storage), n.hash)
+		)
+		if n.node == nil {
+			rawdb.DeleteTrieNode(batch, []byte(storage))
+			if base.cache != nil {
+				base.cache.Set(ikey, nil)
+			}
+		} else {
+			blob = n.rlp()
+			rawdb.WriteTrieNode(batch, []byte(storage), blob)
+			if config != nil && config.WriteLegacy {
+				rawdb.WriteArchiveTrieNode(batch, n.hash, blob)
+			}
+			if base.cache != nil {
+				base.cache.Set(ikey, blob)
+			}
+		}
+		totalSize += int64(len(blob) + len(storage))
+	}
+	rawdb.WriteReverseDiffHead(batch, bottom.rid)
+
+	triedbCommitSizeMeter.Mark(totalSize)
+	triedbCommitNodesMeter.Mark(int64(len(bottom.nodes)))
+
+	// Flush all the updates in the single db operation. Ensure the
+	// disk layer transition is atomic.
+	if err := batch.Write(); err != nil {
+		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
+	}
+	log.Debug("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
+
+	// Send signal that new reverse diff has been stored.
+	select {
+	case newDiff <- bottom.rid:
+	default:
+	}
+	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
 }

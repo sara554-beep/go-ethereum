@@ -27,11 +27,13 @@ import (
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
 type diskLayer struct {
-	prefix []byte              // Prefix of the state storage key, only for anonymous state
+	// Immutables
+	prefix []byte      // Prefix of the state storage key, only for anonymous state
+	root   common.Hash // Root hash of the base snapshot
+	rid    uint64      // Corresponding reverse diff id
+
 	diskdb ethdb.KeyValueStore // Key-value store containing the base snapshot
 	cache  *fastcache.Cache    // Cache to avoid hitting the disk for direct access
-	root   common.Hash         // Root hash of the base snapshot
-	rid    uint64              // Corresponding reverse diff id
 	stale  bool                // Signals that the layer became stale (state progressed)
 	lock   sync.RWMutex        // Lock used to prevent stale flag
 }

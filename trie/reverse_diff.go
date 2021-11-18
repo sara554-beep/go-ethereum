@@ -103,7 +103,7 @@ func loadReverseDiffParent(db ethdb.KeyValueReader, id uint64) (common.Hash, err
 func storeReverseDiff(dl *diffLayer) error {
 	var (
 		startTime = time.Now()
-		base      = dl.parent.(*diskLayer)
+		base      = dl.Parent().(*diskLayer)
 		states    []stateDiff
 		batch     = base.diskdb.NewBatch()
 	)
