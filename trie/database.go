@@ -1016,10 +1016,9 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 }
 
 // pruneReverseDiffs prunes the stale revere diffs which fall in the specified range.
-func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct{}) {
-	defer close(done)
+func (db *Database) pruneReverseDiffs(rid uint64, limit uint64) (uint64, uint64, bool) {
 	if rid < limit {
-		return
+		return 0, 0, false
 	}
 	var (
 		start uint64
@@ -1057,7 +1056,7 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 		if batch.ValueSize() > ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				log.Error("Failed to flush batch in reverse diff pruner", "err", err)
-				return
+				return 0, 0, false
 			}
 			batch.Reset()
 		}
@@ -1065,31 +1064,39 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 	}
 	if err := batch.Write(); err != nil {
 		log.Error("Failed to flush batch in reverse diff pruner", "err", err)
-		return
+		return 0, 0, false
 	}
-	cstart := time.Now()
-	db.diskdb.Compact(rawdb.ReverseDiffKey(first), rawdb.ReverseDiffKey(end))
-	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "compact", common.PrettyDuration(time.Since(cstart)), "elapsed", common.PrettyDuration(time.Since(startTime)))
+	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "elapsed", common.PrettyDuration(time.Since(startTime)))
+	return first, end, true
 }
 
 // PruneReverseDiffs deletes the stale reverse diffs from the database.
 func (db *Database) PruneReverseDiffs(limit uint64, stopCh <-chan struct{}) {
-	var done chan struct{} // Non-nil if background pruning routine is active.
-
+	var (
+		first uint64
+		last  uint64
+	)
 	for {
 		select {
 		case rid := <-db.newDiff:
-			if done == nil {
-				done = make(chan struct{})
-				go db.pruneReverseDiffs(rid, limit, done)
+			head, tail, pruned := db.pruneReverseDiffs(rid, limit)
+			if !pruned {
+				continue
 			}
-		case <-done:
-			done = nil
+			if first == 0 {
+				first = head
+			}
+			last = tail
+			if last-first < 100 {
+				continue
+			}
+			start := time.Now()
+			db.diskdb.Compact(rawdb.ReverseDiffKey(first), rawdb.ReverseDiffKey(last))
+
+			first, last = 0, 0
+			log.Info("Range compacted reverse diff", "elapsed", common.PrettyDuration(time.Since(start)))
+
 		case <-stopCh:
-			if done != nil {
-				log.Info("Waiting background reverse diff pruner to exit")
-				<-done
-			}
 			return
 		}
 	}

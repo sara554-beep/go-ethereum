@@ -78,10 +78,13 @@ func loadReverseDiffParent(db ethdb.KeyValueReader, id uint64) (common.Hash, err
 	if err != nil {
 		return common.Hash{}, err
 	}
-	// Skip the first field: Version
-	_, rest, err := rlp.SplitUint64(listContent)
+	// Handle the first field: Version
+	v, rest, err := rlp.SplitUint64(listContent)
 	if err != nil {
 		return common.Hash{}, err
+	}
+	if v != reverseDiffVersion {
+		return common.Hash{}, fmt.Errorf("%w want %d got %d", errors.New("unexpected reverse diff version"), reverseDiffVersion, v)
 	}
 	// Handle the second field: Parent
 	parentHash, _, err := rlp.SplitString(rest)
