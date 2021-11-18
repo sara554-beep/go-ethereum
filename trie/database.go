@@ -1024,6 +1024,7 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 	}
 	var (
 		start uint64
+		first uint64
 		end   = rid - limit
 		batch = db.diskdb.NewBatch()
 
@@ -1036,6 +1037,9 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 		ids := rawdb.ReadReverseDiffsBelow(db.diskdb, start, end, 10240)
 		if len(ids) == 0 {
 			break
+		}
+		if first == 0 {
+			first = ids[0]
 		}
 		for i := 0; i < len(ids); i++ {
 			parent, err := loadReverseDiffParent(db.diskdb, ids[i])
@@ -1064,7 +1068,9 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 		log.Error("Failed to flush batch in reverse diff pruner", "err", err)
 		return
 	}
-	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "elapsed", common.PrettyDuration(time.Since(startTime)))
+	cstart := time.Now()
+	db.diskdb.Compact(rawdb.ReverseDiffKey(first), rawdb.ReverseDiffKey(end))
+	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "compact", common.PrettyDuration(time.Since(cstart)), "elapsed", common.PrettyDuration(time.Since(startTime)))
 }
 
 // PruneReverseDiffs deletes the stale reverse diffs from the database.

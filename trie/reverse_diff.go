@@ -117,7 +117,7 @@ func storeReverseDiff(dl *diffLayer) error {
 
 	duration := time.Since(startTime)
 	triedbReverseDiffTimeTimer.Update(duration)
-	log.Debug("Stored the reverse diff", "id", dl.rid, "elapsed", common.PrettyDuration(duration))
+	log.Debug("Stored the reverse diff", "id", dl.rid, "size", common.StorageSize(len(blob)), "elapsed", common.PrettyDuration(duration))
 	return nil
 
 }

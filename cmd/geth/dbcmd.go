@@ -301,7 +301,7 @@ func inspect(ctx *cli.Context) error {
 		start  []byte
 	)
 	if ctx.NArg() > 2 {
-		return fmt.Errorf("Max 2 arguments: %v", ctx.Command.ArgsUsage)
+		return fmt.Errorf("max 2 arguments: %v", ctx.Command.ArgsUsage)
 	}
 	if ctx.NArg() >= 1 {
 		if d, err := hexutil.Decode(ctx.Args().Get(0)); err != nil {

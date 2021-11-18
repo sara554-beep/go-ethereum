@@ -170,7 +170,7 @@ func DeleteShadowTrieNodes(db ethdb.KeyValueStore, id []byte) {
 // ReadReverseDiff retrieves the state reverse diff with the given associated
 // block hash and number.
 func ReadReverseDiff(db ethdb.KeyValueReader, id uint64) []byte {
-	data, err := db.Get(reverseDiffKey(id))
+	data, err := db.Get(ReverseDiffKey(id))
 	if err != nil {
 		return nil
 	}
@@ -188,7 +188,7 @@ func ReadReverseDiffsBelow(db ethdb.Iteratee, from, to uint64, limit int) []uint
 	var ids []uint64
 
 	// Construct the key prefix of start point.
-	start, end := reverseDiffKey(from), reverseDiffKey(to)
+	start, end := ReverseDiffKey(from), ReverseDiffKey(to)
 	it := db.NewIterator(nil, start)
 	defer it.Release()
 
@@ -208,14 +208,14 @@ func ReadReverseDiffsBelow(db ethdb.Iteratee, from, to uint64, limit int) []uint
 
 // WriteReverseDiff writes the provided reverse diff to database.
 func WriteReverseDiff(db ethdb.KeyValueWriter, id uint64, blob []byte) {
-	if err := db.Put(reverseDiffKey(id), blob); err != nil {
+	if err := db.Put(ReverseDiffKey(id), blob); err != nil {
 		log.Crit("Failed to store reverse diff", "err", err)
 	}
 }
 
 // DeleteReverseDiff deletes the specified reverse diff from the database.
 func DeleteReverseDiff(db ethdb.KeyValueWriter, id uint64) {
-	if err := db.Delete(reverseDiffKey(id)); err != nil {
+	if err := db.Delete(ReverseDiffKey(id)); err != nil {
 		log.Crit("Failed to delete reverse diff", "err", err)
 	}
 }

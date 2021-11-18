@@ -264,8 +264,8 @@ func shadowTrieNodeKey(id []byte, key []byte) []byte {
 	return append(append(ShadowTrieNodePrefix, id...), key...)
 }
 
-// reverseDiffKey = ReverseDiffPrefix + id (uint64 big endian)
-func reverseDiffKey(id uint64) []byte {
+// ReverseDiffKey = ReverseDiffPrefix + id (uint64 big endian)
+func ReverseDiffKey(id uint64) []byte {
 	var buff [8]byte
 	binary.BigEndian.PutUint64(buff[:], id)
 	return append(ReverseDiffPrefix, buff[:]...)
