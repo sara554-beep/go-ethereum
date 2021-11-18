@@ -1069,7 +1069,7 @@ func (db *Database) pruneReverseDiffs(rid uint64, limit uint64, done chan struct
 		return
 	}
 	cstart := time.Now()
-	db.diskdb.Compact(rawdb.ReverseDiffKey(first), rawdb.ReverseDiffKey(end))
+	db.diskdb.Compact(rawdb.ReverseDiffPrefix, rawdb.ReverseDiffKey(end))
 	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "compact", common.PrettyDuration(time.Since(cstart)), "elapsed", common.PrettyDuration(time.Since(startTime)))
 }
 
