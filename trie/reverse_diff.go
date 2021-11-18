@@ -18,6 +18,7 @@ package trie
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -25,6 +26,10 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+)
+
+const (
+	reverseDiffVersion = uint64(0) // Initial version of reverse diff structure
 )
 
 // stateDiff represents a reverse change of a state data. The value refers to the
@@ -38,9 +43,10 @@ type stateDiff struct {
 // reverse-diffs in disk are linked with each other by a unique id(8byte integer),
 // the head reverse-diff will be pruned in order to control the storage size.
 type reverseDiff struct {
-	Parent common.Hash // The corresponding state root of parent block
-	Root   common.Hash // The corresponding state root which these diffs belong to
-	States []stateDiff // The list of state changes
+	Version uint64      // The version tag of stored reverse diff
+	Parent  common.Hash // The corresponding state root of parent block
+	Root    common.Hash // The corresponding state root which these diffs belong to
+	States  []stateDiff // The list of state changes
 }
 
 // loadReverseDiff reads and decodes the reverse diff by the given id.
@@ -52,6 +58,9 @@ func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
 	var diff reverseDiff
 	if err := rlp.DecodeBytes(blob, &diff); err != nil {
 		return nil, err
+	}
+	if diff.Version != reverseDiffVersion {
+		return nil, fmt.Errorf("%w want %d got %d", errors.New("unexpected reverse diff version"), reverseDiffVersion, diff.Version)
 	}
 	return &diff, nil
 }
@@ -65,13 +74,17 @@ func loadReverseDiffParent(db ethdb.KeyValueReader, id uint64) (common.Hash, err
 	if len(blob) == 0 {
 		return common.Hash{}, errors.New("reverse diff not found")
 	}
-	// The parentHash is the first RLP element, thus preceded only by the
-	// envelope RLP size.
 	listContent, _, err := rlp.SplitList(blob)
 	if err != nil {
 		return common.Hash{}, err
 	}
-	parentHash, _, err := rlp.SplitString(listContent)
+	// Skip the first field: Version
+	_, rest, err := rlp.SplitUint64(listContent)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	// Handle the second field: Parent
+	parentHash, _, err := rlp.SplitString(rest)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -99,9 +112,10 @@ func storeReverseDiff(dl *diffLayer) error {
 		})
 	}
 	diff := &reverseDiff{
-		Parent: base.root,
-		Root:   dl.root,
-		States: states,
+		Version: reverseDiffVersion,
+		Parent:  base.root,
+		Root:    dl.root,
+		States:  states,
 	}
 	blob, err := rlp.EncodeToBytes(diff)
 	if err != nil {
