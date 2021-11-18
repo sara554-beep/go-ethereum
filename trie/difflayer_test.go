@@ -26,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
 // randomHash generates a random blob of data and returns it as a hash.
@@ -57,7 +56,7 @@ func randomEmptyNode(hash common.Hash) *cachedNode {
 
 func emptyLayer() *diskLayer {
 	return &diskLayer{
-		diskdb: memorydb.New(),
+		diskdb: rawdb.NewDatabase(rawdb.NewMemoryDatabase()),
 		cache:  fastcache.New(500 * 1024),
 	}
 }
@@ -122,7 +121,7 @@ func BenchmarkSearchBottom(b *testing.B) { benchmarkSearch(b, 0) }
 func BenchmarkSearchTop(b *testing.B) { benchmarkSearch(b, 127) }
 
 func benchmarkGetNode(b *testing.B, getBlob bool) {
-	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	db := NewDatabase(rawdb.NewDatabase(rawdb.NewMemoryDatabase()), nil)
 	trie, _ := New(common.Hash{}, db)
 
 	k := make([]byte, 32)

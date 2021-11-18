@@ -37,7 +37,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/leveldb"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/rlp"
 	"golang.org/x/crypto/sha3"
 )
@@ -49,7 +48,7 @@ func init() {
 
 // Used for testing
 func newEmpty() *Trie {
-	trie, _ := New(common.Hash{}, NewDatabase(memorydb.New(), nil))
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	return trie
 }
 
@@ -73,7 +72,7 @@ func TestNull(t *testing.T) {
 }
 
 func TestMissingRoot(t *testing.T) {
-	trie, err := New(common.HexToHash("0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"), NewDatabase(memorydb.New(), nil))
+	trie, err := New(common.HexToHash("0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"), NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	if trie != nil {
 		t.Error("New returned non-nil trie for invalid root")
 	}
@@ -414,7 +413,7 @@ func (randTest) Generate(r *rand.Rand, size int) reflect.Value {
 
 func runRandTest(rt randTest) bool {
 	var (
-		triedb   = NewDatabase(memorydb.New(), nil)
+		triedb   = NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		original common.Hash
 		diffs    = make(map[string]*cachedNode)
 		tr, _    = New(original, triedb)
@@ -759,7 +758,7 @@ func TestCommitSequence(t *testing.T) {
 		s := &spongeDb{sponge: sha3.NewLegacyKeccak256()}
 
 		// Insert the test data into the trie
-		trie, _ := New(common.Hash{}, NewDatabase(s, nil))
+		trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewDatabase(s), nil))
 		for i := 0; i < tc.count; i++ {
 			trie.Update(crypto.Keccak256(addresses[i][:]), accounts[i])
 		}
@@ -796,7 +795,7 @@ func TestCommitSequenceRandomBlobs(t *testing.T) {
 		prng := rand.New(rand.NewSource(int64(i)))
 		s := &spongeDb{sponge: sha3.NewLegacyKeccak256()}
 		callbackSponge := sha3.NewLegacyKeccak256()
-		db := NewDatabase(s, &Config{
+		db := NewDatabase(rawdb.NewDatabase(s), &Config{
 			//OnCommit: func(key, val []byte) {
 			//	callbackSponge.Write(key) // spongify the callback-order
 			//},
@@ -834,7 +833,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 	for count := 1; count < 200; count++ {
 		prng := rand.New(rand.NewSource(int64(count)))
 		s := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "a"}
-		db := NewDatabase(s, nil)
+		db := NewDatabase(rawdb.NewDatabase(s), nil)
 		trie, _ := New(common.Hash{}, db)
 
 		// Sponge is used for the stacktrie commits
@@ -895,7 +894,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 // not fit into 32 bytes, rlp-encoded. However, it's still the correct thing to do.
 func TestCommitSequenceSmallRoot(t *testing.T) {
 	s := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "a"}
-	db := NewDatabase(s, nil)
+	db := NewDatabase(rawdb.NewDatabase(s), nil)
 	trie, _ := New(common.Hash{}, db)
 	// Another sponge is used for the stacktrie commits
 	stackTrieSponge := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "b"}
@@ -1131,7 +1130,7 @@ func tempDB() (string, *Database) {
 	if err != nil {
 		panic(fmt.Sprintf("can't create temporary database: %v", err))
 	}
-	return dir, NewDatabase(diskdb, nil)
+	return dir, NewDatabase(rawdb.NewDatabase(diskdb), nil)
 }
 
 func getString(trie *Trie, k string) []byte {

@@ -430,7 +430,7 @@ func (dl *diskLayer) generateRange(state common.Hash, owner common.Hash, root co
 	var snapNodeCache ethdb.KeyValueStore
 	if len(result.keys) > 0 {
 		snapNodeCache = memorydb.New()
-		db := trie.NewDatabase(snapNodeCache, nil)
+		db := trie.NewDatabase(rawdb.NewDatabase(snapNodeCache), nil)
 		snapTrie, _ := trie.NewWithOwner(common.Hash{}, owner, common.Hash{}, db)
 		for i, key := range result.keys {
 			snapTrie.Update(key, result.vals[i])

@@ -18,7 +18,6 @@ package snapshot
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/crypto"
 	"math/big"
 	"os"
 	"testing"
@@ -26,8 +25,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -141,7 +140,7 @@ func checkSnapRoot(t *testing.T, snap *diskLayer, trieRoot common.Hash) {
 }
 
 type testHelper struct {
-	diskdb  *memorydb.Database
+	diskdb  ethdb.Database
 	triedb  *trie.Database
 	accTrie *trie.SecureTrie
 
@@ -150,7 +149,7 @@ type testHelper struct {
 }
 
 func newHelper() *testHelper {
-	diskdb := memorydb.New()
+	diskdb := rawdb.NewMemoryDatabase()
 	triedb := trie.NewDatabase(diskdb, nil)
 	accTrie, _ := trie.NewSecure(common.Hash{}, triedb)
 	return &testHelper{

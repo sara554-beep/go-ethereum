@@ -315,7 +315,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	if memonly {
 		t.Skip("FIX IT")
 	}
-	diskdb := memorydb.New()
+	diskdb := rawdb.NewMemoryDatabase()
 	tdb := NewDatabase(diskdb, nil)
 
 	tr, _ := New(common.Hash{}, tdb)
@@ -428,7 +428,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 		barNodeHash = common.HexToHash("05041990364eb72fcb1127652ce40d8bab765f2bfe53225b1170d276cc101c2e")
 		barNodeKey  []byte
 	)
-	diskdb := memorydb.New()
+	diskdb := rawdb.NewMemoryDatabase()
 	triedb := NewDatabase(diskdb, nil)
 	ctr, _ := New(common.Hash{}, triedb)
 	for _, val := range testdata1 {
@@ -535,7 +535,7 @@ func (l *loggingDb) Close() error {
 func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 	// Create an empty trie
 	logDb := &loggingDb{0, memorydb.New()}
-	triedb := NewDatabase(logDb, nil)
+	triedb := NewDatabase(rawdb.NewDatabase(logDb), nil)
 	trie, _ := NewSecure(common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data

@@ -336,7 +336,7 @@ type Database struct {
 	config        *Config
 	lock          sync.RWMutex
 	namespace     []byte                   // State storage prefix, non-nil only for anonymous mode
-	diskdb        ethdb.KeyValueStore      // Persistent database to store the snapshot
+	diskdb        ethdb.Database           // Persistent database to store the snapshot
 	cleans        *fastcache.Cache         // Megabytes permitted using for read caches
 	layers        map[common.Hash]snapshot // Collection of all known layers
 	preimages     map[common.Hash][]byte   // Preimages of nodes from the secure trie
@@ -352,7 +352,7 @@ type Database struct {
 // key-value store (with a number of memory layers from a journal). If the journal
 // is not matched with the base persistent layer, all the recorded diff layers
 // are discarded.
-func NewDatabase(diskdb ethdb.KeyValueStore, config *Config) *Database {
+func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	var cleans *fastcache.Cache
 	if config != nil && config.Cache > 0 {
 		if config.Journal == "" {

@@ -23,19 +23,19 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
 func newEmptySecure() *SecureTrie {
-	trie, _ := NewSecure(common.Hash{}, NewDatabase(memorydb.New(), nil))
+	trie, _ := NewSecure(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	return trie
 }
 
 // makeTestSecureTrie creates a large enough secure trie for testing.
 func makeTestSecureTrie() (*Database, *SecureTrie, map[string][]byte) {
 	// Create an empty trie
-	triedb := NewDatabase(memorydb.New(), nil)
+	triedb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie, _ := NewSecure(common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
