@@ -436,13 +436,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 			triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
 		}()
 	}
-
-	// Spin up the reverse diff pruners by default
-	bc.wg.Add(1)
-	go func() {
-		defer bc.wg.Done()
-		triedb.PruneReverseDiffs(params.FullImmutabilityThreshold, bc.quit)
-	}()
 	return bc, nil
 }
 

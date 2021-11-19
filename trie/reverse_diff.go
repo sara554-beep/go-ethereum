@@ -50,7 +50,7 @@ type reverseDiff struct {
 }
 
 // loadReverseDiff reads and decodes the reverse diff by the given id.
-func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
+func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
 	blob := rawdb.ReadReverseDiff(db, id)
 	if len(blob) == 0 {
 		return nil, errors.New("reverse diff not found")
@@ -69,7 +69,7 @@ func loadReverseDiff(db ethdb.KeyValueReader, id uint64) (*reverseDiff, error) {
 // and resolves the parent field from it. The trick is applied here, instead
 // of decoding the entire RLP-encoded blob which is super expensive, we only
 // extract the first field from the binary blob.
-func loadReverseDiffParent(db ethdb.KeyValueReader, id uint64) (common.Hash, error) {
+func loadReverseDiffParent(db ethdb.Database, id uint64) (common.Hash, error) {
 	blob := rawdb.ReadReverseDiff(db, id)
 	if len(blob) == 0 {
 		return common.Hash{}, errors.New("reverse diff not found")
@@ -124,7 +124,7 @@ func storeReverseDiff(dl *diffLayer) error {
 	if err != nil {
 		return err
 	}
-	rawdb.WriteReverseDiff(batch, dl.rid, blob)
+	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob)
 	rawdb.WriteReverseDiffLookup(batch, base.root, dl.rid)
 	if err := batch.Write(); err != nil {
 		return err

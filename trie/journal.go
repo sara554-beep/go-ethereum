@@ -85,7 +85,7 @@ func loadJournal(disk ethdb.KeyValueStore, base *diskLayer) (snapshot, error) {
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *Config) snapshot {
+func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config) snapshot {
 	// Retrieve the root node of single persisted trie node.
 	_, hash := rawdb.ReadTrieNode(diskdb, EncodeStorageKey(common.Hash{}, nil))
 	if hash == (common.Hash{}) {

@@ -32,14 +32,14 @@ type diskLayer struct {
 	root   common.Hash // Root hash of the base snapshot
 	rid    uint64      // Corresponding reverse diff id
 
-	diskdb ethdb.KeyValueStore // Key-value store containing the base snapshot
-	cache  *fastcache.Cache    // Cache to avoid hitting the disk for direct access
-	stale  bool                // Signals that the layer became stale (state progressed)
-	lock   sync.RWMutex        // Lock used to prevent stale flag
+	diskdb ethdb.Database   // Key-value store containing the base snapshot
+	cache  *fastcache.Cache // Cache to avoid hitting the disk for direct access
+	stale  bool             // Signals that the layer became stale (state progressed)
+	lock   sync.RWMutex     // Lock used to prevent stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.KeyValueStore) *diskLayer {
+func newDiskLayer(root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.Database) *diskLayer {
 	dl := &diskLayer{
 		diskdb: diskdb,
 		cache:  cache,
@@ -54,7 +54,7 @@ func newDiskLayer(root common.Hash, rid uint64, cache *fastcache.Cache, diskdb e
 // can be stored in shadowy disk layer temporarily and all be pruned from the disk
 // afterwards. This feature is mainly prepared for tracer which requires the past
 // state for tracing.
-func newShadowyDiskLayer(prefix []byte, root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.KeyValueStore) *diskLayer {
+func newShadowyDiskLayer(prefix []byte, root common.Hash, rid uint64, cache *fastcache.Cache, diskdb ethdb.Database) *diskLayer {
 	dl := &diskLayer{
 		prefix: prefix,
 		diskdb: diskdb,

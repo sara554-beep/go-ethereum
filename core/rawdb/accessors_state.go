@@ -17,7 +17,6 @@
 package rawdb
 
 import (
-	"bytes"
 	"encoding/binary"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -169,55 +168,27 @@ func DeleteShadowTrieNodes(db ethdb.KeyValueStore, id []byte) {
 
 // ReadReverseDiff retrieves the state reverse diff with the given associated
 // block hash and number.
-func ReadReverseDiff(db ethdb.KeyValueReader, id uint64) []byte {
-	data, err := db.Get(ReverseDiffKey(id))
+func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
+	blob, err := db.Ancient(reverseDiffFreezer, freezerReverseDiffTable, id-1)
 	if err != nil {
 		return nil
 	}
-	return data
-}
-
-// ReadReverseDiffsBelow retrieves the stored reverse diffs whose block number
-// fall in the range of given parameters where from is included while to
-// is excluded. The maximum returned elements respect the given limit value.
-func ReadReverseDiffsBelow(db ethdb.Iteratee, from, to uint64, limit int) []uint64 {
-	// Short circuit if the limit is 0.
-	if limit == 0 {
-		return nil
-	}
-	var ids []uint64
-
-	// Construct the key prefix of start point.
-	start, end := ReverseDiffKey(from), ReverseDiffKey(to)
-	it := db.NewIterator(nil, start)
-	defer it.Release()
-
-	for it.Next() {
-		if bytes.Compare(it.Key(), end) >= 0 {
-			break
-		}
-		if key := it.Key(); len(key) == len(ReverseDiffPrefix)+8 {
-			ids = append(ids, binary.BigEndian.Uint64(key[len(ReverseDiffPrefix):]))
-			if len(ids) >= limit {
-				break
-			}
-		}
-	}
-	return ids
+	return blob
 }
 
 // WriteReverseDiff writes the provided reverse diff to database.
-func WriteReverseDiff(db ethdb.KeyValueWriter, id uint64, blob []byte) {
-	if err := db.Put(ReverseDiffKey(id), blob); err != nil {
-		log.Crit("Failed to store reverse diff", "err", err)
-	}
+func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte) {
+	db.ModifyAncients(reverseDiffFreezer, func(op ethdb.AncientWriteOp) error {
+		op.AppendRaw(freezerReverseDiffTable, id-1, blob)
+		return nil
+	})
 }
 
 // DeleteReverseDiff deletes the specified reverse diff from the database.
 func DeleteReverseDiff(db ethdb.KeyValueWriter, id uint64) {
-	if err := db.Delete(ReverseDiffKey(id)); err != nil {
-		log.Crit("Failed to delete reverse diff", "err", err)
-	}
+	//if err := db.Delete(ReverseDiffKey(id)); err != nil {
+	//	log.Crit("Failed to delete reverse diff", "err", err)
+	//}
 }
 
 // ReadReverseDiffLookup retrieves the reverse diff id with the given associated
