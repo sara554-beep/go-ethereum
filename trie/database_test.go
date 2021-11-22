@@ -18,7 +18,10 @@ package trie
 
 import (
 	"bytes"
+	"io/ioutil"
 	"math/rand"
+	"os"
+	"path"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -26,9 +29,17 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
+func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func()) {
+	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	if err != nil {
+		panic("Failed to allocate tempdir")
+	}
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+	if err != nil {
+		panic("Failed to create database")
+	}
 	var (
-		db      = NewDatabase(rawdb.NewMemoryDatabase(), nil)
+		db      = NewDatabase(diskdb, nil)
 		numbers []uint64
 		roots   []common.Hash
 
@@ -42,7 +53,7 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 			vals  [][]byte
 			nodes = make(map[string]*cachedNode)
 		)
-		for i := 0; i < 3000; i++ {
+		for i := 0; i < 300; i++ {
 			var (
 				storage []byte
 				val     *cachedNode
@@ -109,15 +120,16 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 		testKeys = append(testKeys, keys)
 		testVals = append(testVals, vals)
 	}
-	return db, numbers, roots, testKeys, testVals
+	return db, numbers, roots, testKeys, testVals, func() { os.RemoveAll(dir) }
 }
 
 func TestDatabaseRollback(t *testing.T) {
 	var (
-		db, numbers, roots, testKeys, testVals = fillDB()
-		dl                                     = db.disklayer()
-		diskIndex                              int
+		db, numbers, roots, testKeys, testVals, relFn = fillDB()
+		dl                                            = db.disklayer()
+		diskIndex                                     int
 	)
+	defer relFn()
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
 			break
@@ -170,10 +182,11 @@ func TestDatabaseRollback(t *testing.T) {
 
 func TestDatabaseBatchRollback(t *testing.T) {
 	var (
-		db, _, roots, testKeys, testVals = fillDB()
-		dl                               = db.disklayer()
-		diskIndex                        int
+		db, _, roots, testKeys, testVals, relFn = fillDB()
+		dl                                      = db.disklayer()
+		diskIndex                               int
 	)
+	defer relFn()
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
 			break
@@ -208,10 +221,11 @@ func TestDatabaseBatchRollback(t *testing.T) {
 
 func TestAnonymousDatabase(t *testing.T) {
 	var (
-		db, _, roots, testKeys, testVals = fillDB()
-		dl                               = db.disklayer()
-		diskIndex                        int
+		db, _, roots, testKeys, testVals, relFn = fillDB()
+		dl                                      = db.disklayer()
+		diskIndex                               int
 	)
+	defer relFn()
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
 			break

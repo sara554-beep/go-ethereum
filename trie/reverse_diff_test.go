@@ -17,7 +17,10 @@
 package trie
 
 import (
+	"io/ioutil"
 	"math/rand"
+	"os"
+	"path"
 	"reflect"
 	"testing"
 
@@ -61,10 +64,17 @@ func genDiffs(n int) []reverseDiff {
 }
 
 func TestLoadStoreReverseDiff(t *testing.T) {
-	var (
-		db    = rawdb.NewMemoryDatabase()
-		diffs = genDiffs(10)
-	)
+	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	if err != nil {
+		panic("Failed to allocate tempdir")
+	}
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+	if err != nil {
+		panic("Failed to create database")
+	}
+	defer os.RemoveAll(dir)
+
+	var diffs = genDiffs(10)
 	for i := 0; i < len(diffs); i++ {
 		blob, err := rlp.EncodeToBytes(diffs[i])
 		if err != nil {
