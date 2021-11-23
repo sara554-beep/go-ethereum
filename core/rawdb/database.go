@@ -42,6 +42,7 @@ var (
 type freezerdb struct {
 	ethdb.KeyValueStore
 	chain *freezer
+	rdiff *freezer
 }
 
 // HasAncient returns an indicator whether the specified data exists in the
@@ -50,6 +51,8 @@ func (frdb *freezerdb) HasAncient(typ string, kind string, id uint64) (bool, err
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.HasAncient(kind, id)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.HasAncient(kind, id)
 	default:
 		return false, errUndefinedType
 	}
@@ -60,6 +63,8 @@ func (frdb *freezerdb) Ancient(typ string, kind string, id uint64) ([]byte, erro
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.Ancient(kind, id)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.Ancient(kind, id)
 	default:
 		return nil, errUndefinedType
 	}
@@ -70,6 +75,8 @@ func (frdb *freezerdb) AncientRange(typ string, kind string, start, max, maxByte
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.AncientRange(kind, start, max, maxByteSize)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.AncientRange(kind, start, max, maxByteSize)
 	default:
 		return nil, errUndefinedType
 	}
@@ -80,6 +87,8 @@ func (frdb *freezerdb) Ancients(typ string) (uint64, error) {
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.Ancients()
+	case ReverseDiffFreezer:
+		return frdb.rdiff.Ancients()
 	default:
 		return 0, errUndefinedType
 	}
@@ -90,6 +99,8 @@ func (frdb *freezerdb) Tail(typ string) (uint64, error) {
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.Tail()
+	case ReverseDiffFreezer:
+		return frdb.rdiff.Tail()
 	default:
 		return 0, errUndefinedType
 	}
@@ -100,6 +111,8 @@ func (frdb *freezerdb) AncientSize(typ string, kind string) (uint64, error) {
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.AncientSize(kind)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.AncientSize(kind)
 	default:
 		return 0, errUndefinedType
 	}
@@ -112,6 +125,8 @@ func (frdb *freezerdb) ModifyAncients(typ string, fn func(ethdb.AncientWriteOp) 
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.ModifyAncients(fn)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.ModifyAncients(fn)
 	default:
 		return 0, errUndefinedType
 	}
@@ -122,6 +137,8 @@ func (frdb *freezerdb) TruncateHead(typ string, items uint64) error {
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.TruncateHead(items)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.TruncateHead(items)
 	default:
 		return errUndefinedType
 	}
@@ -132,6 +149,8 @@ func (frdb *freezerdb) TruncateTail(typ string, items uint64) error {
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.TruncateTail(items)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.TruncateTail(items)
 	default:
 		return errUndefinedType
 	}
@@ -142,6 +161,8 @@ func (frdb *freezerdb) Sync(typ string) error {
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.Sync()
+	case ReverseDiffFreezer:
+		return frdb.rdiff.Sync()
 	default:
 		return errUndefinedType
 	}
@@ -153,6 +174,8 @@ func (frdb *freezerdb) ReadAncients(typ string, fn func(reader ethdb.AncientRead
 	switch typ {
 	case ChainFreezer:
 		return frdb.chain.ReadAncients(fn)
+	case ReverseDiffFreezer:
+		return frdb.rdiff.ReadAncients(fn)
 	default:
 		return errUndefinedType
 	}
@@ -166,6 +189,9 @@ func (frdb *freezerdb) Close() error {
 		errs = append(errs, err)
 	}
 	if err := frdb.chain.Close(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := frdb.rdiff.Close(); err != nil {
 		errs = append(errs, err)
 	}
 	if len(errs) != 0 {
@@ -312,6 +338,10 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace st
 	if err != nil {
 		return nil, err
 	}
+	rdiff, err := newFreezer(freezer, namespace, readonly, freezerTableSize, ReveseDiffFreezerNoSnappy)
+	if err != nil {
+		return nil, err
+	}
 	// Since the freezer can be stored separately from the user's key-value database,
 	// there's a fairly high probability that the user requests invalid combinations
 	// of the freezer and database. Ensure that we don't shoot ourselves in the foot
@@ -387,6 +417,7 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace st
 	return &freezerdb{
 		KeyValueStore: db,
 		chain:         ancientChain,
+		rdiff:         rdiff,
 	}, nil
 }
 
