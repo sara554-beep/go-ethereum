@@ -131,15 +131,20 @@ const (
 	freezerDifficultyTable = "diffs"
 )
 
-// FreezerNoSnappy configures whether compression is disabled for the ancient-tables.
+// ChainFreezerNoSnappy configures whether compression is disabled for the ancient-chain-tables.
 // Hashes and difficulties don't compress well.
-var FreezerNoSnappy = map[string]bool{
+var ChainFreezerNoSnappy = map[string]bool{
 	freezerHeaderTable:     false,
 	freezerHashTable:       true,
 	freezerBodiesTable:     false,
 	freezerReceiptTable:    false,
 	freezerDifficultyTable: true,
 }
+
+const (
+	// ChainFreezer indicates the name of ancient chain freezer
+	ChainFreezer = "chain"
+)
 
 // LegacyTxLookupEntry is the legacy TxLookupEntry definition with some unnecessary
 // fields.
