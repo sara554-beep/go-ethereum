@@ -85,26 +85,21 @@ func loadJournal(disk ethdb.KeyValueStore, base *diskLayer) (snapshot, error) {
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func loadSnapshot(diskdb ethdb.KeyValueStore, cleans *fastcache.Cache, config *Config) snapshot {
+func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config) snapshot {
 	// Retrieve the root node of single persisted trie node.
 	_, hash := rawdb.ReadTrieNode(diskdb, EncodeStorageKey(common.Hash{}, nil))
 	if hash == (common.Hash{}) {
 		hash = emptyRoot
 	}
-	// Retrieve the latest stored reverse diff
-	var head uint64
-	if ret := rawdb.ReadReverseDiffHead(diskdb); ret != nil {
-		head = *ret
+	// Recover reverse diff head, repair the broken reverse diff history
+	// only if mutation is allowed.
+	var diffHead uint64
+	if config != nil && config.ReadOnly {
+		diffHead = rawdb.ReadReverseDiffHead(diskdb)
+	} else {
+		diffHead = repairReverseDiff(diskdb, hash)
 	}
-	// Ensure the head reverse diff matches with the disk layer,
-	// otherwise invalidate the entire reverse diff list.
-	if head != 0 {
-		diff, err := loadReverseDiff(diskdb, head)
-		if err != nil || diff.Root != hash {
-			head = 0
-		}
-	}
-	base := newDiskLayer(hash, head, cleans, diskdb)
+	base := newDiskLayer(hash, diffHead, cleans, diskdb)
 
 	// Load the in-memory diff layers by resolving the journal
 	snapshot, err := loadJournal(diskdb, base)

@@ -702,9 +702,6 @@ func (s *spongeDb) Stat(property string) (string, error)     { panic("implement 
 func (s *spongeDb) Compact(start []byte, limit []byte) error { panic("implement me") }
 func (s *spongeDb) Close() error                             { return nil }
 func (s *spongeDb) Put(key []byte, value []byte) error {
-	if bytes.HasPrefix(key, rawdb.ReverseDiffPrefix) {
-		return nil
-	}
 	if bytes.HasPrefix(key, rawdb.ReverseDiffLookupPrefix) {
 		return nil
 	}

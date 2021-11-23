@@ -17,7 +17,6 @@
 package rawdb
 
 import (
-	"bytes"
 	"encoding/binary"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -168,56 +167,45 @@ func DeleteShadowTrieNodes(db ethdb.KeyValueStore, id []byte) {
 }
 
 // ReadReverseDiff retrieves the state reverse diff with the given associated
-// block hash and number.
-func ReadReverseDiff(db ethdb.KeyValueReader, id uint64) []byte {
-	data, err := db.Get(ReverseDiffKey(id))
+// block hash and number. Because reverse diff is encoded from 1 in Geth, while
+// encoded from 0 in freezer, so do the conversion here implicitly.
+func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
+	blob, err := db.Ancient(ReverseDiffFreezer, freezerReverseDiffTable, id-1)
 	if err != nil {
 		return nil
 	}
-	return data
+	return blob
 }
 
-// ReadReverseDiffsBelow retrieves the stored reverse diffs whose block number
-// fall in the range of given parameters where from is included while to
-// is excluded. The maximum returned elements respect the given limit value.
-func ReadReverseDiffsBelow(db ethdb.Iteratee, from, to uint64, limit int) []uint64 {
-	// Short circuit if the limit is 0.
-	if limit == 0 {
+// ReadReverseDiffHash retrieves the state root corresponding to the specified
+// reverse diff. Because reverse diff is encoded from 1 in Geth, while encoded
+// from 0 in freezer, so do the conversion here implicitly.
+func ReadReverseDiffHash(db ethdb.AncientReader, id uint64) common.Hash {
+	blob, err := db.Ancient(ReverseDiffFreezer, freezerReverseDiffHashTable, id-1)
+	if err != nil {
+		return common.Hash{}
+	}
+	return common.BytesToHash(blob)
+}
+
+// WriteReverseDiff writes the provided reverse diff to database. Because reverse
+// diff is encoded from 1 in Geth, while encoded from 0 in freezer, so do the
+// conversion here implicitly.
+func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte, state common.Hash) {
+	db.ModifyAncients(ReverseDiffFreezer, func(op ethdb.AncientWriteOp) error {
+		op.AppendRaw(freezerReverseDiffTable, id-1, blob)
+		op.AppendRaw(freezerReverseDiffHashTable, id-1, state.Bytes())
 		return nil
-	}
-	var ids []uint64
-
-	// Construct the key prefix of start point.
-	start, end := ReverseDiffKey(from), ReverseDiffKey(to)
-	it := db.NewIterator(nil, start)
-	defer it.Release()
-
-	for it.Next() {
-		if bytes.Compare(it.Key(), end) >= 0 {
-			break
-		}
-		if key := it.Key(); len(key) == len(ReverseDiffPrefix)+8 {
-			ids = append(ids, binary.BigEndian.Uint64(key[len(ReverseDiffPrefix):]))
-			if len(ids) >= limit {
-				break
-			}
-		}
-	}
-	return ids
+	})
 }
 
-// WriteReverseDiff writes the provided reverse diff to database.
-func WriteReverseDiff(db ethdb.KeyValueWriter, id uint64, blob []byte) {
-	if err := db.Put(ReverseDiffKey(id), blob); err != nil {
-		log.Crit("Failed to store reverse diff", "err", err)
-	}
-}
-
-// DeleteReverseDiff deletes the specified reverse diff from the database.
-func DeleteReverseDiff(db ethdb.KeyValueWriter, id uint64) {
-	if err := db.Delete(ReverseDiffKey(id)); err != nil {
-		log.Crit("Failed to delete reverse diff", "err", err)
-	}
+// DeleteReverseDiff deletes the specified reverse diff from the database. The
+// passed parameter should indicate the total items in freezer table(including
+// the deleted one).
+func DeleteReverseDiff(db ethdb.AncientWriter, items uint64) {
+	// The error can be returned here if the db doesn't support ancient
+	// functionalities, don't panic here.
+	db.TruncateHead(ReverseDiffFreezer, items)
 }
 
 // ReadReverseDiffLookup retrieves the reverse diff id with the given associated
@@ -249,13 +237,13 @@ func DeleteReverseDiffLookup(db ethdb.KeyValueWriter, root common.Hash) {
 
 // ReadReverseDiffHead retrieves the number of latest reverse diff from
 // the database.
-func ReadReverseDiffHead(db ethdb.KeyValueReader) *uint64 {
+func ReadReverseDiffHead(db ethdb.KeyValueReader) uint64 {
 	data, _ := db.Get(ReverseDiffHeadKey)
 	if len(data) != 8 {
-		return nil
+		return 0
 	}
 	number := binary.BigEndian.Uint64(data)
-	return &number
+	return number
 }
 
 // WriteReverseDiffHead stores the number of latest reverse diff id

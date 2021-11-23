@@ -90,13 +90,6 @@ var (
 	errImmatureState = errors.New("immature state")
 )
 
-const (
-	// maximumLayerDistance represents the maximum distance between the top
-	// difflayer and disklayer. It also represents the maximum reorg depth
-	// can be supported by trie.Database **without** reverts the disk status.
-	maximumLayerDistance = 128
-)
-
 // Snapshot represents the functionality supported by a snapshot storage layer.
 type Snapshot interface {
 	// Root returns the root hash for which this snapshot was made.
@@ -341,11 +334,6 @@ type Database struct {
 	layers        map[common.Hash]snapshot // Collection of all known layers
 	preimages     map[common.Hash][]byte   // Preimages of nodes from the secure trie
 	preimagesSize common.StorageSize       // Storage size of the preimages cache
-
-	// new diff is the channel used to send signal if new reverse diff is stored.
-	// Note there is no guarantee the channel will always be checked, don't send
-	// signal in blocking way.
-	newDiff chan uint64
 }
 
 // NewDatabase attempts to load an already existing snapshot from a persistent
@@ -371,7 +359,6 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		diskdb:   diskdb,
 		cleans:   cleans,
 		layers:   make(map[common.Hash]snapshot),
-		newDiff:  make(chan uint64),
 	}
 	head := loadSnapshot(diskdb, cleans, config)
 	for head != nil {
@@ -527,7 +514,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		base := diff.persist(db.config, db.newDiff).(*diskLayer)
+		base := diff.persist(db.config).(*diskLayer)
 
 		// Replace the entire snapshot tree with the flat base
 		db.layers = map[common.Hash]snapshot{base.root: base}
@@ -588,9 +575,11 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 		return
 
 	case *diffLayer:
-		base := parent.persist(db.config, db.newDiff)
-		db.layers[base.Root()] = base
+		// Hold the lock to prevent any read operations until the new
+		// parent is linked correctly.
 		diff.lock.Lock()
+		base := parent.persist(db.config)
+		db.layers[base.Root()] = base
 		diff.parent = base
 		diff.lock.Unlock()
 		return
@@ -660,9 +649,7 @@ func (db *Database) Clean(root common.Hash) {
 		switch layer := layer.(type) {
 		case *diskLayer:
 			// Layer should be inactive now, mark it as stale
-			layer.lock.Lock()
-			layer.stale = true
-			layer.lock.Unlock()
+			layer.MarkStale()
 
 		case *diffLayer:
 			// If the layer is a simple diff, simply mark as stale
@@ -679,14 +666,15 @@ func (db *Database) Clean(root common.Hash) {
 	if db.config != nil && db.config.Cache > 0 {
 		cleans = fastcache.New(db.config.Cache * 1024 * 1024)
 	}
+	head := truncateReverseDiffHistory(db.diskdb, 0)
 	db.layers = map[common.Hash]snapshot{
-		root: newDiskLayer(root, 0, cleans, db.diskdb),
+		root: newDiskLayer(root, head, cleans, db.diskdb),
 	}
 	log.Info("Rebuild triedb", "root", root)
 }
 
-// revert applies the reverse diffs to the database by separating the disk layer
-// to two sub layers: diff layer and the modified disk layer.
+// revert applies the reverse diffs to the database by reverting the disk layer
+// content. The passed clean cache should be empty.
 // This function assumes the lock in db is already held.
 func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	var (
@@ -703,24 +691,8 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	}
 	dl.MarkStale()
 
-	nodes := make(map[string]*cachedNode)
 	for _, state := range diff.States {
 		if anonymous {
-			// Here we use the flag returned by database to distinguish
-			// empty-value nodes and non-existent nodes. Only fallback
-			// to main database for non-existent nodes.
-			current, hash, exist := rawdb.ReadShadowTrieNode(dl.diskdb, db.namespace, state.Key)
-			if !exist {
-				current, hash = rawdb.ReadTrieNode(dl.diskdb, state.Key)
-			}
-			if len(current) > 0 {
-				node := &cachedNode{
-					hash: hash,
-					size: uint16(len(current)),
-					node: rawNode(current),
-				}
-				nodes[string(state.Key)] = node
-			}
 			if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 				rawdb.WriteShadowTrieNode(batch, db.namespace, state.Key, state.Val)
 			} else {
@@ -730,15 +702,6 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 				rawdb.WriteShadowTrieNode(batch, db.namespace, state.Key, []byte{})
 			}
 		} else {
-			current, hash := rawdb.ReadTrieNode(dl.diskdb, state.Key)
-			if len(current) > 0 {
-				node := &cachedNode{
-					hash: hash,
-					size: uint16(len(current)),
-					node: rawNode(current),
-				}
-				nodes[string(state.Key)] = node
-			}
 			if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 				rawdb.WriteTrieNode(batch, state.Key, state.Val)
 			} else {
@@ -746,15 +709,26 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 			}
 		}
 	}
-	// Delete the reverse-diff entries from the disk
-	if !anonymous {
-		rawdb.DeleteReverseDiff(batch, dl.rid)
-		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-		rawdb.WriteReverseDiffHead(batch, dl.rid-1)
-	}
 	// Flush all state changes in an atomic batch write
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write reverse diff", "err", err)
+	}
+	batch.Reset()
+
+	// Delete the reverse-diff entries from the disk
+	if !anonymous {
+		// Delete the lookup and update the diff head first. In case crash
+		// happens after updating diff head, it's still possible to recover
+		// in the next restart by truncating extra reverse diff.
+		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+		rawdb.WriteReverseDiffHead(batch, dl.rid-1)
+		if err := batch.Write(); err != nil {
+			log.Crit("Failed to delete reverse diff", "err", err)
+		}
+		batch.Reset()
+
+		// Truncate the reverse diff from the freezer in the last step
+		rawdb.DeleteReverseDiff(db.diskdb, dl.rid)
 	}
 	// Recreate the disk layer with newly created clean cache
 	var ndl *diskLayer
@@ -763,34 +737,8 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	} else {
 		ndl = newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.diskdb)
 	}
-	db.layers[ndl.root] = ndl
-
-	// Create the bottom most diff layer based on the new disk
-	// layer. All the states which are reverted in the disk are
-	// maintained here.
-	bottom := newDiffLayer(ndl, diff.Root, dl.rid, nodes)
-
-	// Link all existent layers with the new parent.
-	for _, snap := range db.layers {
-		if diff, ok := snap.(*diffLayer); ok {
-			if parent := diff.Parent().Root(); parent == dl.root {
-				diff.lock.Lock()
-				diff.parent = bottom
-				diff.lock.Unlock()
-			}
-		}
-	}
-	db.layers[bottom.root] = bottom
-
-	// Truncate layers if the maximum depth maintained exceeds the threshold
-	var (
-		deepest = ndl.rid
-		highest = deepest + uint64(maximumLayerDistance)
-	)
-	for root, snap := range db.layers {
-		if snap.ID() >= highest {
-			delete(db.layers, root)
-		}
+	db.layers = map[common.Hash]snapshot{
+		ndl.root: ndl,
 	}
 	return nil
 }
@@ -846,7 +794,14 @@ func (db *Database) StateRecoverable(root common.Hash) bool {
 	if id == nil {
 		return false
 	}
-	return db.disklayer().ID() >= *id
+	if db.disklayer().ID() < *id {
+		return false
+	}
+	blob := rawdb.ReadReverseDiff(db.diskdb, *id)
+	if len(blob) == 0 {
+		return false
+	}
+	return true
 }
 
 // DiskDB retrieves the persistent storage backing the trie database.
@@ -941,93 +896,6 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 		select {
 		case <-ticker.C:
 			db.saveCache(dir, 1)
-		case <-stopCh:
-			return
-		}
-	}
-}
-
-// pruneReverseDiffs prunes the stale revere diffs which fall in the specified range.
-func (db *Database) pruneReverseDiffs(rid uint64, limit uint64) (uint64, uint64, bool) {
-	if rid < limit {
-		return 0, 0, false
-	}
-	var (
-		start uint64
-		first uint64
-		end   = rid - limit
-		batch = db.diskdb.NewBatch()
-
-		// Statistics
-		stales    int
-		logged    = time.Now()
-		startTime = time.Now()
-	)
-	for {
-		ids := rawdb.ReadReverseDiffsBelow(db.diskdb, start, end, 10240)
-		if len(ids) == 0 {
-			break
-		}
-		if first == 0 {
-			first = ids[0]
-		}
-		for i := 0; i < len(ids); i++ {
-			parent, err := loadReverseDiffParent(db.diskdb, ids[i])
-			if err != nil {
-				break
-			}
-			stales += 1
-			rawdb.DeleteReverseDiff(batch, ids[i])
-			rawdb.DeleteReverseDiffLookup(batch, parent)
-
-			if time.Since(logged) > 8*time.Second {
-				logged = time.Now()
-				log.Info("Pruning stale reverse diffs", "count", stales, "current", ids[i], "elapsed", common.PrettyDuration(time.Since(startTime)))
-			}
-		}
-		if batch.ValueSize() > ethdb.IdealBatchSize {
-			if err := batch.Write(); err != nil {
-				log.Error("Failed to flush batch in reverse diff pruner", "err", err)
-				return 0, 0, false
-			}
-			batch.Reset()
-		}
-		start = ids[len(ids)-1] + 1
-	}
-	if err := batch.Write(); err != nil {
-		log.Error("Failed to flush batch in reverse diff pruner", "err", err)
-		return 0, 0, false
-	}
-	log.Info("Pruned stale reverse diffs", "count", stales, "last", end-1, "elapsed", common.PrettyDuration(time.Since(startTime)))
-	return first, end, true
-}
-
-// PruneReverseDiffs deletes the stale reverse diffs from the database.
-func (db *Database) PruneReverseDiffs(limit uint64, stopCh <-chan struct{}) {
-	var (
-		first uint64
-		last  uint64
-	)
-	for {
-		select {
-		case rid := <-db.newDiff:
-			head, tail, pruned := db.pruneReverseDiffs(rid, limit)
-			if !pruned {
-				continue
-			}
-			if first == 0 {
-				first = head
-			}
-			last = tail
-			if last-first < 100 {
-				continue
-			}
-			start := time.Now()
-			db.diskdb.Compact(rawdb.ReverseDiffKey(first), rawdb.ReverseDiffKey(last))
-
-			first, last = 0, 0
-			log.Info("Range compacted reverse diff", "elapsed", common.PrettyDuration(time.Since(start)))
-
 		case <-stopCh:
 			return
 		}

@@ -94,7 +94,6 @@ var (
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
 
-	ReverseDiffPrefix       = []byte("RD")    // ReverseDiffPrefix + reverse-diff-id(uint64 big endian) -> reverse diff
 	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
 	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
 
@@ -129,6 +128,12 @@ const (
 
 	// freezerDifficultyTable indicates the name of the freezer total difficulty table.
 	freezerDifficultyTable = "diffs"
+
+	// freezerReverseDiffTable indicates the name of the freezer reverse diff table.
+	freezerReverseDiffTable = "rdiffs"
+
+	// freezerReverseDiffHashTable indicates the name of the freezer reverse diff hash table.
+	freezerReverseDiffHashTable = "rdiff.hashes"
 )
 
 // ChainFreezerNoSnappy configures whether compression is disabled for the ancient-chain-tables.
@@ -141,9 +146,19 @@ var ChainFreezerNoSnappy = map[string]bool{
 	freezerDifficultyTable: true,
 }
 
+// ReveseDiffFreezerNoSnappy configures whether compression is disabled for the ancient
+// reverse diffs.
+var ReveseDiffFreezerNoSnappy = map[string]bool{
+	freezerReverseDiffTable:     false,
+	freezerReverseDiffHashTable: true,
+}
+
 const (
 	// ChainFreezer indicates the name of ancient chain freezer
 	ChainFreezer = "chain"
+
+	// ReverseDiffFreezer indicates the name of ancient reverse diff freezer
+	ReverseDiffFreezer = "rdiff"
 )
 
 // LegacyTxLookupEntry is the legacy TxLookupEntry definition with some unnecessary
@@ -267,24 +282,6 @@ func IsTrieNodeKey(key []byte) (bool, []byte) {
 // shadowTrieNodeKey = ShadowTrieNodePrefix + prefix (8 bytes) +  encoded node key
 func shadowTrieNodeKey(id []byte, key []byte) []byte {
 	return append(append(ShadowTrieNodePrefix, id...), key...)
-}
-
-// ReverseDiffKey = ReverseDiffPrefix + id (uint64 big endian)
-func ReverseDiffKey(id uint64) []byte {
-	var buff [8]byte
-	binary.BigEndian.PutUint64(buff[:], id)
-	return append(ReverseDiffPrefix, buff[:]...)
-}
-
-// IsReverseDiffKey reports whether the given byte slice is the key of reverse diff.
-func IsReverseDiffKey(key []byte) (bool, []byte) {
-	if bytes.HasPrefix(key, ReverseDiffPrefix) {
-		rkey := key[len(ReverseDiffPrefix):]
-		if len(rkey) == 8 {
-			return true, rkey
-		}
-	}
-	return false, nil
 }
 
 // reverseDiffLookupKey = ReverseDiffLookupPrefix + root (32 bytes)

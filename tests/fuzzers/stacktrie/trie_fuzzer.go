@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"hash"
 	"io"
 	"sort"
@@ -141,7 +142,7 @@ func (f *fuzzer) fuzz() int {
 	// This spongeDb is used to check the sequence of disk-db-writes
 	var (
 		spongeA     = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
-		dbA         = trie.NewDatabase(spongeA)
+		dbA         = trie.NewDatabase(rawdb.NewDatabase(spongeA), nil)
 		trieA, _    = trie.New(common.Hash{}, dbA)
 		spongeB     = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
 		trieB       = trie.NewStackTrie(spongeB)
@@ -180,7 +181,7 @@ func (f *fuzzer) fuzz() int {
 	rootA := result.Root
 
 	// Flush memdb -> disk (sponge)
-	dbA.Commit(rootA, false, nil)
+	dbA.Cap(rootA, 0)
 
 	// Stacktrie requires sorted insertion
 	sort.Sort(vals)

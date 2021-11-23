@@ -128,9 +128,6 @@ func TestNodeIteratorCoverage(t *testing.T) {
 	it := db.DiskDB().NewIterator(nil, nil)
 	for it.Next() {
 		key := it.Key()
-		if ok, _ := rawdb.IsReverseDiffKey(key); ok {
-			continue
-		}
 		if ok, _ := rawdb.IsReverseDiffLookup(key); ok {
 			continue
 		}

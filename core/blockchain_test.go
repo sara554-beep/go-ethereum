@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"math/rand"
 	"os"
+	"path"
 	"sync"
 	"testing"
 	"time"
@@ -1765,7 +1766,16 @@ func TestLowDiffLongChain(t *testing.T) {
 		b.OffsetTime(-9)
 	})
 	// Import the canonical chain
-	diskdb := rawdb.NewMemoryDatabase()
+	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	if err != nil {
+		panic("Failed to allocate tempdir")
+	}
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+	if err != nil {
+		panic("Failed to create database")
+	}
+	defer os.RemoveAll(dir)
+
 	(&Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}).MustCommit(diskdb)
 
 	chain, err := NewBlockChain(diskdb, nil, params.TestChainConfig, engine, vm.Config{}, nil, nil)

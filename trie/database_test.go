@@ -18,7 +18,11 @@ package trie
 
 import (
 	"bytes"
+	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"os"
+	"path"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -26,9 +30,17 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
+func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func()) {
+	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	if err != nil {
+		panic("Failed to allocate tempdir")
+	}
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-frdb"), "", false)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create database %v", err))
+	}
 	var (
-		db      = NewDatabase(rawdb.NewMemoryDatabase(), nil)
+		db      = NewDatabase(diskdb, nil)
 		numbers []uint64
 		roots   []common.Hash
 
@@ -42,7 +54,7 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 			vals  [][]byte
 			nodes = make(map[string]*cachedNode)
 		)
-		for i := 0; i < 3000; i++ {
+		for i := 0; i < 300; i++ {
 			var (
 				storage []byte
 				val     *cachedNode
@@ -109,15 +121,16 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte) {
 		testKeys = append(testKeys, keys)
 		testVals = append(testVals, vals)
 	}
-	return db, numbers, roots, testKeys, testVals
+	return db, numbers, roots, testKeys, testVals, func() { os.RemoveAll(dir) }
 }
 
 func TestDatabaseRollback(t *testing.T) {
 	var (
-		db, numbers, roots, testKeys, testVals = fillDB()
-		dl                                     = db.disklayer()
-		diskIndex                              int
+		db, numbers, roots, testKeys, testVals, relFn = fillDB()
+		dl                                            = db.disklayer()
+		diskIndex                                     int
 	)
+	defer relFn()
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
 			break
@@ -151,9 +164,9 @@ func TestDatabaseRollback(t *testing.T) {
 		if dl.Root() != roots[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
-		keys, vals := testKeys[i], testVals[i]
+		keys, vals := testKeys[i-1], testVals[i-1]
 		for j := 0; j < len(keys); j++ {
-			layer := db.Snapshot(roots[i])
+			layer := db.Snapshot(roots[i-1])
 			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
 			if err != nil {
 				t.Error("Failed to retrieve state", "err", err)
@@ -163,17 +176,18 @@ func TestDatabaseRollback(t *testing.T) {
 			}
 		}
 	}
-	if len(db.layers) != maximumLayerDistance {
-		t.Error("Only two layers are expected", maximumLayerDistance)
+	if len(db.layers) != 1 {
+		t.Error("Only disk layer is expected")
 	}
 }
 
 func TestDatabaseBatchRollback(t *testing.T) {
 	var (
-		db, _, roots, testKeys, testVals = fillDB()
-		dl                               = db.disklayer()
-		diskIndex                        int
+		db, _, roots, testKeys, testVals, relFn = fillDB()
+		dl                                      = db.disklayer()
+		diskIndex                               int
 	)
+	defer relFn()
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
 			break
@@ -187,9 +201,8 @@ func TestDatabaseBatchRollback(t *testing.T) {
 	if ndl.Root() != emptyRoot {
 		t.Error("Unexpected disk layer root")
 	}
-	// Ensure all the in-memory diff layers are maintained correctly
-	if len(db.layers) != 128 {
-		t.Error("Diff layer number mismatch", "want", 128, "got", len(db.layers))
+	if len(db.layers) != 1 {
+		t.Error("Only disk layer is expected")
 	}
 	for i, keys := range testKeys {
 		vals := testVals[i]
@@ -208,10 +221,11 @@ func TestDatabaseBatchRollback(t *testing.T) {
 
 func TestAnonymousDatabase(t *testing.T) {
 	var (
-		db, _, roots, testKeys, testVals = fillDB()
-		dl                               = db.disklayer()
-		diskIndex                        int
+		db, _, roots, testKeys, testVals, relFn = fillDB()
+		dl                                      = db.disklayer()
+		diskIndex                               int
 	)
+	defer relFn()
 	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
 		if roots[diskIndex] == dl.root {
 			break
@@ -227,9 +241,9 @@ func TestAnonymousDatabase(t *testing.T) {
 		if dl.Root() != roots[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
-		keys, vals := testKeys[i], testVals[i]
+		keys, vals := testKeys[i-1], testVals[i-1]
 		for j := 0; j < len(keys); j++ {
-			layer := adb.Snapshot(roots[i])
+			layer := adb.Snapshot(roots[i-1])
 			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
 			if err != nil {
 				t.Error("Failed to retrieve state", "err", err)

@@ -20,9 +20,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -141,7 +141,7 @@ func Fuzz(input []byte) int {
 }
 
 func runRandTest(rt randTest) error {
-	triedb := trie.NewDatabase(memorydb.New(), nil)
+	triedb := trie.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 
 	tr, _ := trie.New(common.Hash{}, triedb)
 	values := make(map[string]string) // tracks content of the trie

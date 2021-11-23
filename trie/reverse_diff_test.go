@@ -17,7 +17,10 @@
 package trie
 
 import (
+	"io/ioutil"
 	"math/rand"
+	"os"
+	"path"
 	"reflect"
 	"testing"
 
@@ -61,16 +64,23 @@ func genDiffs(n int) []reverseDiff {
 }
 
 func TestLoadStoreReverseDiff(t *testing.T) {
-	var (
-		db    = rawdb.NewMemoryDatabase()
-		diffs = genDiffs(10)
-	)
+	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	if err != nil {
+		panic("Failed to allocate tempdir")
+	}
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+	if err != nil {
+		panic("Failed to create database")
+	}
+	defer os.RemoveAll(dir)
+
+	var diffs = genDiffs(10)
 	for i := 0; i < len(diffs); i++ {
 		blob, err := rlp.EncodeToBytes(diffs[i])
 		if err != nil {
 			t.Fatalf("Failed to encode reverse diff %v", err)
 		}
-		rawdb.WriteReverseDiff(db, uint64(i+1), blob)
+		rawdb.WriteReverseDiff(db, uint64(i+1), blob, diffs[i].Parent)
 		rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
 	}
 	for i := 0; i < len(diffs); i++ {
@@ -89,13 +99,6 @@ func TestLoadStoreReverseDiff(t *testing.T) {
 		}
 		if !reflect.DeepEqual(diff.States, diffs[i].States) {
 			t.Fatal("Unexpected states")
-		}
-		parent, err := loadReverseDiffParent(db, uint64(i+1))
-		if err != nil {
-			t.Fatalf("Failed to load parent %v", err)
-		}
-		if parent != diffs[i].Parent {
-			t.Fatalf("Unexpected parent want %x got %x", diffs[i].Parent, diff.Parent)
 		}
 	}
 }
