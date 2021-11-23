@@ -169,7 +169,7 @@ func DeleteShadowTrieNodes(db ethdb.KeyValueStore, id []byte) {
 // ReadReverseDiff retrieves the state reverse diff with the given associated
 // block hash and number.
 func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
-	blob, err := db.Ancient(reverseDiffFreezer, freezerReverseDiffTable, id-1)
+	blob, err := db.Ancient(ReverseDiffFreezer, freezerReverseDiffTable, id-1)
 	if err != nil {
 		return nil
 	}
@@ -178,17 +178,23 @@ func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
 
 // WriteReverseDiff writes the provided reverse diff to database.
 func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte) {
-	db.ModifyAncients(reverseDiffFreezer, func(op ethdb.AncientWriteOp) error {
+	db.ModifyAncients(ReverseDiffFreezer, func(op ethdb.AncientWriteOp) error {
 		op.AppendRaw(freezerReverseDiffTable, id-1, blob)
 		return nil
 	})
 }
 
 // DeleteReverseDiff deletes the specified reverse diff from the database.
-func DeleteReverseDiff(db ethdb.KeyValueWriter, id uint64) {
-	//if err := db.Delete(ReverseDiffKey(id)); err != nil {
-	//	log.Crit("Failed to delete reverse diff", "err", err)
-	//}
+func DeleteReverseDiff(db ethdb.AncientWriter, id uint64, head bool) {
+	// The error can be returned here if the db doesn't support ancient
+	// functionalities, don't panic here.
+	if head {
+		db.TruncateHead(ReverseDiffFreezer, id)
+	} else {
+		// Besides, freezer can only support file level tail deletion. This
+		// truncate operation can be noop.
+		db.TruncateTail(ReverseDiffFreezer, id)
+	}
 }
 
 // ReadReverseDiffLookup retrieves the reverse diff id with the given associated

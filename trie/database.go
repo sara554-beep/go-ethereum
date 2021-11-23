@@ -341,11 +341,6 @@ type Database struct {
 	layers        map[common.Hash]snapshot // Collection of all known layers
 	preimages     map[common.Hash][]byte   // Preimages of nodes from the secure trie
 	preimagesSize common.StorageSize       // Storage size of the preimages cache
-
-	// new diff is the channel used to send signal if new reverse diff is stored.
-	// Note there is no guarantee the channel will always be checked, don't send
-	// signal in blocking way.
-	newDiff chan uint64
 }
 
 // NewDatabase attempts to load an already existing snapshot from a persistent
@@ -371,7 +366,6 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		diskdb:   diskdb,
 		cleans:   cleans,
 		layers:   make(map[common.Hash]snapshot),
-		newDiff:  make(chan uint64),
 	}
 	head := loadSnapshot(diskdb, cleans, config)
 	for head != nil {
@@ -527,7 +521,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		base := diff.persist(db.config, db.newDiff).(*diskLayer)
+		base := diff.persist(db.config).(*diskLayer)
 
 		// Replace the entire snapshot tree with the flat base
 		db.layers = map[common.Hash]snapshot{base.root: base}
@@ -588,7 +582,7 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 		return
 
 	case *diffLayer:
-		base := parent.persist(db.config, db.newDiff)
+		base := parent.persist(db.config)
 		db.layers[base.Root()] = base
 		diff.lock.Lock()
 		diff.parent = base
@@ -682,6 +676,7 @@ func (db *Database) Clean(root common.Hash) {
 	db.layers = map[common.Hash]snapshot{
 		root: newDiskLayer(root, 0, cleans, db.diskdb),
 	}
+	db.diskdb.TruncateHead(rawdb.ReverseDiffFreezer, 0)
 	log.Info("Rebuild triedb", "root", root)
 }
 
@@ -748,7 +743,7 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	}
 	// Delete the reverse-diff entries from the disk
 	if !anonymous {
-		rawdb.DeleteReverseDiff(batch, dl.rid)
+		rawdb.DeleteReverseDiff(db.diskdb, dl.rid, true)
 		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
 		rawdb.WriteReverseDiffHead(batch, dl.rid-1)
 	}

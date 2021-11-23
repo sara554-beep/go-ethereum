@@ -166,23 +166,23 @@ func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*
 
 // persist persists the diff layer and all its parent diff layers to disk.
 // The order should be strictly from bottom to top.
-func (dl *diffLayer) persist(config *Config, newDiff chan uint64) snapshot {
+func (dl *diffLayer) persist(config *Config) snapshot {
 	parent, ok := dl.Parent().(*diffLayer)
 	if ok {
 		// Hold the lock to prevent any read operations until the new
 		// parent is linked correctly.
 		dl.lock.Lock()
-		dl.parent = parent.persist(config, newDiff)
+		dl.parent = parent.persist(config)
 		dl.lock.Unlock()
 	}
-	return diffToDisk(dl, config, newDiff)
+	return diffToDisk(dl, config)
 }
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
 // it. The method will panic if called onto a non-bottom-most diff layer. The disk
 // layer persistence should be operated in an atomic way. All updates should be
 // discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, config *Config, newDiff chan uint64) *diskLayer {
+func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	var (
 		totalSize int64
 		base      = bottom.Parent().(*diskLayer)
@@ -238,11 +238,5 @@ func diffToDisk(bottom *diffLayer, config *Config, newDiff chan uint64) *diskLay
 		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
 	}
 	log.Debug("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
-
-	// Send signal that new reverse diff has been stored.
-	select {
-	case newDiff <- bottom.rid:
-	default:
-	}
 	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
 }

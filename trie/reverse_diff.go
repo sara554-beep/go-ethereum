@@ -105,7 +105,6 @@ func storeReverseDiff(dl *diffLayer) error {
 		startTime = time.Now()
 		base      = dl.Parent().(*diskLayer)
 		states    []stateDiff
-		batch     = base.diskdb.NewBatch()
 	)
 	for key := range dl.nodes {
 		pre, _ := rawdb.ReadTrieNode(base.diskdb, []byte(key))
@@ -124,12 +123,12 @@ func storeReverseDiff(dl *diffLayer) error {
 	if err != nil {
 		return err
 	}
+	// The reverse diff object and the lookup are stored in two different
+	// places, so there is no atomicity guarantee. It's possible that reverse
+	// diff object is written but lookup is not, vice versa. So double-check
+	// the presence when using the reverse diff.
 	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob)
-	rawdb.WriteReverseDiffLookup(batch, base.root, dl.rid)
-	if err := batch.Write(); err != nil {
-		return err
-	}
-	batch.Reset()
+	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.rid)
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
 	duration := time.Since(startTime)
