@@ -34,7 +34,7 @@ import (
 // injects into the database the block hash->number mappings.
 func InitDatabaseFromFreezer(db ethdb.Database) {
 	// If we can't access the freezer or it's empty, abort
-	frozen, err := db.Ancients()
+	frozen, err := db.Ancients(ChainFreezer)
 	if err != nil || frozen == 0 {
 		return
 	}
@@ -49,7 +49,7 @@ func InitDatabaseFromFreezer(db ethdb.Database) {
 		// it would be 'neat' to read more data in one go, and let the
 		// freezerdb return N items (e.g up to 1000 items per go)
 		// That would require an API change in Ancients though
-		if h, err := db.Ancient(freezerHashTable, i); err != nil {
+		if h, err := db.Ancient(ChainFreezer, freezerHashTable, i); err != nil {
 			log.Crit("Failed to init database from freezer", "err", err)
 		} else {
 			hash = common.BytesToHash(h)

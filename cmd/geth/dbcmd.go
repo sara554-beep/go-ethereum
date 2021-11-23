@@ -516,9 +516,9 @@ func freezerInspect(ctx *cli.Context) error {
 		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
 	}
 	kind := ctx.Args().Get(0)
-	if noSnap, ok := rawdb.FreezerNoSnappy[kind]; !ok {
+	if noSnap, ok := rawdb.ChainFreezerNoSnappy[kind]; !ok {
 		var options []string
-		for opt := range rawdb.FreezerNoSnappy {
+		for opt := range rawdb.ChainFreezerNoSnappy {
 			options = append(options, opt)
 		}
 		sort.Strings(options)
