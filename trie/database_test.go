@@ -18,6 +18,7 @@ package trie
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -34,9 +35,9 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 	if err != nil {
 		panic("Failed to allocate tempdir")
 	}
-	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-frdb"), "", false)
 	if err != nil {
-		panic("Failed to create database")
+		panic(fmt.Sprintf("Failed to create database %v", err))
 	}
 	var (
 		db      = NewDatabase(diskdb, nil)
@@ -163,9 +164,9 @@ func TestDatabaseRollback(t *testing.T) {
 		if dl.Root() != roots[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
-		keys, vals := testKeys[i], testVals[i]
+		keys, vals := testKeys[i-1], testVals[i-1]
 		for j := 0; j < len(keys); j++ {
-			layer := db.Snapshot(roots[i])
+			layer := db.Snapshot(roots[i-1])
 			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
 			if err != nil {
 				t.Error("Failed to retrieve state", "err", err)
@@ -175,8 +176,8 @@ func TestDatabaseRollback(t *testing.T) {
 			}
 		}
 	}
-	if len(db.layers) != maximumLayerDistance {
-		t.Error("Only two layers are expected", maximumLayerDistance)
+	if len(db.layers) != 1 {
+		t.Error("Only disk layer is expected")
 	}
 }
 
@@ -200,9 +201,8 @@ func TestDatabaseBatchRollback(t *testing.T) {
 	if ndl.Root() != emptyRoot {
 		t.Error("Unexpected disk layer root")
 	}
-	// Ensure all the in-memory diff layers are maintained correctly
-	if len(db.layers) != 128 {
-		t.Error("Diff layer number mismatch", "want", 128, "got", len(db.layers))
+	if len(db.layers) != 1 {
+		t.Error("Only disk layer is expected")
 	}
 	for i, keys := range testKeys {
 		vals := testVals[i]
@@ -241,9 +241,9 @@ func TestAnonymousDatabase(t *testing.T) {
 		if dl.Root() != roots[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
-		keys, vals := testKeys[i], testVals[i]
+		keys, vals := testKeys[i-1], testVals[i-1]
 		for j := 0; j < len(keys); j++ {
-			layer := adb.Snapshot(roots[i])
+			layer := adb.Snapshot(roots[i-1])
 			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
 			if err != nil {
 				t.Error("Failed to retrieve state", "err", err)

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"sync/atomic"
 	"time"
 
@@ -338,7 +339,7 @@ func NewDatabaseWithFreezer(db ethdb.KeyValueStore, freezer string, namespace st
 	if err != nil {
 		return nil, err
 	}
-	rdiff, err := newFreezer(freezer, namespace, readonly, freezerTableSize, ReveseDiffFreezerNoSnappy)
+	rdiff, err := newFreezer(path.Join(freezer, "rdiffs"), namespace, readonly, freezerTableSize, ReveseDiffFreezerNoSnappy)
 	if err != nil {
 		return nil, err
 	}

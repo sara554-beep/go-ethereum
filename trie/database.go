@@ -680,8 +680,8 @@ func (db *Database) Clean(root common.Hash) {
 	log.Info("Rebuild triedb", "root", root)
 }
 
-// revert applies the reverse diffs to the database by separating the disk layer
-// to two sub layers: diff layer and the modified disk layer.
+// revert applies the reverse diffs to the database by reverting the disk layer
+// content. The passed clean cache should be empty.
 // This function assumes the lock in db is already held.
 func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	var (
@@ -698,24 +698,8 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	}
 	dl.MarkStale()
 
-	nodes := make(map[string]*cachedNode)
 	for _, state := range diff.States {
 		if anonymous {
-			// Here we use the flag returned by database to distinguish
-			// empty-value nodes and non-existent nodes. Only fallback
-			// to main database for non-existent nodes.
-			current, hash, exist := rawdb.ReadShadowTrieNode(dl.diskdb, db.namespace, state.Key)
-			if !exist {
-				current, hash = rawdb.ReadTrieNode(dl.diskdb, state.Key)
-			}
-			if len(current) > 0 {
-				node := &cachedNode{
-					hash: hash,
-					size: uint16(len(current)),
-					node: rawNode(current),
-				}
-				nodes[string(state.Key)] = node
-			}
 			if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 				rawdb.WriteShadowTrieNode(batch, db.namespace, state.Key, state.Val)
 			} else {
@@ -725,15 +709,6 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 				rawdb.WriteShadowTrieNode(batch, db.namespace, state.Key, []byte{})
 			}
 		} else {
-			current, hash := rawdb.ReadTrieNode(dl.diskdb, state.Key)
-			if len(current) > 0 {
-				node := &cachedNode{
-					hash: hash,
-					size: uint16(len(current)),
-					node: rawNode(current),
-				}
-				nodes[string(state.Key)] = node
-			}
 			if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 				rawdb.WriteTrieNode(batch, state.Key, state.Val)
 			} else {
@@ -741,15 +716,26 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 			}
 		}
 	}
-	// Delete the reverse-diff entries from the disk
-	if !anonymous {
-		rawdb.DeleteReverseDiff(db.diskdb, dl.rid, true)
-		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-		rawdb.WriteReverseDiffHead(batch, dl.rid-1)
-	}
 	// Flush all state changes in an atomic batch write
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write reverse diff", "err", err)
+	}
+	batch.Reset()
+
+	// Delete the reverse-diff entries from the disk
+	if !anonymous {
+		// Delete the lookup and update the diff head first. In case crash
+		// happens after updating diff head, it's still possible to recover
+		// in the next restart by truncating extra reverse diff.
+		rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
+		rawdb.WriteReverseDiffHead(batch, dl.rid-1)
+		if err := batch.Write(); err != nil {
+			log.Crit("Failed to delete reverse diff", "err", err)
+		}
+		batch.Reset()
+
+		// Truncate the reverse diff from the freezer in the last step
+		rawdb.DeleteReverseDiff(db.diskdb, dl.rid, true)
 	}
 	// Recreate the disk layer with newly created clean cache
 	var ndl *diskLayer
@@ -758,34 +744,8 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	} else {
 		ndl = newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.diskdb)
 	}
-	db.layers[ndl.root] = ndl
-
-	// Create the bottom most diff layer based on the new disk
-	// layer. All the states which are reverted in the disk are
-	// maintained here.
-	bottom := newDiffLayer(ndl, diff.Root, dl.rid, nodes)
-
-	// Link all existent layers with the new parent.
-	for _, snap := range db.layers {
-		if diff, ok := snap.(*diffLayer); ok {
-			if parent := diff.Parent().Root(); parent == dl.root {
-				diff.lock.Lock()
-				diff.parent = bottom
-				diff.lock.Unlock()
-			}
-		}
-	}
-	db.layers[bottom.root] = bottom
-
-	// Truncate layers if the maximum depth maintained exceeds the threshold
-	var (
-		deepest = ndl.rid
-		highest = deepest + uint64(maximumLayerDistance)
-	)
-	for root, snap := range db.layers {
-		if snap.ID() >= highest {
-			delete(db.layers, root)
-		}
+	db.layers = map[common.Hash]snapshot{
+		ndl.root: ndl,
 	}
 	return nil
 }
