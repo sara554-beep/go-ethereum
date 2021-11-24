@@ -104,7 +104,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 		"id", dl.rid,
 		"size", common.StorageSize(len(blob)),
 	}
-	if dl.rid-limit > 0 {
+	if dl.rid > limit {
 		oldTail, err := base.diskdb.Tail(rawdb.ReverseDiffFreezer)
 		if err == nil {
 			batch := base.diskdb.NewBatch()
