@@ -192,7 +192,7 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	)
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
-	// states, the stored reverse diff won't be used at all.
+	// states, the stored reverse diff will be truncated in the next restart.
 	if err := storeReverseDiff(bottom); err != nil {
 		log.Error("Failed to store reverse diff", "err", err)
 	}

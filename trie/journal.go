@@ -91,42 +91,17 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config
 	if hash == (common.Hash{}) {
 		hash = emptyRoot
 	}
-	// Retrieve the latest stored reverse diff, ensure it's continuous
-	// with disk layer.
-	var head uint64
-	if ret := rawdb.ReadReverseDiffHead(diskdb); ret != nil {
-		head = *ret
-	}
-	rdiffs, err := diskdb.Ancients(rawdb.ReverseDiffFreezer)
-	if err == nil && rdiffs > 0 {
-		// Note error can return if the freezer functionality
-		// is disabled(testing). Don't panic for it.
-		switch {
-		case rdiffs == head:
-			// reverse diff freezer is continuous with disk layer,
-			// nothing to do here.
-		case rdiffs > head:
-			// reverse diff freezer is dangling, truncate the extra
-			// diffs.
-			diskdb.TruncateHead(rawdb.ReverseDiffFreezer, head+1)
-		default:
-			// disk layer is higher than reverse diff, the gap between
-			// the disk layer and reverse diff freezer is NOT fixable.
-			// truncate the entire reverse diff history.
-			head = 0
-			diskdb.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+	// Recover reverse diff head, repair the broken reverse diff history
+	// only if mutation is allowed.
+	var diffHead uint64
+	if config != nil && config.ReadOnly {
+		if ret := rawdb.ReadReverseDiffHead(diskdb); ret != nil {
+			diffHead = *ret
 		}
+	} else {
+		diffHead = repairReverseDiff(diskdb, hash)
 	}
-	// Ensure the head reverse diff matches with the disk layer,
-	// otherwise invalidate the entire reverse diff list.
-	if head != 0 {
-		diff, err := loadReverseDiff(diskdb, head)
-		if err != nil || diff.Root != hash {
-			head = 0
-			diskdb.TruncateHead(rawdb.ReverseDiffFreezer, 0)
-		}
-	}
-	base := newDiskLayer(hash, head, cleans, diskdb)
+	base := newDiskLayer(hash, diffHead, cleans, diskdb)
 
 	// Load the in-memory diff layers by resolving the journal
 	snapshot, err := loadJournal(diskdb, base)

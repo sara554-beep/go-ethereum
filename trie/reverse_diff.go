@@ -135,5 +135,51 @@ func storeReverseDiff(dl *diffLayer) error {
 	triedbReverseDiffTimeTimer.Update(duration)
 	log.Debug("Stored the reverse diff", "id", dl.rid, "size", common.StorageSize(len(blob)), "elapsed", common.PrettyDuration(duration))
 	return nil
+}
 
+// repairReverseDiff is called when database is constructed. It ensures reverse diff
+// history is aligned with disk layer, or do the necessary repair instead.
+func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
+	var head uint64
+	if ret := rawdb.ReadReverseDiffHead(db); ret != nil {
+		head = *ret
+	}
+	// Nothing expected, clean the entire reverse diff history
+	if head == 0 {
+		db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+		return 0
+	}
+	// Align the reverse diff history and stored reverse diff head.
+	rdiffs, err := db.Ancients(rawdb.ReverseDiffFreezer)
+	if err == nil && rdiffs > 0 {
+		// Note error can return if the freezer functionality
+		// is disabled(testing). Don't panic for it.
+		switch {
+		case rdiffs == head:
+			// reverse diff freezer is continuous with disk layer,
+			// nothing to do here.
+		case rdiffs > head:
+			// reverse diff freezer is dangling, truncate the extra
+			// diffs.
+			db.TruncateHead(rawdb.ReverseDiffFreezer, head)
+		default:
+			// disk layer is higher than reverse diff, the gap between
+			// the disk layer and reverse diff freezer is NOT fixable.
+			// truncate the entire reverse diff history.
+			head = 0
+			rawdb.WriteReverseDiffHead(db, 0)
+			db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+		}
+	}
+	// Ensure the head reverse diff matches with the disk layer,
+	// otherwise invalidate the entire reverse diff list.
+	if head != 0 {
+		diff, err := loadReverseDiff(db, head)
+		if err != nil || diff.Root != diskroot {
+			head = 0
+			rawdb.WriteReverseDiffHead(db, 0)
+			db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+		}
+	}
+	return head
 }

@@ -90,13 +90,6 @@ var (
 	errImmatureState = errors.New("immature state")
 )
 
-const (
-	// maximumLayerDistance represents the maximum distance between the top
-	// difflayer and disklayer. It also represents the maximum reorg depth
-	// can be supported by trie.Database **without** reverts the disk status.
-	maximumLayerDistance = 128
-)
-
 // Snapshot represents the functionality supported by a snapshot storage layer.
 type Snapshot interface {
 	// Root returns the root hash for which this snapshot was made.
