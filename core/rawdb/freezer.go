@@ -316,6 +316,7 @@ func (f *freezer) TruncateTail(items uint64) error {
 			return err
 		}
 	}
+	atomic.StoreUint64(&f.tail, items)
 	return nil
 }
 
