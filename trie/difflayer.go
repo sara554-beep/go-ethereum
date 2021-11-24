@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 // diffLayer represents a collection of modifications made to the in-memory tries
@@ -193,7 +194,7 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
 	// states, the stored reverse diff will be truncated in the next restart.
-	if err := storeReverseDiff(bottom); err != nil {
+	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
 		log.Error("Failed to store reverse diff", "err", err)
 	}
 	// Mark the base layer(disk layer) as stale since we are pushing

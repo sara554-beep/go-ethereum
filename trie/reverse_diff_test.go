@@ -80,7 +80,7 @@ func TestLoadStoreReverseDiff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to encode reverse diff %v", err)
 		}
-		rawdb.WriteReverseDiff(db, uint64(i+1), blob)
+		rawdb.WriteReverseDiff(db, uint64(i+1), blob, diffs[i].Parent)
 		rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
 	}
 	for i := 0; i < len(diffs); i++ {
@@ -99,13 +99,6 @@ func TestLoadStoreReverseDiff(t *testing.T) {
 		}
 		if !reflect.DeepEqual(diff.States, diffs[i].States) {
 			t.Fatal("Unexpected states")
-		}
-		parent, err := loadReverseDiffParent(db, uint64(i+1))
-		if err != nil {
-			t.Fatalf("Failed to load parent %v", err)
-		}
-		if parent != diffs[i].Parent {
-			t.Fatalf("Unexpected parent want %x got %x", diffs[i].Parent, diff.Parent)
 		}
 	}
 }

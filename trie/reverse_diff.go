@@ -65,42 +65,10 @@ func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
 	return &diff, nil
 }
 
-// loadReverseDiffParent reads the specified reverse diff blob from the disk
-// and resolves the parent field from it. The trick is applied here, instead
-// of decoding the entire RLP-encoded blob which is super expensive, we only
-// extract the first field from the binary blob.
-func loadReverseDiffParent(db ethdb.Database, id uint64) (common.Hash, error) {
-	blob := rawdb.ReadReverseDiff(db, id)
-	if len(blob) == 0 {
-		return common.Hash{}, errors.New("reverse diff not found")
-	}
-	listContent, _, err := rlp.SplitList(blob)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	// Handle the first field: Version
-	v, rest, err := rlp.SplitUint64(listContent)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	if v != reverseDiffVersion {
-		return common.Hash{}, fmt.Errorf("%w want %d got %d", errors.New("unexpected reverse diff version"), reverseDiffVersion, v)
-	}
-	// Handle the second field: Parent
-	parentHash, _, err := rlp.SplitString(rest)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	if len(parentHash) != common.HashLength {
-		return common.Hash{}, errors.New("invalid parent hash length")
-	}
-	return common.BytesToHash(parentHash), nil
-}
-
 // storeReverseDiff extracts the reverse state diff by the passed bottom-most
 // diff layer and its parent.
 // This function will panic if it's called for non-bottom-most diff layer.
-func storeReverseDiff(dl *diffLayer) error {
+func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	var (
 		startTime = time.Now()
 		base      = dl.Parent().(*diskLayer)
@@ -127,13 +95,37 @@ func storeReverseDiff(dl *diffLayer) error {
 	// places, so there is no atomicity guarantee. It's possible that reverse
 	// diff object is written but lookup is not, vice versa. So double-check
 	// the presence when using the reverse diff.
-	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob)
+	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob, base.root)
 	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.rid)
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
+	// Prune stale reverse diffs if necessary
+	logCtx := []interface{}{
+		"id", dl.rid,
+		"size", common.StorageSize(len(blob)),
+	}
+	if dl.rid-limit > 0 {
+		oldTail, err := base.diskdb.Tail(rawdb.ReverseDiffFreezer)
+		if err == nil {
+			batch := base.diskdb.NewBatch()
+			newTail := dl.rid - limit
+			for i := oldTail; i < newTail; i++ {
+				hash := rawdb.ReadReverseDiffHash(base.diskdb, i)
+				if hash != (common.Hash{}) {
+					rawdb.DeleteReverseDiffLookup(batch, hash)
+				}
+			}
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			base.diskdb.TruncateTail(rawdb.ReverseDiffFreezer, newTail)
+			logCtx = append(logCtx, "pruned", newTail-oldTail)
+		}
+	}
 	duration := time.Since(startTime)
 	triedbReverseDiffTimeTimer.Update(duration)
-	log.Debug("Stored the reverse diff", "id", dl.rid, "size", common.StorageSize(len(blob)), "elapsed", common.PrettyDuration(duration))
+	logCtx = append(logCtx, "elapsed", common.PrettyDuration(duration))
+	log.Debug("Stored the reverse diff", logCtx...)
 	return nil
 }
 

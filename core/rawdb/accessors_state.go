@@ -176,10 +176,21 @@ func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
 	return blob
 }
 
+// ReadReverseDiffHash retrieves the state root corresponding to the specified
+// reverse diff.
+func ReadReverseDiffHash(db ethdb.AncientReader, id uint64) common.Hash {
+	blob, err := db.Ancient(ReverseDiffFreezer, freezerReverseDiffHashTable, id-1)
+	if err != nil {
+		return common.Hash{}
+	}
+	return common.BytesToHash(blob)
+}
+
 // WriteReverseDiff writes the provided reverse diff to database.
-func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte) {
+func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte, state common.Hash) {
 	db.ModifyAncients(ReverseDiffFreezer, func(op ethdb.AncientWriteOp) error {
 		op.AppendRaw(freezerReverseDiffTable, id-1, blob)
+		op.AppendRaw(freezerReverseDiffHashTable, id-1, state.Bytes())
 		return nil
 	})
 }

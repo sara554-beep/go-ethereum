@@ -132,6 +132,9 @@ const (
 
 	// freezerReverseDiffTable indicates the name of the freezer reverse diff table.
 	freezerReverseDiffTable = "rdiffs"
+
+	// freezerReverseDiffHashTable indicates the name of the freezer reverse diff hash table.
+	freezerReverseDiffHashTable = "rdiff.hashes"
 )
 
 // ChainFreezerNoSnappy configures whether compression is disabled for the ancient-chain-tables.
@@ -147,7 +150,8 @@ var ChainFreezerNoSnappy = map[string]bool{
 // ReveseDiffFreezerNoSnappy configures whether compression is disabled for the ancient
 // reverse diffs.
 var ReveseDiffFreezerNoSnappy = map[string]bool{
-	freezerReverseDiffTable: true,
+	freezerReverseDiffTable:     false,
+	freezerReverseDiffHashTable: true,
 }
 
 const (
