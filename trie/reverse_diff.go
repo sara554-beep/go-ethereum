@@ -66,7 +66,8 @@ func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
 }
 
 // storeReverseDiff extracts the reverse state diff by the passed bottom-most
-// diff layer and its parent.
+// diff layer. After storing the corresponding reverse diffs, it will also prune
+// the stale reverse diffs from the disk by the given limit.
 // This function will panic if it's called for non-bottom-most diff layer.
 func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	var (
@@ -138,7 +139,10 @@ func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
 	}
 	// Nothing expected, clean the entire reverse diff history
 	if head == 0 {
-		db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+		if n, _ := db.Ancients(rawdb.ReverseDiffFreezer); n != 0 {
+			db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+			log.Info("Truncate unexpected reverse diff freezer", "rdiffs", n)
+		}
 		return 0
 	}
 	// Align the reverse diff history and stored reverse diff head.
@@ -154,6 +158,7 @@ func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
 			// reverse diff freezer is dangling, truncate the extra
 			// diffs.
 			db.TruncateHead(rawdb.ReverseDiffFreezer, head)
+			log.Info("Truncate dangling reverse diff freezer", "stored", head, "rdiffs", rdiffs)
 		default:
 			// disk layer is higher than reverse diff, the gap between
 			// the disk layer and reverse diff freezer is NOT fixable.
@@ -161,6 +166,7 @@ func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
 			head = 0
 			rawdb.WriteReverseDiffHead(db, 0)
 			db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+			log.Info("Truncate entire reverse diff freezer", "stored", head, "rdiffs", rdiffs)
 		}
 	}
 	// Ensure the head reverse diff matches with the disk layer,
@@ -171,6 +177,7 @@ func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
 			head = 0
 			rawdb.WriteReverseDiffHead(db, 0)
 			db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
+			log.Info("Truncate unmatched reverse diff freezer", "head", head, "diff", diff.Root, "disk", diskroot)
 		}
 	}
 	return head
