@@ -177,7 +177,7 @@ func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
 			head = 0
 			rawdb.WriteReverseDiffHead(db, 0)
 			db.TruncateHead(rawdb.ReverseDiffFreezer, 0)
-			log.Info("Truncate unmatched reverse diff freezer", "head", head, "diff", diff.Root, "disk", diskroot)
+			log.Info("Truncate unmatched reverse diff freezer", "head", head)
 		}
 	}
 	return head
