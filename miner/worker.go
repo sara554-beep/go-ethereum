@@ -946,12 +946,12 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 
 // generateParams wraps various of settings for generating sealing task.
 type generateParams struct {
-	timestamp  uint64      // The timstamp for sealing task
-	forceTime  bool        // Flag whether the given timestamp is immutable or not
-	parentHash common.Hash // Parent block hash, empty means the latest chain head
-	coinbase   bool        // Flag whether the coinbase field is required
-	noUncle    bool        // Flag whether the uncle block inclusion is allowed
-	noExtra    bool        // Flag whether the extra field assignment is allowed
+	timestamp  uint64         // The timstamp for sealing task
+	forceTime  bool           // Flag whether the given timestamp is immutable or not
+	parentHash common.Hash    // Parent block hash, empty means the latest chain head
+	coinbase   common.Address // The fee recipient address for including transaction
+	noUncle    bool           // Flag whether the uncle block inclusion is allowed
+	noExtra    bool           // Flag whether the extra field assignment is allowed
 }
 
 // prepareWork constructs the sealing task according to the given parameters,
@@ -998,12 +998,16 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 		}
 	}
 	// Set the coinbase if the worker is running or it's required
-	if w.isRunning() || genParams.coinbase {
-		if w.coinbase == (common.Address{}) {
-			log.Error("Refusing to mine without etherbase")
-			return nil, errors.New("no etherbase specified")
+	if w.isRunning() || genParams.coinbase != (common.Address{}) {
+		if genParams.coinbase != (common.Address{}) {
+			header.Coinbase = genParams.coinbase
+		} else {
+			if w.coinbase == (common.Address{}) {
+				log.Error("Refusing to mine without etherbase")
+				return nil, errors.New("no etherbase specified")
+			}
+			header.Coinbase = w.coinbase
 		}
-		header.Coinbase = w.coinbase
 	}
 	// Run the consensus preparation with the default or customized consensus engine.
 	if err := w.engine.Prepare(w.chain, header); err != nil {
@@ -1145,13 +1149,13 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 }
 
 // getSealingBlock generates the sealing block based on the given parameters.
-func (w *worker) getSealingBlock(parent common.Hash, timestamp uint64) (*types.Block, error) {
+func (w *worker) getSealingBlock(parent common.Hash, timestamp uint64, coinbase common.Address) (*types.Block, error) {
 	req := &getWorkReq{
 		params: &generateParams{
 			timestamp:  timestamp,
 			forceTime:  true,
 			parentHash: parent,
-			coinbase:   true,
+			coinbase:   coinbase,
 			noUncle:    true,
 			noExtra:    true,
 		},

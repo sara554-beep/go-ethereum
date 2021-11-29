@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/les"
@@ -79,36 +78,23 @@ type ConsensusAPI struct {
 	light          bool
 	eth            *eth.Ethereum
 	les            *les.LightEthereum
-	engine         consensus.Engine // engine is the post-merge consensus engine, only for block creation
 	preparedBlocks map[uint64]*ExecutableDataV1
 }
 
 func NewConsensusAPI(eth *eth.Ethereum, les *les.LightEthereum) *ConsensusAPI {
-	var engine consensus.Engine
 	if eth == nil {
 		if les.BlockChain().Config().TerminalTotalDifficulty == nil {
 			panic("Catalyst started without valid total difficulty")
 		}
-		if b, ok := les.Engine().(*beacon.Beacon); ok {
-			engine = beacon.New(b.InnerEngine())
-		} else {
-			engine = beacon.New(les.Engine())
-		}
 	} else {
 		if eth.BlockChain().Config().TerminalTotalDifficulty == nil {
 			panic("Catalyst started without valid total difficulty")
-		}
-		if b, ok := eth.Engine().(*beacon.Beacon); ok {
-			engine = beacon.New(b.InnerEngine())
-		} else {
-			engine = beacon.New(eth.Engine())
 		}
 	}
 	return &ConsensusAPI{
 		light:          eth == nil,
 		eth:            eth,
 		les:            les,
-		engine:         engine,
 		preparedBlocks: make(map[uint64]*ExecutableDataV1),
 	}
 }
@@ -231,7 +217,7 @@ func (api *ConsensusAPI) assembleBlock(parentHash common.Hash, params *PayloadAt
 		return nil, errors.New("not supported")
 	}
 	log.Info("Producing block", "parentHash", parentHash)
-	block, err := api.eth.Miner().GetSealingBlock(parentHash, params.Timestamp)
+	block, err := api.eth.Miner().GetSealingBlock(parentHash, params.Timestamp, params.FeeRecipient)
 	if err != nil {
 		return nil, err
 	}

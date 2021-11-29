@@ -558,9 +558,6 @@ func testGetSealingWork(t *testing.T, chainConfig *params.ChainConfig, engine co
 			if len(block.Extra()) != 0 {
 				t.Error("Unexpected extra field")
 			}
-			if block.Coinbase() != w.coinbase {
-				t.Errorf("Invalid coinbase, want %x, get %x", w.coinbase, block.Coinbase())
-			}
 		}
 		if block.MixDigest() != (common.Hash{}) {
 			t.Error("Unexpected mix digest")
@@ -596,7 +593,7 @@ func testGetSealingWork(t *testing.T, chainConfig *params.ChainConfig, engine co
 
 	// This API should work even when the automatic sealing is not enabled
 	for _, c := range cases {
-		block, err := w.getSealingBlock(c.parent, timestamp)
+		block, err := w.getSealingBlock(c.parent, timestamp, common.Address{})
 		if c.expectErr {
 			if err == nil {
 				t.Error("Expect error but get nil")
@@ -612,7 +609,7 @@ func testGetSealingWork(t *testing.T, chainConfig *params.ChainConfig, engine co
 	// This API should work even when the automatic sealing is enabled
 	w.start()
 	for _, c := range cases {
-		block, err := w.getSealingBlock(c.parent, timestamp)
+		block, err := w.getSealingBlock(c.parent, timestamp, common.Address{})
 		if c.expectErr {
 			if err == nil {
 				t.Error("Expect error but get nil")
