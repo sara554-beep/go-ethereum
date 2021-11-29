@@ -670,7 +670,7 @@ func (db *Database) Clean(root common.Hash) {
 	db.layers = map[common.Hash]snapshot{
 		root: newDiskLayer(root, head, cleans, db.diskdb),
 	}
-	log.Info("Rebuild triedb", "root", root)
+	log.Info("Rebuild triedb", "root", root, "rid", head)
 }
 
 // revert applies the reverse diffs to the database by reverting the disk layer
