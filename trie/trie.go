@@ -137,7 +137,7 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 	if stateRoot != (common.Hash{}) && stateRoot != emptyState {
 		snap := db.Snapshot(stateRoot)
 		if snap == nil {
-			return nil, &MissingNodeError{NodeHash: stateRoot}
+			return nil, &MissingNodeError{NodeHash: stateRoot, Owner: owner}
 		}
 		trie.snap = snap.(snapshot)
 	}
