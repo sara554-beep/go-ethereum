@@ -27,6 +27,17 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
+var (
+	// aggregatorMemoryLimit is the maximum size of the bottom-most diff layer
+	// that aggregates the writes from above until it's flushed into the disk
+	// layer.
+	//
+	// Note, bumping this up might drastically increase the size of the bloom
+	// filters that's stored in every diff layer. Don't do that without fully
+	// understanding all the implications.
+	aggregatorMemoryLimit = uint64(256 * 1024 * 1024)
+)
+
 // diffLayer represents a collection of modifications made to the in-memory tries
 // after running a block on top.
 //
@@ -37,6 +48,9 @@ type diffLayer struct {
 	root  common.Hash            // Root hash to which this snapshot diff belongs to
 	rid   uint64                 // Corresponding reverse diff id
 	nodes map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
+
+	// Embedded states
+	rdiffs []*reverseDiff // The map of reverse diffs for embedded states
 
 	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
 	memory uint64       // Approximate guess as to how much memory we use
@@ -179,6 +193,57 @@ func (dl *diffLayer) persist(config *Config) snapshot {
 	return diffToDisk(dl, config)
 }
 
+// flatten pushes all data from this point downwards, flattening everything into
+// a single diff at the bottom. Since usually the lowermost diff is the largest,
+// the flattening builds up from there in reverse.
+func (dl *diffLayer) flatten() snapshot {
+	// If the parent is not diff, we're the first in line, return unmodified
+	parent, ok := dl.parent.(*diffLayer)
+	if !ok {
+		return dl
+	}
+	// Parent is a diff, flatten it first (note, apart from weird corned cases,
+	// flatten will realistically only ever merge 1 layer, so there's no need to
+	// be smarter about grouping flattens together).
+	parent = parent.flatten().(*diffLayer)
+
+	// Before actually writing all our data to the parent, first ensure that the
+	// parent hasn't been 'corrupted' by someone else already flattening into it
+	parent.lock.Lock()
+	if atomic.SwapUint32(&parent.stale, 1) != 0 {
+		panic("parent diff layer is stale") // we've flattened into the same parent from two children, boo
+	}
+	parent.lock.Unlock()
+
+	// Merge nodes of two layers together, overwrite the nodes with same path.
+	size := parent.memory
+	for key, n := range dl.nodes {
+		diff := int(n.size) + len(key) + cachedNodeSize
+		if pnode, ok := parent.nodes[key]; ok {
+			diff = int(n.size) - int(pnode.size)
+		}
+		parent.nodes[key] = n
+		size = uint64(int(size) + diff)
+	}
+	// Construct and store the reverse diff for the merged state. If the bottom
+	// diff layer only contains a single version state, construct the reverse
+	// diff for itself as well.
+	if len(parent.rdiffs) == 0 {
+		parent.rdiffs = []*reverseDiff{genReverseDiff(parent)}
+	}
+	parent.rdiffs = append(parent.rdiffs, genReverseDiff(dl))
+
+	// Return the combo parent
+	return &diffLayer{
+		root:   dl.root,
+		rid:    dl.rid,
+		nodes:  parent.nodes,
+		rdiffs: parent.rdiffs,
+		parent: parent.parent,
+		memory: size,
+	}
+}
+
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
 // it. The method will panic if called onto a non-bottom-most diff layer. The disk
 // layer persistence should be operated in an atomic way. All updates should be
@@ -194,7 +259,7 @@ func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
 	// states, the stored reverse diff will be truncated in the next restart.
-	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
+	if err := storeReverseDiffs(bottom, params.FullImmutabilityThreshold); err != nil {
 		log.Error("Failed to store reverse diff", "err", err)
 	}
 	// Mark the base layer(disk layer) as stale since we are pushing

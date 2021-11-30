@@ -65,45 +65,61 @@ func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
 	return &diff, nil
 }
 
-// storeReverseDiff extracts the reverse state diff by the passed bottom-most
-// diff layer. After storing the corresponding reverse diffs, it will also prune
-// the stale reverse diffs from the disk by the given limit.
-// This function will panic if it's called for non-bottom-most diff layer.
-func storeReverseDiff(dl *diffLayer, limit uint64) error {
+// genReverseDiff extracts the previous state value from the parent layer
+// and constructs the reverse diff for the given diff layer,
+func genReverseDiff(dl *diffLayer) *reverseDiff {
 	var (
 		startTime = time.Now()
-		base      = dl.Parent().(*diskLayer)
+		parent    = dl.Parent()
 		states    []stateDiff
 	)
-	for key := range dl.nodes {
-		pre, _ := rawdb.ReadTrieNode(base.diskdb, []byte(key))
+	for key, node := range dl.nodes {
+		pre, _ := parent.NodeBlob([]byte(key), node.hash)
 		states = append(states, stateDiff{
 			Key: []byte(key),
 			Val: pre,
 		})
 	}
-	diff := &reverseDiff{
+	log.Debug("Generated reverse diff", "nodes", len(dl.nodes), "elapsed", common.PrettyDuration(time.Since(startTime)))
+	return &reverseDiff{
 		Version: reverseDiffVersion,
-		Parent:  base.root,
+		Parent:  parent.Root(),
 		Root:    dl.root,
 		States:  states,
 	}
-	blob, err := rlp.EncodeToBytes(diff)
-	if err != nil {
-		return err
-	}
-	// The reverse diff object and the lookup are stored in two different
-	// places, so there is no atomicity guarantee. It's possible that reverse
-	// diff object is written but lookup is not, vice versa. So double-check
-	// the presence when using the reverse diff.
-	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob, base.root) // RID -> Parent State && RID -> Reverse diff
-	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.rid) // Parent State -> RID
-	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
+}
 
+// storeReverseDiffs stores a batch of reverse diffs maintained in the bottom
+// diff layer into disk. It will also prune the stale reverse diffs from the
+// disk by the given limit as well.
+// This function will panic if it's called for non-bottom-most diff layer.
+func storeReverseDiffs(dl *diffLayer, limit uint64) error {
+	var (
+		startTime = time.Now()
+		base      = dl.Parent().(*diskLayer)
+		total     common.StorageSize
+	)
+	for i, rdiff := range dl.rdiffs {
+		blob, err := rlp.EncodeToBytes(rdiff)
+		if err != nil {
+			return err
+		}
+		total += common.StorageSize(int64(len(blob)))
+
+		// The reverse diff object and the lookup are stored in two different
+		// places, so there is no atomicity guarantee. It's possible that reverse
+		// diff object is written but lookup is not, vice versa. So double-check
+		// the presence when using the reverse diff.
+		rawdb.WriteReverseDiff(base.diskdb, base.rid + uint64(i) + 1, blob, base.root) // RID -> Parent State && RID -> Reverse diff
+		rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.rid) // Parent State -> RID
+		triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
+	}
 	// Prune stale reverse diffs if necessary
 	logCtx := []interface{}{
-		"id", dl.rid,
-		"size", common.StorageSize(len(blob)),
+		"start", base.rid + 1,
+		"end", base.rid + uint64(len(dl.rdiffs)),
+		"count", len(dl.rdiffs),
+		"size", total,
 	}
 	if dl.rid > limit {
 		oldTail, err := base.diskdb.Tail(rawdb.ReverseDiffFreezer)
@@ -129,7 +145,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	duration := time.Since(startTime)
 	triedbReverseDiffTimeTimer.Update(duration)
 	logCtx = append(logCtx, "elapsed", common.PrettyDuration(duration))
-	log.Debug("Stored the reverse diff", logCtx...)
+	log.Debug("Stored the reverse diffs", logCtx...)
 	return nil
 }
 

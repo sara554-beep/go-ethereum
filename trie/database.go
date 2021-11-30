@@ -514,7 +514,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		base := diff.persist(db.config).(*diskLayer)
+		base := diffToDisk(diff.flatten().(*diffLayer), db.config)
 
 		// Replace the entire snapshot tree with the flat base
 		db.layers = map[common.Hash]snapshot{base.root: base}
@@ -578,15 +578,22 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 		// Hold the lock to prevent any read operations until the new
 		// parent is linked correctly.
 		diff.lock.Lock()
-		base := parent.persist(db.config)
-		db.layers[base.Root()] = base
-		diff.parent = base
-		diff.lock.Unlock()
-		return
+		defer diff.lock.Unlock()
+
+		flattened := parent.flatten().(*diffLayer)
+		db.layers[flattened.root] = flattened
+		diff.parent = flattened
+		if flattened.memory < aggregatorMemoryLimit {
+			return
+		}
 
 	default:
 		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
 	}
+	// If the bottom-most layer is larger than our memory cap, persist to disk
+	base := diffToDisk(diff.parent.(*diffLayer), db.config)
+	db.layers[base.root] = base
+	diff.parent = base
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
