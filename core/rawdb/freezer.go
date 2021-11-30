@@ -296,8 +296,7 @@ func (f *freezer) TruncateHead(items uint64) error {
 			return err
 		}
 	}
-	atomic.StoreUint64(&f.frozen, items)
-	return nil
+	return f.repair()
 }
 
 // TruncateTail discards any recent data below the provided threshold number.
@@ -320,8 +319,7 @@ func (f *freezer) TruncateTail(tail uint64) error {
 			return err
 		}
 	}
-	atomic.StoreUint64(&f.tail, tail)
-	return nil
+	return f.repair()
 }
 
 // Sync flushes all data tables to disk.
