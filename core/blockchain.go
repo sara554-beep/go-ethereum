@@ -959,6 +959,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		}
 
 		// Write all chain data to ancients.
+		astart := time.Now()
 		td := bc.GetTd(first.Hash(), first.NumberU64())
 		writeSize, err := rawdb.WriteAncientBlocks(bc.db, blockChain, receiptChain, td)
 		size += writeSize
@@ -966,6 +967,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			log.Error("Error importing chain data to ancients", "err", err)
 			return 0, err
 		}
+		awrite := time.Since(astart)
 
 		// Write tx indices if any condition is satisfied:
 		// * If user requires to reserve all tx indices(txlookuplimit=0)
@@ -979,6 +981,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		// range. In this case, all tx indices of newly imported blocks should be
 		// generated.
 		var batch = bc.db.NewBatch()
+		istart := time.Now()
 		for _, block := range blockChain {
 			if bc.txLookupLimit == 0 || ancientLimit <= bc.txLookupLimit || block.NumberU64() >= ancientLimit-bc.txLookupLimit {
 				rawdb.WriteTxLookupEntriesByBlock(batch, block)
@@ -987,7 +990,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 			stats.processed++
 		}
-
 		// Flush all tx-lookup index data.
 		size += int64(batch.ValueSize())
 		if err := batch.Write(); err != nil {
@@ -999,12 +1001,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 			return 0, err
 		}
+		iwrite := time.Since(istart)
 
 		// Sync the ancient store explicitly to ensure all data has been flushed to disk.
+		sstart := time.Now()
 		if err := bc.db.Sync(); err != nil {
 			return 0, err
 		}
-
 		// Update the current fast block because all block data is now present in DB.
 		previousFastBlock := bc.CurrentFastBlock().NumberU64()
 		if !updateHead(blockChain[len(blockChain)-1]) {
@@ -1015,9 +1018,11 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			}
 			return 0, errSideChainReceipts
 		}
+		stime := time.Since(sstart)
 
 		// Delete block data from the main database.
 		batch.Reset()
+		dstart := time.Now()
 		canonHashes := make(map[common.Hash]struct{})
 		for _, block := range blockChain {
 			canonHashes[block.Hash()] = struct{}{}
@@ -1028,16 +1033,23 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			rawdb.DeleteBlockWithoutNumber(batch, block.Hash(), block.NumberU64())
 		}
 		// Delete side chain hash-to-number mappings.
-		start := time.Now()
 		for _, nh := range rawdb.ReadAllHashesInRange(bc.db, first.NumberU64(), last.NumberU64()) {
 			if _, canon := canonHashes[nh.Hash]; !canon {
 				rawdb.DeleteHeader(batch, nh.Hash, nh.Number)
 			}
 		}
-		log.Info("Iterated side block", "count", last.NumberU64() - first.NumberU64(), "elapsed", common.PrettyDuration(time.Since(start)))
 		if err := batch.Write(); err != nil {
 			return 0, err
 		}
+		dwrite := time.Since(dstart)
+
+		log.Info("written ancient",
+			"count", last.NumberU64()-first.NumberU64(),
+			"ancient-write", common.PrettyDuration(awrite),
+			"sync-update-head", common.PrettyDuration(stime),
+			"lookup-write", common.PrettyDuration(iwrite),
+			"side-delete", common.PrettyDuration(dwrite),
+		)
 		return 0, nil
 	}
 
