@@ -1028,11 +1028,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			rawdb.DeleteBlockWithoutNumber(batch, block.Hash(), block.NumberU64())
 		}
 		// Delete side chain hash-to-number mappings.
+		start := time.Now()
 		for _, nh := range rawdb.ReadAllHashesInRange(bc.db, first.NumberU64(), last.NumberU64()) {
 			if _, canon := canonHashes[nh.Hash]; !canon {
 				rawdb.DeleteHeader(batch, nh.Hash, nh.Number)
 			}
 		}
+		log.Info("Iterated side block", "count", last.NumberU64() - first.NumberU64(), "elapsed", common.PrettyDuration(time.Since(start)))
 		if err := batch.Write(); err != nil {
 			return 0, err
 		}
