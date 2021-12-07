@@ -331,10 +331,13 @@ func (mgr *nodeManager) run() {
 
 			nodes := mgr.getNodes(eth2MiningNode)
 			nodes = append(nodes, mgr.getNodes(eth2NormalNode)...)
-			nodes = append(nodes, mgr.getNodes(eth2LightClient)...)
-
 			for _, node := range nodes {
 				if err := node.insertBlockAndSetHead(parentBlock.Header(), *ed); err != nil {
+					log.Error("Failed to insert block", "type", node.typ, "err", err)
+				}
+			}
+			for _, node := range mgr.getNodes(eth2LightClient) {
+				if err := node.insertBlock(*ed); err != nil {
 					log.Error("Failed to insert block", "type", node.typ, "err", err)
 				}
 			}
