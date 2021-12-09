@@ -287,9 +287,12 @@ func (mgr *nodeManager) run() {
 			fcState := catalyst.ForkchoiceStateV1{
 				HeadBlockHash:      oldest.Hash(),
 				SafeBlockHash:      common.Hash{},
-				FinalizedBlockHash: common.Hash{},
+				FinalizedBlockHash: oldest.Hash(),
 			}
-			node.api.ForkchoiceUpdatedV1(fcState, nil)
+			// TODO(rjl493456442) finalization doesn't work properly, FIX IT
+			_ = fcState
+			_ = node
+			//node.api.ForkchoiceUpdatedV1(fcState, nil)
 		}
 		log.Info("Finalised eth2 block", "number", oldest.NumberU64(), "hash", oldest.Hash())
 		waitFinalise = waitFinalise[1:]

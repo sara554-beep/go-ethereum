@@ -282,8 +282,6 @@ func ExecutableDataToBlock(params ExecutableDataV1) (*types.Block, error) {
 	if len(params.ExtraData) > 32 {
 		return nil, fmt.Errorf("invalid extradata length: %v", len(params.ExtraData))
 	}
-	number := big.NewInt(0)
-	number.SetUint64(params.Number)
 	header := &types.Header{
 		ParentHash:  params.ParentHash,
 		UncleHash:   types.EmptyUncleHash,
@@ -293,7 +291,7 @@ func ExecutableDataToBlock(params ExecutableDataV1) (*types.Block, error) {
 		ReceiptHash: params.ReceiptRoot,
 		Bloom:       types.BytesToBloom(params.LogsBloom),
 		Difficulty:  common.Big0,
-		Number:      number,
+		Number:      new(big.Int).SetUint64(params.Number),
 		GasLimit:    params.GasLimit,
 		GasUsed:     params.GasUsed,
 		Time:        params.Timestamp,
