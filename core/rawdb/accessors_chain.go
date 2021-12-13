@@ -298,7 +298,7 @@ func ReadHeaderRange(db ethdb.Reader, number uint64, count uint64) []rlp.RawValu
 		// It's ok to request block 0, 1 item
 		count = number + 1
 	}
-	limit, _ := db.Ancients()
+	limit, _ := db.Ancients(ChainFreezer)
 	// First read live blocks
 	if i >= limit {
 		// If we need to read live blocks, we need to figure out the hash first
@@ -319,7 +319,7 @@ func ReadHeaderRange(db ethdb.Reader, number uint64, count uint64) []rlp.RawValu
 	}
 	// read remaining from ancients
 	max := count * 700
-	data, err := db.AncientRange(freezerHeaderTable, i+1-count, count, max)
+	data, err := db.AncientRange(ChainFreezer, freezerHeaderTable, i+1-count, count, max)
 	if err == nil && uint64(len(data)) == count {
 		// the data is on the order [h, h+1, .., n] -- reordering needed
 		for i := range data {

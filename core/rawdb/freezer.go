@@ -291,12 +291,17 @@ func (f *freezer) TruncateHead(items uint64) error {
 	if atomic.LoadUint64(&f.frozen) <= items {
 		return nil
 	}
+	var frozen uint64
 	for _, table := range f.tables {
 		if err := table.truncateHead(items); err != nil {
 			return err
 		}
+		// Tables should be aligned, only check the first table.
+		if frozen == 0 {
+			frozen = atomic.LoadUint64(&table.items)
+		}
 	}
-	atomic.StoreUint64(&f.frozen, items)
+	atomic.StoreUint64(&f.frozen, frozen)
 	return nil
 }
 
@@ -315,12 +320,17 @@ func (f *freezer) TruncateTail(tail uint64) error {
 	// there will be some or all tables that do not actually perform the truncate
 	// action because tail deletion can only do in file level. These deletions
 	// will be delayed until the whole data file is deletable.
+	var truncated uint64
 	for _, table := range f.tables {
 		if err := table.truncateTail(tail); err != nil {
 			return err
 		}
+		if truncated == 0 {
+			itemOffset, hidden := atomic.LoadUint64(&table.itemOffset), atomic.LoadUint64(&table.itemHidden)
+			truncated = itemOffset + hidden
+		}
 	}
-	atomic.StoreUint64(&f.tail, tail)
+	atomic.StoreUint64(&f.tail, truncated)
 	return nil
 }
 
@@ -338,7 +348,7 @@ func (f *freezer) Sync() error {
 	return nil
 }
 
-// repair truncates all data tables to the same length.
+// repair truncates all data tables to the same length, both tail and head.
 func (f *freezer) repair() error {
 	var (
 		head = uint64(math.MaxUint64)

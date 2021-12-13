@@ -396,11 +396,19 @@ func (t *freezerTable) truncateHead(items uint64) error {
 	var (
 		offset     uint64 // the offset which points to the last index
 		itemOffset = atomic.LoadUint64(&t.itemOffset)
+		itemHidden = atomic.LoadUint64(&t.itemHidden)
+		tail       = itemOffset + itemHidden
+		newHead    uint64
 	)
 	if items < itemOffset {
-		offset, items = 0, itemOffset
+		offset = 0
 	} else {
 		offset = items - itemOffset
+	}
+	if items < tail {
+		newHead = tail
+	} else {
+		newHead = items
 	}
 	if err := truncateFreezerFile(t.index, int64(offset+1)*indexEntrySize); err != nil {
 		return err
@@ -437,9 +445,9 @@ func (t *freezerTable) truncateHead(items uint64) error {
 	// All data files truncated, set internal counters and return
 	t.headBytes = int64(expected.offset)
 
-	atomic.StoreUint64(&t.items, items)
-	if items < itemOffset+atomic.LoadUint64(&t.itemHidden) {
-		atomic.StoreUint64(&t.itemHidden, items-itemOffset)
+	atomic.StoreUint64(&t.items, newHead)
+	if newHead < itemOffset+atomic.LoadUint64(&t.itemHidden) {
+		atomic.StoreUint64(&t.itemHidden, newHead-itemOffset)
 	}
 	// Retrieve the new size and update the total size counter
 	newSize, err := t.sizeNolock()
