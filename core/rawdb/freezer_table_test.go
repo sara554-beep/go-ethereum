@@ -503,7 +503,7 @@ func TestFreezerReadAndTruncate(t *testing.T) {
 			f.Retrieve(uint64(y))
 		}
 		// Now, truncate back to zero
-		if err := f.truncate(0); err != nil{
+		if err := f.truncate(0); err != nil {
 			t.Fatal(err)
 		}
 		// Write the data again
@@ -829,6 +829,7 @@ func TestSequentialReadByteLimit(t *testing.T) {
 		}
 	}
 }
+
 /*
 func TestFreezerTailTruncate(t *testing.T){
 	t.Parallel()
@@ -861,3 +862,120 @@ func TestFreezerTailTruncate(t *testing.T){
 	}
 }
 */
+
+func TestTruncateTail(t *testing.T) {
+	t.Parallel()
+	rm, wm, sg := metrics.NewMeter(), metrics.NewMeter(), metrics.NewGauge()
+	fname := fmt.Sprintf("truncate-tail-%d", rand.Uint64())
+
+	// Fill table
+	f, err := newTable(os.TempDir(), fname, rm, wm, sg, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Write 7 x 20 bytes, splitting out into four files
+	batch := f.newBatch()
+	require.NoError(t, batch.AppendRaw(0, getChunk(20, 0xFF)))
+	require.NoError(t, batch.AppendRaw(1, getChunk(20, 0xEE)))
+	require.NoError(t, batch.AppendRaw(2, getChunk(20, 0xdd)))
+	require.NoError(t, batch.AppendRaw(3, getChunk(20, 0xcc)))
+	require.NoError(t, batch.AppendRaw(4, getChunk(20, 0xbb)))
+	require.NoError(t, batch.AppendRaw(5, getChunk(20, 0xaa)))
+	require.NoError(t, batch.AppendRaw(6, getChunk(20, 0x11)))
+	require.NoError(t, batch.commit())
+
+	// nothing to do, all the items should still be there.
+	f.tailTruncate(0)
+	f.DumpIndex(0, 100)
+	checkRetrieve(t, f, map[uint64][]byte{
+		0: getChunk(20, 0xFF),
+		1: getChunk(20, 0xEE),
+		2: getChunk(20, 0xdd),
+		3: getChunk(20, 0xcc),
+		4: getChunk(20, 0xbb),
+		5: getChunk(20, 0xaa),
+		6: getChunk(20, 0x11),
+	})
+
+	// truncate single element( item 0 ), deletion is only supported at file level
+	f.tailTruncate(1)
+	f.DumpIndex(0, 100)
+	checkRetrieveError(t, f, map[uint64]error{
+		0: errOutOfBounds,
+	})
+	checkRetrieve(t, f, map[uint64][]byte{
+		1: getChunk(20, 0xEE),
+		2: getChunk(20, 0xdd),
+		3: getChunk(20, 0xcc),
+		4: getChunk(20, 0xbb),
+		5: getChunk(20, 0xaa),
+		6: getChunk(20, 0x11),
+	})
+
+	// Reopen the table, the un-persisted deletion will get lost
+	f.Close()
+	f, err = newTable(os.TempDir(), fname, rm, wm, sg, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkRetrieveError(t, f, map[uint64]error{
+		0: errOutOfBounds,
+	})
+	checkRetrieve(t, f, map[uint64][]byte{
+		1: getChunk(20, 0xEE),
+		2: getChunk(20, 0xdd),
+		3: getChunk(20, 0xcc),
+		4: getChunk(20, 0xbb),
+		5: getChunk(20, 0xaa),
+		6: getChunk(20, 0x11),
+	})
+
+	// truncate two elements( item 0, item 1 ), the file 0 should be deleted
+	f.tailTruncate(2)
+	t.Log(f.dumpIndexString(0, 100))
+	checkRetrieveError(t, f, map[uint64]error{
+		0: errOutOfBounds,
+		1: errOutOfBounds,
+	})
+	checkRetrieve(t, f, map[uint64][]byte{
+		2: getChunk(20, 0xdd),
+		3: getChunk(20, 0xcc),
+		4: getChunk(20, 0xbb),
+		5: getChunk(20, 0xaa),
+		6: getChunk(20, 0x11),
+	})
+
+	// Reopen the table, the above testing should still pass
+	f.Close()
+	f, err = newTable(os.TempDir(), fname, rm, wm, sg, 40, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	checkRetrieveError(t, f, map[uint64]error{
+		0: errOutOfBounds,
+		1: errOutOfBounds,
+	})
+	checkRetrieve(t, f, map[uint64][]byte{
+		2: getChunk(20, 0xdd),
+		3: getChunk(20, 0xcc),
+		4: getChunk(20, 0xbb),
+		5: getChunk(20, 0xaa),
+		6: getChunk(20, 0x11),
+	})
+
+	// truncate all, the entire freezer should be deleted
+	f.tailTruncate(6)
+	checkRetrieveError(t, f, map[uint64]error{
+		0: errOutOfBounds,
+		1: errOutOfBounds,
+		2: errOutOfBounds,
+		3: errOutOfBounds,
+		4: errOutOfBounds,
+		5: errOutOfBounds,
+	})
+	checkRetrieve(t, f, map[uint64][]byte{
+		6: getChunk(20, 0x11),
+	})
+}

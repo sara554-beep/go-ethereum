@@ -64,6 +64,8 @@ func truncateFile(file *os.File, size int64) error {
 // copyFrom copies data from 'srcPath' at offset 'offset' into 'destPath'.
 // The 'destPath' is created if it doesn't exist, otherwise it is overwritten.
 // It is perfectly valid to have destPath == srcPath.
+//
+// TODO how to check if the file with destination path is opened right now?
 func copyFrom(srcPath, destPath string, offset uint64) error {
 	// Create a temp file in the same dir where we want it to wind up
 	f, err := ioutil.TempFile(filepath.Dir(destPath), "copy-tmp-*")
@@ -107,7 +109,7 @@ func copyFrom(srcPath, destPath string, offset uint64) error {
 
 func iterateIndexFile(from uint64, indexFile *os.File, callback func(entry *indexEntry) bool) error {
 	// Apply the table-offset
-	//from = from - t.itemOffset
+	// from = from - t.itemOffset
 	for {
 		buffer := make([]byte, indexEntrySize)
 		if _, err := indexFile.ReadAt(buffer, int64(from*indexEntrySize)); err != nil {
@@ -118,6 +120,7 @@ func iterateIndexFile(from uint64, indexFile *os.File, callback func(entry *inde
 		if !callback(index) {
 			break
 		}
+		from += 1
 	}
 	return nil
 }
