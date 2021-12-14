@@ -49,6 +49,10 @@ var (
 	errNotSupported = errors.New("this operation is not supported")
 )
 
+type metaEntry struct {
+	version uint8
+}
+
 // indexEntry contains the number/id of the file that the data resides in, as well as the
 // offset within the file to the end of the data.
 // In serialized form, the filenum is stored as uint16.
