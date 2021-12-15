@@ -117,6 +117,7 @@ type StateDB struct {
 	StorageHashes        time.Duration
 	StorageUpdates       time.Duration
 	StorageCommits       time.Duration
+	StorageDeletes       time.Duration
 	SnapshotAccountReads time.Duration
 	SnapshotStorageReads time.Duration
 	SnapshotCommits      time.Duration
@@ -934,18 +935,9 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 			}
 		} else {
 			// Account is deleted, nuke out the storage data as well.
-			var (
-				set  = make(map[common.Hash][]byte)
-				iter = obj.getTrie(s.db).NodeIterator(nil)
-			)
-			for iter.Next(true) {
-				if iter.Hash() == (common.Hash{}) {
-					continue
-				}
-				set[iter.Hash()] = iter.StorageKey()
-			}
-			storageDeleted += len(set)
-			committed = append(committed, trie.NewResultFromDeletionSet(set))
+			result := obj.DeleteTrie(s.db)
+			storageDeleted += result.Modified()
+			committed = append(committed, result)
 		}
 	}
 	if len(s.stateObjectsDirty) > 0 {

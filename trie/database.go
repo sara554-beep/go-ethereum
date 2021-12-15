@@ -61,15 +61,22 @@ var (
 
 	triedbReverseDiffTimeTimer = metrics.NewRegisteredTimer("trie/triedb/reversediff/time", nil)
 	triedbReverseDiffSizeMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/size", nil)
-
-	// ErrSnapshotStale is returned from data accessors if the underlying snapshot
-	// layer had been invalidated due to the chain progressing forward far enough
-	// to not maintain the layer's original state.
-	ErrSnapshotStale = errors.New("snapshot stale")
+	triedbReverseDiskHitMeter  = metrics.NewRegisteredMeter("trie/triedb/reversediff/disk", nil)
+	triedbReverseDirtyHitMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/dirty", nil)
+	triedbReverseMissMeter     = metrics.NewRegisteredMeter("trie/triedb/reversediff/miss", nil)
 
 	// ErrSnapshotReadOnly is returned if the database is opened in read only mode
 	// and mutation is requested.
 	ErrSnapshotReadOnly = errors.New("read only")
+
+	// errSnapshotStale is returned from data accessors if the underlying snapshot
+	// layer had been invalidated due to the chain progressing forward far enough
+	// to not maintain the layer's original state.
+	errSnapshotStale = errors.New("snapshot stale")
+
+	// errUnexpectedNode is returned if the requested node with specified path is
+	// not hash matched or marked as deleted.
+	errUnexpectedNode = errors.New("unexpected node")
 
 	// errSnapshotCycle is returned if a snapshot is attempted to be inserted
 	// that forms a cycle in the snapshot tree.
@@ -186,7 +193,7 @@ func (n rawShortNode) fstring(ind string) string { panic("this should never end 
 // cachedNode is all the information we know about a single cached trie node
 // in the memory database write layer.
 type cachedNode struct {
-	hash common.Hash // Node hash, derived by node value hashing, always non-empty
+	hash common.Hash // Node hash, computed by hashing rlp value, empty for deleted node
 	node node        // Cached collapsed trie node, or raw rlp data, nil for deleted node
 	size uint16      // Byte size of the useful cached data, 0 for deleted node
 }
@@ -406,21 +413,7 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	layer := db.layers[convertEmpty(blockRoot)]
-	if layer != nil {
-		return layer
-	}
-	blob := rawdb.ReadArchiveTrieNode(db.diskdb, blockRoot)
-	if len(blob) == 0 {
-		return nil
-	}
-	// If the legacy/archive format root node indeed exists,
-	// create a shadow diff layer with empty diffs for state
-	// accessing.
-	dl := db.disklayer()
-	diff := newDiffLayer(dl, blockRoot, dl.rid+1, nil)
-	db.layers[blockRoot] = diff
-	return diff
+	return db.layers[convertEmpty(blockRoot)]
 }
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing
@@ -499,14 +492,19 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		base := diff.persist(db.config).(*diskLayer)
+		result, err := diff.persist(db.config, true)
+		if err != nil {
+			return err
+		}
+		base := result.(*diskLayer)
 
 		// Replace the entire snapshot tree with the flat base
 		db.layers = map[common.Hash]snapshot{base.root: base}
 		return nil
 	}
-	db.cap(diff, layers)
-
+	if err := db.cap(diff, layers); err != nil {
+		return err
+	}
 	// Remove any layer that is stale or links into a stale layer
 	children := make(map[common.Hash][]common.Hash)
 	for root, snap := range db.layers {
@@ -542,7 +540,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 // which may or may not overflow and cascade to disk. Since this last layer's
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
-func (db *Database) cap(diff *diffLayer, layers int) {
+func (db *Database) cap(diff *diffLayer, layers int) error {
 	// Dive until we run out of layers or reach the persistent database
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
@@ -550,24 +548,28 @@ func (db *Database) cap(diff *diffLayer, layers int) {
 			diff = parent
 		} else {
 			// Diff stack too shallow, return without modifications
-			return
+			return nil
 		}
 	}
 	// We're out of layers, flatten anything below, stopping if it's the disk or if
 	// the memory limit is not yet exceeded.
 	switch parent := diff.Parent().(type) {
 	case *diskLayer:
-		return
+		return nil
 
 	case *diffLayer:
 		// Hold the lock to prevent any read operations until the new
 		// parent is linked correctly.
 		diff.lock.Lock()
-		base := parent.persist(db.config)
+		defer diff.lock.Unlock()
+
+		base, err := parent.persist(db.config, false)
+		if err != nil {
+			return err
+		}
 		db.layers[base.Root()] = base
 		diff.parent = base
-		diff.lock.Unlock()
-		return
+		return nil
 
 	default:
 		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
@@ -598,9 +600,9 @@ func (db *Database) Journal(root common.Hash) error {
 	if err := rlp.Encode(journal, journalVersion); err != nil {
 		return err
 	}
-	diskroot := db.diskRoot()
+	_, diskroot := rawdb.ReadTrieNode(db.diskdb, EncodeStorageKey(common.Hash{}, nil))
 	if diskroot == (common.Hash{}) {
-		return errors.New("invalid disk root in triedb")
+		diskroot = emptyRoot
 	}
 	// Secondly write out the disk layer root, ensure the
 	// diff journal is continuous with disk.
@@ -653,7 +655,7 @@ func (db *Database) Clean(root common.Hash) {
 	}
 	head := truncateFromHead(db.diskdb, 0)
 	db.layers = map[common.Hash]snapshot{
-		root: newDiskLayer(root, head, cleans, db.diskdb),
+		root: newDiskLayer(root, head, cleans, nil, db.diskdb),
 	}
 	log.Info("Rebuild triedb", "root", root, "rid", head)
 }
@@ -675,26 +677,39 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	}
 	dl.MarkStale()
 
-	for _, state := range diff.States {
-		if len(state.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
-			rawdb.WriteTrieNode(batch, state.Key, state.Val)
-		} else {
-			rawdb.DeleteTrieNode(batch, state.Key)
+	_, diskRoot := rawdb.ReadTrieNode(db.diskdb, EncodeStorageKey(common.Hash{}, nil))
+	switch {
+	case diskRoot == diff.Root:
+		// diff.Root == diskRoot, applies the state reverting
+		// on disk directly. The assumption should be held in
+		// this case the dirty cache must be empty.
+		for _, state := range diff.States {
+			if len(state.Val) > 0 {
+				rawdb.WriteTrieNode(batch, state.Key, state.Val)
+			} else {
+				rawdb.DeleteTrieNode(batch, state.Key)
+			}
+		}
+		if err := batch.Write(); err != nil {
+			log.Crit("Failed to write reverse diff", "err", err)
+		}
+		batch.Reset()
+
+	case diskRoot == diff.Parent:
+		// diff.Root == dl.root and diff.Parent == diskRoot,
+		// nuke out the dirty node set for reverting.
+		dl.dirty = newDirtyCache(nil)
+
+	default:
+		// Revert embedded state in the dirty set.
+		if err := dl.dirty.revert(diff); err != nil {
+			return err
 		}
 	}
-	// Flush all state changes in an atomic batch write
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to write reverse diff", "err", err)
-	}
-	batch.Reset()
-
-	// Delete the lookup and update the diff head first. In case crash
-	// happens after updating diff head, it's still possible to recover
-	// in the next restart by truncating extra reverse diff.
+	// Delete the lookup first to mark this reverse diff invisible.
 	rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-	rawdb.WriteReverseDiffHead(batch, dl.rid-1)
 	if err := batch.Write(); err != nil {
-		log.Crit("Failed to delete reverse diff", "err", err)
+		return err
 	}
 	batch.Reset()
 
@@ -702,22 +717,14 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	rawdb.DeleteReverseDiff(db.diskdb, dl.rid)
 
 	// Recreate the disk layer with newly created clean cache
-	ndl := newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.diskdb)
-	db.layers = map[common.Hash]snapshot{
-		ndl.root: ndl,
-	}
+	ndl := newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.dirty, dl.diskdb)
+	db.layers = map[common.Hash]snapshot{ndl.root: ndl}
 	return nil
 }
 
 // Rollback rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding reverse diffs are existent.
-//
-// If the database is opened in Anonymous mode, then the reverted state
-// won't be pushed into disk directly, instead a shadowy "disk layer"
-// will be created maintaining all changed states on the top of the
-// real disk layer. The shadowy disk layer can be deleted afterward
-// by calling CleanJunks.
 func (db *Database) Rollback(target common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -731,6 +738,19 @@ func (db *Database) Rollback(target common.Hash) error {
 	current := db.disklayer().ID()
 	if *id > current {
 		return fmt.Errorf("%w dest: %d head: %d", errImmatureState, *id, current)
+	}
+	// Clean up the database, wipe all existent diff layers and journal as well.
+	rawdb.DeleteTrieJournal(db.diskdb)
+
+	// Iterate over all diff layers and mark them as stale. Disk layer will be
+	// handled later.
+	for _, layer := range db.layers {
+		dl, ok := layer.(*diffLayer)
+		if ok {
+			dl.lock.Lock()
+			atomic.StoreUint32(&dl.stale, 1)
+			dl.lock.Unlock()
+		}
 	}
 	// Apply the reverse diffs with the given order.
 	var cleans *fastcache.Cache
@@ -822,6 +842,9 @@ func (db *Database) Size() (common.StorageSize, common.StorageSize) {
 	for _, layer := range db.layers {
 		if diff, ok := layer.(*diffLayer); ok {
 			nodes += common.StorageSize(diff.memory)
+		}
+		if disk, ok := layer.(*diskLayer); ok {
+			nodes += common.StorageSize(disk.dirty.size)
 		}
 	}
 	return nodes, db.preimagesSize

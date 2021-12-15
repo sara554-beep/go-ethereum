@@ -410,6 +410,25 @@ func (s *stateObject) CommitTrie(db Database) (*trie.CommitResult, error) {
 	return result, err
 }
 
+// DeleteTrie the storage trie of the object from db.
+func (s *stateObject) DeleteTrie(db Database) *trie.CommitResult {
+	// Track the amount of time wasted on iterating and deleting the storage trie
+	if metrics.EnabledExpensive {
+		defer func(start time.Time) { s.db.StorageDeletes += time.Since(start) }(time.Now())
+	}
+	var (
+		paths [][]byte
+		iter  = s.getTrie(db).NodeIterator(nil)
+	)
+	for iter.Next(true) {
+		if iter.Hash() == (common.Hash{}) {
+			continue
+		}
+		paths = append(paths, iter.StorageKey())
+	}
+	return trie.NewResultFromDeletionSet(paths)
+}
+
 // AddBalance adds amount to s's balance.
 // It is used to add funds to the destination account of a transfer.
 func (s *stateObject) AddBalance(amount *big.Int) {

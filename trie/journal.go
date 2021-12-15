@@ -25,6 +25,7 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -42,13 +43,12 @@ const journalVersion uint64 = 0
 
 // journalNode represents a trie node persisted in the journal.
 type journalNode struct {
-	Key  string      // Storage format trie node key
-	Val  []byte      // RLP-encoded trie node blob, nil means the node is deleted
-	Hash common.Hash // Trie node hash
+	Key string // Storage format trie node key
+	Val []byte // RLP-encoded trie node blob, nil means the node is deleted
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
-func loadJournal(disk ethdb.KeyValueStore, base *diskLayer) (snapshot, error) {
+func loadJournal(disk ethdb.Database, diskRoot common.Hash, cleans *fastcache.Cache, config *Config) (snapshot, error) {
 	journal := rawdb.ReadTrieJournal(disk)
 	if len(journal) == 0 {
 		return nil, errMissJournal
@@ -72,57 +72,82 @@ func loadJournal(disk ethdb.KeyValueStore, base *diskLayer) (snapshot, error) {
 	}
 	// The diff journal is not matched with disk, discard them. It can
 	// happen that Geth crashes without persisting the latest diff journal.
-	if !bytes.Equal(root.Bytes(), base.root.Bytes()) {
-		return nil, fmt.Errorf("%w want %x got %x", errUnmatchedJournal, base.root, root)
+	if !bytes.Equal(root.Bytes(), diskRoot.Bytes()) {
+		return nil, fmt.Errorf("%w want %x got %x", errUnmatchedJournal, root, diskRoot)
+	}
+	// Load the disk layer from the journal
+	base, err := loadDiskLayer(r, cleans, disk, config)
+	if err != nil {
+		return nil, err
 	}
 	// Load all the snapshot diffs from the journal
 	snapshot, err := loadDiffLayer(base, r)
 	if err != nil {
 		return nil, err
 	}
-	log.Debug("Loaded snapshot journal", "diskroot", base.root, "diffhead", snapshot.Root())
+	log.Debug("Loaded snapshot journal", "diskroot", diskRoot, "diffhead", snapshot.Root())
 	return snapshot, nil
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
 func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config) snapshot {
 	// Retrieve the root node of single persisted trie node.
-	_, hash := rawdb.ReadTrieNode(diskdb, EncodeStorageKey(common.Hash{}, nil))
-	if hash == (common.Hash{}) {
-		hash = emptyRoot
+	_, root := rawdb.ReadTrieNode(diskdb, EncodeStorageKey(common.Hash{}, nil))
+	if root == (common.Hash{}) {
+		root = emptyRoot
 	}
-	// Recover reverse diff head, repair the broken reverse diff history
-	// only if mutation is allowed.
-	var diffHead uint64
-	if config != nil && config.ReadOnly {
-		diffHead = rawdb.ReadReverseDiffHead(diskdb)
-	} else {
-		diffHead = repairReverseDiff(diskdb, hash)
-	}
-	base := newDiskLayer(hash, diffHead, cleans, diskdb)
-
 	// Load the in-memory diff layers by resolving the journal
-	snapshot, err := loadJournal(diskdb, base)
+	snap, err := loadJournal(diskdb, root, cleans, config)
 	if err != nil {
 		// Print the log for missing trie node journal, but prevent to
 		// show useless information when the db is created from scratch.
-		if !(hash == emptyRoot && errors.Is(err, errMissJournal)) {
+		if !(root == emptyRoot && errors.Is(err, errMissJournal)) {
 			log.Info("Failed to load journal, discard it", "err", err)
 		}
 		// Try to find a fallback state root if the db is empty. It can
 		// happen when upgrade from a legacy node database. In this case
 		// construct the db with a single disk layer.
-		if hash == emptyRoot {
+		if root == emptyRoot {
 			if config != nil && config.Fallback != nil {
 				if fallback := config.Fallback(); fallback != (common.Hash{}) {
-					hash = fallback
+					root = fallback
 				}
 			}
-			base.root = hash
 		}
-		return base
+		return newDiskLayer(root, loadDiffHead(config, diskdb, root), cleans, nil, diskdb)
 	}
-	return snapshot
+	return snap
+}
+
+// loadDiskLayer reads the binary blob from the snapshot journal, reconstructing a new
+// disk layer on it.
+func loadDiskLayer(r *rlp.Stream, clean *fastcache.Cache, disk ethdb.Database, config *Config) (snapshot, error) {
+	var root common.Hash
+	if err := r.Decode(&root); err != nil {
+		return nil, fmt.Errorf("load disk root: %v", err)
+	}
+	var encoded []journalNode
+	if err := r.Decode(&encoded); err != nil {
+		return nil, fmt.Errorf("load disk accounts: %v", err)
+	}
+	var nodes = make(map[string]*cachedNode)
+	for _, entry := range encoded {
+		if len(entry.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
+			nodes[entry.Key] = &cachedNode{
+				hash: crypto.Keccak256Hash(entry.Val),
+				node: rawNode(entry.Val),
+				size: uint16(len(entry.Val)),
+			}
+		} else {
+			nodes[entry.Key] = &cachedNode{
+				hash: common.Hash{},
+				node: nil,
+				size: 0,
+			}
+		}
+	}
+	base := newDiskLayer(root, loadDiffHead(config, disk, root), clean, newDirtyCache(nodes), disk)
+	return base, nil
 }
 
 // loadDiffLayer reads the next sections of a snapshot journal, reconstructing a new
@@ -145,13 +170,13 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 	for _, entry := range encoded {
 		if len(entry.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
 			nodes[entry.Key] = &cachedNode{
-				hash: entry.Hash,
+				hash: crypto.Keccak256Hash(entry.Val),
 				node: rawNode(entry.Val),
 				size: uint16(len(entry.Val)),
 			}
 		} else {
 			nodes[entry.Key] = &cachedNode{
-				hash: entry.Hash,
+				hash: common.Hash{},
 				node: nil,
 				size: 0,
 			}
@@ -165,8 +190,31 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	// Ensure the layer didn't get stale
 	if dl.Stale() {
-		return ErrSnapshotStale
+		return errSnapshotStale
 	}
+	// Step one, write the disk root into the journal. In fact, the
+	// disk root here refers to the root of the uncommitted dirty node
+	// in the disk layer.
+	diskroot := dl.root
+	if diskroot == (common.Hash{}) {
+		return errors.New("invalid disk root in triedb")
+	}
+	if err := rlp.Encode(buffer, diskroot); err != nil {
+		return err
+	}
+	// Step two, write all accumulated dirty nodes into the journal
+	nodes := make([]journalNode, 0, len(dl.dirty.nodes))
+	for key, node := range dl.dirty.nodes {
+		jnode := journalNode{Key: key}
+		if node.node != nil {
+			jnode.Val = node.rlp()
+		}
+		nodes = append(nodes, jnode)
+	}
+	if err := rlp.Encode(buffer, nodes); err != nil {
+		return err
+	}
+	log.Debug("Journaled disk layer", "root", dl.root, "nodes", len(dl.dirty.nodes))
 	return nil
 }
 
@@ -181,18 +229,15 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 		return err
 	}
 	if dl.Stale() {
-		return ErrSnapshotStale
+		return errSnapshotStale
 	}
-	// Everything below was journalled, persist this layer too
+	// Everything below was journaled, persist this layer too
 	if err := rlp.Encode(buffer, dl.root); err != nil {
 		return err
 	}
 	nodes := make([]journalNode, 0, len(dl.nodes))
 	for key, node := range dl.nodes {
-		jnode := journalNode{
-			Key:  key,
-			Hash: node.hash,
-		}
+		jnode := journalNode{Key: key}
 		if node.node != nil {
 			jnode.Val = node.rlp()
 		}
@@ -201,6 +246,6 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err
 	}
-	log.Debug("Journaled diff layer", "root", dl.root, "parent", dl.parent.Root())
+	log.Debug("Journaled diff layer", "root", dl.root, "parent", dl.parent.Root(), "nodes", len(dl.nodes))
 	return nil
 }

@@ -151,24 +151,32 @@ func (api *ConsensusAPI) makeEnv(parent *types.Block, header *types.Header) (*bl
 	// try to retrieve the live state from the chain, if it's not existent,
 	// do the necessary recovery work.
 	var (
-		err   error
-		state *state.StateDB
+		err     error
+		statedb *state.StateDB
 	)
 	if api.eth.BlockChain().HasState(parent.Root()) {
-		state, err = api.eth.BlockChain().StateAt(parent.Root())
+		statedb, err = api.eth.BlockChain().StateAt(parent.Root())
 	}
 	if err != nil {
+		// The requested state is not available, try to rewind the database.
 		// The assumption is held that all the events sent from the consensus
 		// layer are trusted. Otherwise, system can be attacked by rewinding
 		// the live state.
-		state, err = api.eth.StateAtBlock(parent, nil, false) // Operate on LIVE STATE!!
+		if !api.eth.BlockChain().StateRecoverable(parent.Root()) {
+			return nil, fmt.Errorf("state is not available %x", parent.Root())
+		}
+		database := api.eth.BlockChain().StateCache()
+		if err := database.TrieDB().Rollback(parent.Root()); err != nil {
+			return nil, err
+		}
+		statedb, err = state.New(parent.Root(), database, nil)
 	}
 	if err != nil {
 		return nil, err
 	}
 	env := &blockExecutionEnv{
 		chain:   api.eth.BlockChain(),
-		state:   state,
+		state:   statedb,
 		header:  header,
 		gasPool: new(core.GasPool).AddGas(header.GasLimit),
 	}

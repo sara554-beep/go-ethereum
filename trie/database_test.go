@@ -89,9 +89,9 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 				if len(pvals[index]) == 0 {
 					continue
 				}
-				storage, val = []byte(pkeys[index]), randomEmptyNode(crypto.Keccak256Hash(pvals[index]))
+				storage, val = []byte(pkeys[index]), randomEmptyNode()
 			}
-			// Don't add duplicate updates
+			// Don't add duplicated updates
 			if _, ok := nodes[string(storage)]; ok {
 				continue
 			}
@@ -126,6 +126,12 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 }
 
 func TestDatabaseRollback(t *testing.T) {
+	defer func(origin uint64) {
+		dirtyMemoryLimit = origin
+	}(dirtyMemoryLimit)
+
+	dirtyMemoryLimit = 1024 * 256 // Lower the dirty cache size
+
 	var (
 		db, numbers, roots, testKeys, testVals, teardown = fillDB()
 		dl                                               = db.disklayer()
@@ -170,12 +176,22 @@ func TestDatabaseRollback(t *testing.T) {
 		keys, vals := testKeys[i-1], testVals[i-1]
 		for j := 0; j < len(keys); j++ {
 			layer := db.Snapshot(roots[i-1])
-			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
-			if err != nil {
-				t.Error("Failed to retrieve state", "err", err)
-			}
-			if !bytes.Equal(blob, vals[j]) {
-				t.Error("Unexpected state", "key", []byte(keys[j]), "want", vals[j], "got", blob)
+
+			if len(vals[j]) == 0 {
+				// deleted node, expect error
+				blob, _ := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j])) // error can occur
+				if len(blob) != 0 {
+					t.Error("Unexpected state", "key", []byte(keys[j]), "got", blob)
+				}
+			} else {
+				// normal node, expect correct value
+				blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
+				if err != nil {
+					t.Error("Failed to retrieve state", "err", err)
+				}
+				if !bytes.Equal(blob, vals[j]) {
+					t.Error("Unexpected state", "key", []byte(keys[j]), "want", vals[j], "got", blob)
+				}
 			}
 		}
 	}
@@ -185,6 +201,12 @@ func TestDatabaseRollback(t *testing.T) {
 }
 
 func TestDatabaseBatchRollback(t *testing.T) {
+	defer func(origin uint64) {
+		dirtyMemoryLimit = origin
+	}(dirtyMemoryLimit)
+
+	dirtyMemoryLimit = 1024 * 256 // Lower the dirty cache size
+
 	var (
 		db, _, roots, testKeys, testVals, teardown = fillDB()
 		dl                                         = db.disklayer()

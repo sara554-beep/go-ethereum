@@ -182,7 +182,7 @@ func TestRepairReverseDiff(t *testing.T) {
 
 	// Scenario a:
 	// - head reverse diff in leveldb is lower than freezer, it can happen that
-	//   reverse diff is persisted while the head flag is not updated yet.
+	//   reverse diff is persisted while corresponding state is not flushed.
 	//   The extra reverse diff in freezer is expected to be truncated
 	t.Run("Truncate-extra-rdiffs-match-root", func(t *testing.T) {
 		t.Parallel()
@@ -190,14 +190,13 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, diffs, teardown := setup()
 		defer teardown()
 
-		rawdb.WriteReverseDiffHead(db, uint64(9)) // Head reverse diff in ldb: 9
-		repairReverseDiff(db, diffs[len(diffs)-2].Root)
-
+		// Block9's root.
+		diffid := repairReverseDiff(db, diffs[len(diffs)-2].Root)
+		if diffid != uint64(9) {
+			t.Fatalf("Unexpected reverse diff head %d", diffid)
+		}
 		assertReverseDiffInRange(t, db, uint64(1), uint64(9), true)
 		assertReverseDiff(t, db, uint64(10), false)
-		if head := rawdb.ReadReverseDiffHead(db); head != uint64(9) {
-			t.Fatalf("Unexpected reverse diff head %d", head)
-		}
 	})
 	t.Run("Truncate-extra-rdiffs-unmatch-root", func(t *testing.T) {
 		t.Parallel()
@@ -205,13 +204,12 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, _, teardown := setup()
 		defer teardown()
 
-		rawdb.WriteReverseDiffHead(db, uint64(9))
-		repairReverseDiff(db, randomHash())
-
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-		if head := rawdb.ReadReverseDiffHead(db); head != uint64(0) {
-			t.Fatalf("Unexpected reverse diff head %d", head)
+		// Random hash
+		diffid := repairReverseDiff(db, randomHash())
+		if diffid != uint64(0) {
+			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
+		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
 	})
 
 	// Scenario b:
@@ -224,13 +222,11 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, _, teardown := setup()
 		defer teardown()
 
-		rawdb.WriteReverseDiffHead(db, uint64(11))
-		repairReverseDiff(db, randomHash())
-
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-		if head := rawdb.ReadReverseDiffHead(db); head != uint64(0) {
-			t.Fatalf("Unexpected reverse diff head %d", head)
+		diffid := repairReverseDiff(db, randomHash())
+		if diffid != uint64(0) {
+			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
+		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
 	})
 	t.Run("Truncate-unknown-rdiffs-non-zero-tail", func(t *testing.T) {
 		t.Parallel()
@@ -239,14 +235,11 @@ func TestRepairReverseDiff(t *testing.T) {
 		defer teardown()
 
 		truncateFromTail(db, uint64(10), uint64(1)) // Stored rdiffs: [rdiff-10, tail = 9]
-
-		rawdb.WriteReverseDiffHead(db, uint64(11))
-		repairReverseDiff(db, randomHash())
-
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-		if head := rawdb.ReadReverseDiffHead(db); head != uint64(9) {
-			t.Fatalf("Unexpected reverse diff head %d", head)
+		diffid := repairReverseDiff(db, randomHash())
+		if diffid != uint64(9) {
+			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
+		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
 	})
 
 	// Scenario c:
@@ -257,13 +250,11 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, diffs, teardown := setup()
 		defer teardown()
 
-		rawdb.WriteReverseDiffHead(db, uint64(10))
-		repairReverseDiff(db, diffs[len(diffs)-1].Root)
-
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), true)
-		if head := rawdb.ReadReverseDiffHead(db); head != uint64(10) {
-			t.Fatalf("Unexpected reverse diff head %d", head)
+		diffid := repairReverseDiff(db, diffs[len(diffs)-1].Root)
+		if diffid != uint64(10) {
+			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
+		assertReverseDiffInRange(t, db, uint64(1), uint64(10), true)
 	})
 	t.Run("Aligned-reverse-diff-non-matched-root", func(t *testing.T) {
 		t.Parallel()
@@ -271,12 +262,10 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, _, teardown := setup()
 		defer teardown()
 
-		rawdb.WriteReverseDiffHead(db, uint64(10))
-		repairReverseDiff(db, randomHash())
-
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-		if head := rawdb.ReadReverseDiffHead(db); head != uint64(0) {
-			t.Fatalf("Unexpected reverse diff head %d", head)
+		diffid := repairReverseDiff(db, randomHash())
+		if diffid != uint64(0) {
+			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
+		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
 	})
 }

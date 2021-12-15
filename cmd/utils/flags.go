@@ -401,8 +401,8 @@ var (
 	}
 	CacheTrieFlag = cli.IntFlag{
 		Name:  "cache.trie",
-		Usage: "Percentage of cache memory allowance to use for trie caching (default = 15% full mode, 30% archive mode)",
-		Value: 15,
+		Usage: "Percentage of cache memory allowance to use for trie caching (default = 30%)",
+		Value: 30,
 	}
 	CacheTrieJournalFlag = cli.StringFlag{
 		Name:  "cache.trie.journal",
@@ -416,12 +416,12 @@ var (
 	}
 	CacheGCFlag = cli.IntFlag{
 		Name:  "cache.gc",
-		Usage: "Percentage of cache memory allowance to use for trie pruning (default = 25% full mode, 0% archive mode)",
-		Value: 25,
+		Usage: "Percentage of cache memory allowance to use for trie pruning (default = 10%)",
+		Value: 10,
 	}
 	CacheSnapshotFlag = cli.IntFlag{
 		Name:  "cache.snapshot",
-		Usage: "Percentage of cache memory allowance to use for snapshot caching (default = 10% full mode, 20% archive mode)",
+		Usage: "Percentage of cache memory allowance to use for snapshot caching (default = 10% full mode)",
 		Value: 10,
 	}
 	CacheNoPrefetchFlag = cli.BoolFlag{

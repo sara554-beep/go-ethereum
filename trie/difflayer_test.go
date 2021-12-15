@@ -46,9 +46,9 @@ func randomNode() *cachedNode {
 	}
 }
 
-func randomEmptyNode(hash common.Hash) *cachedNode {
+func randomEmptyNode() *cachedNode {
 	return &cachedNode{
-		hash: hash,
+		hash: common.Hash{},
 		node: nil,
 		size: 0,
 	}
@@ -57,7 +57,7 @@ func randomEmptyNode(hash common.Hash) *cachedNode {
 func emptyLayer() *diskLayer {
 	return &diskLayer{
 		diskdb: rawdb.NewDatabase(rawdb.NewMemoryDatabase()),
-		cache:  fastcache.New(500 * 1024),
+		clean:  fastcache.New(500 * 1024),
 	}
 }
 
@@ -191,7 +191,7 @@ func benchmarkPersist(b *testing.B, writeLegacy bool) {
 		if !ok {
 			break
 		}
-		dl.persist(&Config{WriteLegacy: writeLegacy})
+		dl.persist(&Config{WriteLegacy: writeLegacy}, false)
 		b.StopTimer()
 	}
 }

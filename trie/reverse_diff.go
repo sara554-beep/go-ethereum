@@ -41,7 +41,7 @@ type stateDiff struct {
 
 // reverseDiff represents a set of state diffs belong to the same block. All the
 // reverse-diffs in disk are linked with each other by a unique id(8byte integer),
-// the head reverse-diff will be pruned in order to control the storage size.
+// the tail(oldest) reverse-diff will be pruned in order to control the storage size.
 type reverseDiff struct {
 	Version uint64      // The version tag of stored reverse diff
 	Parent  common.Hash // The corresponding state root of parent block
@@ -65,7 +65,7 @@ func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
 	return &diff, nil
 }
 
-// storeReverseDiff extracts the reverse state diff by the passed bottom-most
+// storeReverseDiff generates the reverse state diff for the passed bottom-most
 // diff layer. After storing the corresponding reverse diffs, it will also prune
 // the stale reverse diffs from the disk by the given limit.
 // This function will panic if it's called for non-bottom-most diff layer.
@@ -81,8 +81,11 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 		//
 		// It's possible the previous node is a legacy node, so no blob can be
 		// found with the new scheme. It's OK to use the empty previous value
-		// here since the legacy node can always be found anyway.
-		pre, _ := rawdb.ReadTrieNode(base.diskdb, []byte(key))
+		// here since the legacy node can always be found.
+		pre, err := base.nodeBlobByPath([]byte(key))
+		if err != nil {
+			return err
+		}
 		states = append(states, stateDiff{
 			Key: []byte(key),
 			Val: pre,
@@ -102,8 +105,8 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	// places, so there is no atomicity guarantee. It's possible that reverse
 	// diff object is written but lookup is not, vice versa. So double-check
 	// the presence when using the reverse diff.
-	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob, base.root) // ID -> Parent State && ID -> Reverse diff
-	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.rid) // Parent State -> ID
+	rawdb.WriteReverseDiff(base.diskdb, dl.rid, blob, base.root)
+	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.rid)
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
 	// Prune stale reverse diffs if necessary
@@ -116,6 +119,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 
 	logCtx := []interface{}{
 		"id", dl.rid,
+		"nodes", len(dl.nodes),
 		"size", common.StorageSize(len(blob)),
 	}
 	if pruned != 0 {
@@ -133,16 +137,18 @@ func truncateFromTail(db ethdb.Database, head uint64, limit uint64) (int, error)
 	if head <= limit {
 		return 0, nil
 	}
-	old, err := db.Tail(rawdb.ReverseDiffFreezer)
+	oldTail, err := db.Tail(rawdb.ReverseDiffFreezer)
 	if err != nil {
 		return 0, nil // It's non-freezer database, skip it
 	}
-	batch := db.NewBatch()
-	newTail := head - limit
-	for i := old; i < newTail; i++ {
-		// The rid is added with 1, because reverse diff is encoded from
-		// 1 in Geth, while encoded from 0 in freezer, the i here refers
-		// to the index in freezer.
+	var (
+		batch   = db.NewBatch()
+		newTail = head - limit
+	)
+	for i := oldTail; i < newTail; i++ {
+		// The reverse diff id is added by 1 here. Because reverse diff is
+		// encoded from 1 in this package while in the freezer it's encoded
+		// from 0.
 		hash := rawdb.ReadReverseDiffHash(db, i+1)
 		if hash != (common.Hash{}) {
 			rawdb.DeleteReverseDiffLookup(batch, hash)
@@ -154,7 +160,7 @@ func truncateFromTail(db ethdb.Database, head uint64, limit uint64) (int, error)
 	if err := db.TruncateTail(rawdb.ReverseDiffFreezer, newTail); err != nil {
 		return 0, err
 	}
-	return int(newTail - old), nil
+	return int(newTail - oldTail), nil
 }
 
 // truncateFromHead applies the head truncation with the given parameter.
@@ -162,57 +168,51 @@ func truncateFromTail(db ethdb.Database, head uint64, limit uint64) (int, error)
 // from the tail, which means the lowest available head will be the current
 // tail. So always return the new head after the truncation.
 func truncateFromHead(db ethdb.Database, items uint64) uint64 {
-	n, err := db.Ancients(rawdb.ReverseDiffFreezer)
+	origin, err := db.Ancients(rawdb.ReverseDiffFreezer)
 	if err != nil {
 		return 0 // ancient store is not supported
 	}
 	db.TruncateHead(rawdb.ReverseDiffFreezer, items)
 
-	nItems, _ := db.Ancients(rawdb.ReverseDiffFreezer)
-	rawdb.WriteReverseDiffHead(db, nItems)
-	log.Debug("Truncated reverse diff history", "request", items, "rewound", nItems, "origin", n)
-	return nItems
+	truncated, _ := db.Ancients(rawdb.ReverseDiffFreezer)
+	log.Debug("Truncated reverse diff history", "request", items, "truncated", truncated, "origin", origin)
+	return truncated
 }
 
 // repairReverseDiff is called when database is constructed. It ensures reverse diff
-// history is aligned with disk layer, or do the necessary repair instead.
+// history is aligned with disk layer, or truncate the extra diffs from the freezer.
+// The id of disk layer will be returned as well.
 func repairReverseDiff(db ethdb.Database, diskroot common.Hash) uint64 {
-	// Nothing expected, clean the entire reverse diff history
-	head := rawdb.ReadReverseDiffHead(db)
-	if head == 0 {
-		return truncateFromHead(db, 0)
-	}
-	// Align the reverse diff history and stored reverse diff head.
-	rdiffs, err := db.Ancients(rawdb.ReverseDiffFreezer)
-	if err == nil && rdiffs > 0 {
-		// Note error can return if the freezer functionality
-		// is disabled(testing). Don't panic for it.
-		switch {
-		case rdiffs == head:
-			// reverse diff freezer is continuous with disk layer,
-			// nothing to do here.
-		case rdiffs > head:
-			// reverse diff freezer is dangling, truncate the extra
-			// diffs.
-			head = truncateFromHead(db, head)
-			log.Info("Truncate dangling reverse diff freezer", "stored", head, "rdiffs", rdiffs)
-		default:
-			// disk layer is higher than reverse diff, the gap between
-			// the disk layer and reverse diff freezer is NOT fixable.
-			// truncate the entire reverse diff history.
-			head = truncateFromHead(db, 0)
-			log.Info("Truncate entire reverse diff freezer", "stored", head, "rdiffs", rdiffs)
-			return head
+	var (
+		items, _ = db.Ancients(rawdb.ReverseDiffFreezer)
+		tail, _  = db.Tail(rawdb.ReverseDiffFreezer)
+	)
+	// Start from the head of the reverse diffs, compare the hash one by one
+	// and drop the unmatched one directly.
+	for current := items; current > tail; current -= 1 {
+		rdiff, err := loadReverseDiff(db, current)
+		if err != nil {
+			continue
 		}
-	}
-	// Ensure the head reverse diff matches with the disk layer,
-	// otherwise invalidate the entire reverse diff list.
-	if head != 0 {
-		diff, err := loadReverseDiff(db, head)
-		if err != nil || diff.Root != diskroot {
-			head = truncateFromHead(db, 0)
-			log.Info("Truncate unmatched reverse diff freezer", "head", head)
+		if rdiff.Root == diskroot {
+			return current
 		}
+		db.TruncateHead(rawdb.ReverseDiffFreezer, current-1)
+	}
+	return tail
+}
+
+// loadDiffHead loads the reverse diff id for the disk layer with the given state root.
+func loadDiffHead(config *Config, db ethdb.Database, root common.Hash) uint64 {
+	var head uint64
+	if config != nil && config.ReadOnly {
+		// The database is opened in read-only mode, skip the
+		// reverse checking and return the head reverse diff
+		// id directly.
+		head, _ = db.Ancients(rawdb.ReverseDiffFreezer)
+		return head
+	} else {
+		head = repairReverseDiff(db, root)
 	}
 	return head
 }

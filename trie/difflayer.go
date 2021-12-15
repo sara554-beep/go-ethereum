@@ -20,10 +20,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -103,16 +101,16 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, er
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
 	if dl.Stale() {
-		return nil, ErrSnapshotStale
+		return nil, errSnapshotStale
 	}
 	// If the trie node is known locally, return it
 	n, ok := dl.nodes[string(storage)]
 	if ok {
 		// If the trie node is not hash matched, or marked as removed,
 		// panic here. It shouldn't happen at all.
-		if n.hash != hash || n.node == nil {
+		if n.node == nil || n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
-			panic(fmt.Sprintf("missing node %x(%x %v)", hash, owner, path))
+			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
 		}
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
@@ -141,16 +139,16 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
 	if dl.Stale() {
-		return nil, ErrSnapshotStale
+		return nil, errSnapshotStale
 	}
 	// If the trie node is known locally, return it
 	n, ok := dl.nodes[string(storage)]
 	if ok {
 		// If the trie node is not hash matched, or marked as removed,
 		// panic here. It shouldn't happen at all.
-		if n.hash != hash || n.node == nil {
+		if n.node == nil || n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
-			panic(fmt.Sprintf("missing node %x(%x %v)", hash, owner, path))
+			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
 		}
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
@@ -175,71 +173,43 @@ func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*
 // Note this function can destruct the ancestor layers(mark them as stale)
 // of the given diff layer, please ensure prevent state access operation
 // to this layer through any **descendant layer**.
-func (dl *diffLayer) persist(config *Config) snapshot {
+func (dl *diffLayer) persist(config *Config, forceCommit bool) (snapshot, error) {
 	parent, ok := dl.Parent().(*diffLayer)
 	if ok {
 		// Hold the lock to prevent any read operation until the new
 		// parent is linked correctly.
 		dl.lock.Lock()
-		dl.parent = parent.persist(config)
+		result, err := parent.persist(config, forceCommit)
+		if err != nil {
+			dl.lock.Unlock()
+			return nil, err
+		}
+		dl.parent = result
 		dl.lock.Unlock()
 	}
-	return diffToDisk(dl, config)
+	return diffToDisk(dl, config, forceCommit)
 }
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
 // it. The method will panic if called onto a non-bottom-most diff layer. The disk
 // layer persistence should be operated in an atomic way. All updates should be
 // discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, config *Config) *diskLayer {
-	var (
-		totalSize int64
-		base      = bottom.Parent().(*diskLayer)
-		start     = time.Now()
-		nodes     = len(bottom.nodes)
-		batch     = base.diskdb.NewBatch()
-	)
+func diffToDisk(bottom *diffLayer, config *Config, force bool) (*diskLayer, error) {
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
 	// states, the stored reverse diff will be truncated in the next restart.
 	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
-		log.Error("Failed to store reverse diff", "err", err)
+		return nil, err
 	}
 	// Mark the base layer(disk layer) as stale since we are pushing
 	// new nodes into the disk. A new disk layer needed to be created
 	// and be linked to all existent bottom diff layers later.
+	base := bottom.Parent().(*diskLayer)
 	base.MarkStale()
 
-	defer func(start time.Time) {
-		triedbCommitTimeTimer.Update(time.Since(start))
-	}(time.Now())
-
-	for storage, n := range bottom.nodes {
-		var blob []byte
-		if n.node == nil {
-			rawdb.DeleteTrieNode(batch, []byte(storage))
-		} else {
-			blob = n.rlp()
-			rawdb.WriteTrieNode(batch, []byte(storage), blob)
-			if config != nil && config.WriteLegacy {
-				rawdb.WriteArchiveTrieNode(batch, n.hash, blob)
-			}
-			if base.cache != nil {
-				base.cache.Set(EncodeInternalKey([]byte(storage), n.hash), blob)
-			}
-		}
-		totalSize += int64(len(blob) + len(storage))
+	dl := newDiskLayer(bottom.root, bottom.rid, base.clean, base.dirty.update(bottom.nodes), base.diskdb)
+	if err := dl.flush(config, force); err != nil {
+		return nil, err
 	}
-	rawdb.WriteReverseDiffHead(batch, bottom.rid)
-
-	triedbCommitSizeMeter.Mark(totalSize)
-	triedbCommitNodesMeter.Mark(int64(len(bottom.nodes)))
-
-	// Flush all the updates in the single db operation. Ensure the
-	// disk layer transition is atomic.
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to write bottom dirty trie nodes", "err", err)
-	}
-	log.Debug("Persisted uncommitted nodes", "nodes", nodes, "size", common.StorageSize(totalSize), "elapsed", common.PrettyDuration(time.Since(start)))
-	return newDiskLayer(bottom.root, bottom.rid, base.cache, base.diskdb)
+	return dl, nil
 }

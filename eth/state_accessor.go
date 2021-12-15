@@ -41,51 +41,55 @@ import (
 // - parent: If the caller is tracing multiple blocks, the caller can provide the parent state
 //           continuously from the callsite.
 func (eth *Ethereum) StateAtBlock(block *types.Block, parent *state.StateDB, ephemeral bool) (*state.StateDB, error) {
-	// Firstly check if the state is available in live database.
-	statedb, err := eth.blockchain.StateAt(block.Root())
-	if err == nil {
-		return statedb, nil
-	}
-	// Parent state is available, prepare the next state base on this.
-	if parent != nil {
-		// Check if the state is available in parent's database
-		statedb, err = state.New(block.Root(), parent.Database(), nil)
-		if err == nil {
-			return statedb, nil
-		}
-		_, _, _, err := eth.blockchain.Processor().Process(block, statedb, vm.Config{})
-		if err != nil {
-			return nil, fmt.Errorf("processing block %d failed: %v", block.NumberU64(), err)
-		}
-		// Finalize the state so any modifications are written to the trie
-		root, err := statedb.Commit(eth.blockchain.Config().IsEIP158(block.Number()))
-		if err != nil {
-			return nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
-				block.NumberU64(), block.Root().Hex(), err)
-		}
-		statedb, err = state.New(root, parent.Database(), nil)
-		if err == nil {
-			return statedb, nil
-		}
-	}
-	// Check if the state is recoverable via persisted reverse-diffs.
-	if !eth.blockchain.StateRecoverable(block.Root()) {
-		return nil, fmt.Errorf("state is not available %x", block.Root())
-	}
-	if ephemeral {
-		return nil, fmt.Errorf("state unavailable")
-	}
-	// Use the live one for state reverting. Caller must be responsible for all
-	// side effects it makes.
-	database := eth.blockchain.StateCache()
-	if err := database.TrieDB().Rollback(block.Root()); err != nil {
-		return nil, err
-	}
-	statedb, err = state.New(block.Root(), database, nil)
-	if err != nil {
-		return nil, err
-	}
-	return statedb, nil
+	// Shadow state reverting is still not supported, only check
+	// the available state.
+	return eth.blockchain.StateAt(block.Root())
+
+	//// Firstly check if the state is available in live database.
+	//statedb, err := eth.blockchain.StateAt(block.Root())
+	//if err == nil {
+	//	return statedb, nil
+	//}
+	//// Parent state is available, prepare the next state base on this.
+	//if parent != nil {
+	//	// Check if the state is available in parent's database
+	//	statedb, err = state.New(block.Root(), parent.Database(), nil)
+	//	if err == nil {
+	//		return statedb, nil
+	//	}
+	//	_, _, _, err := eth.blockchain.Processor().Process(block, statedb, vm.Config{})
+	//	if err != nil {
+	//		return nil, fmt.Errorf("processing block %d failed: %v", block.NumberU64(), err)
+	//	}
+	//	// Finalize the state so any modifications are written to the trie
+	//	root, err := statedb.Commit(eth.blockchain.Config().IsEIP158(block.Number()))
+	//	if err != nil {
+	//		return nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
+	//			block.NumberU64(), block.Root().Hex(), err)
+	//	}
+	//	statedb, err = state.New(root, parent.Database(), nil)
+	//	if err == nil {
+	//		return statedb, nil
+	//	}
+	//}
+	//// Check if the state is recoverable via persisted reverse-diffs.
+	//if !eth.blockchain.StateRecoverable(block.Root()) {
+	//	return nil, fmt.Errorf("state is not available %x", block.Root())
+	//}
+	//if ephemeral {
+	//	return nil, fmt.Errorf("state unavailable")
+	//}
+	//// Use the live one for state reverting. Caller must be responsible for all
+	//// side effects it makes.
+	//database := eth.blockchain.StateCache()
+	//if err := database.TrieDB().Rollback(block.Root()); err != nil {
+	//	return nil, err
+	//}
+	//statedb, err = state.New(block.Root(), database, nil)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//return statedb, nil
 }
 
 // stateAtTransaction returns the execution environment of a certain transaction.
