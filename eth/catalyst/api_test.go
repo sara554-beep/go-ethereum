@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/interop"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -85,7 +86,7 @@ func TestEth2AssembleBlock(t *testing.T) {
 		t.Fatalf("error signing transaction, err=%v", err)
 	}
 	ethservice.TxPool().AddLocal(tx)
-	blockParams := PayloadAttributesV1{
+	blockParams := interop.PayloadAttributesV1{
 		Timestamp: blocks[9].Time() + 5,
 	}
 	execData, err := api.assembleBlock(blocks[9].Hash(), &blockParams)
@@ -106,7 +107,7 @@ func TestEth2AssembleBlockWithAnotherBlocksTxs(t *testing.T) {
 
 	// Put the 10th block's tx in the pool and produce a new block
 	api.insertTransactions(blocks[9].Transactions())
-	blockParams := PayloadAttributesV1{
+	blockParams := interop.PayloadAttributesV1{
 		Timestamp: blocks[8].Time() + 5,
 	}
 	execData, err := api.assembleBlock(blocks[8].Hash(), &blockParams)
@@ -124,7 +125,7 @@ func TestSetHeadBeforeTotalDifficulty(t *testing.T) {
 	defer n.Close()
 
 	api := NewConsensusAPI(ethservice, nil)
-	fcState := ForkchoiceStateV1{
+	fcState := interop.ForkchoiceStateV1{
 		HeadBlockHash:      blocks[5].Hash(),
 		SafeBlockHash:      common.Hash{},
 		FinalizedBlockHash: common.Hash{},
@@ -145,10 +146,10 @@ func TestEth2PrepareAndGetPayload(t *testing.T) {
 
 	// Put the 10th block's tx in the pool and produce a new block
 	api.insertTransactions(blocks[9].Transactions())
-	blockParams := PayloadAttributesV1{
+	blockParams := interop.PayloadAttributesV1{
 		Timestamp: blocks[8].Time() + 5,
 	}
-	fcState := ForkchoiceStateV1{
+	fcState := interop.ForkchoiceStateV1{
 		HeadBlockHash:      blocks[8].Hash(),
 		SafeBlockHash:      common.Hash{},
 		FinalizedBlockHash: common.Hash{},
@@ -210,7 +211,7 @@ func TestEth2NewBlock(t *testing.T) {
 		tx, _ := types.SignTx(types.NewContractCreation(nonce, new(big.Int), 1000000, big.NewInt(2*params.InitialBaseFee), logCode), types.LatestSigner(ethservice.BlockChain().Config()), testKey)
 		ethservice.TxPool().AddLocal(tx)
 
-		execData, err := api.assembleBlock(parent.Hash(), &PayloadAttributesV1{
+		execData, err := api.assembleBlock(parent.Hash(), &interop.PayloadAttributesV1{
 			Timestamp: parent.Time() + 5,
 		})
 		if err != nil {
@@ -228,7 +229,7 @@ func TestEth2NewBlock(t *testing.T) {
 			t.Fatalf("Chain head shouldn't be updated")
 		}
 		checkLogEvents(t, newLogCh, rmLogsCh, 0, 0)
-		fcState := ForkchoiceStateV1{
+		fcState := interop.ForkchoiceStateV1{
 			HeadBlockHash:      block.Hash(),
 			SafeBlockHash:      block.Hash(),
 			FinalizedBlockHash: block.Hash(),
@@ -250,7 +251,7 @@ func TestEth2NewBlock(t *testing.T) {
 	)
 	parent = preMergeBlocks[len(preMergeBlocks)-1]
 	for i := 0; i < 10; i++ {
-		execData, err := api.assembleBlock(parent.Hash(), &PayloadAttributesV1{
+		execData, err := api.assembleBlock(parent.Hash(), &interop.PayloadAttributesV1{
 			Timestamp: parent.Time() + 6,
 		})
 		if err != nil {
@@ -268,7 +269,7 @@ func TestEth2NewBlock(t *testing.T) {
 			t.Fatalf("Chain head shouldn't be updated")
 		}
 
-		fcState := ForkchoiceStateV1{
+		fcState := interop.ForkchoiceStateV1{
 			HeadBlockHash:      block.Hash(),
 			SafeBlockHash:      block.Hash(),
 			FinalizedBlockHash: block.Hash(),
@@ -373,12 +374,12 @@ func TestFullAPI(t *testing.T) {
 		tx, _ := types.SignTx(types.NewContractCreation(nonce, new(big.Int), 1000000, big.NewInt(2*params.InitialBaseFee), logCode), types.LatestSigner(ethservice.BlockChain().Config()), testKey)
 		ethservice.TxPool().AddLocal(tx)
 
-		params := PayloadAttributesV1{
+		params := interop.PayloadAttributesV1{
 			Timestamp:             parent.Time() + 1,
 			Random:                crypto.Keccak256Hash([]byte{byte(i)}),
 			SuggestedFeeRecipient: parent.Coinbase(),
 		}
-		fcState := ForkchoiceStateV1{
+		fcState := interop.ForkchoiceStateV1{
 			HeadBlockHash:      parent.Hash(),
 			SafeBlockHash:      common.Hash{},
 			FinalizedBlockHash: common.Hash{},
@@ -387,7 +388,7 @@ func TestFullAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("error preparing payload, err=%v", err)
 		}
-		if resp.Status != SUCCESS.Status {
+		if resp.Status != interop.SUCCESS.Status {
 			t.Fatalf("error preparing payload, invalid status: %v", resp.Status)
 		}
 		payloadID := computePayloadId(parent.Hash(), &params)
@@ -399,10 +400,10 @@ func TestFullAPI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("can't execute payload: %v", err)
 		}
-		if execResp.Status != VALID.Status {
+		if execResp.Status != interop.VALID.Status {
 			t.Fatalf("invalid status: %v", execResp.Status)
 		}
-		fcState = ForkchoiceStateV1{
+		fcState = interop.ForkchoiceStateV1{
 			HeadBlockHash:      payload.BlockHash,
 			SafeBlockHash:      payload.ParentHash,
 			FinalizedBlockHash: payload.ParentHash,
