@@ -79,7 +79,7 @@ func TestEth2AssembleBlock(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks)
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice, nil)
+	api := NewConsensusAPI(ethservice)
 	signer := types.NewEIP155Signer(ethservice.BlockChain().Config().ChainID)
 	tx, err := types.SignTx(types.NewTransaction(uint64(10), blocks[9].Coinbase(), big.NewInt(1000), params.TxGas, big.NewInt(params.InitialBaseFee), nil), signer, testKey)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestEth2AssembleBlockWithAnotherBlocksTxs(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks[:9])
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice, nil)
+	api := NewConsensusAPI(ethservice)
 
 	// Put the 10th block's tx in the pool and produce a new block
 	api.insertTransactions(blocks[9].Transactions())
@@ -124,7 +124,7 @@ func TestSetHeadBeforeTotalDifficulty(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks)
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice, nil)
+	api := NewConsensusAPI(ethservice)
 	fcState := interop.ForkchoiceStateV1{
 		HeadBlockHash:      blocks[5].Hash(),
 		SafeBlockHash:      common.Hash{},
@@ -142,7 +142,7 @@ func TestEth2PrepareAndGetPayload(t *testing.T) {
 	n, ethservice := startEthService(t, genesis, blocks[:9])
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice, nil)
+	api := NewConsensusAPI(ethservice)
 
 	// Put the 10th block's tx in the pool and produce a new block
 	api.insertTransactions(blocks[9].Transactions())
@@ -193,7 +193,7 @@ func TestEth2NewBlock(t *testing.T) {
 	defer n.Close()
 
 	var (
-		api    = NewConsensusAPI(ethservice, nil)
+		api    = NewConsensusAPI(ethservice)
 		parent = preMergeBlocks[len(preMergeBlocks)-1]
 
 		// This EVM code generates a log when the contract is created.
@@ -363,7 +363,7 @@ func TestFullAPI(t *testing.T) {
 	ethservice.Merger().ReachTTD()
 	defer n.Close()
 	var (
-		api    = NewConsensusAPI(ethservice, nil)
+		api    = NewConsensusAPI(ethservice)
 		parent = ethservice.BlockChain().CurrentBlock()
 		// This EVM code generates a log when the contract is created.
 		logCode = common.Hex2Bytes("60606040525b7f24ec1d3ff24c2f6ff210738839dbc339cd45a5294d85c79361016243157aae7b60405180905060405180910390a15b600a8060416000396000f360606040526008565b00")
