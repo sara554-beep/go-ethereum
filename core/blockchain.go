@@ -186,7 +186,10 @@ type BlockChain struct {
 	logsFeed      event.Feed
 	blockProcFeed event.Feed
 	scope         event.SubscriptionScope
-	genesisBlock  *types.Block
+
+	// The earliest block and the corresponding state
+	genesisBlock *types.Block
+	genesis      *Genesis
 
 	// This mutex synchronizes chain write operations.
 	// Readers don't need to take it, they can just read the database.
@@ -216,10 +219,37 @@ type BlockChain struct {
 	vmConfig   vm.Config
 }
 
+// loadLegacyStateRoot is a helper function used to load the state root
+// stored in legacy scheme. It's mainly served as the fallback for geth
+// node which just upgrade from legacy storage scheme.
+func loadLegacyStateRoot(db ethdb.Database) common.Hash {
+	blockHash := rawdb.ReadHeadBlockHash(db)
+	for {
+		if blockHash == (common.Hash{}) {
+			break
+		}
+		number := rawdb.ReadHeaderNumber(db, blockHash)
+		if number == nil {
+			break
+		}
+		block := rawdb.ReadBlock(db, blockHash, *number)
+		if block == nil {
+			break
+		}
+		blob := rawdb.ReadLegacyTrieNode(db, block.Root())
+		if len(blob) > 0 {
+			log.Info("Found fallback base layer root", "number", block.Number(), "hash", block.Hash(), "root", block.Root())
+			return block.Root()
+		}
+		blockHash = block.ParentHash()
+	}
+	return common.Hash{}
+}
+
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
-func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
+func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
@@ -234,6 +264,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		chainConfig:   chainConfig,
 		cacheConfig:   cacheConfig,
 		db:            db,
+		genesis:       genesis,
 		triegc:        prque.New(nil),
 		quit:          make(chan struct{}),
 		chainmu:       syncx.NewClosableMutex(),
@@ -248,36 +279,10 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 	}
 	bc.forker = NewForkChoice(bc, shouldPreserve)
 	bc.stateCache = state.NewDatabaseWithConfig(db, &trie.Config{
-		Cache:       cacheConfig.TrieCleanLimit,
-		Journal:     cacheConfig.TrieCleanJournal,
-		Preimages:   cacheConfig.Preimages,
-		WriteLegacy: cacheConfig.TrieDirtyDisabled,
-		Fallback: func() common.Hash {
-			// Serve as the fallback for nodes which just upgrade from
-			// legacy storage scheme. Resolve the state root of the
-			// most recent block with complete state as the disk layer.
-			blockHash := rawdb.ReadHeadBlockHash(db)
-			for {
-				if blockHash == (common.Hash{}) {
-					break
-				}
-				number := rawdb.ReadHeaderNumber(db, blockHash)
-				if number == nil {
-					break
-				}
-				block := rawdb.ReadBlock(db, blockHash, *number)
-				if block == nil {
-					break
-				}
-				blob := rawdb.ReadArchiveTrieNode(db, block.Root())
-				if len(blob) > 0 {
-					log.Info("Found fallback base layer root", "number", block.Number(), "hash", block.Hash(), "root", block.Root())
-					return block.Root()
-				}
-				blockHash = block.ParentHash()
-			}
-			return common.Hash{}
-		},
+		Cache:         cacheConfig.TrieCleanLimit,
+		Journal:       cacheConfig.TrieCleanJournal,
+		Preimages:     cacheConfig.Preimages,
+		LoadStateRoot: loadLegacyStateRoot,
 	})
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
@@ -578,10 +583,12 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, root common.Hash, repair bo
 					if beyondRoot || newHeadBlock.NumberU64() == 0 {
 						log.Debug("Rewound to block with state", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash())
 						if newHeadBlock.NumberU64() == 0 {
-							// Rewind to the genesis block, rebuild the trie db with the
-							// genesis state. The assumption is held genesis state is always
-							// available.
-							bc.stateCache.TrieDB().Clean(newHeadBlock.Root())
+							// Rewind to genesis block, reset the state database with
+							// corresponding genesis state.
+							bc.genesis.ToBlock(bc.db)
+							if err := bc.stateCache.TrieDB().Clean(newHeadBlock.Root()); err != nil {
+								log.Crit("Failed to reset state", "err", err)
+							}
 						} else if !bc.HasState(newHeadBlock.Root()) {
 							// Rewind to a block with recoverable state. If the state is
 							// missing, run the state recovery here.

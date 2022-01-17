@@ -134,7 +134,6 @@ type ChtIndexerBackend struct {
 	disablePruning       bool
 	diskdb, trieTable    ethdb.Database
 	odr                  OdrBackend
-	triedb               *trie.Database
 	section, sectionSize uint64
 	lastHash             common.Hash
 	trieRoot             common.Hash
@@ -148,7 +147,6 @@ func NewChtIndexer(db ethdb.Database, odr OdrBackend, size, confirms uint64, dis
 		diskdb:         db,
 		odr:            odr,
 		trieTable:      trieTable,
-		triedb:         trie.NewDatabase(trieTable, &trie.Config{Cache: 1}), // Use a tiny cache only to keep memory down
 		sectionSize:    size,
 		disablePruning: disablePruning,
 	}
@@ -187,13 +185,13 @@ func (c *ChtIndexerBackend) Reset(ctx context.Context, section uint64, lastSecti
 		root = GetChtRoot(c.diskdb, section-1, lastSectionHead)
 	}
 	var err error
-	c.trie, err = trie.New(root, c.triedb)
+	c.trie, err = trie.NewWithHashStore(common.Hash{}, root, c.trieTable)
 	c.trieRoot = root
 
 	if err != nil && c.odr != nil {
 		err = c.fetchMissingNodes(ctx, section, root)
 		if err == nil {
-			c.trie, err = trie.New(root, c.triedb)
+			c.trie, err = trie.NewWithHashStore(common.Hash{}, root, c.trieTable)
 		}
 	}
 	c.section = section
@@ -225,7 +223,7 @@ func (c *ChtIndexerBackend) Commit() error {
 	root, hashes := result.Root, make(map[common.Hash]struct{})
 
 	batch := c.trieTable.NewBatch()
-	for _, v := range result.Nodes() {
+	for _, v := range result.NodeBlobs() {
 		hash := crypto.Keccak256Hash(v)
 		batch.Put(hash.Bytes(), v)
 		hashes[hash] = struct{}{}
@@ -335,7 +333,6 @@ func StoreBloomTrieRoot(db ethdb.Database, sectionIdx uint64, sectionHead, root 
 type BloomTrieIndexerBackend struct {
 	disablePruning    bool
 	diskdb, trieTable ethdb.Database
-	triedb            *trie.Database
 	trieset           mapset.Set
 	odr               OdrBackend
 	section           uint64
@@ -354,7 +351,6 @@ func NewBloomTrieIndexer(db ethdb.Database, odr OdrBackend, parentSize, size uin
 		diskdb:         db,
 		odr:            odr,
 		trieTable:      trieTable,
-		triedb:         trie.NewDatabase(trieTable, &trie.Config{Cache: 1}), // Use a tiny cache only to keep memory down
 		parentSize:     parentSize,
 		size:           size,
 		disablePruning: disablePruning,
@@ -417,13 +413,13 @@ func (b *BloomTrieIndexerBackend) Reset(ctx context.Context, section uint64, las
 		root = GetBloomTrieRoot(b.diskdb, section-1, lastSectionHead)
 	}
 	var err error
-	b.trie, err = trie.New(root, b.triedb)
+	b.trie, err = trie.NewWithHashStore(common.Hash{}, root, b.trieTable)
 	b.trieRoot = root
 
 	if err != nil && b.odr != nil {
 		err = b.fetchMissingNodes(ctx, section, root)
 		if err == nil {
-			b.trie, err = trie.New(root, b.triedb)
+			b.trie, err = trie.NewWithHashStore(common.Hash{}, root, b.trieTable)
 		}
 	}
 	b.section = section
@@ -476,7 +472,7 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 	root, hashes := result.Root, make(map[common.Hash]struct{})
 
 	batch := b.trieTable.NewBatch()
-	for _, v := range result.Nodes() {
+	for _, v := range result.NodeBlobs() {
 		hash := crypto.Keccak256Hash(v)
 		batch.Put(hash.Bytes(), v)
 		hashes[hash] = struct{}{}

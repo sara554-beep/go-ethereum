@@ -102,9 +102,9 @@ func DeleteTrieNode(db ethdb.KeyValueWriter, key []byte) {
 	}
 }
 
-// ReadArchiveTrieNode retrieves the archive trie node with the given
+// ReadLegacyTrieNode retrieves the legacy trie node with the given
 // associated node hash.
-func ReadArchiveTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
+func ReadLegacyTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	data, err := db.Get(hash.Bytes())
 	if err != nil {
 		return nil
@@ -112,17 +112,17 @@ func ReadArchiveTrieNode(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	return data
 }
 
-// WriteArchiveTrieNode writes the provided archived trie node to database.
-func WriteArchiveTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
+// WriteLegacyTrieNode writes the provided legacy trie node to database.
+func WriteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash, node []byte) {
 	if err := db.Put(hash.Bytes(), node); err != nil {
-		log.Crit("Failed to store archived trie node", "err", err)
+		log.Crit("Failed to store legacy trie node", "err", err)
 	}
 }
 
-// DeleteArchiveTrieNode deletes the specified archived trie node from the database.
-func DeleteArchiveTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
+// DeleteLegacyTrieNode deletes the specified legacy trie node from the database.
+func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Delete(hash.Bytes()); err != nil {
-		log.Crit("Failed to delete archived trie node", "err", err)
+		log.Crit("Failed to delete legacy trie node", "err", err)
 	}
 }
 
@@ -159,15 +159,6 @@ func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte, state comm
 	})
 }
 
-// DeleteReverseDiff deletes the specified reverse diff from the database. The
-// passed parameter should indicate the total items in freezer table(including
-// the deleted one).
-func DeleteReverseDiff(db ethdb.AncientWriter, items uint64) {
-	// The error can be returned here if the db doesn't support ancient
-	// functionalities, don't panic here.
-	db.TruncateHead(ReverseDiffFreezer, items)
-}
-
 // ReadReverseDiffLookup retrieves the reverse diff id with the given associated
 // state root. Return nil if it's not existent.
 func ReadReverseDiffLookup(db ethdb.KeyValueReader, root common.Hash) *uint64 {
@@ -195,7 +186,7 @@ func DeleteReverseDiffLookup(db ethdb.KeyValueWriter, root common.Hash) {
 	}
 }
 
-// ReadReverseDiffHead retrieves the number of latest reverse diff from
+// ReadReverseDiffHead retrieves the number of the latest reverse diff from
 // the database.
 func ReadReverseDiffHead(db ethdb.KeyValueReader) uint64 {
 	data, _ := db.Get(ReverseDiffHeadKey)
@@ -206,7 +197,7 @@ func ReadReverseDiffHead(db ethdb.KeyValueReader) uint64 {
 	return number
 }
 
-// WriteReverseDiffHead stores the number of latest reverse diff id
+// WriteReverseDiffHead stores the number of the latest reverse diff id
 // into database.
 func WriteReverseDiffHead(db ethdb.KeyValueWriter, number uint64) {
 	if err := db.Put(ReverseDiffHeadKey, encodeBlockNumber(number)); err != nil {

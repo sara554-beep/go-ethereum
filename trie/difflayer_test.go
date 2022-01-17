@@ -58,6 +58,7 @@ func emptyLayer() *diskLayer {
 	return &diskLayer{
 		diskdb: rawdb.NewDatabase(rawdb.NewMemoryDatabase()),
 		clean:  fastcache.New(500 * 1024),
+		dirty:  newDirtyCache(nil),
 	}
 }
 
@@ -69,14 +70,17 @@ func benchmarkSearch(b *testing.B, depth int) {
 	)
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot, index int) *diffLayer {
-		var nodes = make(map[string]*cachedNode)
+		var nodes = make(map[string]*nodeWithPreValue)
 		for i := 0; i < 3000; i++ {
 			var (
 				path    = randomHash().Bytes()
 				storage = EncodeStorageKey(common.Hash{}, path)
 				val     = randomNode()
 			)
-			nodes[string(storage)] = val
+			nodes[string(storage)] = &nodeWithPreValue{
+				cachedNode: val,
+				pre:        nil,
+			}
 			if target == nil && depth == index {
 				want = val.rlp()
 				target = append([]byte{}, storage...)
@@ -107,15 +111,13 @@ func benchmarkSearch(b *testing.B, depth int) {
 }
 
 // BenchmarkSearchBottom benchmarks the search hits in the bottom diff layer.
-
-// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
+//
 // BenchmarkSearchBottom
 // BenchmarkSearchBottom-4   	  222717	      6167 ns/op
 func BenchmarkSearchBottom(b *testing.B) { benchmarkSearch(b, 0) }
 
 // BenchmarkSearchBottom benchmarks the search hits in the top diff layer.
 //
-// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
 // BenchmarkSearchTop
 // BenchmarkSearchTop-4   	10910677	       111.8 ns/op
 func BenchmarkSearchTop(b *testing.B) { benchmarkSearch(b, 127) }
@@ -130,13 +132,13 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		trie.Update(k, randBytes(100))
 	}
 	result, _ := trie.Commit(nil)
-	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	db.Update(result.Root, common.Hash{}, result.Nodes())
 
 	var (
 		target     []byte
 		targetHash common.Hash
 	)
-	result.WrittenNodes.forEach(func(storage string, node *cachedNode) {
+	result.Dirty.forEach(func(storage string, node *cachedNode) {
 		if target == nil {
 			target = []byte(storage)
 			targetHash = node.hash
@@ -154,27 +156,29 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 	}
 }
 
-// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
 // BenchmarkGetNode
 // BenchmarkGetNode-4   	 3279104	       349.2 ns/op
 func BenchmarkGetNode(b *testing.B) { benchmarkGetNode(b, false) }
 
-// cpu: Intel(R) Core(TM) i5-7360U CPU @ 2.30GHz
 // BenchmarkGetNodeBlob
 // BenchmarkGetNodeBlob-4   	 2166842	       479.8 ns/op
 func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
 
-func benchmarkPersist(b *testing.B, writeLegacy bool) {
+// BenchmarkPersist-8   	       2	 538105875 ns/op
+func BenchmarkPersist(b *testing.B) {
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot) *diffLayer {
-		var nodes = make(map[string]*cachedNode)
+		var nodes = make(map[string]*nodeWithPreValue)
 		for i := 0; i < 3000; i++ {
 			var (
 				path    = randomHash().Bytes()
 				storage = EncodeStorageKey(common.Hash{}, path)
 				val     = randomNode()
 			)
-			nodes[string(storage)] = val
+			nodes[string(storage)] = &nodeWithPreValue{
+				cachedNode: val,
+				pre:        nil,
+			}
 		}
 		return newDiffLayer(parent, common.Hash{}, 0, nodes)
 	}
@@ -191,34 +195,29 @@ func benchmarkPersist(b *testing.B, writeLegacy bool) {
 		if !ok {
 			break
 		}
-		dl.persist(&Config{WriteLegacy: writeLegacy}, false)
+		dl.persist(false)
 		b.StopTimer()
 	}
 }
 
-// BenchmarkPersist-8   	       2	 538105875 ns/op
-func BenchmarkPersist(b *testing.B) {
-	benchmarkPersist(b, false)
-}
-
-// BenchmarkPersistAndLegacy-8   	       2	 753407000 ns/op
-func BenchmarkPersistAndLegacy(b *testing.B) {
-	benchmarkPersist(b, true)
-}
-
+// BenchmarkJournal benchmarks the performance for journaling the layers.
+//
 // BenchmarkJournal
 // BenchmarkJournal-8   	      10	 110969279 ns/op
 func BenchmarkJournal(b *testing.B) {
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot) *diffLayer {
-		var nodes = make(map[string]*cachedNode)
+		var nodes = make(map[string]*nodeWithPreValue)
 		for i := 0; i < 3000; i++ {
 			var (
 				path    = randomHash().Bytes()
 				storage = EncodeStorageKey(common.Hash{}, path)
 				val     = randomNode()
 			)
-			nodes[string(storage)] = val
+			nodes[string(storage)] = &nodeWithPreValue{
+				cachedNode: val,
+				pre:        nil,
+			}
 		}
 		return newDiffLayer(parent, common.Hash{}, 0, nodes)
 	}

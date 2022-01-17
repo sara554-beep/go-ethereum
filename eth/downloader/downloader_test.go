@@ -64,9 +64,9 @@ func newTester() *downloadTester {
 	if err != nil {
 		panic(err)
 	}
-	core.GenesisBlockForTesting(db, testAddress, big.NewInt(1000000000000000))
+	gspec, _ := core.GenesisBlockForTesting(db, testAddress, big.NewInt(1000000000000000))
 
-	chain, err := core.NewBlockChain(db, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
+	chain, err := core.NewBlockChain(db, gspec, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
 	if err != nil {
 		panic(err)
 	}

@@ -37,6 +37,7 @@ import (
 // SecureTrie is not safe for concurrent use.
 type SecureTrie struct {
 	trie             Trie
+	db               *Database
 	hashKeyBuf       [common.HashLength]byte
 	secKeyCache      map[string][]byte
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key cache on mismatch
@@ -61,7 +62,7 @@ func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SecureTrie{trie: *trie}, nil
+	return &SecureTrie{trie: *trie, db: db}, nil
 }
 
 func NewSecureWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database) (*SecureTrie, error) {
@@ -72,7 +73,7 @@ func NewSecureWithOwner(stateRoot common.Hash, owner common.Hash, root common.Ha
 	if err != nil {
 		return nil, err
 	}
-	return &SecureTrie{trie: *trie}, nil
+	return &SecureTrie{trie: *trie, db: db}, nil
 }
 
 // Get returns the value for key stored in the trie.
@@ -98,7 +99,7 @@ func (t *SecureTrie) TryGetNode(path []byte) ([]byte, int, error) {
 	return t.trie.TryGetNode(path)
 }
 
-// TryUpdate account will abstract the write of an account to the
+// TryUpdateAccount account will abstract the write of an account to the
 // secure trie.
 func (t *SecureTrie) TryUpdateAccount(key []byte, acc *types.StateAccount) error {
 	hk := t.hashKey(key)
@@ -164,7 +165,7 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
 		return key
 	}
-	return t.trie.db.Preimage(common.BytesToHash(shaKey))
+	return t.db.Preimage(common.BytesToHash(shaKey))
 }
 
 // Commit writes all nodes and the secure hash pre-images to the trie's database.
@@ -179,7 +180,7 @@ func (t *SecureTrie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 		for hk, key := range t.secKeyCache {
 			preimages[common.BytesToHash([]byte(hk))] = key
 		}
-		t.trie.db.InsertPreimage(preimages)
+		t.db.InsertPreimage(preimages)
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database
@@ -194,8 +195,11 @@ func (t *SecureTrie) Hash() common.Hash {
 
 // Copy returns a copy of SecureTrie.
 func (t *SecureTrie) Copy() *SecureTrie {
-	cpy := *t
-	return &cpy
+	return &SecureTrie{
+		trie:        *t.trie.Copy(),
+		db:          t.db,
+		secKeyCache: t.secKeyCache,
+	}
 }
 
 // NodeIterator returns an iterator that returns nodes of the underlying trie. Iteration

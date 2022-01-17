@@ -33,9 +33,9 @@ import (
 // made to the state, that have not yet graduated into a semi-immutable state.
 type diffLayer struct {
 	// Immutables
-	root  common.Hash            // Root hash to which this snapshot diff belongs to
-	rid   uint64                 // Corresponding reverse diff id
-	nodes map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
+	root   common.Hash                  // Root hash to which this snapshot diff belongs to
+	diffid uint64                       // Corresponding reverse diff id
+	nodes  map[string]*nodeWithPreValue // Keyed trie nodes for retrieval, indexed by storage key
 
 	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
 	memory uint64       // Approximate guess as to how much memory we use
@@ -45,15 +45,15 @@ type diffLayer struct {
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, rid uint64, nodes map[string]*cachedNode) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[string]*nodeWithPreValue) *diffLayer {
 	dl := &diffLayer{
 		root:   root,
-		rid:    rid,
+		diffid: diffid,
 		nodes:  nodes,
 		parent: parent,
 	}
 	for key, node := range nodes {
-		dl.memory += uint64(len(key) + int(node.size) + cachedNodeSize)
+		dl.memory += uint64(len(key) + int(node.size) + cachedNodeSize + len(node.pre))
 		triedbDirtyWriteMeter.Mark(int64(node.size))
 	}
 	triedbDiffLayerSizeMeter.Mark(int64(dl.memory))
@@ -69,7 +69,7 @@ func (dl *diffLayer) Root() common.Hash {
 
 // ID returns the id of associated reverse diff.
 func (dl *diffLayer) ID() uint64 {
-	return dl.rid
+	return dl.diffid
 }
 
 // Parent returns the subsequent layer of a diff layer.
@@ -164,22 +164,23 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*cachedNode) *diffLayer {
+func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*nodeWithPreValue) *diffLayer {
 	return newDiffLayer(dl, blockRoot, id, nodes)
 }
 
-// persist persists the diff layer and all its parent diff layers to disk.
+// persist stores the diff layer and all its parent diff layers to disk.
 // The order should be strictly from bottom to top.
+//
 // Note this function can destruct the ancestor layers(mark them as stale)
 // of the given diff layer, please ensure prevent state access operation
 // to this layer through any **descendant layer**.
-func (dl *diffLayer) persist(config *Config, forceCommit bool) (snapshot, error) {
+func (dl *diffLayer) persist(force bool) (snapshot, error) {
 	parent, ok := dl.Parent().(*diffLayer)
 	if ok {
 		// Hold the lock to prevent any read operation until the new
 		// parent is linked correctly.
 		dl.lock.Lock()
-		result, err := parent.persist(config, forceCommit)
+		result, err := parent.persist(force)
 		if err != nil {
 			dl.lock.Unlock()
 			return nil, err
@@ -187,14 +188,14 @@ func (dl *diffLayer) persist(config *Config, forceCommit bool) (snapshot, error)
 		dl.parent = result
 		dl.lock.Unlock()
 	}
-	return diffToDisk(dl, config, forceCommit)
+	return diffToDisk(dl, force)
 }
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
 // it. The method will panic if called onto a non-bottom-most diff layer. The disk
 // layer persistence should be operated in an atomic way. All updates should be
 // discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, config *Config, force bool) (*diskLayer, error) {
+func diffToDisk(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
 	// states, the stored reverse diff will be truncated in the next restart.
@@ -207,8 +208,14 @@ func diffToDisk(bottom *diffLayer, config *Config, force bool) (*diskLayer, erro
 	base := bottom.Parent().(*diskLayer)
 	base.MarkStale()
 
-	dl := newDiskLayer(bottom.root, bottom.rid, base.clean, base.dirty.update(bottom.nodes), base.diskdb)
-	if err := dl.flush(config, force); err != nil {
+	// The node previous value is useless once the reverse diff is constructed.
+	slim := make(map[string]*cachedNode)
+	for key, n := range bottom.nodes {
+		slim[key] = n.unwrap()
+	}
+	dl := newDiskLayer(bottom.root, bottom.diffid, base.clean, base.dirty.update(slim), base.diskdb)
+
+	if err := dl.flush(force); err != nil {
 		return nil, err
 	}
 	return dl, nil

@@ -47,7 +47,7 @@ func TestNodeIterator(t *testing.T) {
 	gspec.MustCommit(lightdb)
 	gspec.MustCommit(gendb)
 
-	blockchain, _ := core.NewBlockChain(fulldb, nil, params.TestChainConfig, ethash.NewFullFaker(), vm.Config{}, nil, nil)
+	blockchain, _ := core.NewBlockChain(fulldb, &gspec, nil, params.TestChainConfig, ethash.NewFullFaker(), vm.Config{}, nil, nil)
 	gchain, _ := core.GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), gendb, 4, testChainGen)
 	if _, err := blockchain.InsertChain(gchain); err != nil {
 		panic(err)
@@ -56,7 +56,10 @@ func TestNodeIterator(t *testing.T) {
 	ctx := context.Background()
 	odr := &testOdr{sdb: fulldb, ldb: lightdb, serverState: blockchain.StateCache(), indexerConfig: TestClientIndexerConfig}
 	head := blockchain.CurrentHeader()
-	lightTrie, _ := NewStateDatabase(ctx, head, odr).OpenTrie(head.Root)
+	lightTrie, err := NewStateDatabase(ctx, head, odr).OpenTrie(head.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fullTrie, _ := blockchain.StateCache().OpenTrie(head.Root)
 	if err := diffTries(fullTrie, lightTrie); err != nil {
 		t.Fatal(err)

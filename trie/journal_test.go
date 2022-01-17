@@ -25,7 +25,6 @@ import (
 
 func TestJournal(t *testing.T) {
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
-
 	var (
 		db, numbers, roots, testKeys, testVals, teardown = fillDB()
 		dl                                               = db.disklayer()

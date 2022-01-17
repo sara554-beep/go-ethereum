@@ -61,9 +61,6 @@ var (
 
 	triedbReverseDiffTimeTimer = metrics.NewRegisteredTimer("trie/triedb/reversediff/time", nil)
 	triedbReverseDiffSizeMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/size", nil)
-	triedbReverseDiskHitMeter  = metrics.NewRegisteredMeter("trie/triedb/reversediff/disk", nil)
-	triedbReverseDirtyHitMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/dirty", nil)
-	triedbReverseMissMeter     = metrics.NewRegisteredMeter("trie/triedb/reversediff/miss", nil)
 
 	// ErrSnapshotReadOnly is returned if the database is opened in read only mode
 	// and mutation is requested.
@@ -130,7 +127,7 @@ type snapshot interface {
 	// node object.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*cachedNode) *diffLayer
+	Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*nodeWithPreValue) *diffLayer
 
 	// Journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the snapshot without
@@ -228,6 +225,17 @@ func (n *cachedNode) obj(hash common.Hash) node {
 	return expandNode(hash[:], n.node)
 }
 
+// nodeWithPreValue wraps the cachedNode with the previous node value.
+type nodeWithPreValue struct {
+	*cachedNode
+	pre []byte // RLP-encoded previous value, nil means it's non-existent
+}
+
+// unwrap returns the internal cachedNode object.
+func (n *nodeWithPreValue) unwrap() *cachedNode {
+	return n.cachedNode
+}
+
 // simplifyNode traverses the hierarchy of an expanded memory node and discards
 // all the internal caches, returning a node that only contains the raw data.
 func simplifyNode(n node) node {
@@ -296,21 +304,15 @@ type Config struct {
 	Journal   string // Journal of clean cache to survive node restarts
 	Preimages bool   // Flag whether the preimage of trie key is recorded
 
-	// WriteLegacy indicates whether the flushed data will be stored with
-	// an additional piece of data according to the legacy state scheme. It's
-	// mainly used in the archive node mode which requires all historical state
-	// and storing the preserved state like genesis.
-	WriteLegacy bool
-
 	// ReadOnly mode indicates whether the database is opened in read only mode.
 	// All the mutations like journaling, updating disk layer will all be rejected.
 	ReadOnly bool
 
-	// Fallback is the function used to find the fallback base layer root. It's pretty
-	// common that there is no singleton trie persisted in the disk(e.g. migrated from
-	// the legacy database) so the function provided can find the alternative root as
-	// the base.
-	Fallback func() common.Hash
+	// LoadStateRoot is the function used to find the fallback base layer root.
+	// It can happen that there is no trie persisted in the disk(e.g. migrated
+	// from the legacy database) so the function provided can find the alternative
+	// root as the base.
+	LoadStateRoot func(ethdb.Database) common.Hash
 }
 
 // Database is a multiple-layered structure for maintaining in-memory trie nodes.
@@ -406,9 +408,7 @@ func (db *Database) Preimage(hash common.Hash) []byte {
 	return rawdb.ReadPreimage(db.diskdb, hash)
 }
 
-// Snapshot retrieves a snapshot belonging to the given block root, or fallback
-// to legacy/archive format node in disk if no snapshot is maintained for that
-// block.
+// Snapshot retrieves a snapshot belonging to the given block root.
 func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -419,7 +419,7 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 // The passed keys must all be encoded in the **storage** format.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*cachedNode) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*nodeWithPreValue) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).
@@ -492,7 +492,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	// child for the capping and then remove it.
 	if layers == 0 {
 		// If full commit was requested, flatten the diffs and merge onto disk
-		result, err := diff.persist(db.config, true)
+		result, err := diff.persist(true)
 		if err != nil {
 			return err
 		}
@@ -563,7 +563,7 @@ func (db *Database) cap(diff *diffLayer, layers int) error {
 		diff.lock.Lock()
 		defer diff.lock.Unlock()
 
-		base, err := parent.persist(db.config, false)
+		base, err := parent.persist(false)
 		if err != nil {
 			return err
 		}
@@ -625,7 +625,7 @@ func (db *Database) Journal(root common.Hash) error {
 
 // Clean wipes all available journal from the persistent database and discard
 // all caches and diff layers. Using the given root to create a new disk layer.
-func (db *Database) Clean(root common.Hash) {
+func (db *Database) Clean(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -653,17 +653,22 @@ func (db *Database) Clean(root common.Hash) {
 	if db.config != nil && db.config.Cache > 0 {
 		cleans = fastcache.New(db.config.Cache * 1024 * 1024)
 	}
-	head := truncateFromHead(db.diskdb, 0)
+	// Delete all remaining reverse diffs in disk
+	head, err := purgeReverseDiffs(db.diskdb)
+	if err != nil {
+		return err
+	}
 	db.layers = map[common.Hash]snapshot{
 		root: newDiskLayer(root, head, cleans, nil, db.diskdb),
 	}
-	log.Info("Rebuild triedb", "root", root, "rid", head)
+	log.Info("Rebuild triedb", "root", root, "diffid", head)
+	return nil
 }
 
 // revert applies the reverse diffs to the database by reverting the disk layer
 // content. The passed clean cache should be empty.
 // This function assumes the lock in db is already held.
-func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
+func (db *Database) revert(diffid uint64, diff *reverseDiff, cleans *fastcache.Cache) error {
 	var (
 		dl    = db.disklayer()
 		root  = dl.Root()
@@ -672,7 +677,10 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	if diff.Root != root {
 		return errUnmatchedReverseDiff
 	}
-	if dl.rid == 0 {
+	if diffid != dl.diffid {
+		return errUnmatchedReverseDiff
+	}
+	if dl.diffid == 0 {
 		return fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
 	}
 	dl.MarkStale()
@@ -690,6 +698,8 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 				rawdb.DeleteTrieNode(batch, state.Key)
 			}
 		}
+		rawdb.WriteReverseDiffHead(batch, diffid-1)
+
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write reverse diff", "err", err)
 		}
@@ -714,10 +724,12 @@ func (db *Database) revert(diff *reverseDiff, cleans *fastcache.Cache) error {
 	batch.Reset()
 
 	// Truncate the reverse diff from the freezer in the last step
-	rawdb.DeleteReverseDiff(db.diskdb, dl.rid)
-
+	_, err := truncateFromHead(db.diskdb, dl.diffid-1)
+	if err != nil {
+		return err
+	}
 	// Recreate the disk layer with newly created clean cache
-	ndl := newDiskLayer(diff.Parent, dl.rid-1, cleans, dl.dirty, dl.diskdb)
+	ndl := newDiskLayer(diff.Parent, dl.diffid-1, cleans, dl.dirty, dl.diskdb)
 	db.layers = map[common.Hash]snapshot{ndl.root: ndl}
 	return nil
 }
@@ -762,7 +774,7 @@ func (db *Database) Rollback(target common.Hash) error {
 		if err != nil {
 			return err
 		}
-		if err := db.revert(diff, cleans); err != nil {
+		if err := db.revert(current, diff, cleans); err != nil {
 			return err
 		}
 		current -= 1
@@ -813,7 +825,7 @@ func (db *Database) disklayer() *diskLayer {
 	}
 }
 
-// diskRoot is a internal helper function to return the disk layer root.
+// diskRoot is an internal helper function to return the disk layer root.
 // The lock of snapTree is assumed to be held already.
 func (db *Database) diskRoot() common.Hash {
 	disklayer := db.disklayer()
@@ -893,6 +905,19 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 // Config returns the configures used by db.
 func (db *Database) Config() *Config {
 	return db.config
+}
+
+// IsEmpty returns an indicator if the state database is empty
+func (db *Database) IsEmpty() bool {
+	db.lock.RLock()
+	defer db.lock.RUnlock()
+
+	for _, layer := range db.layers {
+		if layer.Root() != emptyRoot {
+			return false
+		}
+	}
+	return true
 }
 
 // convertEmpty converts the given hash to predefined emptyHash if it's empty.

@@ -58,7 +58,7 @@ func makeTestSecureTrie() (*Database, *SecureTrie, map[string][]byte) {
 		}
 	}
 	result, _ := trie.Commit(nil)
-	triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	triedb.Update(result.Root, common.Hash{}, result.Nodes())
 	triedb.Cap(result.Root, 0)
 
 	// Return the generated trie
@@ -114,8 +114,7 @@ func TestSecureTrieConcurrency(t *testing.T) {
 	threads := runtime.NumCPU()
 	tries := make([]*SecureTrie, threads)
 	for i := 0; i < threads; i++ {
-		cpy := *trie
-		tries[i] = &cpy
+		tries[i] = trie.Copy()
 	}
 	// Start a batch of goroutines interactng with the trie
 	pend := new(sync.WaitGroup)

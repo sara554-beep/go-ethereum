@@ -417,16 +417,18 @@ func (s *stateObject) DeleteTrie(db Database) *trie.CommitResult {
 		defer func(start time.Time) { s.db.StorageDeletes += time.Since(start) }(time.Now())
 	}
 	var (
-		paths [][]byte
-		iter  = s.getTrie(db).NodeIterator(nil)
+		keys [][]byte
+		vals = make(map[string][]byte)
+		iter = s.getTrie(db).NodeIterator(nil)
 	)
 	for iter.Next(true) {
 		if iter.Hash() == (common.Hash{}) {
 			continue
 		}
-		paths = append(paths, iter.StorageKey())
+		keys = append(keys, iter.StorageKey())
+		vals[string(iter.StorageKey())] = iter.NodeBlob()
 	}
-	return trie.NewResultFromDeletionSet(paths)
+	return trie.NewResultFromDeletionSet(keys, vals)
 }
 
 // AddBalance adds amount to s's balance.

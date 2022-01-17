@@ -27,18 +27,18 @@ import (
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
 type diskLayer struct {
-	root common.Hash // Immutable, root hash of the base snapshot
-	rid  uint64      // Immutable, corresponding reverse diff id
+	root   common.Hash // Immutable, root hash of the base snapshot
+	diffid uint64      // Immutable, corresponding reverse diff id
 
 	diskdb ethdb.Database   // Key-value store containing the base snapshot
 	clean  *fastcache.Cache // Clean node cache to avoid hitting the disk for direct access
 	dirty  *dirtyCache      // Dirty node cache to aggregate writes and temporary cache.
 	stale  bool             // Signals that the layer became stale (state progressed)
-	lock   sync.RWMutex     // Lock used to prevent stale flag
+	lock   sync.RWMutex     // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, rid uint64, clean *fastcache.Cache, dirty *dirtyCache, diskdb ethdb.Database) *diskLayer {
+func newDiskLayer(root common.Hash, diffid uint64, clean *fastcache.Cache, dirty *dirtyCache, diskdb ethdb.Database) *diskLayer {
 	if dirty == nil {
 		dirty = newDirtyCache(nil)
 	}
@@ -47,7 +47,7 @@ func newDiskLayer(root common.Hash, rid uint64, clean *fastcache.Cache, dirty *d
 		clean:  clean,
 		dirty:  dirty,
 		root:   root,
-		rid:    rid,
+		diffid: diffid,
 	}
 }
 
@@ -72,7 +72,7 @@ func (dl *diskLayer) Stale() bool {
 
 // ID returns the id of associated reverse diff.
 func (dl *diskLayer) ID() uint64 {
-	return dl.rid
+	return dl.diffid
 }
 
 // MarkStale sets the stale flag as true.
@@ -117,7 +117,7 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 	// Try to retrieve the trie node from the disk.
 	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, storage)
 	if len(blob) == 0 || nodeHash != hash {
-		blob = rawdb.ReadArchiveTrieNode(dl.diskdb, hash)
+		blob = rawdb.ReadLegacyTrieNode(dl.diskdb, hash)
 		if len(blob) != 0 {
 			triedbFallbackHitMeter.Mark(1)
 			triedbFallbackReadMeter.Mark(int64(len(blob)))
@@ -164,7 +164,7 @@ func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 	// Try to retrieve the trie node from the disk.
 	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, storage)
 	if len(blob) == 0 || nodeHash != hash {
-		blob = rawdb.ReadArchiveTrieNode(dl.diskdb, hash)
+		blob = rawdb.ReadLegacyTrieNode(dl.diskdb, hash)
 		if len(blob) != 0 {
 			triedbFallbackHitMeter.Mark(1)
 			triedbFallbackReadMeter.Mark(int64(len(blob)))
@@ -180,37 +180,12 @@ func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 	return nil, nil
 }
 
-// nodeBlobByPath retrieves the trie node blob associated with node path disregard
-// the hash of node.
-func (dl *diskLayer) nodeBlobByPath(storage []byte) ([]byte, error) {
-	if dl.Stale() {
-		return nil, errSnapshotStale
-	}
-	// Try to retrieve the trie node from the dirty memory cache.
-	// The map is lock free since it's impossible to read/write it
-	// at the same time.
-	blob, found := dl.dirty.nodeBlobByPath(storage)
-	if found {
-		triedbReverseDirtyHitMeter.Mark(1)
-		return blob, nil
-	}
-	// Try to retrieve the trie node from the disk.
-	blob, _ = rawdb.ReadTrieNode(dl.diskdb, storage)
-	if len(blob) > 0 {
-		triedbReverseDiskHitMeter.Mark(1)
-		return blob, nil
-	}
-	triedbReverseMissMeter.Mark(1)
-	return nil, nil
-}
-
-func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*cachedNode) *diffLayer {
+func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*nodeWithPreValue) *diffLayer {
 	return newDiffLayer(dl, blockHash, id, nodes)
 }
 
 // flush persists the in-memory dirty trie node into the disk if the predefined
-// memory threshold is reached. Depends on the given config, the additional legacy
-// format node can be written as well (e.g. for archive node).
-func (dl *diskLayer) flush(config *Config, force bool) error {
-	return dl.dirty.flush(dl.diskdb, dl.clean, config, force)
+// memory threshold is reached.
+func (dl *diskLayer) flush(force bool) error {
+	return dl.dirty.flush(dl.diskdb, dl.clean, dl.diffid, force)
 }

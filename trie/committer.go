@@ -51,6 +51,7 @@ type committer struct {
 	onleaf    LeafCallback
 	leafCh    chan *leaf
 	committed *nodeSet
+	embedded  [][]byte
 }
 
 // committers live in a global sync.Pool
@@ -74,6 +75,7 @@ func returnCommitterToPool(h *committer) {
 	h.onleaf = nil
 	h.leafCh = nil
 	h.committed = nil
+	h.embedded = nil
 	h.owner = common.Hash{}
 	committerPool.Put(h)
 }
@@ -115,6 +117,8 @@ func (c *committer) commit(path []byte, n node) (node, error) {
 		if hn, ok := hashedNode.(hashNode); ok {
 			return hn, nil
 		}
+		// The short node is embedded in its parent, track it.
+		c.embedded = append(c.embedded, EncodeStorageKey(c.owner, path))
 		return collapsed, nil
 	case *fullNode:
 		hashedKids, err := c.commitChildren(path, cn)
@@ -128,6 +132,8 @@ func (c *committer) commit(path []byte, n node) (node, error) {
 		if hn, ok := hashedNode.(hashNode); ok {
 			return hn, nil
 		}
+		// The full node is embedded in its parent, track it.
+		c.embedded = append(c.embedded, EncodeStorageKey(c.owner, path))
 		return collapsed, nil
 	case hashNode:
 		return cn, nil
@@ -190,7 +196,7 @@ func (c *committer) store(path []byte, n node) node {
 		storage = EncodeStorageKey(c.owner, path)
 		nhash   = common.BytesToHash(hash)
 	)
-	c.committed.put(storage, slim, size, nhash)
+	c.committed.put(storage, slim, uint16(size), nhash)
 
 	// If we're using channel-based leaf-reporting, send to channel.
 	// The leaf channel will be active only when there an active leaf-callback

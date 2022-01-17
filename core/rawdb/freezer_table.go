@@ -517,19 +517,27 @@ func (t *freezerTable) truncateTail(tail uint64) error {
 		return nil
 	}
 	head := atomic.LoadUint64(&t.items)
-	if head <= tail {
+	if head < tail {
 		return nil
 	}
-	// Load the new tail index, extract the position info. Note the
-	// second index contains the "real" position info.
-	offset := tail - itemOffset + 1
-	buffer := make([]byte, indexEntrySize)
-	if _, err := t.index.ReadAt(buffer, int64(offset*indexEntrySize)); err != nil {
-		return err
+	var (
+		newTail indexEntry
+		buffer  = make([]byte, indexEntrySize)
+	)
+	if head == tail {
+		newTail = indexEntry{
+			offset:  uint32(t.headBytes),
+			filenum: t.headId,
+		}
+	} else {
+		// Load the new tail index, extract the position info. Note the
+		// second index contains the "real" position info.
+		offset := tail - itemOffset + 1
+		if _, err := t.index.ReadAt(buffer, int64(offset*indexEntrySize)); err != nil {
+			return err
+		}
+		newTail.unmarshalBinary(buffer)
 	}
-	var newTail indexEntry
-	newTail.unmarshalBinary(buffer)
-
 	// Update the hidden marker to ensure this item is not accessible.
 	atomic.StoreUint64(&t.itemHidden, tail-itemOffset)
 

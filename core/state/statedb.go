@@ -930,13 +930,13 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				return common.Hash{}, err
 			}
 			if result != nil {
-				storageUpdated += result.Modified()
+				storageUpdated += result.NodeLen()
 				committed = append(committed, result)
 			}
 		} else {
 			// Account is deleted, nuke out the storage data as well.
 			result := obj.DeleteTrie(s.db)
-			storageDeleted += result.Modified()
+			storageDeleted += result.NodeLen()
 			committed = append(committed, result)
 		}
 	}
@@ -966,7 +966,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		rawStorageUpdatedMeter.Mark(int64(s.StorageUpdated))
 		rawAccountDeletedMeter.Mark(int64(s.AccountDeleted))
 		rawStorageDeletedMeter.Mark(int64(s.StorageDeleted))
-		trieAccountUpdatedMeter.Mark(int64(result.Modified()))
+		trieAccountUpdatedMeter.Mark(int64(result.NodeLen()))
 		trieStorageUpdatedMeter.Mark(int64(storageUpdated))
 		trieStorageDeletedMeter.Mark(int64(storageDeleted))
 		s.AccountUpdated, s.AccountDeleted = 0, 0
@@ -1003,12 +1003,17 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	if root != s.originalRoot {
 		start := time.Now()
-		if err := s.db.TrieDB().Update(root, s.originalRoot, result.CommitTo(nil)); err != nil {
+		if err := s.db.TrieDB().Update(root, s.originalRoot, result.Nodes()); err != nil {
 			if err != trie.ErrSnapshotReadOnly {
 				log.Warn("Failed to commit dirty trie nodes", "err", err)
 			}
 			return common.Hash{}, err
 		}
+		// Keep 128 diff layers in the memory, persistent layer is 129th.
+		// - head layer is paired with HEAD state
+		// - head-1 layer is paired with HEAD-1 state
+		// - head-127 layer(bottom-most diff layer) is paired with HEAD-127 state
+		// - head-128 layer(disk layer) is paired with HEAD-128 state
 		if err := s.db.TrieDB().Cap(root, 128); err != nil {
 			if err != trie.ErrSnapshotReadOnly {
 				log.Warn("Failed to cap node tree", "err", err)

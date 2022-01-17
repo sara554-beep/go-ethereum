@@ -29,19 +29,19 @@ import (
 )
 
 var (
-	// dirtyMemoryLimit is the maximum size of the dirty cache size that
-	// aggregates the writes from above until it's flushed into the disk.
+	// dirtyMemoryLimit is the maximum size of the dirty cache that aggregates
+	// the writes from above until it's flushed into the disk.
 	dirtyMemoryLimit = uint64(256 * 1024 * 1024)
 )
 
 // dirtyCache is a collection of uncommitted dirty nodes to aggregate the disk
-// write. And it can act as an additional cache avoid hitting disk too much.
+// write. It can also act as an additional cache to avoid hitting disk too much.
 type dirtyCache struct {
 	nodes map[string]*cachedNode // Uncommitted dirty nodes, indexed by storage key
 	size  uint64                 // The approximate size of cached nodes
 }
 
-// newDirtyCache initializes the dirty node cache with the given nodes.
+// newDirtyCache initializes the dirty node cache with the given node set.
 func newDirtyCache(nodes map[string]*cachedNode) *dirtyCache {
 	if nodes == nil {
 		nodes = make(map[string]*cachedNode)
@@ -53,7 +53,7 @@ func newDirtyCache(nodes map[string]*cachedNode) *dirtyCache {
 	return &dirtyCache{nodes: nodes, size: size}
 }
 
-// node retrieves the node with given path and hash.
+// node retrieves the node with given storage key and hash.
 func (cache *dirtyCache) node(storage []byte, hash common.Hash) (node, error) {
 	n, ok := cache.nodes[string(storage)]
 	if ok {
@@ -69,7 +69,7 @@ func (cache *dirtyCache) node(storage []byte, hash common.Hash) (node, error) {
 	return nil, nil
 }
 
-// nodeBlob retrieves the node blob with given path and hash.
+// nodeBlob retrieves the node blob with given storage key and hash.
 func (cache *dirtyCache) nodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	n, ok := cache.nodes[string(storage)]
 	if ok {
@@ -83,18 +83,6 @@ func (cache *dirtyCache) nodeBlob(storage []byte, hash common.Hash) ([]byte, err
 		return n.rlp(), nil
 	}
 	return nil, nil
-}
-
-// nodeBlobByPath retrieves the node blob with given path regardless of the node hash.
-func (cache *dirtyCache) nodeBlobByPath(storage []byte) ([]byte, bool) {
-	n, ok := cache.nodes[string(storage)]
-	if ok {
-		if n.node == nil {
-			return nil, true
-		}
-		return n.rlp(), true
-	}
-	return nil, false
 }
 
 // update merges the given nodes into the cache. This function should never be called
@@ -149,55 +137,37 @@ func (cache *dirtyCache) revert(diff *reverseDiff) error {
 // format node can be written as well (e.g. for archive node). Note, all data must
 // be written to disk atomically.
 // This function should never be called simultaneously with other map accessors.
-func (cache *dirtyCache) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, config *Config, force bool) error {
+func (cache *dirtyCache) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, diffid uint64, force bool) error {
 	if cache.size <= dirtyMemoryLimit && !force {
 		return nil
 	}
 	var (
-		total int64
 		start = time.Now()
-		batch = db.NewBatch()
-
-		encodeTime time.Duration
-		batchTime  time.Duration
-		flushTime  time.Duration
+		batch = db.NewBatchWithSize(int(dirtyMemoryLimit))
 	)
 	for storage, n := range cache.nodes {
 		if n.node == nil {
 			rawdb.DeleteTrieNode(batch, []byte(storage))
 			continue
 		}
-		t := time.Now()
 		blob := n.rlp()
-		encodeTime += time.Since(t)
-
-		t = time.Now()
 		rawdb.WriteTrieNode(batch, []byte(storage), blob)
-		if config != nil && config.WriteLegacy {
-			rawdb.WriteArchiveTrieNode(batch, n.hash, blob)
-		}
-		batchTime += time.Since(t)
 		if clean != nil {
 			clean.Set(EncodeInternalKey([]byte(storage), n.hash), blob)
 		}
-		total += int64(len(blob) + len(storage))
 	}
-	triedbCommitSizeMeter.Mark(total)
-	triedbCommitNodesMeter.Mark(int64(len(cache.nodes)))
-	triedbCommitTimeTimer.UpdateSince(start)
+	rawdb.WriteReverseDiffHead(batch, diffid)
 
-	t := time.Now()
 	if err := batch.Write(); err != nil {
 		return err
 	}
-	flushTime = time.Since(t)
+	triedbCommitSizeMeter.Mark(int64(batch.ValueSize()))
+	triedbCommitNodesMeter.Mark(int64(len(cache.nodes)))
+	triedbCommitTimeTimer.UpdateSince(start)
 
 	log.Debug("Persisted uncommitted nodes",
 		"nodes", len(cache.nodes),
-		"size", common.StorageSize(total),
-		"encode-time", common.PrettyDuration(encodeTime),
-		"batch-time", common.PrettyDuration(batchTime),
-		"flush-time", common.PrettyDuration(flushTime),
+		"size", common.StorageSize(batch.ValueSize()),
 		"elapsed", common.PrettyDuration(time.Since(start)),
 	)
 	cache.nodes, cache.size = make(map[string]*cachedNode), 0

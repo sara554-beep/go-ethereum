@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"io"
 	"sort"
 
@@ -61,8 +62,7 @@ func (f *fuzzer) readInt() uint64 {
 }
 
 func (f *fuzzer) randomTrie(n int) (*trie.Trie, map[string]*kv) {
-
-	trie := new(trie.Trie)
+	trie, _ := trie.New(common.Hash{}, trie.NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	vals := make(map[string]*kv)
 	size := f.readInt()
 	// Fill it with some fluff

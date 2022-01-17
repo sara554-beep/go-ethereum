@@ -81,9 +81,9 @@ func odrGetReceipts(ctx context.Context, db ethdb.Database, config *params.Chain
 	return rlp
 }
 
-func TestOdrAccountsLes2(t *testing.T) { testOdr(t, 2, 1, true, odrAccounts) }
-func TestOdrAccountsLes3(t *testing.T) { testOdr(t, 3, 1, true, odrAccounts) }
-func TestOdrAccountsLes4(t *testing.T) { testOdr(t, 4, 1, true, odrAccounts) }
+func TestOdrAccountsLes2(t *testing.T) { testOdr(t, 2, 0, true, odrAccounts) }
+func TestOdrAccountsLes3(t *testing.T) { testOdr(t, 3, 0, true, odrAccounts) }
+func TestOdrAccountsLes4(t *testing.T) { testOdr(t, 4, 0, true, odrAccounts) }
 
 func odrAccounts(ctx context.Context, db ethdb.Database, config *params.ChainConfig, bc *core.BlockChain, lc *light.LightChain, bhash common.Hash) []byte {
 	dummyAddr := common.HexToAddress("1234567812345678123456781234567812345678")
@@ -236,7 +236,7 @@ func testOdr(t *testing.T, protocol int, expFail uint64, checkCached bool, fn od
 		}
 	}
 
-	// expect retrievals to fail (except genesis block) without a les peer
+	// expect retrievals to fail (include genesis block) without a les peer
 	client.handler.backend.peers.lock.Lock()
 	client.peer.speer.hasBlockHook = func(common.Hash, uint64, bool) bool { return false }
 	client.handler.backend.peers.lock.Unlock()

@@ -35,10 +35,10 @@ import (
 
 // Test chain parameters.
 var (
-	testKey, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-	testAddress = crypto.PubkeyToAddress(testKey.PublicKey)
-	testGenDB   = rawdb.NewMemoryDatabase()
-	testGenesis = core.GenesisBlockForTesting(testGenDB, testAddress, big.NewInt(1000000000000000))
+	testKey, _            = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	testAddress           = crypto.PubkeyToAddress(testKey.PublicKey)
+	testGenDB             = rawdb.NewMemoryDatabase()
+	testSpec, testGenesis = core.GenesisBlockForTesting(testGenDB, testAddress, big.NewInt(1000000000000000))
 )
 
 var (
@@ -226,7 +226,7 @@ func newTestBlockchain(blocks []*types.Block) *core.BlockChain {
 		db := rawdb.NewMemoryDatabase()
 		core.GenesisBlockForTesting(db, testAddress, big.NewInt(1000000000000000))
 
-		chain, err := core.NewBlockChain(db, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
+		chain, err := core.NewBlockChain(db, testSpec, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
 		if err != nil {
 			panic(err)
 		}

@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -278,7 +277,7 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 	gspec.MustCommit(gendb)
 
 	// Assemble the test environment
-	blockchain, _ := core.NewBlockChain(sdb, nil, params.TestChainConfig, ethash.NewFullFaker(), vm.Config{}, nil, nil)
+	blockchain, _ := core.NewBlockChain(sdb, &gspec, nil, params.TestChainConfig, ethash.NewFullFaker(), vm.Config{}, nil, nil)
 
 	gchain, _ := core.GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), gendb, 4, testChainGen)
 	if _, err := blockchain.InsertChain(gchain); err != nil {
@@ -305,8 +304,6 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 			if err != nil {
 				t.Fatalf("error in full-node test for block %d: %v", i, err)
 			}
-			fmt.Println("read from server", i)
-
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
 
@@ -315,8 +312,6 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 			if err != nil && exp {
 				t.Errorf("error in ODR test for block %d: %v", i, err)
 			}
-			fmt.Println("read from client", i)
-
 			eq := bytes.Equal(b1, b2)
 			if exp && !eq {
 				t.Errorf("ODR test output for block %d doesn't match full node", i)
@@ -324,10 +319,10 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 		}
 	}
 
-	// expect retrievals to fail (except genesis block) without a les peer
+	// expect retrievals to fail (include genesis block) without a les peer
 	t.Log("checking without ODR")
 	odr.disable = true
-	test(1)
+	test(0)
 
 	// expect all retrievals to pass with ODR enabled
 	t.Log("checking with ODR")
@@ -335,7 +330,7 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 	test(len(gchain))
 
 	// still expect all retrievals to pass, now data should be cached locally
-	//t.Log("checking without ODR, should be cached")
-	//odr.disable = true
-	//test(len(gchain))
+	t.Log("checking without ODR, should be cached")
+	odr.disable = true
+	test(len(gchain))
 }

@@ -513,7 +513,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		numHashPairings    stat
 		hashNumPairings    stat
 		tries              stat
-		archiveTries       stat
+		legacyTries        stat
 		reverseDiffLookups stat
 		codes              stat
 		txLookups          stat
@@ -567,7 +567,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		case bytes.HasPrefix(key, TrieNodePrefix) && len(key) > len(TrieNodePrefix) && len(key) < len(TrieNodePrefix)+maxTrieNodeStorageKeyLen:
 			tries.Add(size)
 		case len(key) == common.HashLength:
-			archiveTries.Add(size)
+			legacyTries.Add(size)
 		case bytes.HasPrefix(key, ReverseDiffLookupPrefix) && len(key) == len(ReverseDiffLookupPrefix)+common.HashLength:
 			reverseDiffLookups.Add(size)
 		case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
@@ -656,7 +656,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Bloombit index", bloomBits.Size(), bloomBits.Count()},
 		{"Key-Value store", "Contract codes", codes.Size(), codes.Count()},
 		{"Key-Value store", "Trie nodes", tries.Size(), tries.Count()},
-		{"Key-Value store", "Archived trie nodes", archiveTries.Size(), archiveTries.Count()},
+		{"Key-Value store", "Legacy trie nodes", legacyTries.Size(), legacyTries.Count()},
 		{"Key-Value store", "Reverse diff lookups", reverseDiffLookups.Size(), reverseDiffLookups.Count()},
 		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
 		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},

@@ -101,6 +101,7 @@ func TestIteratorLargeData(t *testing.T) {
 type iterationElement struct {
 	hash common.Hash
 	key  []byte
+	val  []byte
 }
 
 // Tests that the node iterator indeed walks over the entire database contents.
@@ -116,13 +117,16 @@ func TestNodeIteratorCoverage(t *testing.T) {
 			elements[key] = iterationElement{
 				hash: it.Hash(),
 				key:  it.StorageKey(),
+				val:  it.NodeBlob(),
 			}
 		}
 	}
 	// Cross check the hashes and the database itself
 	for _, element := range elements {
-		if _, err := db.Snapshot(trie.Hash()).NodeBlob(element.key, element.hash); err != nil {
+		if blob, err := db.Snapshot(trie.Hash()).NodeBlob(element.key, element.hash); err != nil {
 			t.Errorf("failed to retrieve reported node %x: %v", element.hash, err)
+		} else if !bytes.Equal(blob, element.val) {
+			t.Errorf("node blob is different, want %v got %v", element.val, blob)
 		}
 	}
 	it := db.DiskDB().NewIterator(nil, nil)
@@ -140,8 +144,10 @@ func TestNodeIteratorCoverage(t *testing.T) {
 		}
 		hash := crypto.Keccak256Hash(it.Value())
 		ikey := string(EncodeInternalKey(nodeKey, hash))
-		if _, ok := elements[ikey]; !ok {
+		if elem, ok := elements[ikey]; !ok {
 			t.Errorf("state entry not reported %v", suffixCompactToHex(nodeKey))
+		} else if !bytes.Equal(it.Value(), elem.val) {
+			t.Errorf("node blob is different, want %v got %v", elem.val, it.Value())
 		}
 	}
 	it.Release()
@@ -317,7 +323,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
 	result, _ := tr.Commit(nil)
-	tdb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	tdb.Update(result.Root, common.Hash{}, result.Nodes())
 	if !memonly {
 		tdb.Cap(result.Root, 0)
 	}
@@ -328,7 +334,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		memKeys  [][]byte
 	)
 	if memonly {
-		for k, n := range result.CommitTo(nil) {
+		for k, n := range result.Nodes() {
 			if n.size == 0 {
 				continue
 			}
@@ -359,7 +365,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		for {
 			if memonly {
 				rkey = memKeys[rand.Intn(len(memKeys))]
-				node := result.CommitTo(nil)[string(rkey)]
+				node := result.Nodes()[string(rkey)]
 				if node == nil {
 					continue
 				}
@@ -373,12 +379,12 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 			}
 		}
 		if memonly {
-			node, exist := tr.dirty.get(rkey, rhash)
+			node, exist := tr.nodes.nodes[string(rkey)]
 			if !exist {
 				continue
 			}
-			rnode = node
-			tr.dirty.del(rkey, rhash)
+			rnode = node.obj(rhash)
+			delete(tr.nodes.nodes, string(rkey))
 		} else {
 			rval, _ = rawdb.ReadTrieNode(diskdb, rkey)
 			rawdb.DeleteTrieNode(diskdb, rkey)
@@ -394,7 +400,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 
 		// Add the node back and continue iteration.
 		if memonly {
-			tr.dirty.put(rkey, simplifyNode(rnode), 100, rhash)
+			tr.nodes.nodes[string(rkey)] = &cachedNode{rhash, simplifyNode(rnode), 100}
 		} else {
 			rawdb.WriteTrieNode(diskdb, rkey, rval)
 		}
@@ -433,20 +439,20 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	result, _ := ctr.Commit(nil)
 	root := result.Root
 
-	for key, node := range result.CommitTo(nil) {
+	for key, node := range result.Nodes() {
 		if node.hash == barNodeHash {
 			barNodeKey = []byte(key)
 		}
 	}
 	if !memonly {
-		triedb.Update(root, common.Hash{}, result.CommitTo(nil))
+		triedb.Update(root, common.Hash{}, result.Nodes())
 		triedb.Cap(root, 0)
 	} else {
-		triedb.Update(root, common.Hash{}, result.CommitTo(nil))
+		triedb.Update(root, common.Hash{}, result.Nodes())
 	}
 	var (
 		barNodeBlob []byte
-		barNodeObj  *cachedNode
+		barNodeObj  *nodeWithPreValue
 	)
 	if memonly {
 		// Ugly hacks, delete item from the immutable diff layer
@@ -527,6 +533,10 @@ func (l *loggingDb) NewBatch() ethdb.Batch {
 	return l.backend.NewBatch()
 }
 
+func (l *loggingDb) NewBatchWithSize(size int) ethdb.Batch {
+	return l.backend.NewBatchWithSize(size)
+}
+
 func (l *loggingDb) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	return l.backend.NewIterator(prefix, start)
 }
@@ -560,7 +570,7 @@ func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 		trie.Update(key, val)
 	}
 	result, _ := trie.Commit(nil)
-	triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	triedb.Update(result.Root, common.Hash{}, result.Nodes())
 	triedb.Cap(result.Root, 0)
 	// Return the generated trie
 	return triedb, trie, logDb

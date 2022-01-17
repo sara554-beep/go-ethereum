@@ -121,6 +121,39 @@ func assertReverseDiffInRange(t *testing.T, db ethdb.Database, from, to uint64, 
 	}
 }
 
+func TestTruncateHeadReverseDiff(t *testing.T) {
+	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	if err != nil {
+		panic("Failed to allocate tempdir")
+	}
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+	if err != nil {
+		panic("Failed to create database")
+	}
+	defer os.RemoveAll(dir)
+
+	var diffs = genDiffs(10)
+	for i := 0; i < len(diffs); i++ {
+		blob, err := rlp.EncodeToBytes(diffs[i])
+		if err != nil {
+			t.Fatalf("Failed to encode reverse diff %v", err)
+		}
+		rawdb.WriteReverseDiff(db, uint64(i+1), blob, diffs[i].Parent)
+		rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
+	}
+	for i := len(diffs); i > 0; i-- {
+		pruned, err := truncateFromHead(db, uint64(i-1))
+		if err != nil {
+			t.Fatalf("Failed to truncate from head %v", err)
+		}
+		if i != 0 && pruned != 1 {
+			t.Error("Unexpected pruned items", "want", 1, "got", pruned)
+		}
+		assertReverseDiffInRange(t, db, uint64(i), uint64(10), false)
+		assertReverseDiffInRange(t, db, uint64(1), uint64(i-1), true)
+	}
+}
+
 func TestTruncateTailReverseDiff(t *testing.T) {
 	dir, err := ioutil.TempDir(os.TempDir(), "testing")
 	if err != nil {
@@ -141,14 +174,128 @@ func TestTruncateTailReverseDiff(t *testing.T) {
 		rawdb.WriteReverseDiff(db, uint64(i+1), blob, diffs[i].Parent)
 		rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
 
-		// Only keep the latest reverse diff in disk, ensure all
-		// older are evicted.
-		pruned, _ := truncateFromTail(db, uint64(i+1), 1)
+		pruned, _ := truncateFromTail(db, uint64(i))
 		if i != 0 && pruned != 1 {
 			t.Error("Unexpected pruned items", "want", 1, "got", pruned)
 		}
-		assertReverseDiffInRange(t, db, 0, uint64(i), false)
+		assertReverseDiffInRange(t, db, uint64(1), uint64(i), false)
 		assertReverseDiff(t, db, uint64(i+1), true)
+	}
+}
+
+func TestTruncateTailReverseDiffs(t *testing.T) {
+	var cases = []struct {
+		limit       uint64
+		expPruned   int
+		maxPruned   uint64
+		minUnpruned uint64
+		empty       bool
+	}{
+		{
+			1, 9, 9, 10, false,
+		},
+		{
+			0, 10, 10, 0 /* no meaning */, true,
+		},
+		{
+			10, 0, 0, 1, false,
+		},
+	}
+	for _, c := range cases {
+		dir, err := ioutil.TempDir(os.TempDir(), "")
+		if err != nil {
+			panic("Failed to allocate tempdir")
+		}
+		db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+		if err != nil {
+			panic("Failed to create database")
+		}
+		defer os.RemoveAll(dir)
+
+		var diffs = genDiffs(10)
+		for i := 0; i < len(diffs); i++ {
+			blob, err := rlp.EncodeToBytes(diffs[i])
+			if err != nil {
+				t.Fatalf("Failed to encode reverse diff %v", err)
+			}
+			rawdb.WriteReverseDiff(db, uint64(i+1), blob, diffs[i].Parent)
+			rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
+		}
+
+		pruned, _ := truncateFromTail(db, uint64(10)-c.limit)
+		if pruned != c.expPruned {
+			t.Error("Unexpected pruned items", "want", c.expPruned, "got", pruned)
+		}
+		if c.empty {
+			assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
+		} else {
+			assertReverseDiffInRange(t, db, uint64(1), c.maxPruned, false)
+			assertReverseDiff(t, db, c.minUnpruned, true)
+		}
+	}
+}
+
+func TestPurgeReverseDiffs(t *testing.T) {
+	var cases = []struct {
+		prePruned int
+		expHead   uint64
+	}{
+		{0, 0},
+		{1, 1},
+		{10, 10},
+	}
+	for _, c := range cases {
+		dir, err := ioutil.TempDir(os.TempDir(), "")
+		if err != nil {
+			panic("Failed to allocate tempdir")
+		}
+		db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-fr"), "", false)
+		if err != nil {
+			panic("Failed to create database")
+		}
+		defer os.RemoveAll(dir)
+
+		var diffs = genDiffs(15)
+		for i := 0; i < 10; i++ {
+			blob, err := rlp.EncodeToBytes(diffs[i])
+			if err != nil {
+				t.Fatalf("Failed to encode reverse diff %v", err)
+			}
+			rawdb.WriteReverseDiff(db, uint64(i+1), blob, diffs[i].Parent)
+			rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
+		}
+
+		// Deleted the items in the tail if it's required
+		if c.prePruned != 0 {
+			pruned, err := truncateFromTail(db, uint64(c.prePruned))
+			if err != nil {
+				t.Fatalf("Failed to truncate reverse diff %v", err)
+			}
+			if pruned != c.prePruned {
+				t.Fatalf("Unexpected pruned items %d - %d", pruned, c.prePruned)
+			}
+		}
+
+		// Purge all the reverse diffs stored, ensure nothing left
+		newHead, err := purgeReverseDiffs(db)
+		if err != nil {
+			t.Fatalf("Failed to purge reverse diff %v", err)
+		}
+		if newHead != c.expHead {
+			t.Fatalf("Unexpected new head %d - %d", newHead, c.expHead)
+		}
+		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
+
+		// Push new reverse diffs on top, ensure everything flushed is accessible
+		for i := c.expHead + 1; i <= 15; i++ {
+			blob, err := rlp.EncodeToBytes(diffs[i-1])
+			if err != nil {
+				t.Fatalf("Failed to encode reverse diff %v", err)
+			}
+			rawdb.WriteReverseDiff(db, i, blob, diffs[i-1].Parent)
+			rawdb.WriteReverseDiffLookup(db, diffs[i-1].Parent, i)
+		}
+		assertReverseDiffInRange(t, db, c.expHead+1, uint64(15), true)
 	}
 }
 
@@ -180,92 +327,37 @@ func TestRepairReverseDiff(t *testing.T) {
 		}
 	}
 
-	// Scenario a:
+	// Scenario 1:
 	// - head reverse diff in leveldb is lower than freezer, it can happen that
 	//   reverse diff is persisted while corresponding state is not flushed.
 	//   The extra reverse diff in freezer is expected to be truncated
 	t.Run("Truncate-extra-rdiffs-match-root", func(t *testing.T) {
 		t.Parallel()
 
-		db, diffs, teardown := setup()
+		db, _, teardown := setup()
 		defer teardown()
 
 		// Block9's root.
-		diffid := repairReverseDiff(db, diffs[len(diffs)-2].Root)
+		diffid := repairReverseDiff(db, 9)
 		if diffid != uint64(9) {
 			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
 		assertReverseDiffInRange(t, db, uint64(1), uint64(9), true)
 		assertReverseDiff(t, db, uint64(10), false)
 	})
-	t.Run("Truncate-extra-rdiffs-unmatch-root", func(t *testing.T) {
-		t.Parallel()
 
-		db, _, teardown := setup()
-		defer teardown()
-
-		// Random hash
-		diffid := repairReverseDiff(db, randomHash())
-		if diffid != uint64(0) {
-			t.Fatalf("Unexpected reverse diff head %d", diffid)
-		}
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-	})
-
-	// Scenario b:
-	// - head reverse diff in leveldb is higher than freezer, it's not supposed
-	//   to be occurred.
-	//   In this case all the existent reverse diffs should all be dropped.
-	t.Run("Truncate-unknown-rdiffs-zero-tail", func(t *testing.T) {
-		t.Parallel()
-
-		db, _, teardown := setup()
-		defer teardown()
-
-		diffid := repairReverseDiff(db, randomHash())
-		if diffid != uint64(0) {
-			t.Fatalf("Unexpected reverse diff head %d", diffid)
-		}
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-	})
-	t.Run("Truncate-unknown-rdiffs-non-zero-tail", func(t *testing.T) {
-		t.Parallel()
-
-		db, _, teardown := setup()
-		defer teardown()
-
-		truncateFromTail(db, uint64(10), uint64(1)) // Stored rdiffs: [rdiff-10, tail = 9]
-		diffid := repairReverseDiff(db, randomHash())
-		if diffid != uint64(9) {
-			t.Fatalf("Unexpected reverse diff head %d", diffid)
-		}
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
-	})
-
-	// Scenario c:
+	// Scenario 2:
 	// - head reverse diff in leveldb matches with the freezer
 	t.Run("Aligned-reverse-diff-same-root", func(t *testing.T) {
 		t.Parallel()
 
-		db, diffs, teardown := setup()
+		db, _, teardown := setup()
 		defer teardown()
 
-		diffid := repairReverseDiff(db, diffs[len(diffs)-1].Root)
+		diffid := repairReverseDiff(db, 10)
 		if diffid != uint64(10) {
 			t.Fatalf("Unexpected reverse diff head %d", diffid)
 		}
 		assertReverseDiffInRange(t, db, uint64(1), uint64(10), true)
-	})
-	t.Run("Aligned-reverse-diff-non-matched-root", func(t *testing.T) {
-		t.Parallel()
-
-		db, _, teardown := setup()
-		defer teardown()
-
-		diffid := repairReverseDiff(db, randomHash())
-		if diffid != uint64(0) {
-			t.Fatalf("Unexpected reverse diff head %d", diffid)
-		}
-		assertReverseDiffInRange(t, db, uint64(1), uint64(10), false)
 	})
 }

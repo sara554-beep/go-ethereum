@@ -18,6 +18,7 @@ package downloader
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -34,16 +35,16 @@ import (
 )
 
 var (
-	testdb  = rawdb.NewMemoryDatabase()
-	genesis = core.GenesisBlockForTesting(testdb, testAddress, big.NewInt(1000000000000000))
+	testdb     = rawdb.NewMemoryDatabase()
+	_, genesis = core.GenesisBlockForTesting(testdb, testAddress, big.NewInt(1000000000000000))
 )
 
 // makeChain creates a chain of n blocks starting at and including parent.
 // the returned hash chain is ordered head->parent. In addition, every 3rd block
 // contains a transaction and every 5th an uncle to allow testing correct block
 // reassembly.
-func makeChain(n int, seed byte, parent *types.Block, empty bool) ([]*types.Block, []types.Receipts) {
-	blocks, receipts := core.GenerateChain(params.TestChainConfig, parent, ethash.NewFaker(), testdb, n, func(i int, block *core.BlockGen) {
+func makeChain(n int, seed byte, parent *types.Block, empty bool, db ethdb.Database) ([]*types.Block, []types.Receipts) {
+	blocks, receipts := core.GenerateChain(params.TestChainConfig, parent, ethash.NewFaker(), db, n, func(i int, block *core.BlockGen) {
 		block.SetCoinbase(common.Address{seed})
 		// Add one tx to every secondblock
 		if !empty && i%2 == 0 {
@@ -69,10 +70,10 @@ var emptyChain *chainData
 func init() {
 	// Create a chain of blocks to import
 	targetBlocks := 128
-	blocks, _ := makeChain(targetBlocks, 0, genesis, false)
+	blocks, _ := makeChain(targetBlocks, 0, genesis, false, copyDB(testdb))
 	chain = &chainData{blocks, 0}
 
-	blocks, _ = makeChain(targetBlocks, 0, genesis, true)
+	blocks, _ = makeChain(targetBlocks, 0, genesis, true, copyDB(testdb))
 	emptyChain = &chainData{blocks, 0}
 }
 
@@ -261,7 +262,7 @@ func TestEmptyBlocks(t *testing.T) {
 // some more advanced scenarios
 func XTestDelivery(t *testing.T) {
 	// the outside network, holding blocks
-	blo, rec := makeChain(128, 0, genesis, false)
+	blo, rec := makeChain(128, 0, genesis, false, copyDB(testdb))
 	world := newNetwork()
 	world.receipts = rec
 	world.chain = blo
@@ -420,7 +421,7 @@ func (n *network) progress(numBlocks int) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 	//fmt.Printf("progressing...\n")
-	newBlocks, newR := makeChain(numBlocks, 0, n.chain[len(n.chain)-1], false)
+	newBlocks, newR := makeChain(numBlocks, 0, n.chain[len(n.chain)-1], false, copyDB(testdb))
 	n.chain = append(n.chain, newBlocks...)
 	n.receipts = append(n.receipts, newR...)
 	n.cond.Broadcast()
