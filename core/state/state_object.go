@@ -418,6 +418,7 @@ func (s *stateObject) DeleteTrie(db Database) *trie.CommitResult {
 	}
 	var (
 		paths [][]byte
+		vals  = make(map[string][]byte)
 		iter  = s.getTrie(db).NodeIterator(nil)
 	)
 	for iter.Next(true) {
@@ -425,8 +426,9 @@ func (s *stateObject) DeleteTrie(db Database) *trie.CommitResult {
 			continue
 		}
 		paths = append(paths, iter.StorageKey())
+		vals[string(iter.StorageKey())] = iter.NodeBlob()
 	}
-	return trie.NewResultFromDeletionSet(paths)
+	return trie.NewResultFromDeletionSet(paths, vals)
 }
 
 // AddBalance adds amount to s's balance.

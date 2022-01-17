@@ -48,22 +48,26 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 		testVals [][][]byte
 	)
 	// First, we set up 128 diff layers, with 300 items each
-	fill := func(parentHash common.Hash, parentNumber uint64) common.Hash {
+	fill := func(parentHash common.Hash, parentBlob []byte, parentNumber uint64) (common.Hash, []byte) {
 		var (
 			keys  []string
 			vals  [][]byte
-			nodes = make(map[string]*cachedNode)
+			nodes = make(map[string]*nodeWithPreValue)
 		)
 		for i := 0; i < 300; i++ {
 			var (
 				storage []byte
-				val     *cachedNode
+				val     *nodeWithPreValue
 			)
 			r := rand.Intn(3)
 			switch r {
 			case 0:
 				// node creation
-				storage, val = EncodeStorageKey(common.Hash{}, randomHash().Bytes()), randomNode()
+				storage = EncodeStorageKey(common.Hash{}, randomHash().Bytes())
+				val = &nodeWithPreValue{
+					cachedNode: randomNode(),
+					pre:        nil,
+				}
 
 			case 1:
 				// node modification
@@ -74,7 +78,13 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 				if len(pkeys) == 0 {
 					continue
 				}
-				storage, val = []byte(pkeys[rand.Intn(len(pkeys))]), randomNode()
+				pos := rand.Intn(len(pkeys))
+				storage = []byte(pkeys[pos])
+
+				val = &nodeWithPreValue{
+					cachedNode: randomNode(),
+					pre:        testVals[parentNumber-1][pos],
+				}
 
 			case 2:
 				// node deletion
@@ -89,7 +99,12 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 				if len(pvals[index]) == 0 {
 					continue
 				}
-				storage, val = []byte(pkeys[index]), randomEmptyNode()
+				storage = []byte(pkeys[index])
+
+				val = &nodeWithPreValue{
+					cachedNode: randomEmptyNode(),
+					pre:        pvals[index],
+				}
 			}
 			// Don't add duplicated updates
 			if _, ok := nodes[string(storage)]; ok {
@@ -106,7 +121,10 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 		}
 		// Add the root node
 		root := randomNode()
-		nodes[string(EncodeStorageKey(common.Hash{}, nil))] = root
+		nodes[string(EncodeStorageKey(common.Hash{}, nil))] = &nodeWithPreValue{
+			cachedNode: root,
+			pre:        parentBlob,
+		}
 
 		db.Update(root.hash, parentHash, nodes)
 		db.Cap(root.hash, 128)
@@ -115,12 +133,15 @@ func fillDB() (*Database, []uint64, []common.Hash, [][]string, [][][]byte, func(
 		roots = append(roots, root.hash)
 		testKeys = append(testKeys, keys)
 		testVals = append(testVals, vals)
-		return root.hash
+		return root.hash, root.rlp()
 	}
 	// Construct a database with enough reverse diffs stored
-	var parent common.Hash
+	var (
+		parent     common.Hash
+		parentBlob []byte
+	)
 	for i := 0; i < 2*128; i++ {
-		parent = fill(parent, uint64(i))
+		parent, parentBlob = fill(parent, parentBlob, uint64(i))
 	}
 	return db, numbers, roots, testKeys, testVals, func() { os.RemoveAll(dir) }
 }

@@ -69,14 +69,17 @@ func benchmarkSearch(b *testing.B, depth int) {
 	)
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot, index int) *diffLayer {
-		var nodes = make(map[string]*cachedNode)
+		var nodes = make(map[string]*nodeWithPreValue)
 		for i := 0; i < 3000; i++ {
 			var (
 				path    = randomHash().Bytes()
 				storage = EncodeStorageKey(common.Hash{}, path)
 				val     = randomNode()
 			)
-			nodes[string(storage)] = val
+			nodes[string(storage)] = &nodeWithPreValue{
+				cachedNode: val,
+				pre:        nil,
+			}
 			if target == nil && depth == index {
 				want = val.rlp()
 				target = append([]byte{}, storage...)
@@ -130,17 +133,18 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		trie.Update(k, randBytes(100))
 	}
 	result, _ := trie.Commit(nil)
-	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	trie.db.Update(result.Root, common.Hash{}, result.CommitTo())
 
 	var (
 		target     []byte
 		targetHash common.Hash
 	)
-	result.WrittenNodes.forEach(func(storage string, node *cachedNode) {
+	result.Nodes.forEach(func(storage string, node *cachedNode) error {
 		if target == nil {
 			target = []byte(storage)
 			targetHash = node.hash
 		}
+		return nil
 	})
 	layer := db.Snapshot(result.Root).(snapshot)
 
@@ -167,14 +171,17 @@ func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
 func benchmarkPersist(b *testing.B, writeLegacy bool) {
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot) *diffLayer {
-		var nodes = make(map[string]*cachedNode)
+		var nodes = make(map[string]*nodeWithPreValue)
 		for i := 0; i < 3000; i++ {
 			var (
 				path    = randomHash().Bytes()
 				storage = EncodeStorageKey(common.Hash{}, path)
 				val     = randomNode()
 			)
-			nodes[string(storage)] = val
+			nodes[string(storage)] = &nodeWithPreValue{
+				cachedNode: val,
+				pre:        nil,
+			}
 		}
 		return newDiffLayer(parent, common.Hash{}, 0, nodes)
 	}
@@ -211,14 +218,17 @@ func BenchmarkPersistAndLegacy(b *testing.B) {
 func BenchmarkJournal(b *testing.B) {
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot) *diffLayer {
-		var nodes = make(map[string]*cachedNode)
+		var nodes = make(map[string]*nodeWithPreValue)
 		for i := 0; i < 3000; i++ {
 			var (
 				path    = randomHash().Bytes()
 				storage = EncodeStorageKey(common.Hash{}, path)
 				val     = randomNode()
 			)
-			nodes[string(storage)] = val
+			nodes[string(storage)] = &nodeWithPreValue{
+				cachedNode: val,
+				pre:        nil,
+			}
 		}
 		return newDiffLayer(parent, common.Hash{}, 0, nodes)
 	}

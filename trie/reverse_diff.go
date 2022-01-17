@@ -75,20 +75,10 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 		base      = dl.Parent().(*diskLayer)
 		states    []stateDiff
 	)
-	for key := range dl.nodes {
-		// Read the previous value stored in the disk. Note that here we expect
-		// to get a node with a different hash, thus no need to compare hash here.
-		//
-		// It's possible the previous node is a legacy node, so no blob can be
-		// found with the new scheme. It's OK to use the empty previous value
-		// here since the legacy node can always be found.
-		pre, err := base.nodeBlobByPath([]byte(key))
-		if err != nil {
-			return err
-		}
+	for key, node := range dl.nodes {
 		states = append(states, stateDiff{
 			Key: []byte(key),
-			Val: pre,
+			Val: node.pre,
 		})
 	}
 	diff := &reverseDiff{

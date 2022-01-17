@@ -45,6 +45,7 @@ const journalVersion uint64 = 0
 type journalNode struct {
 	Key string // Storage format trie node key
 	Val []byte // RLP-encoded trie node blob, nil means the node is deleted
+	Pre []byte // The previous value of trie node, rlp encoded. Nil means the node is non-existent
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
@@ -166,19 +167,25 @@ func loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 	if err := r.Decode(&encoded); err != nil {
 		return nil, fmt.Errorf("load diff accounts: %v", err)
 	}
-	nodes := make(map[string]*cachedNode)
+	nodes := make(map[string]*nodeWithPreValue)
 	for _, entry := range encoded {
 		if len(entry.Val) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
-			nodes[entry.Key] = &cachedNode{
-				hash: crypto.Keccak256Hash(entry.Val),
-				node: rawNode(entry.Val),
-				size: uint16(len(entry.Val)),
+			nodes[entry.Key] = &nodeWithPreValue{
+				cachedNode: &cachedNode{
+					hash: crypto.Keccak256Hash(entry.Val),
+					node: rawNode(entry.Val),
+					size: uint16(len(entry.Val)),
+				},
+				pre: entry.Pre,
 			}
 		} else {
-			nodes[entry.Key] = &cachedNode{
-				hash: common.Hash{},
-				node: nil,
-				size: 0,
+			nodes[entry.Key] = &nodeWithPreValue{
+				cachedNode: &cachedNode{
+					hash: common.Hash{},
+					node: nil,
+					size: 0,
+				},
+				pre: entry.Pre,
 			}
 		}
 	}
@@ -237,7 +244,7 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	}
 	nodes := make([]journalNode, 0, len(dl.nodes))
 	for key, node := range dl.nodes {
-		jnode := journalNode{Key: key}
+		jnode := journalNode{Key: key, Pre: node.pre}
 		if node.node != nil {
 			jnode.Val = node.rlp()
 		}

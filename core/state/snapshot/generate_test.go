@@ -206,7 +206,7 @@ func (t *testHelper) CommitAndGenerate(runGen bool) (*trie.CommitResult, *diskLa
 	}
 	t.uncommitted = t.uncommitted[:0]
 
-	t.triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	t.triedb.Update(result.Root, common.Hash{}, result.CommitTo())
 	t.triedb.Cap(result.Root, 0)
 
 	if runGen {
@@ -394,10 +394,10 @@ func TestGenerateCorruptAccountTrie(t *testing.T) {
 
 	// Delete an account trie leaf and ensure the generator chokes
 	result, _ := helper.accTrie.Commit(nil) // Root: 0xa04693ea110a31037fb5ee814308a6f1d76bdab0b11676bdf4541d2de55ba978
-	helper.triedb.Update(common.Hash{}, result.Root, result.CommitTo(nil))
+	helper.triedb.Update(common.Hash{}, result.Root, result.CommitTo())
 	helper.triedb.Cap(result.Root, 0)
 
-	nodes := result.Nodes()
+	nodes := result.NodeBlobs()
 	for k := range nodes {
 		deletionKey = append([]byte{}, []byte(k)...)
 		break
@@ -482,7 +482,7 @@ func TestGenerateCorruptStorageTrie(t *testing.T) {
 	result, _ := helper.CommitAndGenerate(false)
 	root := result.Root
 
-	for key, n := range result.Nodes() {
+	for key, n := range result.NodeBlobs() {
 		hash := crypto.Keccak256Hash(n)
 		if hash == common.HexToHash("0x18a0f4d79cff4459642dd7604f303886ad9d77c30cf3d7d7cedb3a693ab6d371") {
 			storageKey = append([]byte{}, []byte(key)...)

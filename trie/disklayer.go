@@ -180,31 +180,7 @@ func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 	return nil, nil
 }
 
-// nodeBlobByPath retrieves the trie node blob associated with node path disregard
-// the hash of node.
-func (dl *diskLayer) nodeBlobByPath(storage []byte) ([]byte, error) {
-	if dl.Stale() {
-		return nil, errSnapshotStale
-	}
-	// Try to retrieve the trie node from the dirty memory cache.
-	// The map is lock free since it's impossible to read/write it
-	// at the same time.
-	blob, found := dl.dirty.nodeBlobByPath(storage)
-	if found {
-		triedbReverseDirtyHitMeter.Mark(1)
-		return blob, nil
-	}
-	// Try to retrieve the trie node from the disk.
-	blob, _ = rawdb.ReadTrieNode(dl.diskdb, storage)
-	if len(blob) > 0 {
-		triedbReverseDiskHitMeter.Mark(1)
-		return blob, nil
-	}
-	triedbReverseMissMeter.Mark(1)
-	return nil, nil
-}
-
-func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*cachedNode) *diffLayer {
+func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*nodeWithPreValue) *diffLayer {
 	return newDiffLayer(dl, blockHash, id, nodes)
 }
 

@@ -123,6 +123,9 @@ type NodeIterator interface {
 
 	// StorageKey returns the storage format node key.
 	StorageKey() []byte
+
+	// NodeBlob returns the rlp-encoded node blob of the current iterated node.
+	NodeBlob() []byte
 }
 
 // nodeIteratorState represents the iteration state at one particular node of the
@@ -240,6 +243,19 @@ func (it *nodeIterator) StorageKey() []byte {
 		return nil
 	}
 	return EncodeStorageKey(it.trie.owner, it.path)
+}
+
+func (it *nodeIterator) NodeBlob() []byte {
+	if it.Hash() == (common.Hash{}) {
+		return nil
+	}
+	last := it.stack[len(it.stack)-1]
+	blob, err := rlp.EncodeToBytes(last.node)
+	if err != nil {
+		it.err = err
+		return nil
+	}
+	return blob
 }
 
 func (it *nodeIterator) Error() error {
@@ -629,6 +645,10 @@ func (it *differenceIterator) StorageKey() []byte {
 	return it.b.StorageKey()
 }
 
+func (it *differenceIterator) NodeBlob() []byte {
+	panic("not implemented")
+}
+
 type nodeIteratorHeap []NodeIterator
 
 func (h nodeIteratorHeap) Len() int            { return len(h) }
@@ -746,4 +766,8 @@ func (it *unionIterator) Owner() common.Hash {
 
 func (it *unionIterator) StorageKey() []byte {
 	return (*it.items)[0].StorageKey()
+}
+
+func (it *unionIterator) NodeBlob() []byte {
+	return (*it.items)[0].NodeBlob()
 }

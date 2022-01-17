@@ -190,7 +190,7 @@ func (c *committer) store(path []byte, n node) node {
 		storage = EncodeStorageKey(c.owner, path)
 		nhash   = common.BytesToHash(hash)
 	)
-	c.committed.put(storage, slim, size, nhash)
+	c.committed.put(storage, slim, uint16(size), nhash)
 
 	// If we're using channel-based leaf-reporting, send to channel.
 	// The leaf channel will be active only when there an active leaf-callback

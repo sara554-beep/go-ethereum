@@ -43,9 +43,9 @@ type dirtyCache struct {
 	size  uint64                 // The approximate size of cached nodes
 
 	// Frozen node set
-	frozenCommitted chan struct{}          // Channel used to send signal when the frozen set is flushed
-	frozenLock      sync.RWMutex           // Lock used to protect frozen list
-	frozen          map[string]*cachedNode // Frozen dirty node set, waiting for flushing
+	committed  chan struct{}          // Channel used to send signal when the frozen set is flushed
+	frozenLock sync.RWMutex           // Lock used to protect frozen list
+	frozen     map[string]*cachedNode // Frozen dirty node set, waiting for flushing
 }
 
 // newDirtyCache initializes the dirty node cache with the given nodes.
@@ -58,10 +58,10 @@ func newDirtyCache(db ethdb.Database, nodes map[string]*cachedNode) *dirtyCache 
 		size += uint64(len(key) + int(node.size) + cachedNodeSize)
 	}
 	return &dirtyCache{
-		db:              db,
-		nodes:           nodes,
-		size:            size,
-		frozenCommitted: make(chan struct{}),
+		db:        db,
+		nodes:     nodes,
+		size:      size,
+		committed: make(chan struct{}),
 	}
 }
 
@@ -179,7 +179,7 @@ func (cache *dirtyCache) flush(clean *fastcache.Cache, config *Config, force boo
 	// Reset the local dirty node set
 	cache.nodes = make(map[string]*cachedNode)
 	cache.size = 0
-	cache.frozenCommitted = make(chan struct{})
+	cache.committed = make(chan struct{})
 
 	go cache.flushFrozen(clean, config)
 	if sync {
@@ -205,7 +205,10 @@ func (cache *dirtyCache) waitCommit() {
 	if frozen == nil {
 		return
 	}
-	<-cache.frozenCommitted
+	triedbCommitWaitGauge.Inc(1)
+	start := time.Now()
+	<-cache.committed
+	triedbCommitWaitTimer.UpdateSince(start)
 }
 
 func (cache *dirtyCache) dirtySets() []map[string]*cachedNode {
@@ -244,20 +247,21 @@ func (cache *dirtyCache) flushFrozen(clean *fastcache.Cache, config *Config) {
 			rawdb.WriteArchiveTrieNode(batch, n.hash, blob)
 		}
 		batchTime += time.Since(t)
+
 		if clean != nil {
 			clean.Set(EncodeInternalKey([]byte(storage), n.hash), blob)
 		}
 		total += int64(len(blob) + len(storage))
 	}
-	triedbCommitSizeMeter.Mark(total)
-	triedbCommitNodesMeter.Mark(int64(len(cache.nodes)))
-	triedbCommitTimeTimer.UpdateSince(start)
-
 	t := time.Now()
 	if err := batch.Write(); err != nil {
 		panic(fmt.Sprintf("failed to write %v", err))
 	}
 	flushTime = time.Since(t)
+
+	triedbCommitSizeMeter.Mark(total)
+	triedbCommitNodesMeter.Mark(int64(len(cache.nodes)))
+	triedbCommitTimeTimer.UpdateSince(start)
 
 	log.Debug("Persisted uncommitted nodes",
 		"nodes", len(cache.nodes),
@@ -271,5 +275,5 @@ func (cache *dirtyCache) flushFrozen(clean *fastcache.Cache, config *Config) {
 	cache.frozen = nil
 	cache.frozenLock.Unlock()
 
-	close(cache.frozenCommitted) // fire the signal
+	close(cache.committed) // fire the signal
 }

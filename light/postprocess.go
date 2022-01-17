@@ -225,7 +225,7 @@ func (c *ChtIndexerBackend) Commit() error {
 	root, hashes := result.Root, make(map[common.Hash]struct{})
 
 	batch := c.trieTable.NewBatch()
-	for _, v := range result.Nodes() {
+	for _, v := range result.NodeBlobs() {
 		hash := crypto.Keccak256Hash(v)
 		batch.Put(hash.Bytes(), v)
 		hashes[hash] = struct{}{}
@@ -476,7 +476,7 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 	root, hashes := result.Root, make(map[common.Hash]struct{})
 
 	batch := b.trieTable.NewBatch()
-	for _, v := range result.Nodes() {
+	for _, v := range result.NodeBlobs() {
 		hash := crypto.Keccak256Hash(v)
 		batch.Put(hash.Bytes(), v)
 		hashes[hash] = struct{}{}

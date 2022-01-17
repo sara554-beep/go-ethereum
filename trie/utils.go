@@ -22,18 +22,15 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// nodeSet is the accumulated dirty nodes set acts as the temporary
-// database for storing immature nodes.
+// nodeSet is a set for containing batch of nodes in memory temporarily.
 type nodeSet struct {
 	lock  sync.RWMutex
 	nodes map[string]*cachedNode // Set of dirty nodes, indexed by **storage** key
 }
 
-// newNodeSet initializes the dirty set.
+// newNodeSet initializes the node set.
 func newNodeSet() *nodeSet {
-	return &nodeSet{
-		nodes: make(map[string]*cachedNode),
-	}
+	return &nodeSet{nodes: make(map[string]*cachedNode)}
 }
 
 // get retrieves the trie node in the set with **storage** format key.
@@ -68,9 +65,26 @@ func (set *nodeSet) getBlob(storage []byte, hash common.Hash) ([]byte, bool) {
 	return nil, false
 }
 
+// getBlobByPath retrieves the encoded trie node in the set with **storage**
+// format key. The node hash is not checked here.
+// Note the returned value shouldn't be changed by callers.
+func (set *nodeSet) getBlobByPath(storage []byte) ([]byte, bool) {
+	// Don't panic on uninitialized set, it's possible in testing.
+	if set == nil {
+		return nil, false
+	}
+	set.lock.RLock()
+	defer set.lock.RUnlock()
+
+	if node, ok := set.nodes[string(storage)]; ok {
+		return node.rlp(), true
+	}
+	return nil, false
+}
+
 // put stores the given state entry in the set. The given key should be encoded in
 // the storage format. Note the val shouldn't be changed by caller later.
-func (set *nodeSet) put(storage []byte, n node, size int, hash common.Hash) {
+func (set *nodeSet) put(storage []byte, n node, size uint16, hash common.Hash) {
 	// Don't panic on uninitialized set, it's possible in testing.
 	if set == nil {
 		return
@@ -81,7 +95,7 @@ func (set *nodeSet) put(storage []byte, n node, size int, hash common.Hash) {
 	set.nodes[string(storage)] = &cachedNode{
 		hash: hash,
 		node: n,
-		size: uint16(size),
+		size: size,
 	}
 }
 
@@ -119,17 +133,21 @@ func (set *nodeSet) merge(other *nodeSet) {
 }
 
 // forEach iterates the dirty nodes in the set and executes the given function.
-func (set *nodeSet) forEach(fn func(string, *cachedNode)) {
+func (set *nodeSet) forEach(fn func(string, *cachedNode) error) error {
 	// Don't panic on uninitialized set, it's possible in testing.
 	if set == nil {
-		return
+		return nil
 	}
 	set.lock.RLock()
 	defer set.lock.RUnlock()
 
 	for key, n := range set.nodes {
-		fn(key, n)
+		err := fn(key, n)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // forEachBlob iterates the dirty nodes in the set and pass them in RLP-encoded format.
@@ -162,49 +180,56 @@ func (set *nodeSet) len() int {
 type CommitResult struct {
 	Root common.Hash // The re-calculated trie root hash after commit
 
-	// WrittenNodes is the collection of newly updated and created nodes
-	// since last commit. Nodes are indexed by **internal** key.
-	WrittenNodes *nodeSet
+	// Nodes is the collection of newly updated and created nodes
+	// since last commit. Nodes are indexed by **storage** key.
+	Nodes     *nodeSet
+	PreValues map[string][]byte
 }
 
 // CommitTo commits the tracked state diff into the given container.
-func (result *CommitResult) CommitTo(nodes map[string]*cachedNode) map[string]*cachedNode {
-	if nodes == nil {
-		nodes = make(map[string]*cachedNode)
-	}
-	result.WrittenNodes.forEach(func(key string, n *cachedNode) {
-		nodes[key] = n
+func (result *CommitResult) CommitTo() map[string]*nodeWithPreValue {
+	nodes := make(map[string]*nodeWithPreValue)
+	result.Nodes.forEach(func(key string, n *cachedNode) error {
+		nodes[key] = &nodeWithPreValue{
+			cachedNode: n,
+			pre:        result.PreValues[key],
+		}
+		return nil
 	})
 	return nodes
 }
 
-// Modified returns the number of modified items.
-func (result *CommitResult) Modified() int {
-	return result.WrittenNodes.len()
+// NodeLen returns the number of contained nodes.
+func (result *CommitResult) NodeLen() int {
+	return result.Nodes.len()
 }
 
 // Merge merges the dirty nodes from the other set.
 func (result *CommitResult) Merge(other *CommitResult) {
-	result.WrittenNodes.merge(other.WrittenNodes)
+	result.Nodes.merge(other.Nodes)
+	for key, pre := range other.PreValues {
+		result.PreValues[key] = pre
+	}
 }
 
-// Nodes returns all contained nodes, key in storage format and value in RLP-encoded format.
-func (result *CommitResult) Nodes() map[string][]byte {
+// NodeBlobs returns the rlp-encoded format of nodes
+func (result *CommitResult) NodeBlobs() map[string][]byte {
 	ret := make(map[string][]byte)
-	result.WrittenNodes.forEachBlob(func(k string, v []byte) {
+	result.Nodes.forEachBlob(func(k string, v []byte) {
 		ret[k] = v
 	})
 	return ret
 }
 
 // NewResultFromDeletionSet constructs a commit result with the given deletion set.
-func NewResultFromDeletionSet(deleted [][]byte) *CommitResult {
+func NewResultFromDeletionSet(keys [][]byte, preVals map[string][]byte) *CommitResult {
 	updated := newNodeSet()
-	for _, storage := range deleted {
+	for _, storage := range keys {
 		updated.put(storage, nil, 0, common.Hash{})
 	}
 	return &CommitResult{
-		Root:         common.Hash{},
-		WrittenNodes: updated,
+		Root:      common.Hash{},
+		Nodes:     updated,
+		PreValues: preVals,
 	}
 }

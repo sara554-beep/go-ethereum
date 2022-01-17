@@ -930,13 +930,13 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				return common.Hash{}, err
 			}
 			if result != nil {
-				storageUpdated += result.Modified()
+				storageUpdated += result.NodeLen()
 				committed = append(committed, result)
 			}
 		} else {
 			// Account is deleted, nuke out the storage data as well.
 			result := obj.DeleteTrie(s.db)
-			storageDeleted += result.Modified()
+			storageDeleted += result.NodeLen()
 			committed = append(committed, result)
 		}
 	}
@@ -966,7 +966,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		rawStorageUpdatedMeter.Mark(int64(s.StorageUpdated))
 		rawAccountDeletedMeter.Mark(int64(s.AccountDeleted))
 		rawStorageDeletedMeter.Mark(int64(s.StorageDeleted))
-		trieAccountUpdatedMeter.Mark(int64(result.Modified()))
+		trieAccountUpdatedMeter.Mark(int64(result.NodeLen()))
 		trieStorageUpdatedMeter.Mark(int64(storageUpdated))
 		trieStorageDeletedMeter.Mark(int64(storageDeleted))
 		s.AccountUpdated, s.AccountDeleted = 0, 0
@@ -1003,7 +1003,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	if root != s.originalRoot {
 		start := time.Now()
-		if err := s.db.TrieDB().Update(root, s.originalRoot, result.CommitTo(nil)); err != nil {
+		if err := s.db.TrieDB().Update(root, s.originalRoot, result.CommitTo()); err != nil {
 			if err != trie.ErrSnapshotReadOnly {
 				log.Warn("Failed to commit dirty trie nodes", "err", err)
 			}

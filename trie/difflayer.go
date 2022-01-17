@@ -33,9 +33,9 @@ import (
 // made to the state, that have not yet graduated into a semi-immutable state.
 type diffLayer struct {
 	// Immutables
-	root  common.Hash            // Root hash to which this snapshot diff belongs to
-	rid   uint64                 // Corresponding reverse diff id
-	nodes map[string]*cachedNode // Keyed trie nodes for retrieval, indexed by storage key
+	root  common.Hash                  // Root hash to which this snapshot diff belongs to
+	rid   uint64                       // Corresponding reverse diff id
+	nodes map[string]*nodeWithPreValue // Keyed trie nodes for retrieval, indexed by storage key
 
 	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
 	memory uint64       // Approximate guess as to how much memory we use
@@ -45,7 +45,7 @@ type diffLayer struct {
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, rid uint64, nodes map[string]*cachedNode) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, rid uint64, nodes map[string]*nodeWithPreValue) *diffLayer {
 	dl := &diffLayer{
 		root:   root,
 		rid:    rid,
@@ -53,7 +53,7 @@ func newDiffLayer(parent snapshot, root common.Hash, rid uint64, nodes map[strin
 		parent: parent,
 	}
 	for key, node := range nodes {
-		dl.memory += uint64(len(key) + int(node.size) + cachedNodeSize)
+		dl.memory += uint64(len(key) + int(node.size) + cachedNodeSize + len(node.pre))
 		triedbDirtyWriteMeter.Mark(int64(node.size))
 	}
 	triedbDiffLayerSizeMeter.Mark(int64(dl.memory))
@@ -164,7 +164,7 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*cachedNode) *diffLayer {
+func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*nodeWithPreValue) *diffLayer {
 	return newDiffLayer(dl, blockRoot, id, nodes)
 }
 
@@ -207,7 +207,11 @@ func diffToDisk(bottom *diffLayer, config *Config, force bool, sync bool) (*disk
 	base := bottom.Parent().(*diskLayer)
 	base.MarkStale()
 
-	dl := newDiskLayer(bottom.root, bottom.rid, base.clean, base.dirty.update(bottom.nodes), base.diskdb)
+	slim := make(map[string]*cachedNode)
+	for key, n := range bottom.nodes {
+		slim[key] = n.unwrap()
+	}
+	dl := newDiskLayer(bottom.root, bottom.rid, base.clean, base.dirty.update(slim), base.diskdb)
 	if err := dl.flush(config, force, sync); err != nil {
 		return nil, err
 	}

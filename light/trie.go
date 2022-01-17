@@ -251,6 +251,10 @@ func (it *nodeIterator) StorageKey() []byte {
 	panic("not implemented")
 }
 
+func (it *nodeIterator) NodeBlob() []byte {
+	panic("not implemented")
+}
+
 func (it *nodeIterator) Error() error {
 	if it.err != nil {
 		return it.err

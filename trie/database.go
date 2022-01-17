@@ -55,6 +55,8 @@ var (
 	triedbCommitTimeTimer  = metrics.NewRegisteredTimer("trie/triedb/commit/time", nil)
 	triedbCommitNodesMeter = metrics.NewRegisteredMeter("trie/triedb/commit/nodes", nil)
 	triedbCommitSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/commit/size", nil)
+	triedbCommitWaitGauge  = metrics.NewRegisteredGauge("trie/triedb/commit/wait/count", nil)
+	triedbCommitWaitTimer  = metrics.NewRegisteredTimer("trie/triedb/commit/wait/time", nil)
 
 	triedbDiffLayerSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/diff/size", nil)
 	triedbDiffLayerNodesMeter = metrics.NewRegisteredMeter("trie/triedb/diff/nodes", nil)
@@ -62,9 +64,6 @@ var (
 	triedbReverseDiffTimeTimer  = metrics.NewRegisteredTimer("trie/triedb/reversediff/time", nil)
 	triedbReverseDiffSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/reversediff/size", nil)
 	triedbReverseDiffCountMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/count", nil)
-	triedbReverseDiskHitMeter   = metrics.NewRegisteredMeter("trie/triedb/reversediff/disk", nil)
-	triedbReverseDirtyHitMeter  = metrics.NewRegisteredMeter("trie/triedb/reversediff/dirty", nil)
-	triedbReverseMissMeter      = metrics.NewRegisteredMeter("trie/triedb/reversediff/miss", nil)
 
 	triedbDiskCacheHitMeter  = metrics.NewRegisteredMeter("trie/triedb/diskcache/hit", nil)
 	triedbDiskCacheMissMeter = metrics.NewRegisteredMeter("trie/triedb/diskcache/miss", nil)
@@ -134,7 +133,7 @@ type snapshot interface {
 	// node object.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*cachedNode) *diffLayer
+	Update(blockRoot common.Hash, blockNumber uint64, nodes map[string]*nodeWithPreValue) *diffLayer
 
 	// Journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the snapshot without
@@ -230,6 +229,17 @@ func (n *cachedNode) obj(hash common.Hash) node {
 		return mustDecodeNode(hash[:], node)
 	}
 	return expandNode(hash[:], n.node)
+}
+
+// nodeWithPreValue wraps the cachedNode with the previous node value.
+type nodeWithPreValue struct {
+	*cachedNode
+	pre []byte // RLP-encoded previous value, nil means it's non-existent
+}
+
+// unwrap returns the internal cachedNode object.
+func (n *nodeWithPreValue) unwrap() *cachedNode {
+	return n.cachedNode
 }
 
 // simplifyNode traverses the hierarchy of an expanded memory node and discards
@@ -423,7 +433,7 @@ func (db *Database) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 // The passed keys must all be encoded in the **storage** format.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*cachedNode) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*nodeWithPreValue) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).

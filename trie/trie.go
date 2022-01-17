@@ -68,19 +68,7 @@ type Trie struct {
 	// hashing operation. This number will not directly map to the number of
 	// actually unhashed nodes
 	unhashed int
-
-	// snap it the base layer for retrieving trie state. It's initialised since
-	// the trie creation. If the corresponding snapshot layer with same trie root
-	// is not found then disk layer will be used as the fallback, all the loaded
-	// nodes will be checked by hash.
-	// All subsequent new states introduced by the trie operation can be accessed
-	// in the accumulated dirty node set.
-	snap snapshot
-
-	// Dirty is the container for maintaining all dirty nodes since creation.
-	// It acts as the auxiliary self-contained lookup and will only be released
-	// when the trie itself is deallocated.
-	dirty *nodeSet
+	nodes    nodeReadCacher // the handler to access trie node and cache un-persisted nodes.
 }
 
 // newFlag returns the cache flag value for a newly created node.
@@ -90,13 +78,27 @@ func (t *Trie) newFlag() nodeFlag {
 
 // finalize submits the state changes to the global state tracker and converts
 // the state diff since the last commit to a result object.
-func (t *Trie) finalize(root common.Hash, committed *nodeSet) *CommitResult {
-	result := &CommitResult{
-		Root:         root,
-		WrittenNodes: committed,
+func (t *Trie) finalize(root common.Hash, committed *nodeSet) (*CommitResult, error) {
+	// Retrieve the pre-value of modified nodes first
+	var preVals = make(map[string][]byte)
+	if err := committed.forEach(func(key string, node *cachedNode) error {
+		_, path := DecodeStorageKey([]byte(key))
+		pre, err := t.nodes.ReadOrigin(t.owner, path)
+		if err != nil {
+			return err
+		}
+		preVals[key] = pre
+		return nil
+	}); err != nil {
+		return nil, err
 	}
-	t.dirty.merge(committed)
-	return result
+	result := &CommitResult{
+		Root:      root,
+		Nodes:     committed,
+		PreValues: preVals,
+	}
+	t.nodes.CacheNodes(committed)
+	return result, nil
 }
 
 // New creates a trie with an existing root node from db.
@@ -120,17 +122,14 @@ func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db
 	if db == nil {
 		panic("trie.NewWithOwner called without a database")
 	}
+	nodes, err := newSnapReadCacher(stateRoot, owner, db)
+	if err != nil {
+		return nil, err
+	}
 	trie := &Trie{
 		db:    db,
 		owner: owner,
-		dirty: newNodeSet(),
-	}
-	if stateRoot != (common.Hash{}) && stateRoot != emptyState {
-		snap := db.Snapshot(stateRoot)
-		if snap == nil {
-			return nil, &MissingNodeError{NodeHash: stateRoot, Owner: owner}
-		}
-		trie.snap = snap.(snapshot)
+		nodes: nodes,
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
@@ -241,19 +240,9 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		// Always try to look up the dirty node in the temporary set in case they
-		// are not moved into the layers yet. Don't panic for the nil set which is
-		// possible in tests.
-		var (
-			storage = EncodeStorageKey(t.owner, path)
-			nhash   = common.BytesToHash(hash)
-		)
-		if n, exist := t.dirty.getBlob(storage, nhash); exist {
-			return n, origNode, 1, nil
-		}
-		if t.snap != nil {
-			blob, err := t.snap.NodeBlob(storage, nhash)
-			return blob, origNode, 1, err
+		blob, err := t.nodes.ReadBlob(t.owner, common.BytesToHash(hash), path)
+		if err == nil {
+			return blob, origNode, 1, nil
 		}
 		return nil, nil, 0, nil
 	}
@@ -570,27 +559,11 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 }
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	// Always try to look up the dirty node in the temporary set in case they
-	// are not moved into the layers yet. Don't panic for the nil set which is
-	// possible in tests.
-	var (
-		hash    = common.BytesToHash(n)
-		storage = EncodeStorageKey(t.owner, prefix)
-	)
-	if n, exist := t.dirty.get(storage, hash); exist {
-		return n, nil
+	// TODO testing???
+	if t.nodes == nil {
+		return nil, nil
 	}
-	if t.snap != nil {
-		node, err := t.snap.Node(storage, hash)
-		if err != nil {
-			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: err}
-		}
-		if node == nil {
-			return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix, err: errors.New("deleted")}
-		}
-		return node, nil
-	}
-	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
+	return t.nodes.Read(t.owner, common.BytesToHash(n), prefix)
 }
 
 // Hash returns the root hash of the trie. It does not write to the
@@ -605,7 +578,7 @@ func (t *Trie) Hash() common.Hash {
 // and external (for account tries) references.
 func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	if t.root == nil {
-		return t.finalize(emptyRoot, nil), nil
+		return t.finalize(emptyRoot, nil)
 	}
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
@@ -619,7 +592,7 @@ func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	// up goroutines. This can happen e.g. if we load a trie for
 	// reading storage values, but don't write to it.
 	if _, dirty := t.root.cache(); !dirty {
-		return t.finalize(rootHash, nil), nil
+		return t.finalize(rootHash, nil)
 	}
 	var wg sync.WaitGroup
 	if onleaf != nil {
@@ -643,7 +616,7 @@ func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 		return nil, err
 	}
 	t.root = newRoot
-	return t.finalize(rootHash, h.committed), nil
+	return t.finalize(rootHash, h.committed)
 }
 
 // hashRoot calculates the root hash of the given trie

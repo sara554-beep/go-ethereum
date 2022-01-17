@@ -317,7 +317,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
 	result, _ := tr.Commit(nil)
-	tdb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	tdb.Update(result.Root, common.Hash{}, result.CommitTo())
 	if !memonly {
 		tdb.Cap(result.Root, 0)
 	}
@@ -328,7 +328,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		memKeys  [][]byte
 	)
 	if memonly {
-		for k, n := range result.CommitTo(nil) {
+		for k, n := range result.CommitTo() {
 			if n.size == 0 {
 				continue
 			}
@@ -359,7 +359,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 		for {
 			if memonly {
 				rkey = memKeys[rand.Intn(len(memKeys))]
-				node := result.CommitTo(nil)[string(rkey)]
+				node := result.CommitTo()[string(rkey)]
 				if node == nil {
 					continue
 				}
@@ -373,12 +373,12 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 			}
 		}
 		if memonly {
-			node, exist := tr.dirty.get(rkey, rhash)
+			node, exist := tr.nodes.(*snapReadCacher).cache.get(rkey, rhash)
 			if !exist {
 				continue
 			}
 			rnode = node
-			tr.dirty.del(rkey, rhash)
+			tr.nodes.(*snapReadCacher).cache.del(rkey, rhash)
 		} else {
 			rval, _ = rawdb.ReadTrieNode(diskdb, rkey)
 			rawdb.DeleteTrieNode(diskdb, rkey)
@@ -394,7 +394,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 
 		// Add the node back and continue iteration.
 		if memonly {
-			tr.dirty.put(rkey, simplifyNode(rnode), 100, rhash)
+			tr.nodes.(*snapReadCacher).cache.put(rkey, simplifyNode(rnode), 100, rhash)
 		} else {
 			rawdb.WriteTrieNode(diskdb, rkey, rval)
 		}
@@ -433,20 +433,20 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	result, _ := ctr.Commit(nil)
 	root := result.Root
 
-	for key, node := range result.CommitTo(nil) {
+	for key, node := range result.CommitTo() {
 		if node.hash == barNodeHash {
 			barNodeKey = []byte(key)
 		}
 	}
 	if !memonly {
-		triedb.Update(root, common.Hash{}, result.CommitTo(nil))
+		triedb.Update(root, common.Hash{}, result.CommitTo())
 		triedb.Cap(root, 0)
 	} else {
-		triedb.Update(root, common.Hash{}, result.CommitTo(nil))
+		triedb.Update(root, common.Hash{}, result.CommitTo())
 	}
 	var (
 		barNodeBlob []byte
-		barNodeObj  *cachedNode
+		barNodeObj  *nodeWithPreValue
 	)
 	if memonly {
 		// Ugly hacks, delete item from the immutable diff layer
@@ -560,7 +560,7 @@ func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 		trie.Update(key, val)
 	}
 	result, _ := trie.Commit(nil)
-	triedb.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	triedb.Update(result.Root, common.Hash{}, result.CommitTo())
 	triedb.Cap(result.Root, 0)
 	// Return the generated trie
 	return triedb, trie, logDb

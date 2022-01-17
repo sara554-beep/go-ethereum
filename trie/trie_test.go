@@ -276,7 +276,7 @@ func TestReplication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit error: %v", err)
 	}
-	trie.db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	trie.db.Update(result.Root, common.Hash{}, result.CommitTo())
 
 	// create a new trie on top of the database and check that lookups work.
 	exp := result.Root
@@ -415,7 +415,7 @@ func runRandTest(rt randTest) bool {
 	var (
 		triedb   = NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		original common.Hash
-		diffs    = make(map[string]*cachedNode)
+		diffs    = make(map[string]*nodeWithPreValue)
 		tr, _    = New(original, triedb)
 		values   = make(map[string]string) // tracks content of the trie
 	)
@@ -440,7 +440,10 @@ func runRandTest(rt randTest) bool {
 			if err != nil {
 				rt[i].err = err
 			} else {
-				result.CommitTo(diffs)
+				ret := result.CommitTo()
+				for k, n := range ret {
+					diffs[k] = n
+				}
 			}
 		case opHash:
 			tr.Hash()
@@ -450,8 +453,10 @@ func runRandTest(rt randTest) bool {
 				rt[i].err = err
 				return false
 			}
-			diffs = result.CommitTo(diffs)
-
+			ret := result.CommitTo()
+			for k, n := range ret {
+				diffs[k] = n
+			}
 			if result.Root != original {
 				err = triedb.Update(result.Root, original, diffs)
 				if err != nil {
@@ -459,7 +464,7 @@ func runRandTest(rt randTest) bool {
 					return false
 				}
 			}
-			original, diffs = result.Root, make(map[string]*cachedNode)
+			original, diffs = result.Root, make(map[string]*nodeWithPreValue)
 
 			newtr, err := New(original, triedb)
 			if err != nil {
@@ -762,7 +767,7 @@ func TestCommitSequence(t *testing.T) {
 
 		// Flush trie -> database
 		result, _ := trie.Commit(nil)
-		for k, v := range result.Nodes() {
+		for k, v := range result.NodeBlobs() {
 			s.Put([]byte(k), v)
 		}
 		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
@@ -813,7 +818,7 @@ func TestCommitSequenceRandomBlobs(t *testing.T) {
 		}
 		// Flush trie -> database
 		result, _ := trie.Commit(nil)
-		db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+		db.Update(result.Root, common.Hash{}, result.CommitTo())
 		db.Cap(result.Root, 0)
 		if got, exp := s.sponge.Sum(nil), tc.expWriteSeqHash; !bytes.Equal(got, exp) {
 			t.Fatalf("test %d, disk write sequence wrong:\ngot %x exp %x\n", i, got, exp)
@@ -857,7 +862,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 		root := result.Root
 
 		// Flush memdb -> disk (sponge)
-		db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+		db.Update(result.Root, common.Hash{}, result.CommitTo())
 		db.Cap(result.Root, 0)
 
 		// And flush stacktrie -> disk
@@ -905,7 +910,7 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	result, _ := trie.Commit(nil)
 	root := result.Root
 	// Flush memdb -> disk (sponge)
-	db.Update(result.Root, common.Hash{}, result.CommitTo(nil))
+	db.Update(result.Root, common.Hash{}, result.CommitTo())
 	db.Cap(result.Root, 0)
 	// And flush stacktrie -> disk
 	stRoot, err := stTrie.Commit()
