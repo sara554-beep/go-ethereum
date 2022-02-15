@@ -32,6 +32,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -53,7 +54,7 @@ func newEmpty() *Trie {
 }
 
 func TestEmptyTrie(t *testing.T) {
-	var trie Trie
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
 	res := trie.Hash()
 	exp := emptyRoot
 	if res != exp {
@@ -62,7 +63,7 @@ func TestEmptyTrie(t *testing.T) {
 }
 
 func TestNull(t *testing.T) {
-	var trie Trie
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
 	key := make([]byte, 32)
 	value := []byte("test")
 	trie.Update(key, value)
@@ -480,7 +481,7 @@ func BenchmarkUpdateLE(b *testing.B) { benchUpdate(b, binary.LittleEndian) }
 const benchElemCount = 20000
 
 func benchGet(b *testing.B, commit bool) {
-	trie := new(Trie)
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
 	if commit {
 		_, tmpdb := tempDB()
 		trie, _ = New(common.Hash{}, tmpdb)
