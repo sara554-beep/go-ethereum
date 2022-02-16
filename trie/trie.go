@@ -61,8 +61,9 @@ type LeafCallback func(paths [][]byte, hexpath []byte, leaf []byte, parent commo
 //
 // Trie is not safe for concurrent use.
 type Trie struct {
-	db   *Database
-	root node
+	db    *Database
+	root  node
+	owner common.Hash
 
 	// Keep track of the number leaves which have been inserted since the last
 	// hashing operation. This number will not directly map to the number of
@@ -84,6 +85,7 @@ func (t *Trie) Copy() *Trie {
 	return &Trie{
 		db:       t.db,
 		root:     t.root,
+		owner:    t.owner,
 		unhashed: t.unhashed,
 		tracer:   t.tracer.copy(),
 	}
@@ -96,11 +98,28 @@ func (t *Trie) Copy() *Trie {
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
 func New(root common.Hash, db *Database) (*Trie, error) {
+	return newTrie(common.Hash{}, root, db)
+}
+
+// NewWithOwner creates a trie with an existing root node from db
+// and an assigned owner for storage proximity.
+func NewWithOwner(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
+	return newTrie(owner, root, db)
+}
+
+// newTrie creates a trie with an existing root node from db.
+//
+// If root is the zero hash or the sha3 hash of an empty string, the
+// trie is initially empty and does not require a database. Otherwise,
+// New will panic if db is nil and returns a MissingNodeError if root does
+// not exist in the database. Accessing the trie loads nodes from db on demand.
+func newTrie(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
 	if db == nil {
 		panic("trie.New called without a database")
 	}
 	trie := &Trie{
-		db: db,
+		db:     db,
+		owner:  owner,
 		//tracer: newTracer(),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
