@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
@@ -110,6 +111,16 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 		trie.root = rootnode
 	}
 	return trie, nil
+}
+
+// newWithRootNode initializes the trie with the given root node.
+// It's only used by range prover.
+func newWithRootNode(root node) *Trie {
+	return &Trie{
+		root: root,
+		//tracer: newTracer(),
+		db: NewDatabase(rawdb.NewMemoryDatabase()),
+	}
 }
 
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration starts at
