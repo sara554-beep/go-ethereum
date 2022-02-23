@@ -27,6 +27,7 @@ import (
 func TestTrieTracer(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie, _ := New(common.Hash{}, db)
+	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
 	vals := []struct{ k, v string }{
@@ -94,6 +95,7 @@ func TestTrieTracer(t *testing.T) {
 func TestTrieTracerNoop(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie, _ := New(common.Hash{}, db)
+	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
 	vals := []struct{ k, v string }{

@@ -48,6 +48,10 @@ func newTracer() *tracer {
 // in the deletion set(resurrected node), then just wipe it from
 // the deletion set as it's untouched.
 func (t *tracer) onInsert(key []byte) {
+	// Tracer isn't used right now, remove this check later.
+	if t == nil {
+		return
+	}
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
@@ -62,6 +66,10 @@ func (t *tracer) onInsert(key []byte) {
 // in the addition set, then just wipe it from the addition set
 // as it's untouched.
 func (t *tracer) onDelete(key []byte) {
+	// Tracer isn't used right now, remove this check later.
+	if t == nil {
+		return
+	}
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
@@ -74,6 +82,10 @@ func (t *tracer) onDelete(key []byte) {
 
 // insertList returns the tracked inserted trie nodes in list format.
 func (t *tracer) insertList() [][]byte {
+	// Tracer isn't used right now, remove this check later.
+	if t == nil {
+		return nil
+	}
 	t.lock.RLock()
 	defer t.lock.RUnlock()
 
@@ -86,6 +98,10 @@ func (t *tracer) insertList() [][]byte {
 
 // deleteList returns the tracked deleted trie nodes in list format.
 func (t *tracer) deleteList() [][]byte {
+	// Tracer isn't used right now, remove this check later.
+	if t == nil {
+		return nil
+	}
 	t.lock.RLock()
 	defer t.lock.RUnlock()
 
@@ -98,6 +114,10 @@ func (t *tracer) deleteList() [][]byte {
 
 // reset clears the content tracked by tracer.
 func (t *tracer) reset() {
+	// Tracer isn't used right now, remove this check later.
+	if t == nil {
+		return
+	}
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
@@ -107,6 +127,10 @@ func (t *tracer) reset() {
 
 // copy returns a deep copied tracer instance.
 func (t *tracer) copy() *tracer {
+	// Tracer isn't used right now, remove this check later.
+	if t == nil {
+		return nil
+	}
 	t.lock.Lock()
 	defer t.lock.Unlock()
 

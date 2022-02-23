@@ -416,6 +416,7 @@ func runRandTest(rt randTest) bool {
 		values      = make(map[string]string) // tracks content of the trie
 		origTrie, _ = New(common.Hash{}, triedb)
 	)
+	tr.tracer = newTracer()
 
 	for i, step := range rt {
 		fmt.Printf("{op: %d, key: common.Hex2Bytes(\"%x\"), value: common.Hex2Bytes(\"%x\")}, // step %d\n",
@@ -450,6 +451,8 @@ func runRandTest(rt randTest) bool {
 				return false
 			}
 			tr = newtr
+			tr.tracer = newTracer()
+
 			origTrie = tr.Copy()
 		case opItercheckhash:
 			checktr, _ := New(common.Hash{}, triedb)
@@ -498,13 +501,13 @@ func runRandTest(rt randTest) bool {
 			for path := range curSeen {
 				_, present := origSeen[path]
 				if !present {
-					insertExp[path]	= struct{}{}
+					insertExp[path] = struct{}{}
 				}
 			}
 			for path := range origSeen {
 				_, present := curSeen[path]
 				if !present {
-					deleteExp[path]	= struct{}{}
+					deleteExp[path] = struct{}{}
 				}
 			}
 			if len(insertExp) != len(inserted) {
