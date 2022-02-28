@@ -58,7 +58,7 @@ func emptyLayer() *diskLayer {
 	return &diskLayer{
 		diskdb: rawdb.NewDatabase(rawdb.NewMemoryDatabase()),
 		clean:  fastcache.New(500 * 1024),
-		dirty:  newDirtyCache(nil),
+		dirty:  newDiskcache(nil, 0),
 	}
 }
 

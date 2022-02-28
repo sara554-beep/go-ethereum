@@ -91,11 +91,6 @@ type AncientReader interface {
 
 	// AncientSize returns the ancient size of the specified category.
 	AncientSize(typ string, kind string) (uint64, error)
-}
-
-// AncientBatchReader is the interface for 'batched' or 'atomic' reading.
-type AncientBatchReader interface {
-	AncientReader
 
 	// ReadAncients runs the given read operation while ensuring that no writes take place
 	// on the underlying freezer.
@@ -164,7 +159,7 @@ type AncientWriteOp interface {
 // immutable ancient data.
 type Reader interface {
 	KeyValueReader
-	AncientBatchReader
+	AncientReader
 }
 
 // Writer contains the methods required to write data to both key-value as well as
@@ -177,7 +172,7 @@ type Writer interface {
 // AncientStore contains all the methods required to allow handling different
 // ancient data stores backing immutable chain data store.
 type AncientStore interface {
-	AncientBatchReader
+	AncientReader
 	AncientWriter
 	io.Closer
 }

@@ -26,29 +26,29 @@ import (
 func TestJournal(t *testing.T) {
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 	var (
-		db, numbers, roots, testKeys, testVals, teardown = fillDB()
-		dl                                               = db.disklayer()
-		diskIndex                                        int
+		env       = fillDB()
+		dl        = env.db.disklayer()
+		diskIndex int
 	)
-	defer teardown()
+	defer env.teardown()
 
-	if err := db.Journal(roots[len(roots)-1]); err != nil {
+	if err := env.db.Journal(env.roots[len(env.roots)-1]); err != nil {
 		t.Error("Failed to journal triedb", "err", err)
 	}
-	newdb := NewDatabase(db.diskdb, db.config)
+	newdb := NewDatabase(env.db.diskdb, env.db.config)
 
-	for diskIndex = 0; diskIndex < len(roots); diskIndex++ {
-		if roots[diskIndex] == dl.root {
+	for diskIndex = 0; diskIndex < len(env.roots); diskIndex++ {
+		if env.roots[diskIndex] == dl.root {
 			break
 		}
 	}
-	for i := diskIndex; i < len(numbers); i++ {
-		keys, vals := testKeys[i], testVals[i]
+	for i := diskIndex; i < len(env.numbers); i++ {
+		keys, vals := env.keys[i], env.vals[i]
 		for j := 0; j < len(keys); j++ {
 			if vals[j] == nil {
 				continue
 			}
-			layer := newdb.Snapshot(roots[i])
+			layer := newdb.Snapshot(env.roots[i])
 			blob, err := layer.NodeBlob([]byte(keys[j]), crypto.Keccak256Hash(vals[j]))
 			if err != nil {
 				t.Error("Failed to retrieve state", "err", err)

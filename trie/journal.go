@@ -118,10 +118,10 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config
 			if err != nil {
 				log.Crit("Failed to purge reverse diffs", "err", err)
 			}
-			return newDiskLayer(root, diffHead, cleans, nil, diskdb)
+			return newDiskLayer(root, diffHead, cleans, newDiskcache(nil, 0), diskdb)
 		}
 		// Journal is not usable, construct the snaptree with in-disk content.
-		return newDiskLayer(root, repairReverseDiff(diskdb, 0), cleans, nil, diskdb)
+		return newDiskLayer(root, repairReverseDiff(diskdb, 0), cleans, newDiskcache(nil, 0), diskdb)
 	}
 	return snap
 }
@@ -160,7 +160,8 @@ func loadDiskLayer(r *rlp.Stream, clean *fastcache.Cache, disk ethdb.Database) (
 	if err := r.Decode(&diffid); err != nil {
 		return nil, fmt.Errorf("load reverse diff id: %v", err)
 	}
-	base := newDiskLayer(root, repairReverseDiff(disk, diffid), clean, newDirtyCache(nodes), disk)
+	head := rawdb.ReadReverseDiffHead(disk)
+	base := newDiskLayer(root, repairReverseDiff(disk, diffid), clean, newDiskcache(nodes, diffid-head), disk)
 	return base, nil
 }
 

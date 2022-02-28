@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,20 +30,25 @@ import (
 )
 
 var (
-	// dirtyMemoryLimit is the maximum size of the dirty cache that aggregates
-	// the writes from above until it's flushed into the disk.
-	dirtyMemoryLimit = uint64(256 * 1024 * 1024)
+	// cacheSizeLimit is the maximum size of the disk cache that aggregates
+	// the writes from above until it's flushed into the disk. Do not
+	// increase the cache size arbitrarily, otherwise the system pause
+	// time will increase when the database writes happen.
+	cacheSizeLimit = uint64(256 * 1024 * 1024)
 )
 
-// dirtyCache is a collection of uncommitted dirty nodes to aggregate the disk
-// write. It can also act as an additional cache to avoid hitting disk too much.
-type dirtyCache struct {
-	nodes map[string]*cachedNode // Uncommitted dirty nodes, indexed by storage key
+// diskcache is a collection of dirty trie nodes to aggregate the disk
+// write. It can act as an additional cache to avoid hitting disk too much.
+// diskcache is not thread-safe, callers must manage concurrency issues
+// by themselves.
+type diskcache struct {
+	seq   uint64                 // The number of state transitions applied
+	nodes map[string]*cachedNode // The dirty node set, indexed by storage key
 	size  uint64                 // The approximate size of cached nodes
 }
 
-// newDirtyCache initializes the dirty node cache with the given node set.
-func newDirtyCache(nodes map[string]*cachedNode) *dirtyCache {
+// newDiskcache initializes the dirty node cache with the given node set.
+func newDiskcache(nodes map[string]*cachedNode, seq uint64) *diskcache {
 	if nodes == nil {
 		nodes = make(map[string]*cachedNode)
 	}
@@ -50,11 +56,11 @@ func newDirtyCache(nodes map[string]*cachedNode) *dirtyCache {
 	for key, node := range nodes {
 		size += uint64(len(key) + int(node.size) + cachedNodeSize)
 	}
-	return &dirtyCache{nodes: nodes, size: size}
+	return &diskcache{seq: seq, nodes: nodes, size: size}
 }
 
 // node retrieves the node with given storage key and hash.
-func (cache *dirtyCache) node(storage []byte, hash common.Hash) (node, error) {
+func (cache *diskcache) node(storage []byte, hash common.Hash) (node, error) {
 	n, ok := cache.nodes[string(storage)]
 	if ok {
 		if n.node == nil || n.hash != hash {
@@ -70,7 +76,7 @@ func (cache *dirtyCache) node(storage []byte, hash common.Hash) (node, error) {
 }
 
 // nodeBlob retrieves the node blob with given storage key and hash.
-func (cache *dirtyCache) nodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
+func (cache *diskcache) nodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
 	n, ok := cache.nodes[string(storage)]
 	if ok {
 		if n.node == nil || n.hash != hash {
@@ -85,33 +91,43 @@ func (cache *dirtyCache) nodeBlob(storage []byte, hash common.Hash) ([]byte, err
 	return nil, nil
 }
 
-// update merges the given nodes into the cache. This function should never be called
-// simultaneously with other map accessors.
-func (cache *dirtyCache) update(nodes map[string]*cachedNode) *dirtyCache {
-	var diff int64
+// update merges the given dirty nodes into the cache, and bump seq as well
+// to complete the state transition. It should only happen at block level.
+func (cache *diskcache) update(nodes map[string]*cachedNode) *diskcache {
+	var (
+		prev uint64
+		size int64
+	)
+	cache.seq += 1
+
 	for storage, n := range nodes {
-		if prev, exist := cache.nodes[storage]; exist {
-			diff += int64(n.size) - int64(prev.size)
+		if orig, exist := cache.nodes[storage]; exist {
+			size += int64(n.size) - int64(orig.size)
 		} else {
-			diff += int64(int(n.size) + len(storage) + cachedNodeSize)
+			size += int64(int(n.size) + len(storage) + cachedNodeSize)
 		}
 		cache.nodes[storage] = n
 	}
-	if final := int64(cache.size) + diff; final < 0 {
-		log.Error("Negative dirty cache size", "previous", cache.size, "diff", diff)
-		cache.size = 0
-	} else {
+	if final := int64(cache.size) + size; final > 0 {
 		cache.size = uint64(final)
+	} else {
+		prev, cache.size = cache.size, 0
+		log.Error("Negative disk cache size", "previous", common.StorageSize(prev), "diff", common.StorageSize(size))
 	}
 	return cache
 }
 
 // revert applies the reverse diff to the local dirty node set. This function
-// should never be called simultaneously with other map accessors.
-func (cache *dirtyCache) revert(diff *reverseDiff) error {
+func (cache *diskcache) revert(diff *reverseDiff) error {
+	if cache.seq == 0 {
+		return errors.New("diskcache is unrecoverable")
+	}
+	cache.seq -= 1
+
 	for _, state := range diff.States {
 		_, ok := cache.nodes[string(state.Key)]
 		if !ok {
+			// TODO it should never happen, perhaps panic here.
 			owner, path := DecodeStorageKey(state.Key)
 			return fmt.Errorf("non-existent node (%x %v)", owner, path)
 		}
@@ -132,18 +148,27 @@ func (cache *dirtyCache) revert(diff *reverseDiff) error {
 	return nil
 }
 
+// reset cleans up the disk cache.
+func (cache *diskcache) reset() {
+	cache.seq = 0
+	cache.nodes = make(map[string]*cachedNode)
+	cache.size = 0
+}
+
 // flush persists the in-memory dirty trie node into the disk if the predefined
-// memory threshold is reached. Depends on the given config, the additional legacy
-// format node can be written as well (e.g. for archive node). Note, all data must
-// be written to disk atomically.
+// memory threshold is reached. Note, all data must be written to disk atomically.
 // This function should never be called simultaneously with other map accessors.
-func (cache *dirtyCache) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, diffid uint64, force bool) error {
-	if cache.size <= dirtyMemoryLimit && !force {
+func (cache *diskcache) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, diffid uint64, force bool) error {
+	if cache.size <= cacheSizeLimit && !force {
 		return nil
+	}
+	head := rawdb.ReadReverseDiffHead(db)
+	if head+cache.seq != diffid {
+		return errors.New("invalid reverse diff id")
 	}
 	var (
 		start = time.Now()
-		batch = db.NewBatchWithSize(int(dirtyMemoryLimit))
+		batch = db.NewBatchWithSize(int(cacheSizeLimit))
 	)
 	for storage, n := range cache.nodes {
 		if n.node == nil {
@@ -161,6 +186,8 @@ func (cache *dirtyCache) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, d
 	if err := batch.Write(); err != nil {
 		return err
 	}
+	cache.reset()
+
 	triedbCommitSizeMeter.Mark(int64(batch.ValueSize()))
 	triedbCommitNodesMeter.Mark(int64(len(cache.nodes)))
 	triedbCommitTimeTimer.UpdateSince(start)
@@ -170,6 +197,5 @@ func (cache *dirtyCache) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, d
 		"size", common.StorageSize(batch.ValueSize()),
 		"elapsed", common.PrettyDuration(time.Since(start)),
 	)
-	cache.nodes, cache.size = make(map[string]*cachedNode), 0
 	return nil
 }

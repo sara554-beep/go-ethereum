@@ -25,14 +25,14 @@ import (
 )
 
 func TestNodeStoreCopy(t *testing.T) {
-	db, _, roots, keylist, vallist, teardown := fillDB()
-	defer teardown()
+	env := fillDB()
+	defer env.teardown()
 
-	reader, err := newSnapStore(roots[len(roots)-1], common.Hash{}, db)
+	reader, err := newSnapStore(env.roots[len(env.roots)-1], common.Hash{}, env.db)
 	if err != nil {
 		t.Fatalf("Failed to create reader %v", err)
 	}
-	keys, vals := keylist[len(keylist)-1], vallist[len(vallist)-1]
+	keys, vals := env.keys[len(env.keys)-1], env.vals[len(env.vals)-1]
 
 	readerCopy := reader.copy()
 

@@ -19,7 +19,6 @@ package trie
 import (
 	"fmt"
 	"sync"
-	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
@@ -36,10 +35,10 @@ type diffLayer struct {
 	root   common.Hash                  // Root hash to which this snapshot diff belongs to
 	diffid uint64                       // Corresponding reverse diff id
 	nodes  map[string]*nodeWithPreValue // Keyed trie nodes for retrieval, indexed by storage key
+	memory uint64                       // Approximate guess as to how much memory we use
 
 	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
-	memory uint64       // Approximate guess as to how much memory we use
-	stale  uint32       // Signals that the layer became stale (state progressed)
+	stale  bool         // Signals that the layer became stale (state progressed)
 	lock   sync.RWMutex // Lock used to protect parent and stale fields.
 }
 
@@ -83,7 +82,21 @@ func (dl *diffLayer) Parent() snapshot {
 // Stale return whether this layer has become stale (was flattened across) or if
 // it's still live.
 func (dl *diffLayer) Stale() bool {
-	return atomic.LoadUint32(&dl.stale) != 0
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	return dl.stale
+}
+
+// MarkStale sets the stale flag as true.
+func (dl *diffLayer) MarkStale() {
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	if dl.stale == true {
+		panic("triedb diff layer is stale")
+	}
+	dl.stale = true
 }
 
 // Node retrieves the trie node associated with a particular key.
@@ -100,7 +113,7 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, er
 
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
-	if dl.Stale() {
+	if dl.stale {
 		return nil, errSnapshotStale
 	}
 	// If the trie node is known locally, return it
@@ -138,7 +151,7 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 
 	// If the layer was flattened into, consider it invalid (any live reference to
 	// the original should be marked as unusable).
-	if dl.Stale() {
+	if dl.stale {
 		return nil, errSnapshotStale
 	}
 	// If the trie node is known locally, return it
@@ -198,25 +211,10 @@ func (dl *diffLayer) persist(force bool) (snapshot, error) {
 func diffToDisk(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct and store the reverse diff firstly. If crash happens
 	// after storing the reverse diff but without flushing the corresponding
-	// states, the stored reverse diff will be truncated in the next restart.
+	// states(journal), the stored reverse diff will be truncated in
+	// the next restart.
 	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
 		return nil, err
 	}
-	// Mark the base layer(disk layer) as stale since we are pushing
-	// new nodes into the disk. A new disk layer needed to be created
-	// and be linked to all existent bottom diff layers later.
-	base := bottom.Parent().(*diskLayer)
-	base.MarkStale()
-
-	// The node previous value is useless once the reverse diff is constructed.
-	slim := make(map[string]*cachedNode)
-	for key, n := range bottom.nodes {
-		slim[key] = n.unwrap()
-	}
-	dl := newDiskLayer(bottom.root, bottom.diffid, base.clean, base.dirty.update(slim), base.diskdb)
-
-	if err := dl.flush(force); err != nil {
-		return nil, err
-	}
-	return dl, nil
+	return bottom.Parent().(*diskLayer).commit(bottom, force)
 }

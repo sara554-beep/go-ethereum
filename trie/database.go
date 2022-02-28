@@ -24,7 +24,6 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/VictoriaMetrics/fastcache"
@@ -629,6 +628,8 @@ func (db *Database) Clean(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// TODO check if the given root node is existent
+	// before applying any mutations.
 	rawdb.DeleteTrieJournal(db.diskdb)
 
 	// Iterate over all layers and mark them as stale
@@ -640,9 +641,7 @@ func (db *Database) Clean(root common.Hash) error {
 
 		case *diffLayer:
 			// If the layer is a simple diff, simply mark as stale
-			layer.lock.Lock()
-			atomic.StoreUint32(&layer.stale, 1)
-			layer.lock.Unlock()
+			layer.MarkStale()
 
 		default:
 			panic(fmt.Sprintf("unknown layer type: %T", layer))
@@ -659,77 +658,28 @@ func (db *Database) Clean(root common.Hash) error {
 		return err
 	}
 	db.layers = map[common.Hash]snapshot{
-		root: newDiskLayer(root, head, cleans, nil, db.diskdb),
+		root: newDiskLayer(root, head, cleans, newDiskcache(nil, 0), db.diskdb),
 	}
 	log.Info("Rebuild triedb", "root", root, "diffid", head)
 	return nil
 }
 
 // revert applies the reverse diffs to the database by reverting the disk layer
-// content. The passed clean cache should be empty.
-// This function assumes the lock in db is already held.
-func (db *Database) revert(diffid uint64, diff *reverseDiff, cleans *fastcache.Cache) error {
-	var (
-		dl    = db.disklayer()
-		root  = dl.Root()
-		batch = dl.diskdb.NewBatch()
-	)
-	if diff.Root != root {
-		return errUnmatchedReverseDiff
-	}
-	if diffid != dl.diffid {
-		return errUnmatchedReverseDiff
-	}
-	if dl.diffid == 0 {
-		return fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
-	}
-	dl.MarkStale()
-
-	_, diskRoot := rawdb.ReadTrieNode(db.diskdb, EncodeStorageKey(common.Hash{}, nil))
-	switch {
-	case diskRoot == diff.Root:
-		// diff.Root == diskRoot, applies the state reverting
-		// on disk directly. The assumption should be held in
-		// this case the dirty cache must be empty.
-		for _, state := range diff.States {
-			if len(state.Val) > 0 {
-				rawdb.WriteTrieNode(batch, state.Key, state.Val)
-			} else {
-				rawdb.DeleteTrieNode(batch, state.Key)
-			}
-		}
-		rawdb.WriteReverseDiffHead(batch, diffid-1)
-
-		if err := batch.Write(); err != nil {
-			log.Crit("Failed to write reverse diff", "err", err)
-		}
-		batch.Reset()
-
-	case diskRoot == diff.Parent:
-		// diff.Root == dl.root and diff.Parent == diskRoot,
-		// nuke out the dirty node set for reverting.
-		dl.dirty = newDirtyCache(nil)
-
-	default:
-		// Revert embedded state in the dirty set.
-		if err := dl.dirty.revert(diff); err != nil {
-			return err
-		}
-	}
-	// Delete the lookup first to mark this reverse diff invisible.
-	rawdb.DeleteReverseDiffLookup(batch, diff.Parent)
-	if err := batch.Write(); err != nil {
+// content. This function assumes the lock in db is already held.
+func (db *Database) revert(diffid uint64, diff *reverseDiff) error {
+	ndl, err := db.disklayer().revert(diff, diffid)
+	if err != nil {
 		return err
 	}
-	batch.Reset()
+	// Delete the lookup first to mark this reverse diff invisible.
+	rawdb.DeleteReverseDiffLookup(db.diskdb, diff.Parent)
 
 	// Truncate the reverse diff from the freezer in the last step
-	_, err := truncateFromHead(db.diskdb, dl.diffid-1)
+	_, err = truncateFromHead(db.diskdb, diffid-1)
 	if err != nil {
 		return err
 	}
 	// Recreate the disk layer with newly created clean cache
-	ndl := newDiskLayer(diff.Parent, dl.diffid-1, cleans, dl.dirty, dl.diskdb)
 	db.layers = map[common.Hash]snapshot{ndl.root: ndl}
 	return nil
 }
@@ -758,23 +708,18 @@ func (db *Database) Rollback(target common.Hash) error {
 	// handled later.
 	for _, layer := range db.layers {
 		dl, ok := layer.(*diffLayer)
-		if ok {
-			dl.lock.Lock()
-			atomic.StoreUint32(&dl.stale, 1)
-			dl.lock.Unlock()
+		if !ok {
+			continue
 		}
+		dl.MarkStale()
 	}
 	// Apply the reverse diffs with the given order.
-	var cleans *fastcache.Cache
-	if db.config != nil && db.config.Cache > 0 {
-		cleans = fastcache.New(db.config.Cache * 1024 * 1024)
-	}
 	for current >= *id {
 		diff, err := loadReverseDiff(db.diskdb, current)
 		if err != nil {
 			return err
 		}
-		if err := db.revert(current, diff, cleans); err != nil {
+		if err := db.revert(current, diff); err != nil {
 			return err
 		}
 		current -= 1
@@ -856,7 +801,7 @@ func (db *Database) Size() (common.StorageSize, common.StorageSize) {
 			nodes += common.StorageSize(diff.memory)
 		}
 		if disk, ok := layer.(*diskLayer); ok {
-			nodes += common.StorageSize(disk.dirty.size)
+			nodes += disk.size()
 		}
 	}
 	return nodes, db.preimagesSize
