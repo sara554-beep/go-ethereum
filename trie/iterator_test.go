@@ -540,6 +540,11 @@ func (l *loggingDb) NewBatchWithSize(size int) ethdb.Batch {
 func (l *loggingDb) NewIterator(prefix []byte, start []byte) ethdb.Iterator {
 	return l.backend.NewIterator(prefix, start)
 }
+
+func (l *loggingDb) NewSnapshot() (ethdb.Snapshot, error) {
+	return l.backend.NewSnapshot()
+}
+
 func (l *loggingDb) Stat(property string) (string, error) {
 	return l.backend.Stat(property)
 }
