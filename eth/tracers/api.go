@@ -67,8 +67,8 @@ type Backend interface {
 	// StateAtBlock returns the state corresponding to the stateroot of the block.
 	// N.B: For executing transactions on block N, the required stateRoot is block N-1,
 	// so this method should be called with the parent.
-	StateAtBlock(ctx context.Context, block *types.Block, parent *state.StateDB) (*state.StateDB, error)
-	StateAtTransaction(ctx context.Context, block *types.Block, txIndex int) (core.Message, vm.BlockContext, *state.StateDB, error)
+	StateAtBlock(ctx context.Context, block *types.Block, parent *state.StateDB) (*state.StateDB, func(), error)
+	StateAtTransaction(ctx context.Context, block *types.Block, txIndex int) (core.Message, vm.BlockContext, *state.StateDB, func(), error)
 }
 
 // API is the collection of tracing APIs exposed over the private debugging endpoint.
@@ -189,7 +189,6 @@ type txTraceResult struct {
 type blockTraceTask struct {
 	statedb *state.StateDB   // Intermediate state prepped for tracing
 	block   *types.Block     // Block to trace the transactions from
-	rootref common.Hash      // Trie root reference held for this task
 	results []*txTraceResult // Trace results procudes by the task
 }
 
@@ -290,11 +289,13 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 
 	go func() {
 		var (
-			logged  time.Time
-			number  uint64
-			traced  uint64
-			failed  error
+			logged time.Time
+			number uint64
+			traced uint64
+			failed error
+
 			statedb *state.StateDB
+			rel     func()
 		)
 		// Ensure everything is properly cleaned up on any exit path
 		defer func() {
@@ -310,6 +311,11 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 				log.Info("Chain tracing finished", "start", start.NumberU64(), "end", end.NumberU64(), "transactions", traced, "elapsed", time.Since(begin))
 			}
 			close(results)
+
+			// Release occupied resources
+			if rel != nil {
+				rel()
+			}
 		}()
 		// Feed all the blocks both into the tracer, as well as fast process concurrently
 		for number = start.NumberU64(); number < end.NumberU64(); number++ {
@@ -330,10 +336,16 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 				failed = err
 				break
 			}
-			statedb, err = api.backend.StateAtBlock(localctx, block, statedb)
+			// Prepare the statedb for tracing. Don't use the live database for
+			// tracing to avoid persisting state junks into the database.
+			state, relFn, err := api.backend.StateAtBlock(localctx, block, statedb)
 			if err != nil {
 				failed = err
 				break
+			}
+			statedb = state
+			if number == start.NumberU64() {
+				rel = relFn
 			}
 			next, err := api.blockByNumber(localctx, rpc.BlockNumber(number+1))
 			if err != nil {
@@ -343,7 +355,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			// Send the block over to the concurrent tracers (if not in the fast-forward phase)
 			txs := next.Transactions()
 			select {
-			case tasks <- &blockTraceTask{statedb: statedb.Copy(), block: next, rootref: block.Root(), results: make([]*txTraceResult, len(txs))}:
+			case tasks <- &blockTraceTask{statedb: statedb.Copy(), block: next, results: make([]*txTraceResult, len(txs))}:
 			case <-notifier.Closed():
 				return
 			}
@@ -459,10 +471,12 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 	if err != nil {
 		return nil, err
 	}
-	statedb, err := api.backend.StateAtBlock(ctx, parent, nil)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer rel()
+
 	var (
 		roots              []common.Hash
 		signer             = types.MakeSigner(api.backend.ChainConfig(), block.Number())
@@ -516,10 +530,12 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	if err != nil {
 		return nil, err
 	}
-	statedb, err := api.backend.StateAtBlock(ctx, parent, nil)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer rel()
+
 	// Execute all the transaction contained within the block concurrently
 	var (
 		signer  = types.MakeSigner(api.backend.ChainConfig(), block.Number())
@@ -601,10 +617,12 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 	if err != nil {
 		return nil, err
 	}
-	statedb, err := api.backend.StateAtBlock(ctx, parent, nil)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer rel()
+
 	// Retrieve the tracing configurations, or use default values
 	var (
 		logConfig logger.Config
@@ -724,10 +742,12 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 	if err != nil {
 		return nil, err
 	}
-	msg, vmctx, statedb, err := api.backend.StateAtTransaction(ctx, block, int(index))
+	msg, vmctx, statedb, rel, err := api.backend.StateAtTransaction(ctx, block, int(index))
 	if err != nil {
 		return nil, err
 	}
+	defer rel()
+
 	txctx := &Context{
 		BlockHash: blockHash,
 		TxIndex:   int(index),
@@ -756,10 +776,12 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if err != nil {
 		return nil, err
 	}
-	statedb, err := api.backend.StateAtBlock(ctx, block, nil)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, block, nil)
 	if err != nil {
 		return nil, err
 	}
+	defer rel()
+
 	// Apply the customized state rules if required.
 	if config != nil {
 		if err := config.StateOverrides.Apply(statedb); err != nil {

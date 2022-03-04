@@ -352,10 +352,10 @@ func (b *EthAPIBackend) StartMining(threads int) error {
 	return b.eth.StartMining(threads)
 }
 
-func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, error) {
-	return b.eth.StateAtBlock(block, statedb, true)
+func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, func(), error) {
+	return b.eth.StateAtBlock(block, statedb)
 }
 
-func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int) (core.Message, vm.BlockContext, *state.StateDB, error) {
+func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int) (core.Message, vm.BlockContext, *state.StateDB, func(), error) {
 	return b.eth.stateAtTransaction(block, txIndex)
 }

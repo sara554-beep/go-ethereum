@@ -202,8 +202,8 @@ func traverseState(ctx *cli.Context) error {
 		return errors.New("too many arguments")
 	}
 	var (
-		root common.Hash
 		err  error
+		root common.Hash
 	)
 	if ctx.NArg() == 1 {
 		root, err = parseRoot(ctx.Args()[0])
@@ -292,8 +292,8 @@ func traverseRawState(ctx *cli.Context) error {
 		return errors.New("too many arguments")
 	}
 	var (
-		root common.Hash
 		err  error
+		root common.Hash
 	)
 	if ctx.NArg() == 1 {
 		root, err = parseRoot(ctx.Args()[0])

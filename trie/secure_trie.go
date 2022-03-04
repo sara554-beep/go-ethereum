@@ -37,7 +37,7 @@ import (
 // SecureTrie is not safe for concurrent use.
 type SecureTrie struct {
 	trie             Trie
-	db               *Database
+	db               StateReader
 	hashKeyBuf       [common.HashLength]byte
 	secKeyCache      map[string][]byte
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key cache on mismatch
@@ -54,7 +54,7 @@ type SecureTrie struct {
 // Loaded nodes are kept around until their 'cache generation' expires.
 // A new cache generation is created by each call to Commit.
 // cachelimit sets the number of past cache generations to keep.
-func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
+func NewSecure(root common.Hash, db StateReader) (*SecureTrie, error) {
 	if db == nil {
 		panic("trie.NewSecure called without a database")
 	}
@@ -65,7 +65,7 @@ func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
 	return &SecureTrie{trie: *trie, db: db}, nil
 }
 
-func NewSecureWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database) (*SecureTrie, error) {
+func NewSecureWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db StateReader) (*SecureTrie, error) {
 	if db == nil {
 		panic("trie.NewSecure called without a database")
 	}
@@ -165,7 +165,10 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
 		return key
 	}
-	return t.db.Preimage(common.BytesToHash(shaKey))
+	if db, ok := t.db.(*Database); ok {
+		return db.Preimage(common.BytesToHash(shaKey))
+	}
+	return nil
 }
 
 // Commit writes all nodes and the secure hash pre-images to the trie's database.
@@ -180,7 +183,9 @@ func (t *SecureTrie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 		for hk, key := range t.secKeyCache {
 			preimages[common.BytesToHash([]byte(hk))] = key
 		}
-		t.db.InsertPreimage(preimages)
+		if db, ok := t.db.(*Database); ok {
+			db.InsertPreimage(preimages)
+		}
 		t.secKeyCache = make(map[string][]byte)
 	}
 	// Commit the trie to its intermediate node database

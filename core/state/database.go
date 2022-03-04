@@ -54,8 +54,8 @@ type Database interface {
 	// ContractCodeSize retrieves a particular contracts code's size.
 	ContractCodeSize(addrHash, codeHash common.Hash) (int, error)
 
-	// TrieDB retrieves the low level trie database used for data storage.
-	TrieDB() *trie.Database
+	// TrieDB returns the underlying database for managing state.
+	TrieDB() trie.StateDatabase
 }
 
 // Trie is a Ethereum Merkle Patricia trie.
@@ -108,25 +108,36 @@ type Trie interface {
 
 // NewDatabase creates a backing store for state. The returned database is safe for
 // concurrent use, but does not retain any recent trie nodes in memory. To keep some
-// historical state in memory, use the NewDatabaseWithConfig constructor.
+// historical state in memory, use the NewLiveDatabase constructor.
 func NewDatabase(db ethdb.Database) Database {
-	return NewDatabaseWithConfig(db, nil)
+	return NewLiveDatabase(trie.NewDatabase(db, nil))
 }
 
-// NewDatabaseWithConfig creates a backing store for state. The returned database
+// NewLiveDatabase creates a backing store for state. The returned database
 // is safe for concurrent use and retains a lot of collapsed RLP trie nodes in a
 // large memory cache.
-func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
+func NewLiveDatabase(triedb *trie.Database) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
 	return &cachingDB{
-		db:            trie.NewDatabase(db, config),
+		db:            triedb,
 		codeSizeCache: csc,
 		codeCache:     fastcache.New(codeCacheSize),
 	}
 }
 
+// NewSnapDatabase creates a state database from the live triedb snapshot.
+// It has data isolation and is safe to apply the mutation on the top.
+func NewSnapDatabase(snap *trie.DatabaseSnapshot) (Database, error) {
+	csc, _ := lru.New(codeSizeCacheSize)
+	return &cachingDB{
+		db:            snap,
+		codeSizeCache: csc,
+		codeCache:     fastcache.New(codeCacheSize),
+	}, nil
+}
+
 type cachingDB struct {
-	db            *trie.Database
+	db            trie.StateDatabase
 	codeSizeCache *lru.Cache
 	codeCache     *fastcache.Cache
 }
@@ -199,6 +210,6 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.
-func (db *cachingDB) TrieDB() *trie.Database {
+func (db *cachingDB) TrieDB() trie.StateDatabase {
 	return db.db
 }

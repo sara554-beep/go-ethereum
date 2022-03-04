@@ -170,6 +170,7 @@ type BlockChain struct {
 	snaps  *snapshot.Tree // Snapshot tree for fast trie leaf access
 	triegc *prque.Prque   // Priority queue mapping block numbers to tries to gc
 	gcproc time.Duration  // Accumulates canonical block processing for trie dumping
+	triedb *trie.Database
 
 	// txLookupLimit is the maximum number of blocks from head whose tx indices
 	// are reserved:
@@ -278,12 +279,13 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 		vmConfig:      vmConfig,
 	}
 	bc.forker = NewForkChoice(bc, shouldPreserve)
-	bc.stateCache = state.NewDatabaseWithConfig(db, &trie.Config{
+	bc.triedb = trie.NewDatabase(db, &trie.Config{
 		Cache:         cacheConfig.TrieCleanLimit,
 		Journal:       cacheConfig.TrieCleanJournal,
 		Preimages:     cacheConfig.Preimages,
 		LoadStateRoot: loadLegacyStateRoot,
 	})
+	bc.stateCache = state.NewLiveDatabase(bc.triedb)
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
@@ -412,7 +414,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 			log.Warn("Enabling snapshot recovery", "chainhead", head.NumberU64(), "diskbase", *layer)
 			recover = true
 		}
-		bc.snaps, _ = snapshot.New(bc.db, bc.stateCache.TrieDB(), bc.cacheConfig.SnapshotLimit, head.Root(), !bc.cacheConfig.SnapshotWait, true, recover)
+		bc.snaps, _ = snapshot.New(bc.db, bc.triedb, bc.cacheConfig.SnapshotLimit, head.Root(), !bc.cacheConfig.SnapshotWait, true, recover)
 	}
 
 	// Start future block processor.
@@ -428,7 +430,6 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 	}
 
 	// If periodic cache journal is required, spin it up.
-	triedb := bc.stateCache.TrieDB()
 	if bc.cacheConfig.TrieCleanRejournal > 0 {
 		if bc.cacheConfig.TrieCleanRejournal < time.Minute {
 			log.Warn("Sanitizing invalid trie cache journal time", "provided", bc.cacheConfig.TrieCleanRejournal, "updated", time.Minute)
@@ -437,7 +438,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 		bc.wg.Add(1)
 		go func() {
 			defer bc.wg.Done()
-			triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
+			bc.triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
 		}()
 	}
 	return bc, nil
@@ -586,13 +587,13 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, root common.Hash, repair bo
 							// Rewind to genesis block, reset the state database with
 							// corresponding genesis state.
 							bc.genesis.ToBlock(bc.db)
-							if err := bc.stateCache.TrieDB().Clean(newHeadBlock.Root()); err != nil {
+							if err := bc.triedb.Clean(newHeadBlock.Root()); err != nil {
 								log.Crit("Failed to reset state", "err", err)
 							}
 						} else if !bc.HasState(newHeadBlock.Root()) {
 							// Rewind to a block with recoverable state. If the state is
 							// missing, run the state recovery here.
-							if err := bc.stateCache.TrieDB().Rollback(newHeadBlock.Root()); err != nil {
+							if err := bc.triedb.Rollback(newHeadBlock.Root()); err != nil {
 								log.Crit("Failed to rollback state", "err", err) // Shouldn't happen
 							}
 						}
@@ -691,9 +692,9 @@ func (bc *BlockChain) SnapSyncCommitHead(hash common.Hash) error {
 		return fmt.Errorf("non existent block [%x..]", hash[:4])
 	}
 	// Rebuild the triedb with the given state root.
-	bc.stateCache.TrieDB().Clean(block.Root())
+	bc.triedb.Clean(block.Root())
 
-	if _, err := trie.NewSecure(block.Root(), bc.stateCache.TrieDB()); err != nil {
+	if _, err := trie.NewSecure(block.Root(), bc.triedb); err != nil {
 		return err
 	}
 	// If all checks out, manually set the head block.
@@ -844,14 +845,14 @@ func (bc *BlockChain) Stop() {
 		}
 	}
 	if !bc.cacheConfig.TrieDirtyDisabled {
-		if err := bc.stateCache.TrieDB().Journal(bc.CurrentBlock().Root()); err != nil {
+		if err := bc.triedb.Journal(bc.CurrentBlock().Root()); err != nil {
 			log.Info("Failed to journal in-memory trie nodes", "err", err)
 		}
 	}
 	// Ensure all live cached entries be saved into disk, so that we can skip
 	// cache warmup when node restarts.
 	if bc.cacheConfig.TrieCleanJournal != "" {
-		bc.stateCache.TrieDB().SaveCache(bc.cacheConfig.TrieCleanJournal)
+		bc.triedb.SaveCache(bc.cacheConfig.TrieCleanJournal)
 	}
 	log.Info("Blockchain stopped")
 }
@@ -1658,7 +1659,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		stats.processed++
 		stats.usedGas += usedGas
 
-		dirty, _ := bc.stateCache.TrieDB().Size()
+		dirty := bc.triedb.Size()
 		stats.report(chain, it.index, dirty)
 	}
 
@@ -1781,7 +1782,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 	}
 	// Recover the state if it's necessary
 	if !bc.HasState(parent.Root) {
-		if err := bc.stateCache.TrieDB().Rollback(parent.Root); err != nil {
+		if err := bc.triedb.Rollback(parent.Root); err != nil {
 			return 0, err
 		}
 	}
@@ -1849,7 +1850,7 @@ func (bc *BlockChain) recoverAncestors(block *types.Block) error {
 	}
 	// Recover the state if it's necessary
 	if !bc.HasState(parent.Root()) {
-		if err := bc.stateCache.TrieDB().Rollback(parent.Root()); err != nil {
+		if err := bc.triedb.Rollback(parent.Root()); err != nil {
 			return err
 		}
 	}

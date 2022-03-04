@@ -387,7 +387,7 @@ func (it *nodeIterator) resolveHash(hash hashNode, path []byte) (node, error) {
 			}
 		}
 	}
-	return it.trie.resolve(hash, path)
+	return it.trie.nodes.readNode(it.trie.owner, common.BytesToHash(hash), path)
 }
 
 func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) {
@@ -397,7 +397,7 @@ func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) 
 			return blob, nil
 		}
 	}
-	return it.trie.resolveBlob(hash, path)
+	return it.trie.nodes.readBlob(it.trie.owner, common.BytesToHash(hash), path)
 }
 
 func (st *nodeIteratorState) resolve(it *nodeIterator, path []byte) error {

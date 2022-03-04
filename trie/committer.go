@@ -47,11 +47,16 @@ type committer struct {
 	tmp sliceBuffer
 	sha crypto.KeccakState
 
-	owner     common.Hash
-	onleaf    LeafCallback
-	leafCh    chan *leaf
-	committed *nodeSet
-	embedded  [][]byte
+	owner  common.Hash
+	onleaf LeafCallback
+	leafCh chan *leaf
+
+	// The set of dirty nodes gathered during the commit
+	// operation which are waiting to be committed.
+	nodes map[string]*cachedNode
+
+	// The list of node keys which is embedded in its parent.
+	internal [][]byte
 }
 
 // committers live in a global sync.Pool
@@ -67,15 +72,15 @@ var committerPool = sync.Pool{
 // newCommitter creates a new committer or picks one from the pool.
 func newCommitter() *committer {
 	ret := committerPool.Get().(*committer)
-	ret.committed = newNodeSet()
+	ret.nodes = make(map[string]*cachedNode)
 	return ret
 }
 
 func returnCommitterToPool(h *committer) {
 	h.onleaf = nil
 	h.leafCh = nil
-	h.committed = nil
-	h.embedded = nil
+	h.nodes = nil
+	h.internal = nil
 	h.owner = common.Hash{}
 	committerPool.Put(h)
 }
@@ -118,7 +123,7 @@ func (c *committer) commit(path []byte, n node) (node, error) {
 			return hn, nil
 		}
 		// The short node is embedded in its parent, track it.
-		c.embedded = append(c.embedded, EncodeStorageKey(c.owner, path))
+		c.internal = append(c.internal, EncodeStorageKey(c.owner, path))
 		return collapsed, nil
 	case *fullNode:
 		hashedKids, err := c.commitChildren(path, cn)
@@ -133,7 +138,7 @@ func (c *committer) commit(path []byte, n node) (node, error) {
 			return hn, nil
 		}
 		// The full node is embedded in its parent, track it.
-		c.embedded = append(c.embedded, EncodeStorageKey(c.owner, path))
+		c.internal = append(c.internal, EncodeStorageKey(c.owner, path))
 		return collapsed, nil
 	case hashNode:
 		return cn, nil
@@ -192,12 +197,14 @@ func (c *committer) store(path []byte, n node) node {
 		// We have the hash already, estimate the RLP encoding-size of the node.
 		// The size is used for mem tracking, does not need to be exact
 		size    = estimateSize(n)
-		slim    = simplifyNode(n)
 		storage = EncodeStorageKey(c.owner, path)
 		nhash   = common.BytesToHash(hash)
 	)
-	c.committed.put(storage, slim, uint16(size), nhash)
-
+	c.nodes[string(storage)] = &cachedNode{
+		hash: nhash,
+		node: simplifyNode(n),
+		size: uint16(size),
+	}
 	// If we're using channel-based leaf-reporting, send to channel.
 	// The leaf channel will be active only when there an active leaf-callback
 	if c.leafCh != nil {
@@ -284,5 +291,79 @@ func estimateSize(n node) int {
 		return 1 + len(n)
 	default:
 		panic(fmt.Sprintf("node type %T", n))
+	}
+}
+
+// CommitResult wraps the trie commit result in a single struct.
+type CommitResult struct {
+	Root   common.Hash            // The re-calculated trie root hash after commit
+	nodes  map[string]*cachedNode // The set of dirty nodes involved in this commit operation
+	origin map[string][]byte      // The corresponding pre-value of the dirty nodes
+	lock   sync.RWMutex
+}
+
+// Nodes returns the set of dirty nodes along with their previous value.
+func (result *CommitResult) Nodes() map[string]*nodeWithPreValue {
+	result.lock.RLock()
+	defer result.lock.RUnlock()
+
+	ret := make(map[string]*nodeWithPreValue)
+	for key, node := range result.nodes {
+		ret[key] = &nodeWithPreValue{
+			cachedNode: node,
+			pre:        result.origin[key],
+		}
+	}
+	return ret
+}
+
+// NodeBlobs returns the rlp-encoded format of nodes
+func (result *CommitResult) NodeBlobs() map[string][]byte {
+	result.lock.RLock()
+	defer result.lock.RUnlock()
+
+	ret := make(map[string][]byte)
+	for key, node := range result.nodes {
+		ret[key] = node.rlp()
+	}
+	return ret
+}
+
+// NodeLen returns the number of contained nodes.
+func (result *CommitResult) NodeLen() int {
+	result.lock.RLock()
+	defer result.lock.RUnlock()
+
+	return len(result.nodes)
+}
+
+// Merge merges the dirty nodes from the given set.
+func (result *CommitResult) Merge(other *CommitResult) {
+	result.lock.Lock()
+	defer result.lock.Unlock()
+
+	other.lock.RLock()
+	defer other.lock.RUnlock()
+
+	for key, node := range other.nodes {
+		result.nodes[key] = node
+	}
+	for key, pre := range other.origin {
+		result.origin[key] = pre
+	}
+}
+
+// MergeDeletion adds a batch of deleted trie nodes into the node set.
+func (result *CommitResult) MergeDeletion(keys [][]byte, prev [][]byte) {
+	result.lock.Lock()
+	defer result.lock.Unlock()
+
+	for i, key := range keys {
+		result.nodes[string(key)] = &cachedNode{
+			node: nil,
+			hash: common.Hash{},
+			size: 0,
+		}
+		result.origin[string(key)] = prev[i]
 	}
 }

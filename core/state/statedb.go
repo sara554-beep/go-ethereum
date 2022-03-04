@@ -914,7 +914,10 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	var (
 		storageUpdated int
 		storageDeleted int
-		committed      []*trie.CommitResult
+
+		deletedKeys [][]byte
+		deletedPrev [][]byte
+		results     []*trie.CommitResult
 	)
 	codeWriter := s.db.TrieDB().DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
@@ -931,13 +934,16 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 			}
 			if result != nil {
 				storageUpdated += result.NodeLen()
-				committed = append(committed, result)
+				results = append(results, result)
 			}
 		} else {
 			// Account is deleted, nuke out the storage data as well.
-			result := obj.DeleteTrie(s.db)
-			storageDeleted += result.NodeLen()
-			committed = append(committed, result)
+			// TODO(rjl493456442) the destructed storage can be huge
+			// which may lead to OOM panic.
+			keys, vals := obj.DeleteTrie(s.db)
+			deletedKeys = append(deletedKeys, keys...)
+			deletedPrev = append(deletedPrev, vals...)
+			storageDeleted += len(keys)
 		}
 	}
 	if len(s.stateObjectsDirty) > 0 {
@@ -973,9 +979,11 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		s.StorageUpdated, s.StorageDeleted = 0, 0
 	}
 	// Group all the committed storage trie nodes together
-	for _, res := range committed {
+	for _, res := range results {
 		result.Merge(res)
 	}
+	result.MergeDeletion(deletedKeys, deletedPrev)
+
 	// If snapshotting is enabled, update the snapshot tree with this new version
 	if s.snap != nil {
 		start := time.Now()

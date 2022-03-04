@@ -453,7 +453,7 @@ func dump(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := state.New(root, state.NewDatabaseWithConfig(db, &trie.Config{ReadOnly: true}), nil)
+	state, err := state.New(root, state.NewLiveDatabase(trie.NewDatabase(db, &trie.Config{ReadOnly: true})), nil)
 	if err != nil {
 		return err
 	}

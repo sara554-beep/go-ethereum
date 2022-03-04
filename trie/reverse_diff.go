@@ -44,12 +44,12 @@ import (
 // diffs according to config.
 //
 //                                    block of disk state    block of disk layer    block of diff layer
-//                                         /                             /                 /
+//                                         /                              /                /
 //    +--------------+--------------+--------------+--------------+----------------+--------------+
 //    |   block 1    |      ...     |    block n   |      ...     |     block m    |  block m+1   |
 //    +--------------+--------------+--------------+--------------+----------------+--------------+
-//                           |             |                               |
-//                    earliest rdiff    rdiff n           ...        latest rdiff m
+//                           |             |                              |
+//                    earliest rdiff    rdiff n           ...       latest rdiff m
 //
 //
 // How does state rollback work? For example, if Geth wants to roll back its state to the state
@@ -73,8 +73,7 @@ import (
 //           |  Destination state S  |--------->|   n   |       (Key-value store)
 //           +-----------------------+          +-------+
 //
-// The destination state here refers to the state of the parent block, the previous status
-// before executing the block.
+// The state should be rewound the destination state S after applying the reverse diff n.
 
 const reverseDiffVersion = uint64(0) // Initial version of reverse diff structure
 
@@ -162,7 +161,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	triedbReverseDiffTimeTimer.Update(duration)
 	logCtx = append(logCtx, "elapsed", common.PrettyDuration(duration))
 
-	log.Info("Stored the reverse diff", logCtx...)
+	log.Debug("Stored the reverse diff", logCtx...)
 	return nil
 }
 
@@ -214,15 +213,19 @@ func truncateFromTail(db ethdb.Database, ntail uint64) (int, error) {
 	return int(ntail - otail), nil
 }
 
-// purgeReverseDiffs deletes all the stored reverse diffs from the key-value store
-// and ancient store. Considering that some reverse diffs have been permanently
-// deleted from the ancient store and the corresponding reverse diff ids are no longer
-// available. So this function will also return the smallest available reverse diff id
-// and reset the reverse diff head id to that number.
-func purgeReverseDiffs(db ethdb.Database) (uint64, error) {
+// purge deletes all the stored reverse diffs from the key-value store
+// and ancient store. Considering that some reverse diffs have been
+// permanently deleted from the ancient store and the corresponding
+// reverse diff ids are no longer available. So this function will also
+// return the smallest available reverse diff id and reset the reverse
+// diff head id to that number.
+func purge(db ethdb.Database, readOnly bool) (uint64, error) {
 	tail, err := db.Tail(rawdb.ReverseDiffFreezer)
 	if err != nil {
 		return 0, nil // It's non-freezer database, skip it
+	}
+	if readOnly {
+		return tail, nil
 	}
 	_, err = truncateFromHead(db, tail)
 	if err != nil {
@@ -232,19 +235,15 @@ func purgeReverseDiffs(db ethdb.Database) (uint64, error) {
 	return tail, nil
 }
 
-// repairReverseDiff is called when database is constructed. It ensures reverse diff
-// history is aligned with disk layer, and truncate the extra diffs from the freezer.
-// The reverse diff id of disk layer will be returned as well.
-func repairReverseDiff(db ethdb.Database, diffid uint64) uint64 {
-	if diffid == 0 {
-		diffid = rawdb.ReadReverseDiffHead(db)
-	}
+// repair is called when database is constructed. It ensures reverse diff
+// history is aligned with disk layer, and truncate the extra diffs from
+// the freezer.
+func repair(db ethdb.Database, diffid uint64) {
 	pruned, err := truncateFromHead(db, diffid)
 	if err != nil {
 		log.Crit("Failed to truncate extra reverse diffs", "err", err)
 	}
 	if pruned != 0 {
-		log.Info("Truncated extra reverse diff", "number", pruned)
+		log.Info("Truncated extra reverse diff", "number", pruned, "head", diffid)
 	}
-	return diffid
 }

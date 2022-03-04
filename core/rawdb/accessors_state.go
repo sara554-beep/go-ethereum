@@ -126,6 +126,50 @@ func DeleteLegacyTrieNode(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
+// ReadTrieNodeSnapshot retrieves the trie node snapshot and the associated
+// node hash of the provided node key.
+func ReadTrieNodeSnapshot(db ethdb.KeyValueReader, prefix []byte, key []byte) ([]byte, common.Hash) {
+	data, err := db.Get(trieNodeSnapshotKey(prefix, key))
+	if err != nil {
+		return nil, common.Hash{}
+	}
+	return data, crypto.Keccak256Hash(data) // TODO use hasher pool to reduce allocation
+}
+
+// WriteTrieNodeSnapshot writes the provided trie node snapshot database.
+func WriteTrieNodeSnapshot(db ethdb.KeyValueWriter, prefix []byte, key []byte, node []byte) {
+	if err := db.Put(trieNodeSnapshotKey(prefix, key), node); err != nil {
+		log.Crit("Failed to store trie node snapshot", "err", err)
+	}
+}
+
+// DeleteTrieNodeSnapshot deletes the specified trie node snapshot from the
+// database.
+func DeleteTrieNodeSnapshot(db ethdb.KeyValueWriter, prefix, key []byte) {
+	if err := db.Delete(trieNodeSnapshotKey(prefix, key)); err != nil {
+		log.Crit("Failed to delete trie node snapshot", "err", err)
+	}
+}
+
+// DeleteTrieNodeSnapshots deletes all the trie node snapshots under the given
+// namespace.
+func DeleteTrieNodeSnapshots(db ethdb.KeyValueStore, prefix []byte) {
+	iter := db.NewIterator(append(TrieNodeSnapshotPrefix, prefix...), nil)
+	defer iter.Release()
+
+	batch := db.NewBatch()
+	for iter.Next() {
+		batch.Delete(iter.Key())
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				log.Crit("Failed to delete trie node snapshots", "err", err)
+			}
+			batch.Reset()
+		}
+	}
+	batch.Write()
+}
+
 // ReadReverseDiff retrieves the state reverse diff with the given associated
 // block hash and number. Because reverse diff is encoded from 1 in Geth, while
 // encoded from 0 in freezer, so do the conversion here implicitly.

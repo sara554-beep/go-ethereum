@@ -383,7 +383,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 			if !exist {
 				continue
 			}
-			rnode = node.obj(rhash)
+			rnode = node.obj()
 			delete(tr.nodes.nodes, string(rkey))
 		} else {
 			rval, _ = rawdb.ReadTrieNode(diskdb, rkey)

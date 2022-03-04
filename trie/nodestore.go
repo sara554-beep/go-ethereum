@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -26,10 +27,9 @@ import (
 
 // nodeReader wraps the necessary functions for trie to read the trie nodes
 type nodeReader interface {
-	// read retrieves the rlp-encoded trie node with given node hash and the
-	// node path. Returns the node blob if found, otherwise, an MissingNodeError
-	// error is expected.
-	read(owner common.Hash, hash common.Hash, path []byte) ([]byte, error)
+	// read retrieves the trie node with given node hash and the node path.
+	// Returns an MissingNodeError error if the node is not found
+	read(owner common.Hash, hash common.Hash, path []byte) (*cachedNode, error)
 }
 
 // snapReader is an implementation of nodeReader. It leverages the in-memory
@@ -41,36 +41,33 @@ type snapReader struct {
 // newSnapReader constructs the snapReader by given state identifier and
 // in-memory database. If the corresponding state layer can't be found,
 // return an MissingNodeError error then.
-func newSnapReader(stateRoot common.Hash, owner common.Hash, db *Database) (*snapReader, error) {
-	var snap snapshot
-	if stateRoot != (common.Hash{}) && stateRoot != emptyState {
-		ret := db.Snapshot(stateRoot)
-		if ret == nil {
-			return nil, &MissingNodeError{NodeHash: stateRoot, Owner: owner}
-		}
-		snap = ret.(snapshot)
+func newSnapReader(stateRoot common.Hash, owner common.Hash, db StateReader) (*snapReader, error) {
+	if stateRoot == (common.Hash{}) || stateRoot == emptyState {
+		return nil, nil
 	}
-	return &snapReader{snap: snap}, nil
+	snap := db.Snapshot(stateRoot)
+	if snap == nil {
+		return nil, &MissingNodeError{NodeHash: stateRoot, Owner: owner}
+	}
+	return &snapReader{snap: snap.(snapshot)}, nil
 }
 
 // read retrieves the rlp-encoded trie node with given node hash and the
 // node path. Returns the node blob if found, otherwise, an MissingNodeError
 // error is expected.
-func (s *snapReader) read(owner common.Hash, hash common.Hash, path []byte) ([]byte, error) {
-	blob, err := s.snap.NodeBlob(EncodeStorageKey(owner, path), hash)
-	if err != nil {
+func (s *snapReader) read(owner common.Hash, hash common.Hash, path []byte) (*cachedNode, error) {
+	node, err := s.snap.Node(EncodeStorageKey(owner, path), hash)
+	if err != nil || node == nil {
 		return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path, err: err}
 	}
-	if len(blob) > 0 {
-		return blob, nil
-	}
-	return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
+	return node, nil
 }
 
 // hashReader is an implementation of nodeReader. It's the legacy version
 // trie node reader which resolves the node by its hash.
 type hashReader struct {
 	db ethdb.Database
+	// todo(rjl493456442) tiny cache can help a lot
 }
 
 // newHashReader constructs the hashReader with the given raw database.
@@ -80,10 +77,10 @@ func newHashReader(db ethdb.Database) *hashReader {
 
 // read retrieves the rlp-encoded trie node with given node hash. Returns
 // the node blob if found, otherwise, an MissingNodeError error is expected.
-func (h *hashReader) read(owner common.Hash, hash common.Hash, path []byte) ([]byte, error) {
+func (h *hashReader) read(owner common.Hash, hash common.Hash, path []byte) (*cachedNode, error) {
 	blob := rawdb.ReadLegacyTrieNode(h.db, hash)
 	if len(blob) != 0 {
-		return blob, nil
+		return &cachedNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
 	}
 	return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
 }
@@ -94,60 +91,64 @@ func (h *hashReader) read(owner common.Hash, hash common.Hash, path []byte) ([]b
 type nodeStore struct {
 	reader nodeReader
 	nodes  map[string]*cachedNode
-	origin map[string][]byte
 	lock   sync.RWMutex
 }
 
-// read retrieves the rlp-encoded trie node with given node hash and the
-// node path. Returns the node blob if found, otherwise, an MissingNodeError
-// error is expected.
-func (s *nodeStore) read(owner common.Hash, hash common.Hash, path []byte) ([]byte, error) {
+// read retrieves the trie node with given node hash and the node path.
+// Returns an MissingNodeError error if the node is not found.
+func (s *nodeStore) read(owner common.Hash, hash common.Hash, path []byte) (*cachedNode, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
 	// Load the node from the cached dirty node set first
 	storage := string(EncodeStorageKey(owner, path))
-	n, exist := s.nodes[storage]
-	if exist && n.hash == hash {
-		return n.rlp(), nil
+	n, ok := s.nodes[storage]
+	if ok {
+		// If the trie node is not hash matched, or marked as removed,
+		// bubble up an error here. It shouldn't happen at all.
+		if n.hash != hash {
+			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
+		}
+		return n, nil
 	}
 	// Load the node from the underlying node reader then
-	blob, err := s.reader.read(owner, hash, path)
+	if s.reader == nil {
+		return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
+	}
+	n, err := s.reader.read(owner, hash, path)
 	if err != nil {
 		return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path, err: err}
 	}
-	if len(blob) == 0 {
-		return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
-	}
-	s.origin[storage] = blob
-	return blob, nil
+	return n, nil
 }
 
-// readPrev retrieves the trie node blob with given node storage key.
-// It holds the assumption that the node with specified path must
-// already be loaded from the underlying reader and cached internally.
-// It's used to load the previous value of the node.
-func (s *nodeStore) readPrev(storage string) []byte {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+// readNode retrieves the node in canonical representation.
+func (s *nodeStore) readNode(owner common.Hash, hash common.Hash, path []byte) (node, error) {
+	node, err := s.read(owner, hash, path)
+	if err != nil {
+		return nil, err
+	}
+	return node.obj(), nil
+}
 
-	return s.origin[storage]
+// readBlob retrieves the node in rlp-encoded representation.
+func (s *nodeStore) readBlob(owner common.Hash, hash common.Hash, path []byte) ([]byte, error) {
+	node, err := s.read(owner, hash, path)
+	if err != nil {
+		return nil, err
+	}
+	return node.rlp(), nil
 }
 
 // commit accepts a batch of newly modified nodes and caches them in
 // the local set. It happens after each commit operation.
-func (s *nodeStore) commit(nodes *nodeSet) {
+func (s *nodeStore) commit(nodes map[string]*cachedNode) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	nodes.forEach(func(storage string, n *cachedNode) {
-		s.nodes[storage] = n
-		if n.node == nil {
-			delete(s.origin, storage)
-		} else {
-			s.origin[storage] = n.rlp()
-		}
-	})
+	for key, node := range nodes {
+		s.nodes[key] = node
+	}
 }
 
 // copy deep copies the nodeStore and returns an independent handler but
@@ -160,20 +161,15 @@ func (s *nodeStore) copy() *nodeStore {
 	for k, n := range s.nodes {
 		nodes[k] = n
 	}
-	origin := make(map[string][]byte)
-	for k, blob := range s.origin {
-		origin[k] = blob
-	}
 	return &nodeStore{
 		reader: s.reader,
 		nodes:  nodes,
-		origin: origin,
 	}
 }
 
 // newSnapStore initializes the snap based nodeStore with the given multilayer
 // trie nodes and the corresponding state identifier.
-func newSnapStore(stateRoot common.Hash, owner common.Hash, db *Database) (*nodeStore, error) {
+func newSnapStore(stateRoot common.Hash, owner common.Hash, db StateReader) (*nodeStore, error) {
 	reader, err := newSnapReader(stateRoot, owner, db)
 	if err != nil {
 		return nil, err
@@ -181,7 +177,6 @@ func newSnapStore(stateRoot common.Hash, owner common.Hash, db *Database) (*node
 	return &nodeStore{
 		reader: reader,
 		nodes:  make(map[string]*cachedNode),
-		origin: make(map[string][]byte),
 	}, nil
 }
 
@@ -190,6 +185,5 @@ func newHashStore(db ethdb.Database) *nodeStore {
 	return &nodeStore{
 		reader: newHashReader(db),
 		nodes:  make(map[string]*cachedNode),
-		origin: make(map[string][]byte),
 	}
 }

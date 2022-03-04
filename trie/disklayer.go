@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
@@ -86,8 +87,11 @@ func (dl *diskLayer) MarkStale() {
 }
 
 // Node retrieves the trie node associated with a particular key.
-func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
-	if dl.Stale() {
+func (dl *diskLayer) Node(storage []byte, hash common.Hash) (*cachedNode, error) {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if dl.stale {
 		return nil, errSnapshotStale
 	}
 	// Try to retrieve the trie node from the dirty memory cache.
@@ -109,7 +113,7 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 		if blob, found := dl.clean.HasGet(nil, ikey); found && len(blob) > 0 {
 			triedbCleanHitMeter.Mark(1)
 			triedbCleanReadMeter.Mark(int64(len(blob)))
-			return mustDecodeNode(hash.Bytes(), blob), nil
+			return &cachedNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
 		}
 		triedbCleanMissMeter.Mark(1)
 	}
@@ -127,56 +131,22 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 		triedbCleanWriteMeter.Mark(int64(len(blob)))
 	}
 	if len(blob) > 0 {
-		return mustDecodeNode(hash.Bytes(), blob), nil
+		return &cachedNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
 	}
 	return nil, nil
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.
 func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
-	if dl.Stale() {
-		return nil, errSnapshotStale
-	}
-	// Try to retrieve the trie node from the dirty memory cache.
-	// The map is lock free since it's impossible to mutate the
-	// disk layer before tagging it as stale.
-	blob, err := dl.dirty.nodeBlob(storage, hash)
+	n, err := dl.Node(storage, hash)
 	if err != nil {
 		return nil, err
 	}
-	if len(blob) != 0 {
-		return blob, nil
+	var blob []byte
+	if n != nil {
+		blob = n.rlp()
 	}
-	// If we're in the disk layer, all diff layers missed
-	triedbDirtyMissMeter.Mark(1)
-
-	// Try to retrieve the trie node from the memory cache
-	ikey := EncodeInternalKey(storage, hash)
-	if dl.clean != nil {
-		if blob, found := dl.clean.HasGet(nil, ikey); found && len(blob) > 0 {
-			triedbCleanHitMeter.Mark(1)
-			triedbCleanReadMeter.Mark(int64(len(blob)))
-			return blob, nil
-		}
-		triedbCleanMissMeter.Mark(1)
-	}
-	// Try to retrieve the trie node from the disk.
-	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, storage)
-	if len(blob) == 0 || nodeHash != hash {
-		blob = rawdb.ReadLegacyTrieNode(dl.diskdb, hash)
-		if len(blob) != 0 {
-			triedbFallbackHitMeter.Mark(1)
-			triedbFallbackReadMeter.Mark(int64(len(blob)))
-		}
-	}
-	if dl.clean != nil && len(blob) > 0 {
-		dl.clean.Set(ikey, blob)
-		triedbCleanWriteMeter.Mark(int64(len(blob)))
-	}
-	if len(blob) > 0 {
-		return blob, nil
-	}
-	return nil, nil
+	return blob, nil
 }
 
 // Update returns a new diff layer on top with the given dirty node set.
@@ -186,17 +156,27 @@ func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*
 
 // commit merges the given bottom-most diff layer into the local cache
 // and returns a newly constructed disk layer. Note the current disk
-// layer must be tagged as stale first to prevent access anymore.
+// layer must be tagged as stale first to prevent re-access.
 func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
-	// Mark the diskLayer as stale before applying any mutations on top.
-	dl.MarkStale()
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
 
+	// Mark the diskLayer as stale before applying any mutations on top.
+	dl.stale = true
+
+	// Construct and store the reverse diff firstly. If crash happens
+	// after storing the reverse diff but without flushing the corresponding
+	// states(journal), the stored reverse diff will be truncated in
+	// the next restart.
+	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
+		return nil, err
+	}
 	// Drop the unneeded previous value to reduce memory usage.
 	slim := make(map[string]*cachedNode)
 	for key, n := range bottom.nodes {
 		slim[key] = n.unwrap()
 	}
-	ndl := newDiskLayer(bottom.root, bottom.diffid, dl.clean, dl.dirty.update(slim), dl.diskdb)
+	ndl := newDiskLayer(bottom.root, bottom.diffid, dl.clean, dl.dirty.commit(slim), dl.diskdb)
 	if err := ndl.dirty.flush(ndl.diskdb, ndl.clean, ndl.diffid, force); err != nil {
 		return nil, err
 	}
@@ -220,10 +200,13 @@ func (dl *diskLayer) revert(diff *reverseDiff, diffid uint64) (*diskLayer, error
 		return nil, fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
 	}
 	// Mark the diskLayer as stale before applying any mutations on top.
-	dl.MarkStale()
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	dl.stale = true
 
 	switch {
-	case dl.dirty.seq == 0:
+	case dl.dirty.empty():
 		// The disk cache is empty, applies the state reverting
 		// on disk directly. The assumption should be held in
 		// this case the dirty cache must be empty.
@@ -241,25 +224,19 @@ func (dl *diskLayer) revert(diff *reverseDiff, diffid uint64) (*diskLayer, error
 		}
 		batch.Reset()
 
-	case dl.dirty.seq == 1:
-		// There is only one state transition left in the disk
-		// cache, nuke out the cache entirely for reverting.
-		dl.dirty.reset()
-
 	default:
 		// Revert embedded state in the disk set.
 		if err := dl.dirty.revert(diff); err != nil {
 			return nil, err
 		}
 	}
-	// Recreate the disk layer with newly created clean cache
-	if dl.clean != nil {
-		dl.clean.Reset()
-	}
 	return newDiskLayer(diff.Parent, dl.diffid-1, dl.clean, dl.dirty, dl.diskdb), nil
 }
 
 // size returns the approximate size of cached nodes in the disk layer.
 func (dl *diskLayer) size() common.StorageSize {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
 	return common.StorageSize(dl.dirty.size)
 }

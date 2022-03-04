@@ -74,7 +74,7 @@ type Trie struct {
 
 	// tracer is the state diff tracer can ba used to track newly added/deleted
 	// trie node. It will be reset after each commit operation.
-	tracer *tracer
+	tracer *prevTracer
 }
 
 // newFlag returns the cache flag value for a newly created node.
@@ -93,40 +93,49 @@ func (t *Trie) Copy() *Trie {
 	}
 }
 
-// finalize submits the state changes to the global state tracer and converts
+// finalize submits the state changes to the global state prevTracer and converts
 // the state diff since the last commit to a result object.
-func (t *Trie) finalize(root common.Hash, committed *nodeSet, embedded [][]byte) (*CommitResult, error) {
-	// Retrieve the pre-value of modified nodes first
-	var prev = make(map[string][]byte)
-
+func (t *Trie) finalize(root common.Hash, nodes map[string]*cachedNode, internal [][]byte) (*CommitResult, error) {
+	if nodes == nil {
+		nodes = make(map[string]*cachedNode)
+	}
 	// Iterate the deleted node list, mark them as deleted in the final
 	// committed set if the previous value is not nil. The special case
 	// here is the deleted node can an embedded node before, so just
 	// ignore the node as noop.
 	for _, key := range t.tracer.deleteList() {
-		if t.nodes.readPrev(string(key)) != nil {
-			committed.put(key, nil, 0, common.Hash{})
+		if t.tracer.getPrev(key) != nil {
+			nodes[string(key)] = &cachedNode{
+				node: nil,
+				hash: common.Hash{},
+				size: 0,
+			}
 		}
 	}
 	// Iterate the embedded node list, mark them as deleted in the final
 	// committed set if the previous value is not nil. The embedded node
 	// is equivalent to deleted node in the database.
-	for _, key := range embedded {
-		if t.nodes.readPrev(string(key)) != nil {
-			committed.put(key, nil, 0, common.Hash{})
+	for _, key := range internal {
+		if t.tracer.getPrev(key) != nil {
+			nodes[string(key)] = &cachedNode{
+				node: nil,
+				hash: common.Hash{},
+				size: 0,
+			}
 		}
 	}
-	// Retrieve the previous value of nodes from the nodeStore.
-	committed.forEach(func(key string, node *cachedNode) {
-		prev[key] = t.nodes.readPrev(key)
-	})
-	// Commit the node changes to the nodeStore and reset the diff tracer.
-	t.nodes.commit(committed)
+	// Retrieve the pre-value of modified nodes first
+	var origin = make(map[string][]byte)
+	for key := range nodes {
+		origin[key] = t.tracer.getPrev([]byte(key))
+	}
+	// Commit the node changes to the nodeStore and reset the tracer.
 	t.tracer.reset()
+	t.nodes.commit(nodes)
 	return &CommitResult{
 		Root:   root,
-		Dirty:  committed,
-		Origin: prev,
+		nodes:  nodes,
+		origin: origin,
 	}, nil
 }
 
@@ -136,8 +145,12 @@ func (t *Trie) finalize(root common.Hash, committed *nodeSet, embedded [][]byte)
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func New(root common.Hash, db *Database) (*Trie, error) {
-	return newTrie(root, common.Hash{}, root, db, nil)
+func New(root common.Hash, db StateReader) (*Trie, error) {
+	store, err := newSnapStore(root, common.Hash{}, db)
+	if err != nil {
+		return nil, err
+	}
+	return newTrie(common.Hash{}, root, store)
 }
 
 // NewWithOwner creates a trie with an existing root node from db and an assigned
@@ -147,29 +160,26 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
-	return newTrie(stateRoot, owner, root, db, nil)
+func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db StateReader) (*Trie, error) {
+	store, err := newSnapStore(stateRoot, owner, db)
+	if err != nil {
+		return nil, err
+	}
+	return newTrie(owner, root, store)
 }
 
 // NewWithHashStore creates a trie with the hash based node store.
 func NewWithHashStore(owner common.Hash, root common.Hash, db ethdb.Database) (*Trie, error) {
-	return newTrie(common.Hash{}, owner, root, nil, newHashStore(db))
+	return newTrie(owner, root, newHashStore(db))
 }
 
 // newTrie is the internal function used to construct the trie with given parameters.
 // The node reader can either be constructed with the given database or passed directly.
-func newTrie(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database, store *nodeStore) (*Trie, error) {
-	if store == nil {
-		var err error
-		store, err = newSnapStore(stateRoot, owner, db)
-		if err != nil {
-			return nil, err
-		}
-	}
+func newTrie(owner common.Hash, root common.Hash, store *nodeStore) (*Trie, error) {
 	trie := &Trie{
 		owner:  owner,
 		nodes:  store,
-		tracer: newTracer(),
+		tracer: newPrevTracer(),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
@@ -280,7 +290,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.nodes.read(t.owner, common.BytesToHash(hash), path)
+		blob, err := t.nodes.readBlob(t.owner, common.BytesToHash(hash), path)
 		if err == nil {
 			return blob, origNode, 1, nil
 		}
@@ -604,33 +614,16 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 }
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	// It's possible in testing. TODO(rjl493456442) get rid of it.
+	// todo get rid of it.
 	if t.nodes == nil {
 		return nil, nil
 	}
-	// It's better to use `read` for retrieving the node instead of the RLP-encode
-	// blob. However, it's much easier to use `readBlob` if the node pre-value is
-	// required to be recorded. TODO(rjl493456442) improve it.
-	blob, err := t.nodes.read(t.owner, common.BytesToHash(n), prefix)
+	node, err := t.nodes.read(t.owner, common.BytesToHash(n), prefix)
 	if err != nil {
 		return nil, err
 	}
-	return mustDecodeNode(n, blob), nil
-}
-
-func (t *Trie) resolveBlob(n hashNode, prefix []byte) ([]byte, error) {
-	// It's possible in testing. TODO(rjl493456442) get rid of it.
-	if t.nodes == nil {
-		return nil, nil
-	}
-	// It's better to use `read` for retrieving the node instead of the RLP-encode
-	// blob. However, it's much easier to use `readBlob` if the node pre-value is
-	// required to be recorded. TODO(rjl493456442) improve it.
-	blob, err := t.nodes.read(t.owner, common.BytesToHash(n), prefix)
-	if err != nil {
-		return nil, err
-	}
-	return blob, nil
+	t.tracer.onRead(EncodeStorageKey(t.owner, prefix), node.rlp())
+	return node.obj(), nil
 }
 
 // Hash returns the root hash of the trie. It does not write to the
@@ -645,7 +638,7 @@ func (t *Trie) Hash() common.Hash {
 // and external (for account tries) references.
 func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	if t.root == nil {
-		return t.finalize(emptyRoot, newNodeSet(), nil)
+		return t.finalize(emptyRoot, nil, nil)
 	}
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
@@ -658,8 +651,11 @@ func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	// Do a quick check if we really need to commit, before we spin
 	// up goroutines. This can happen e.g. if we load a trie for
 	// reading storage values, but don't write to it.
-	if _, dirty := t.root.cache(); !dirty {
-		return t.finalize(rootHash, newNodeSet(), nil)
+	if hashedNode, dirty := t.root.cache(); !dirty {
+		// Replace the root node with the origin hash in order to
+		// ensure all resolved nodes are dropped after the commit.
+		t.root = hashedNode
+		return t.finalize(rootHash, nil, nil)
 	}
 	var wg sync.WaitGroup
 	if onleaf != nil {
@@ -683,7 +679,7 @@ func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 		return nil, err
 	}
 	t.root = newRoot
-	return t.finalize(rootHash, h.committed, h.embedded)
+	return t.finalize(rootHash, h.nodes, h.internal)
 }
 
 // hashRoot calculates the root hash of the given trie

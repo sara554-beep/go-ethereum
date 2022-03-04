@@ -90,12 +90,13 @@ var (
 	blockBodyPrefix     = []byte("b") // blockBodyPrefix + num (uint64 big endian) + hash -> block body
 	blockReceiptsPrefix = []byte("r") // blockReceiptsPrefix + num (uint64 big endian) + hash -> block receipts
 
-	txLookupPrefix        = []byte("l") // txLookupPrefix + hash -> transaction/receipt lookup metadata
-	bloomBitsPrefix       = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
-	SnapshotAccountPrefix = []byte("a") // SnapshotAccountPrefix + account hash -> account trie value
-	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
-	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
-	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
+	txLookupPrefix         = []byte("l") // txLookupPrefix + hash -> transaction/receipt lookup metadata
+	bloomBitsPrefix        = []byte("B") // bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash -> bloom bits
+	SnapshotAccountPrefix  = []byte("a") // SnapshotAccountPrefix + account hash -> account trie value
+	SnapshotStoragePrefix  = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
+	CodePrefix             = []byte("c") // CodePrefix + code hash -> account code
+	TrieNodePrefix         = []byte("w") // TrieNodePrefix + node path -> trie node
+	TrieNodeSnapshotPrefix = []byte("W") // TrieNodeSnapshotPrefix + node path -> trie node
 
 	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
 	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
@@ -264,6 +265,11 @@ func IsCodeKey(key []byte) (bool, []byte) {
 // trieNodeKey = TrieNodePrefix + encoded node key
 func trieNodeKey(key []byte) []byte {
 	return append(TrieNodePrefix, key...)
+}
+
+// trieNodeSnapshotKey = TrieNodeSnapshotPrefix + prefix + encoded node key
+func trieNodeSnapshotKey(key []byte, prefix []byte) []byte {
+	return append(append(TrieNodeSnapshotPrefix, prefix...), key...)
 }
 
 // IsTrieNodeKey reports whether the given byte slice is the key of trie node.

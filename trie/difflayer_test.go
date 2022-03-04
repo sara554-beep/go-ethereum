@@ -138,12 +138,12 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		target     []byte
 		targetHash common.Hash
 	)
-	result.Dirty.forEach(func(storage string, node *cachedNode) {
-		if target == nil {
-			target = []byte(storage)
-			targetHash = node.hash
-		}
-	})
+	result.lock.RLock()
+	for k, n := range result.nodes {
+		target, targetHash = []byte(k), n.hash
+		break
+	}
+	result.lock.RUnlock()
 	layer := db.Snapshot(result.Root).(snapshot)
 
 	b.ResetTimer()

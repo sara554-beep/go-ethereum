@@ -277,7 +277,7 @@ func TestPurgeReverseDiffs(t *testing.T) {
 		}
 
 		// Purge all the reverse diffs stored, ensure nothing left
-		newHead, err := purgeReverseDiffs(db)
+		newHead, err := purge(db, false)
 		if err != nil {
 			t.Fatalf("Failed to purge reverse diff %v", err)
 		}
@@ -338,10 +338,7 @@ func TestRepairReverseDiff(t *testing.T) {
 		defer teardown()
 
 		// Block9's root.
-		diffid := repairReverseDiff(db, 9)
-		if diffid != uint64(9) {
-			t.Fatalf("Unexpected reverse diff head %d", diffid)
-		}
+		repair(db, 9)
 		assertReverseDiffInRange(t, db, uint64(1), uint64(9), true)
 		assertReverseDiff(t, db, uint64(10), false)
 	})
@@ -354,10 +351,7 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, _, teardown := setup()
 		defer teardown()
 
-		diffid := repairReverseDiff(db, 10)
-		if diffid != uint64(10) {
-			t.Fatalf("Unexpected reverse diff head %d", diffid)
-		}
+		repair(db, 10)
 		assertReverseDiffInRange(t, db, uint64(1), uint64(10), true)
 	})
 }

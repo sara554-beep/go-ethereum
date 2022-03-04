@@ -49,7 +49,7 @@ type journalNode struct {
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
-func loadJournal(disk ethdb.Database, diskRoot common.Hash, cleans *fastcache.Cache) (snapshot, error) {
+func loadJournal(disk ethdb.Database, diskRoot common.Hash, cleans *fastcache.Cache, readOnly bool) (snapshot, error) {
 	journal := rawdb.ReadTrieJournal(disk)
 	if len(journal) == 0 {
 		return nil, errMissJournal
@@ -71,13 +71,13 @@ func loadJournal(disk ethdb.Database, diskRoot common.Hash, cleans *fastcache.Ca
 	if err := r.Decode(&root); err != nil {
 		return nil, errMissDiskRoot
 	}
-	// The diff journal is not matched with disk, discard them. It can
-	// happen that Geth crashes without persisting the latest diff journal.
+	// The journal is not matched with disk state, discard them. It can
+	// happen that Geth crashes without persisting the journal properly.
 	if !bytes.Equal(root.Bytes(), diskRoot.Bytes()) {
 		return nil, fmt.Errorf("%w want %x got %x", errUnmatchedJournal, root, diskRoot)
 	}
 	// Load the disk layer from the journal
-	base, err := loadDiskLayer(r, cleans, disk)
+	base, err := loadDiskLayer(r, cleans, disk, readOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,8 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config
 		root = emptyRoot
 	}
 	// Load the in-memory diff layers by resolving the journal
-	snap, err := loadJournal(diskdb, root, cleans)
+	readOnly := config != nil && config.ReadOnly
+	snap, err := loadJournal(diskdb, root, cleans, readOnly)
 	if err != nil {
 		// Print the log for missing trie node journal, but try to avoid
 		// showing useless information when the db is created from scratch.
@@ -114,21 +115,25 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config
 					root = base
 				}
 			}
-			diffHead, err := purgeReverseDiffs(diskdb)
+			diffHead, err := purge(diskdb, readOnly)
 			if err != nil {
 				log.Crit("Failed to purge reverse diffs", "err", err)
 			}
 			return newDiskLayer(root, diffHead, cleans, newDiskcache(nil, 0), diskdb)
 		}
 		// Journal is not usable, construct the snaptree with in-disk content.
-		return newDiskLayer(root, repairReverseDiff(diskdb, 0), cleans, newDiskcache(nil, 0), diskdb)
+		diffid := rawdb.ReadReverseDiffHead(diskdb)
+		if !readOnly {
+			repair(diskdb, diffid)
+		}
+		return newDiskLayer(root, diffid, cleans, newDiskcache(nil, 0), diskdb)
 	}
 	return snap
 }
 
 // loadDiskLayer reads the binary blob from the snapshot journal, reconstructing a new
 // disk layer on it.
-func loadDiskLayer(r *rlp.Stream, clean *fastcache.Cache, disk ethdb.Database) (snapshot, error) {
+func loadDiskLayer(r *rlp.Stream, clean *fastcache.Cache, disk ethdb.Database, readOnly bool) (snapshot, error) {
 	// Resolve disk layer root
 	var root common.Hash
 	if err := r.Decode(&root); err != nil {
@@ -160,8 +165,14 @@ func loadDiskLayer(r *rlp.Stream, clean *fastcache.Cache, disk ethdb.Database) (
 	if err := r.Decode(&diffid); err != nil {
 		return nil, fmt.Errorf("load reverse diff id: %v", err)
 	}
-	head := rawdb.ReadReverseDiffHead(disk)
-	base := newDiskLayer(root, repairReverseDiff(disk, diffid), clean, newDiskcache(nodes, diffid-head), disk)
+	// Truncate extra reverse diffs on top. It can happen the reverse
+	// diffs are persisted while the journal is not.
+	if !readOnly {
+		repair(disk, diffid)
+	}
+	// Calculate the internal state transitions by id difference.
+	seq := diffid - rawdb.ReadReverseDiffHead(disk)
+	base := newDiskLayer(root, diffid, clean, newDiskcache(nodes, seq), disk)
 	return base, nil
 }
 
@@ -213,9 +224,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	if dl.Stale() {
 		return errSnapshotStale
 	}
-	// Step one, write the disk root into the journal. In fact, the
-	// disk root here refers to the root of the uncommitted dirty node
-	// in the disk layer.
+	// Step one, write the disk root into the journal.
 	diskroot := dl.root
 	if diskroot == (common.Hash{}) {
 		return errors.New("invalid disk root in triedb")

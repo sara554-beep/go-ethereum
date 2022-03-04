@@ -91,7 +91,7 @@ func (db *odrDatabase) ContractCodeSize(addrHash, codeHash common.Hash) (int, er
 	return len(code), err
 }
 
-func (db *odrDatabase) TrieDB() *trie.Database {
+func (db *odrDatabase) TrieDB() trie.StateDatabase {
 	return nil
 }
 
