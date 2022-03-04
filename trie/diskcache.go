@@ -91,39 +91,42 @@ func (cache *diskcache) nodeBlob(storage []byte, hash common.Hash) ([]byte, erro
 	return nil, nil
 }
 
-// update merges the given dirty nodes into the cache, and bump seq as well
-// to complete the state transition. It should only happen at block level.
-func (cache *diskcache) update(nodes map[string]*cachedNode) *diskcache {
-	var (
-		prev uint64
-		size int64
-	)
+// commit merges the given dirty nodes into the cache and bumps seq as well
+// to complete the state transition.
+func (cache *diskcache) commit(nodes map[string]*cachedNode) *diskcache {
 	cache.seq += 1
 
-	for storage, n := range nodes {
+	var size int64
+	for storage, node := range nodes {
 		if orig, exist := cache.nodes[storage]; exist {
-			size += int64(n.size) - int64(orig.size)
+			size += int64(node.size) - int64(orig.size)
 		} else {
-			size += int64(int(n.size) + len(storage) + cachedNodeSize)
+			size += int64(int(node.size) + len(storage) + cachedNodeSize)
 		}
-		cache.nodes[storage] = n
+		cache.nodes[storage] = node
 	}
 	if final := int64(cache.size) + size; final > 0 {
 		cache.size = uint64(final)
 	} else {
-		prev, cache.size = cache.size, 0
-		log.Error("Negative disk cache size", "previous", common.StorageSize(prev), "diff", common.StorageSize(size))
+		log.Error("Negative disk cache size", "previous", common.StorageSize(cache.size), "diff", common.StorageSize(size))
+		cache.size = 0
 	}
 	return cache
 }
 
-// revert applies the reverse diff to the local dirty node set. This function
+// revert applies the reverse diff to the local dirty node set.
 func (cache *diskcache) revert(diff *reverseDiff) error {
 	if cache.seq == 0 {
 		return errors.New("diskcache is unrecoverable")
 	}
 	cache.seq -= 1
 
+	// If all the embedded state transitions are reverted,
+	// reset the dirty cache entirely.
+	if cache.seq == 0 {
+		cache.reset()
+		return nil
+	}
 	for _, state := range diff.States {
 		_, ok := cache.nodes[string(state.Key)]
 		if !ok {
@@ -153,6 +156,18 @@ func (cache *diskcache) reset() {
 	cache.seq = 0
 	cache.nodes = make(map[string]*cachedNode)
 	cache.size = 0
+}
+
+// empty returns an indicator if diskcache contains any state transition inside.
+func (cache *diskcache) empty() bool {
+	return cache.seq == 0
+}
+
+// forEach iterates all the cached nodes and applies the given callback on them
+func (cache *diskcache) forEach(callback func(key string, node *cachedNode)) {
+	for storage, n := range cache.nodes {
+		callback(storage, n)
+	}
 }
 
 // flush persists the in-memory dirty trie node into the disk if the predefined

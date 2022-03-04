@@ -22,7 +22,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
 )
 
 // diffLayer represents a collection of modifications made to the in-memory tries
@@ -34,7 +33,7 @@ type diffLayer struct {
 	// Immutables
 	root   common.Hash                  // Root hash to which this snapshot diff belongs to
 	diffid uint64                       // Corresponding reverse diff id
-	nodes  map[string]*nodeWithPreValue // Keyed trie nodes for retrieval, indexed by storage key
+	nodes  map[string]*nodeWithPreValue // Keyed trie nodes for retrieval
 	memory uint64                       // Approximate guess as to how much memory we use
 
 	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
@@ -120,7 +119,7 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, er
 	n, ok := dl.nodes[string(storage)]
 	if ok {
 		// If the trie node is not hash matched, or marked as removed,
-		// panic here. It shouldn't happen at all.
+		// bubble up an error here. It shouldn't happen at all.
 		if n.node == nil || n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
 			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
@@ -158,7 +157,7 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 	n, ok := dl.nodes[string(storage)]
 	if ok {
 		// If the trie node is not hash matched, or marked as removed,
-		// panic here. It shouldn't happen at all.
+		// bubble up an error here. It shouldn't happen at all.
 		if n.node == nil || n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
 			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
@@ -205,16 +204,14 @@ func (dl *diffLayer) persist(force bool) (snapshot, error) {
 }
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
-// it. The method will panic if called onto a non-bottom-most diff layer. The disk
-// layer persistence should be operated in an atomic way. All updates should be
-// discarded if the whole transition if not finished.
-func diffToDisk(bottom *diffLayer, force bool) (*diskLayer, error) {
-	// Construct and store the reverse diff firstly. If crash happens
-	// after storing the reverse diff but without flushing the corresponding
-	// states(journal), the stored reverse diff will be truncated in
-	// the next restart.
-	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
-		return nil, err
+// it. The method will panic if called onto a non-bottom-most diff layer.
+func diffToDisk(bottom *diffLayer, force bool) (snapshot, error) {
+	switch layer := bottom.Parent().(type) {
+	case *diskLayer:
+		return layer.commit(bottom, force)
+	case *diskLayerSnapshot:
+		return layer.commit(bottom)
+	default:
+		panic(fmt.Sprintf("unknown layer type: %T", layer))
 	}
-	return bottom.Parent().(*diskLayer).commit(bottom, force)
 }

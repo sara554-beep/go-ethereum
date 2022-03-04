@@ -104,7 +104,7 @@ func (t *Trie) finalize(root common.Hash, committed *nodeSet, embedded [][]byte)
 	// here is the deleted node can an embedded node before, so just
 	// ignore the node as noop.
 	for _, key := range t.tracer.deleteList() {
-		if t.nodes.readPrev(string(key)) != nil {
+		if t.nodes.readByPath(string(key)) != nil {
 			committed.put(key, nil, 0, common.Hash{})
 		}
 	}
@@ -112,13 +112,13 @@ func (t *Trie) finalize(root common.Hash, committed *nodeSet, embedded [][]byte)
 	// committed set if the previous value is not nil. The embedded node
 	// is equivalent to deleted node in the database.
 	for _, key := range embedded {
-		if t.nodes.readPrev(string(key)) != nil {
+		if t.nodes.readByPath(string(key)) != nil {
 			committed.put(key, nil, 0, common.Hash{})
 		}
 	}
 	// Retrieve the previous value of nodes from the nodeStore.
 	committed.forEach(func(key string, node *cachedNode) {
-		prev[key] = t.nodes.readPrev(key)
+		prev[key] = t.nodes.readByPath(key)
 	})
 	// Commit the node changes to the nodeStore and reset the diff tracer.
 	t.nodes.commit(committed)
@@ -136,8 +136,12 @@ func (t *Trie) finalize(root common.Hash, committed *nodeSet, embedded [][]byte)
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func New(root common.Hash, db *Database) (*Trie, error) {
-	return newTrie(root, common.Hash{}, root, db, nil)
+func New(root common.Hash, db StateReader) (*Trie, error) {
+	store, err := newSnapStore(root, common.Hash{}, db)
+	if err != nil {
+		return nil, err
+	}
+	return newTrie(common.Hash{}, root, store)
 }
 
 // NewWithOwner creates a trie with an existing root node from db and an assigned
@@ -147,25 +151,22 @@ func New(root common.Hash, db *Database) (*Trie, error) {
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
-	return newTrie(stateRoot, owner, root, db, nil)
+func NewWithOwner(stateRoot common.Hash, owner common.Hash, root common.Hash, db StateReader) (*Trie, error) {
+	store, err := newSnapStore(stateRoot, owner, db)
+	if err != nil {
+		return nil, err
+	}
+	return newTrie(owner, root, store)
 }
 
 // NewWithHashStore creates a trie with the hash based node store.
 func NewWithHashStore(owner common.Hash, root common.Hash, db ethdb.Database) (*Trie, error) {
-	return newTrie(common.Hash{}, owner, root, nil, newHashStore(db))
+	return newTrie(owner, root, newHashStore(db))
 }
 
 // newTrie is the internal function used to construct the trie with given parameters.
 // The node reader can either be constructed with the given database or passed directly.
-func newTrie(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database, store *nodeStore) (*Trie, error) {
-	if store == nil {
-		var err error
-		store, err = newSnapStore(stateRoot, owner, db)
-		if err != nil {
-			return nil, err
-		}
-	}
+func newTrie(owner common.Hash, root common.Hash, store *nodeStore) (*Trie, error) {
 	trie := &Trie{
 		owner:  owner,
 		nodes:  store,

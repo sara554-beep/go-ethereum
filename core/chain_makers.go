@@ -18,6 +18,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -294,13 +295,14 @@ func generateChain(config *params.ChainConfig, parent *types.Block, engine conse
 // values. Inserting them into BlockChain requires use of FakePow or
 // a similar non-validating proof of work implementation.
 func GenerateChain(config *params.ChainConfig, parent *types.Block, engine consensus.Engine, db ethdb.Database, n int, gen func(int, *BlockGen)) ([]*types.Block, []types.Receipts) {
-	sdb := state.NewDatabase(db)
+	triedb := trie.NewDatabase(db, nil)
+	sdb := state.NewLiveDatabase(triedb)
 	blocks, receipts := generateChain(config, parent, engine, sdb, n, gen)
 	if len(blocks) == 0 {
 		return nil, nil
 	}
 	// Commit the state changes into the underlying database.
-	sdb.TrieDB().Cap(blocks[len(blocks)-1].Root(), 0)
+	triedb.Cap(blocks[len(blocks)-1].Root(), 0)
 	return blocks, receipts
 }
 

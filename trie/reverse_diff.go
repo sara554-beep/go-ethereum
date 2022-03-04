@@ -44,12 +44,12 @@ import (
 // diffs according to config.
 //
 //                                    block of disk state    block of disk layer    block of diff layer
-//                                         /                             /                 /
+//                                         /                              /                /
 //    +--------------+--------------+--------------+--------------+----------------+--------------+
 //    |   block 1    |      ...     |    block n   |      ...     |     block m    |  block m+1   |
 //    +--------------+--------------+--------------+--------------+----------------+--------------+
-//                           |             |                               |
-//                    earliest rdiff    rdiff n           ...        latest rdiff m
+//                           |             |                              |
+//                    earliest rdiff    rdiff n           ...       latest rdiff m
 //
 //
 // How does state rollback work? For example, if Geth wants to roll back its state to the state
@@ -162,7 +162,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	triedbReverseDiffTimeTimer.Update(duration)
 	logCtx = append(logCtx, "elapsed", common.PrettyDuration(duration))
 
-	log.Info("Stored the reverse diff", logCtx...)
+	log.Debug("Stored the reverse diff", logCtx...)
 	return nil
 }
 

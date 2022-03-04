@@ -238,7 +238,7 @@ func TestDatabaseRollback(t *testing.T) {
 			}
 		}
 	}
-	if len(env.db.layers) != 1 {
+	if env.db.tree.len() != 1 {
 		t.Error("Only disk layer is expected")
 	}
 }
@@ -269,7 +269,7 @@ func TestDatabaseBatchRollback(t *testing.T) {
 	if ndl.Root() != emptyRoot {
 		t.Error("Unexpected disk layer root")
 	}
-	if len(env.db.layers) != 1 {
+	if env.db.tree.len() != 1 {
 		t.Error("Only disk layer is expected")
 	}
 	// Ensure all the states are deleted by reverting.

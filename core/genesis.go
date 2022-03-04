@@ -265,7 +265,8 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 	if db == nil {
 		db = rawdb.NewMemoryDatabase()
 	}
-	statedb, err := state.New(common.Hash{}, state.NewDatabase(db), nil)
+	triedb := trie.NewDatabase(db, nil)
+	statedb, err := state.New(common.Hash{}, state.NewLiveDatabase(triedb), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -307,7 +308,7 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 	}
 	statedb.Commit(false)
 	if commit {
-		statedb.Database().TrieDB().Cap(root, 0)
+		triedb.Cap(root, 0)
 	}
 	return types.NewBlock(head, nil, nil, nil, trie.NewStackTrie(nil))
 }

@@ -165,11 +165,10 @@ func (api *ConsensusAPI) makeEnv(parent *types.Block, header *types.Header) (*bl
 		if !api.eth.BlockChain().StateRecoverable(parent.Root()) {
 			return nil, fmt.Errorf("state is not available %x", parent.Root())
 		}
-		database := api.eth.BlockChain().StateCache()
-		if err := database.TrieDB().Rollback(parent.Root()); err != nil {
+		if err := api.eth.BlockChain().TrieDB().Rollback(parent.Root()); err != nil {
 			return nil, err
 		}
-		statedb, err = state.New(parent.Root(), database, nil)
+		statedb, err = state.New(parent.Root(), api.eth.BlockChain().StateCache(), nil)
 	}
 	if err != nil {
 		return nil, err

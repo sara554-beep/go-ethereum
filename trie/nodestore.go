@@ -41,7 +41,7 @@ type snapReader struct {
 // newSnapReader constructs the snapReader by given state identifier and
 // in-memory database. If the corresponding state layer can't be found,
 // return an MissingNodeError error then.
-func newSnapReader(stateRoot common.Hash, owner common.Hash, db *Database) (*snapReader, error) {
+func newSnapReader(stateRoot common.Hash, owner common.Hash, db StateReader) (*snapReader, error) {
 	var snap snapshot
 	if stateRoot != (common.Hash{}) && stateRoot != emptyState {
 		ret := db.Snapshot(stateRoot)
@@ -123,11 +123,11 @@ func (s *nodeStore) read(owner common.Hash, hash common.Hash, path []byte) ([]by
 	return blob, nil
 }
 
-// readPrev retrieves the trie node blob with given node storage key.
+// readByPath retrieves the trie node blob with given node storage key.
 // It holds the assumption that the node with specified path must
 // already be loaded from the underlying reader and cached internally.
 // It's used to load the previous value of the node.
-func (s *nodeStore) readPrev(storage string) []byte {
+func (s *nodeStore) readByPath(storage string) []byte {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
@@ -173,7 +173,7 @@ func (s *nodeStore) copy() *nodeStore {
 
 // newSnapStore initializes the snap based nodeStore with the given multilayer
 // trie nodes and the corresponding state identifier.
-func newSnapStore(stateRoot common.Hash, owner common.Hash, db *Database) (*nodeStore, error) {
+func newSnapStore(stateRoot common.Hash, owner common.Hash, db StateReader) (*nodeStore, error) {
 	reader, err := newSnapReader(stateRoot, owner, db)
 	if err != nil {
 		return nil, err
