@@ -21,7 +21,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 )
 
@@ -45,24 +44,9 @@ type DatabaseSnapshot struct {
 // live database and the target state identifier. The returned snapshot
 // should be released otherwise resource leak will happen.
 func NewDatabaseSnapshot(db *Database, root common.Hash) (*DatabaseSnapshot, error) {
-	if !db.StateRecoverable(root) {
-		return nil, errStateUnrecoverable
-	}
-	snap, err := db.disklayer().GetSnapshot()
+	snap, err := db.disklayer().GetSnapshotAndRewind(root)
 	if err != nil {
 		return nil, err
-	}
-	// Apply the reverse diffs with the given order.
-	id := rawdb.ReadReverseDiffLookup(db.diskdb, convertEmpty(root))
-	for snap.diffid >= *id {
-		diff, err := loadReverseDiff(db.diskdb, snap.diffid)
-		if err != nil {
-			return nil, err
-		}
-		snap, err = snap.revert(diff, snap.diffid)
-		if err != nil {
-			return nil, err
-		}
 	}
 	return &DatabaseSnapshot{
 		tree:   newLayerTree(snap),

@@ -42,47 +42,88 @@ type diskLayerSnapshot struct {
 	lock   sync.RWMutex     // Lock used to protect stale flag
 }
 
-// GetSnapshot creates a disk layer snapshot and allocates a unique database
-// snapshot as the temporary read/write area for the snapshot.
-func (dl *diskLayer) GetSnapshot() (*diskLayerSnapshot, error) {
+// GetSnapshotAndRewind creates a disk layer snapshot and rewinds the snapshot
+// to the specified state. In order to store the temporary mutations happened,
+// the unique database namespace will be allocated for the snapshot and it's
+// expected to be released after the usage.
+func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (snap *diskLayerSnapshot, err error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
 		return nil, errSnapshotStale
 	}
-	// Allocate a namespace handler for the snapshot, ensure
-	// it's not used yet. TODO check if the namespace is usable.
+	id := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
+	if id == nil {
+		return nil, errStateUnrecoverable
+	}
+	// Allocate an unique database namespace for the snapshot.
 	prefix := make([]byte, 8)
 	if _, err := rand.Read(prefix[:]); err != nil {
 		return nil, err
 	}
-	// Allocate the disk snapshot for following reading purposes.
-	snap, err := dl.diskdb.NewSnapshot()
+	// Apply the disk snapshot for isolating the snapshot and the live one.
+	db, err := dl.diskdb.NewSnapshot()
 	if err != nil {
 		return nil, err
 	}
-	// Commit the cached nodes into the ephemeral disk area.
-	// Note the following operation may take a few seconds.
-	batch := dl.diskdb.NewBatch()
-	dl.dirty.forEach(func(key string, node *cachedNode) {
-		if node.node == nil {
-			rawdb.DeleteTrieNodeSnapshot(batch, prefix, []byte(key))
-		} else {
-			rawdb.WriteTrieNodeSnapshot(batch, prefix, []byte(key), node.rlp())
+	defer func() {
+		if err == nil {
+			return
 		}
-	})
-	if err := batch.Write(); err != nil {
-		return nil, err
+		// Release all held resources and cleanup the junks
+		db.Release()
+		rawdb.DeleteTrieNodeSnapshots(dl.diskdb, prefix)
+	}()
+
+	diskid := rawdb.ReadReverseDiffHead(dl.diskdb)
+	if *id >= diskid {
+		// The requested state is located in the embedded disk
+		// cache, flushest all cached nodes into the ephemeral
+		// disk area and apply the reverse diffs later. Note
+		// the following operation may take a few seconds.
+		batch := dl.diskdb.NewBatch()
+		dl.dirty.forEach(func(key string, node *cachedNode) {
+			if node.node == nil {
+				rawdb.DeleteTrieNodeSnapshot(batch, prefix, []byte(key))
+			} else {
+				rawdb.WriteTrieNodeSnapshot(batch, prefix, []byte(key), node.rlp())
+			}
+		})
+		if err := batch.Write(); err != nil {
+			return nil, err
+		}
+		snap = &diskLayerSnapshot{
+			prefix: prefix,
+			root:   dl.root,
+			diffid: dl.diffid,
+			diskdb: dl.diskdb,
+			snap:   db,
+			clean:  fastcache.New(16 * 1024 * 1024), // tiny cache
+		}
+	} else {
+		_, diskRoot := rawdb.ReadTrieNode(dl.diskdb, EncodeStorageKey(common.Hash{}, nil))
+		snap = &diskLayerSnapshot{
+			prefix: prefix,
+			root:   diskRoot,
+			diffid: diskid,
+			diskdb: dl.diskdb,
+			snap:   db,
+			clean:  fastcache.New(16 * 1024 * 1024), // tiny cache
+		}
 	}
-	return &diskLayerSnapshot{
-		prefix: prefix,
-		root:   dl.root,
-		diffid: dl.diffid,
-		diskdb: dl.diskdb,
-		snap:   snap,
-		clean:  fastcache.New(16 * 1024 * 1024), // tiny cache
-	}, nil
+	// Apply the reverse diffs with the given order.
+	for snap.diffid >= *id {
+		diff, err := loadReverseDiff(snap.diskdb, snap.diffid)
+		if err != nil {
+			return nil, err
+		}
+		snap, err = snap.revert(diff, snap.diffid)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return snap, nil
 }
 
 // Root returns root hash of corresponding state.

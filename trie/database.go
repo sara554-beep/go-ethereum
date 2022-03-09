@@ -450,8 +450,7 @@ func (db *Database) DiskDB() ethdb.KeyValueStore {
 
 // disklayer is an internal helper function to return the disk layer.
 // The lock of trieDB is assumed to be held already.
-func (db *Database) disklayer() *diskLayer {
-	var ret *diskLayer
+func (db *Database) disklayer() (ret *diskLayer) {
 	db.tree.forEach(func(hash common.Hash, layer snapshot) bool {
 		if dl, ok := layer.(*diskLayer); ok {
 			ret = dl
