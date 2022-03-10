@@ -42,27 +42,20 @@ type diskLayerSnapshot struct {
 	lock   sync.RWMutex     // Lock used to protect stale flag
 }
 
-// GetSnapshotAndRewind creates a disk layer snapshot and rewinds the snapshot
-// to the specified state. In order to store the temporary mutations happened,
-// the unique database namespace will be allocated for the snapshot and it's
-// expected to be released after the usage.
-func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (snap *diskLayerSnapshot, err error) {
+// getSnapshot creates the disk layer snapshot by the given root.
+// If the root is matched with the
+func (dl *diskLayer) getSnapshot(nocache bool) (snap *diskLayerSnapshot, err error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
 		return nil, errSnapshotStale
 	}
-	id := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
-	if id == nil {
-		return nil, errStateUnrecoverable
-	}
 	// Allocate an unique database namespace for the snapshot.
 	prefix := make([]byte, 8)
 	if _, err := rand.Read(prefix[:]); err != nil {
 		return nil, err
 	}
-
 	// Create the disk snapshot for isolating the live database.
 	db, err := dl.diskdb.NewSnapshot()
 	if err != nil {
@@ -76,9 +69,7 @@ func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (snap *diskLayerSnap
 		db.Release()
 		rawdb.DeleteTrieNodeSnapshots(dl.diskdb, prefix)
 	}()
-
-	diskid := rawdb.ReadReverseDiffHead(dl.diskdb)
-	if *id > diskid {
+	if !nocache {
 		// The requested state is located in the embedded disk
 		// cache, flushest all cached nodes into the ephemeral
 		// disk area and apply the reverse diffs later. Note
@@ -107,11 +98,30 @@ func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (snap *diskLayerSnap
 		snap = &diskLayerSnapshot{
 			prefix: prefix,
 			root:   diskRoot,
-			diffid: diskid,
+			diffid: rawdb.ReadReverseDiffHead(dl.diskdb),
 			diskdb: dl.diskdb,
 			snap:   db,
 			clean:  fastcache.New(16 * 1024 * 1024), // tiny cache
 		}
+	}
+	return snap, nil
+}
+
+// GetSnapshotAndRewind creates a disk layer snapshot and rewinds the snapshot
+// to the specified state. In order to store the temporary mutations happened,
+// the unique database namespace will be allocated for the snapshot and it's
+// expected to be released after the usage.
+func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (*diskLayerSnapshot, error) {
+	id := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
+	if id == nil {
+		return nil, errStateUnrecoverable
+	}
+	// If the requested state is even blow the disk state, then
+	// the cached dirty nodes are not needed by the snapshot.
+	nocache := *id <= rawdb.ReadReverseDiffHead(dl.diskdb)
+	snap, err := dl.getSnapshot(nocache)
+	if err != nil {
+		return nil, err
 	}
 	// Apply the reverse diffs with the given order.
 	for snap.diffid >= *id {

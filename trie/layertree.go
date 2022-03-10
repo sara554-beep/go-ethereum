@@ -152,7 +152,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 	// We're out of layers, flatten anything below, stopping if it's the disk or if
 	// the memory limit is not yet exceeded.
 	switch parent := diff.Parent().(type) {
-	case *diskLayer:
+	case *diskLayer, *diskLayerSnapshot:
 		return nil
 
 	case *diffLayer:

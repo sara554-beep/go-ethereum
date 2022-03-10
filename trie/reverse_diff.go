@@ -73,8 +73,7 @@ import (
 //           |  Destination state S  |--------->|   n   |       (Key-value store)
 //           +-----------------------+          +-------+
 //
-// The destination state here refers to the state of the parent block, the previous status
-// before executing the block.
+// The state should be rewound the destination state S after applying the reverse diff n.
 
 const reverseDiffVersion = uint64(0) // Initial version of reverse diff structure
 
