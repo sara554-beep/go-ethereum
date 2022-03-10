@@ -54,22 +54,21 @@ func (eth *Ethereum) StateAtBlock(block *types.Block, parent *state.StateDB, che
 		}
 	}
 	// Build the requested state based on the given parent state
-	// if it's available.
+	// by applying the block on top.
 	if parent != nil {
-		parentBlock := eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
-		_, _, _, err := eth.blockchain.Processor().Process(parentBlock, parent, vm.Config{})
+		_, _, _, err := eth.blockchain.Processor().Process(block, parent, vm.Config{})
 		if err != nil {
-			return nil, nil, fmt.Errorf("processing block %d failed: %v", parentBlock.NumberU64(), err)
+			return nil, nil, fmt.Errorf("processing block %d failed: %v", block.NumberU64(), err)
 		}
 		// Finalize the state so any modifications are written to the trie
-		root, err := parent.Commit(eth.blockchain.Config().IsEIP158(parentBlock.Number()))
+		root, err := parent.Commit(eth.blockchain.Config().IsEIP158(block.Number()))
 		if err != nil {
 			return nil, nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
-				parentBlock.NumberU64(), parentBlock.Root().Hex(), err)
+				block.NumberU64(), block.Root().Hex(), err)
 		}
 		statedb, err := state.New(root, parent.Database(), nil)
 		if err != nil {
-			return nil, nil, fmt.Errorf("state reset after block %d failed: %v", parentBlock.NumberU64(), err)
+			return nil, nil, fmt.Errorf("state reset after block %d failed: %v", block.NumberU64(), err)
 		}
 		return statedb, noopReleaser, nil
 	}
@@ -82,11 +81,11 @@ func (eth *Ethereum) StateAtBlock(block *types.Block, parent *state.StateDB, che
 	if err != nil {
 		return nil, nil, err
 	}
-	triedb, err := state.NewSnapDatabase(snap)
+	stateCache, err := state.NewSnapDatabase(snap)
 	if err != nil {
 		return nil, nil, err
 	}
-	state, err := state.New(block.Root(), triedb, nil)
+	state, err := state.New(block.Root(), stateCache, nil)
 	if err != nil {
 		return nil, nil, err
 	}

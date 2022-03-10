@@ -62,7 +62,8 @@ func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (snap *diskLayerSnap
 	if _, err := rand.Read(prefix[:]); err != nil {
 		return nil, err
 	}
-	// Apply the disk snapshot for isolating the snapshot and the live one.
+
+	// Create the disk snapshot for isolating the live database.
 	db, err := dl.diskdb.NewSnapshot()
 	if err != nil {
 		return nil, err
@@ -77,7 +78,7 @@ func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (snap *diskLayerSnap
 	}()
 
 	diskid := rawdb.ReadReverseDiffHead(dl.diskdb)
-	if *id >= diskid {
+	if *id > diskid {
 		// The requested state is located in the embedded disk
 		// cache, flushest all cached nodes into the ephemeral
 		// disk area and apply the reverse diffs later. Note
