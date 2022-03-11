@@ -107,6 +107,7 @@ func (s *nodeStore) read(owner common.Hash, hash common.Hash, path []byte) (*cac
 	storage := string(EncodeStorageKey(owner, path))
 	n, exist := s.nodes[storage]
 	if exist && n.hash == hash {
+		// todo it shouldn't happen at all.
 		return n, nil
 	}
 	// Load the node from the underlying node reader then
@@ -118,6 +119,7 @@ func (s *nodeStore) read(owner common.Hash, hash common.Hash, path []byte) (*cac
 	return n, nil
 }
 
+// readNode retrieves the node in canonical representation.
 func (s *nodeStore) readNode(owner common.Hash, hash common.Hash, path []byte) (node, error) {
 	node, err := s.read(owner, hash, path)
 	if err != nil {
@@ -126,6 +128,7 @@ func (s *nodeStore) readNode(owner common.Hash, hash common.Hash, path []byte) (
 	return node.obj(), nil
 }
 
+// readNode retrieves the node in rlp-encoded representation.
 func (s *nodeStore) readBlob(owner common.Hash, hash common.Hash, path []byte) ([]byte, error) {
 	node, err := s.read(owner, hash, path)
 	if err != nil {

@@ -120,7 +120,7 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (*cachedN
 	if ok {
 		// If the trie node is not hash matched, or marked as removed,
 		// bubble up an error here. It shouldn't happen at all.
-		if n.node == nil || n.hash != hash {
+		if n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
 			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
 		}
@@ -158,7 +158,7 @@ func (dl *diffLayer) nodeBlob(storage []byte, hash common.Hash, depth int) ([]by
 	if ok {
 		// If the trie node is not hash matched, or marked as removed,
 		// bubble up an error here. It shouldn't happen at all.
-		if n.node == nil || n.hash != hash {
+		if n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
 			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
 		}

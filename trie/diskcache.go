@@ -63,7 +63,7 @@ func newDiskcache(nodes map[string]*cachedNode, seq uint64) *diskcache {
 func (cache *diskcache) node(storage []byte, hash common.Hash) (*cachedNode, error) {
 	n, ok := cache.nodes[string(storage)]
 	if ok {
-		if n.node == nil || n.hash != hash {
+		if n.hash != hash {
 			owner, path := DecodeStorageKey(storage)
 			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
 		}
