@@ -101,11 +101,14 @@ func (n *cachedNode) rlp() []byte {
 
 // obj returns the decoded and expanded trie node, either directly from the cache,
 // or by regenerating it from the rlp encoded blob.
-func (n *cachedNode) obj(hash common.Hash) node {
-	if node, ok := n.node.(rawNode); ok {
-		return mustDecodeNode(hash[:], node)
+func (n *cachedNode) obj() node {
+	if n.node == nil {
+		return nil
 	}
-	return expandNode(hash[:], n.node)
+	if node, ok := n.node.(rawNode); ok {
+		return mustDecodeNode(n.hash[:], node)
+	}
+	return expandNode(n.hash[:], n.node)
 }
 
 // nodeWithPreValue wraps the cachedNode with the previous node value.

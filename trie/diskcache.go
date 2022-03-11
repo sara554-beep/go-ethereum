@@ -60,7 +60,7 @@ func newDiskcache(nodes map[string]*cachedNode, seq uint64) *diskcache {
 }
 
 // node retrieves the node with given storage key and hash.
-func (cache *diskcache) node(storage []byte, hash common.Hash) (node, error) {
+func (cache *diskcache) node(storage []byte, hash common.Hash) (*cachedNode, error) {
 	n, ok := cache.nodes[string(storage)]
 	if ok {
 		if n.node == nil || n.hash != hash {
@@ -70,23 +70,7 @@ func (cache *diskcache) node(storage []byte, hash common.Hash) (node, error) {
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(128))
 		triedbDirtyReadMeter.Mark(int64(n.size))
-		return n.obj(hash), nil
-	}
-	return nil, nil
-}
-
-// nodeBlob retrieves the node blob with given storage key and hash.
-func (cache *diskcache) nodeBlob(storage []byte, hash common.Hash) ([]byte, error) {
-	n, ok := cache.nodes[string(storage)]
-	if ok {
-		if n.node == nil || n.hash != hash {
-			owner, path := DecodeStorageKey(storage)
-			return nil, fmt.Errorf("%w %x(%x %v)", errUnexpectedNode, hash, owner, path)
-		}
-		triedbDirtyHitMeter.Mark(1)
-		triedbDirtyNodeHitDepthHist.Update(int64(128))
-		triedbDirtyReadMeter.Mark(int64(n.size))
-		return n.rlp(), nil
+		return n, nil
 	}
 	return nil, nil
 }

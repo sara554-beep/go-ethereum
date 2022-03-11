@@ -39,7 +39,7 @@ func (set *nodeSet) get(storage []byte, hash common.Hash) (node, bool) {
 	defer set.lock.RUnlock()
 
 	if node, ok := set.nodes[string(storage)]; ok && node.hash == hash {
-		return node.obj(hash), true
+		return node.obj(), true
 	}
 	return nil, false
 }

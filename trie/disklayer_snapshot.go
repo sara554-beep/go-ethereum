@@ -173,7 +173,7 @@ func (snap *diskLayerSnapshot) MarkStale() {
 }
 
 // Node retrieves the trie node associated with a particular key.
-func (snap *diskLayerSnapshot) Node(storage []byte, hash common.Hash) (node, error) {
+func (snap *diskLayerSnapshot) Node(storage []byte, hash common.Hash) (*cachedNode, error) {
 	blob, err := snap.NodeBlob(storage, hash)
 	if err != nil {
 		return nil, err
@@ -181,7 +181,7 @@ func (snap *diskLayerSnapshot) Node(storage []byte, hash common.Hash) (node, err
 	if len(blob) == 0 {
 		return nil, nil
 	}
-	return mustDecodeNode(hash.Bytes(), blob), nil
+	return &cachedNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
 }
 
 // NodeBlob retrieves the trie node blob associated with a particular key.

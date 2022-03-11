@@ -87,7 +87,7 @@ func (dl *diskLayer) MarkStale() {
 }
 
 // Node retrieves the trie node associated with a particular key.
-func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
+func (dl *diskLayer) Node(storage []byte, hash common.Hash) (*cachedNode, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -113,7 +113,7 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 		if blob, found := dl.clean.HasGet(nil, ikey); found && len(blob) > 0 {
 			triedbCleanHitMeter.Mark(1)
 			triedbCleanReadMeter.Mark(int64(len(blob)))
-			return mustDecodeNode(hash.Bytes(), blob), nil
+			return &cachedNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
 		}
 		triedbCleanMissMeter.Mark(1)
 	}
@@ -131,7 +131,7 @@ func (dl *diskLayer) Node(storage []byte, hash common.Hash) (node, error) {
 		triedbCleanWriteMeter.Mark(int64(len(blob)))
 	}
 	if len(blob) > 0 {
-		return mustDecodeNode(hash.Bytes(), blob), nil
+		return &cachedNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
 	}
 	return nil, nil
 }
@@ -147,12 +147,12 @@ func (dl *diskLayer) NodeBlob(storage []byte, hash common.Hash) ([]byte, error) 
 	// Try to retrieve the trie node from the dirty memory cache.
 	// The map is lock free since it's impossible to mutate the
 	// disk layer before tagging it as stale.
-	blob, err := dl.dirty.nodeBlob(storage, hash)
+	node, err := dl.dirty.node(storage, hash)
 	if err != nil {
 		return nil, err
 	}
-	if len(blob) != 0 {
-		return blob, nil
+	if node != nil {
+		return node.rlp(), nil
 	}
 	// If we're in the disk layer, all diff layers missed
 	triedbDirtyMissMeter.Mark(1)

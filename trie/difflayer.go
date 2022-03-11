@@ -99,12 +99,12 @@ func (dl *diffLayer) MarkStale() {
 }
 
 // Node retrieves the trie node associated with a particular key.
-func (dl *diffLayer) Node(storage []byte, hash common.Hash) (node, error) {
+func (dl *diffLayer) Node(storage []byte, hash common.Hash) (*cachedNode, error) {
 	return dl.node(storage, hash, 0)
 }
 
 // node is the inner version of Node which counts the accessed layer depth.
-func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, error) {
+func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (*cachedNode, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
@@ -127,7 +127,7 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (node, er
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
 		triedbDirtyReadMeter.Mark(int64(n.size))
-		return n.obj(hash), nil
+		return n.unwrap(), nil
 	}
 	// Trie node unknown to this diff, resolve from parent
 	if diff, ok := dl.parent.(*diffLayer); ok {

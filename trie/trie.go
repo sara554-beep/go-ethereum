@@ -281,7 +281,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.nodes.read(t.owner, common.BytesToHash(hash), path)
+		blob, err := t.nodes.readBlob(t.owner, common.BytesToHash(hash), path)
 		if err == nil {
 			return blob, origNode, 1, nil
 		}
@@ -609,14 +609,7 @@ func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
 	if t.nodes == nil {
 		return nil, nil
 	}
-	// It's better to use `read` for retrieving the node instead of the RLP-encode
-	// blob. However, it's much easier to use `readBlob` if the node pre-value is
-	// required to be recorded. TODO(rjl493456442) improve it.
-	blob, err := t.nodes.read(t.owner, common.BytesToHash(n), prefix)
-	if err != nil {
-		return nil, err
-	}
-	return mustDecodeNode(n, blob), nil
+	return t.nodes.readNode(t.owner, common.BytesToHash(n), prefix)
 }
 
 func (t *Trie) resolveBlob(n hashNode, prefix []byte) ([]byte, error) {
@@ -624,14 +617,7 @@ func (t *Trie) resolveBlob(n hashNode, prefix []byte) ([]byte, error) {
 	if t.nodes == nil {
 		return nil, nil
 	}
-	// It's better to use `read` for retrieving the node instead of the RLP-encode
-	// blob. However, it's much easier to use `readBlob` if the node pre-value is
-	// required to be recorded. TODO(rjl493456442) improve it.
-	blob, err := t.nodes.read(t.owner, common.BytesToHash(n), prefix)
-	if err != nil {
-		return nil, err
-	}
-	return blob, nil
+	return t.nodes.readBlob(t.owner, common.BytesToHash(n), prefix)
 }
 
 // Hash returns the root hash of the trie. It does not write to the

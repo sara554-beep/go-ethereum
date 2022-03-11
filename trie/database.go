@@ -107,9 +107,10 @@ type snapshot interface {
 	Snapshot
 
 	// Node retrieves the trie node associated with a particular key and the
-	// corresponding node hash. The passed key should be encoded in storage
-	// format. No error will be returned if the node is not found.
-	Node(storage []byte, hash common.Hash) (node, error)
+	// corresponding node hash. The returned node is in a wrapper through which
+	// callers can obtain the RLP-format or canonical node representation easily.
+	// No error will be returned if the node is not found.
+	Node(storage []byte, hash common.Hash) (*cachedNode, error)
 
 	// Parent returns the subsequent layer of a snapshot, or nil if the base was
 	// reached.
