@@ -434,12 +434,13 @@ func (db *Database) StateRecoverable(root common.Hash) bool {
 	if id == nil {
 		return false
 	}
-	if db.disklayer().ID() < *id {
+	if db.disklayer().ID() <= *id {
 		return false
 	}
-	// In theory all the reverse diffs starts from the given id until the disk layer
-	// should be checked for presence. In practice, the check is too expensive. So
-	// optimistically believe that all the reverse diffs are present.
+	// In theory all the reverse diffs starts from the given id until
+	// the disk layer should be checked for presence. In practice, the
+	// check is too expensive. So optimistically believe that all the
+	// reverse diffs are present.
 	return true
 }
 
