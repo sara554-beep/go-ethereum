@@ -67,7 +67,7 @@ type Backend interface {
 	// StateAtBlock returns the state corresponding to the stateroot of the block.
 	// N.B: For executing transactions on block N, the required stateRoot is block N-1,
 	// so this method should be called with the parent.
-	StateAtBlock(ctx context.Context, block *types.Block, parent *state.StateDB, checkLive bool) (*state.StateDB, func(), error)
+	StateAtBlock(ctx context.Context, block *types.Block, parent *state.StateDB) (*state.StateDB, func(), error)
 	StateAtTransaction(ctx context.Context, block *types.Block, txIndex int) (core.Message, vm.BlockContext, *state.StateDB, func(), error)
 }
 
@@ -313,7 +313,9 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			close(results)
 
 			// Release occupied resources
-			rel()
+			if rel != nil {
+				rel()
+			}
 		}()
 		// Feed all the blocks both into the tracer, as well as fast process concurrently
 		for number = start.NumberU64(); number < end.NumberU64(); number++ {
@@ -336,7 +338,7 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			}
 			// Prepare the statedb for tracing. Don't use the live database for
 			// tracing to avoid persisting state junks into the database.
-			state, relFn, err := api.backend.StateAtBlock(localctx, block, statedb, false)
+			state, relFn, err := api.backend.StateAtBlock(localctx, block, statedb)
 			if err != nil {
 				failed = err
 				break
@@ -469,7 +471,7 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 	if err != nil {
 		return nil, err
 	}
-	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil, true)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +530,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 	if err != nil {
 		return nil, err
 	}
-	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil, true)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -615,7 +617,7 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 	if err != nil {
 		return nil, err
 	}
-	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil, true)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, parent, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +776,7 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if err != nil {
 		return nil, err
 	}
-	statedb, rel, err := api.backend.StateAtBlock(ctx, block, nil, true)
+	statedb, rel, err := api.backend.StateAtBlock(ctx, block, nil)
 	if err != nil {
 		return nil, err
 	}

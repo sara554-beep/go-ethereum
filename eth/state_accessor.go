@@ -42,16 +42,11 @@ var noopReleaser = func() {}
 // - block:     The block for which we want the state (== state at the stateRoot of the parent)
 // - parent:    If the caller is tracing multiple blocks, the caller can provide the parent state
 //              continuously from the callsite.
-// - checklive: if true, then the live 'blockchain' state database is used. If the caller
-//              want to perform Commit or other 'save-to-disk' changes, this should be set
-//              to false to avoid storing trash persistently
-func (eth *Ethereum) StateAtBlock(block *types.Block, parent *state.StateDB, checklive bool) (*state.StateDB, func(), error) {
+func (eth *Ethereum) StateAtBlock(block *types.Block, parent *state.StateDB) (*state.StateDB, func(), error) {
 	// Check if the requested state is available in the live chain.
-	if checklive && eth.blockchain.HasState(block.Root()) {
-		state, err := eth.blockchain.StateAt(block.Root())
-		if err == nil {
-			return state, noopReleaser, nil
-		}
+	statedb, err := eth.blockchain.StateAt(block.Root())
+	if err == nil {
+		return statedb, noopReleaser, nil
 	}
 	// Build the requested state based on the given parent state
 	// by applying the block on top.
@@ -105,7 +100,7 @@ func (eth *Ethereum) stateAtTransaction(block *types.Block, txIndex int) (core.M
 	}
 	// Lookup the statedb of parent block from the live database,
 	// otherwise regenerate it on the flight.
-	statedb, rel, err := eth.StateAtBlock(parent, nil, true)
+	statedb, rel, err := eth.StateAtBlock(parent, nil)
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}

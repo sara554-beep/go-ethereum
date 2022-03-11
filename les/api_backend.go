@@ -324,7 +324,7 @@ func (b *LesApiBackend) CurrentHeader() *types.Header {
 	return b.eth.blockchain.CurrentHeader()
 }
 
-func (b *LesApiBackend) StateAtBlock(ctx context.Context, block *types.Block, statedb *state.StateDB, checklive bool) (*state.StateDB, func(), error) {
+func (b *LesApiBackend) StateAtBlock(ctx context.Context, block *types.Block, statedb *state.StateDB) (*state.StateDB, func(), error) {
 	return b.eth.stateAtBlock(ctx, block)
 }
 
