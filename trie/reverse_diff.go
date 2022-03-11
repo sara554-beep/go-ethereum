@@ -234,9 +234,12 @@ func purgeReverseDiffs(db ethdb.Database) (uint64, error) {
 // repairReverseDiff is called when database is constructed. It ensures reverse diff
 // history is aligned with disk layer, and truncate the extra diffs from the freezer.
 // The reverse diff id of disk layer will be returned as well.
-func repairReverseDiff(db ethdb.Database, diffid uint64) uint64 {
+func repairReverseDiff(db ethdb.Database, diffid uint64, readOnly bool) uint64 {
 	if diffid == 0 {
 		diffid = rawdb.ReadReverseDiffHead(db)
+	}
+	if readOnly {
+		return diffid
 	}
 	pruned, err := truncateFromHead(db, diffid)
 	if err != nil {
