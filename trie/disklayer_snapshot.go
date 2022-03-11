@@ -248,6 +248,7 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 		return nil, err
 	}
 	return &diskLayerSnapshot{
+		prefix: snap.prefix,
 		root:   bottom.root,
 		diffid: bottom.diffid,
 		diskdb: snap.diskdb,
