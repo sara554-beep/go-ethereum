@@ -449,6 +449,21 @@ func (db *Database) meter(refresh time.Duration) {
 		db.nonlevel0CompGauge.Update(int64(nonLevel0Comp))
 		db.seekCompGauge.Update(int64(seekComp))
 
+		var dbStats leveldb.DBStats
+		db.db.Stats(&dbStats)
+
+		var (
+			fileHitRate float64
+			dataHitRate float64
+		)
+		if dbStats.FileCacheTotal != 0 {
+			fileHitRate = float64(dbStats.FileCacheTotal - dbStats.FileCacheMiss) / float64(dbStats.FileCacheTotal)
+		}
+		if dbStats.DataCacheTotal != 0 {
+			dataHitRate = float64(dbStats.DataCacheTotal - dbStats.DataCacheMiss) / float64(dbStats.DataCacheTotal)
+		}
+		log.Info("Database cache statistics", "fileCache", fileHitRate, "dataCache", dataHitRate)
+
 		// Sleep a bit, then repeat the stats collection
 		select {
 		case errc = <-db.quitChan:
