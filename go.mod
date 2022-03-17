@@ -72,3 +72,5 @@ require (
 	gopkg.in/urfave/cli.v1 v1.20.0
 	gotest.tools v2.2.0+incompatible // indirect
 )
+
+replace github.com/syndtr/goleveldb => github.com/rjl493456442/goleveldb v0.0.0-20220316085309-43bf784e1f23
