@@ -31,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -53,13 +52,14 @@ type snapshotTestBasic struct {
 	// share fields, set in runtime
 	datadir string
 	db      ethdb.Database
-	gendb   state.Database
+	gendb   ethdb.Database
 	engine  consensus.Engine
 }
 
 func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Block) {
 	// Create a temporary persistent database
 	datadir := t.TempDir()
+
 	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -68,7 +68,7 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 	var (
 		genesis = (&Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}).MustCommit(db)
 		engine  = ethash.NewFullFaker()
-		gendb   = state.NewDatabase(rawdb.NewMemoryDatabase())
+		gendb   = rawdb.NewMemoryDatabase()
 
 		// Snapshot is enabled, the first snapshot is created from the Genesis.
 		// The snapshot memory allowance is 256MB, it means no snapshot flush
@@ -96,7 +96,7 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 		startPoint = point
 
 		if basic.commitBlock > 0 && basic.commitBlock == point {
-			chain.stateCache.TrieDB().Commit(blocks[point-1].Root(), true, nil)
+			chain.triedb.Cap(blocks[point-1].Root(), 0)
 		}
 		if basic.snapshotBlock > 0 && basic.snapshotBlock == point {
 			// Flushing the entire snap tree into the disk, the
@@ -200,7 +200,7 @@ func (basic *snapshotTestBasic) dump() string {
 
 func (basic *snapshotTestBasic) teardown() {
 	basic.db.Close()
-	basic.gendb.TrieDB().DiskDB().Close()
+	basic.gendb.Close()
 	os.RemoveAll(basic.datadir)
 }
 
@@ -240,8 +240,8 @@ func (snaptest *crashSnapshotTest) test(t *testing.T) {
 	chain, blocks := snaptest.prepare(t)
 
 	// Pull the plug on the database, simulating a hard crash
-	db := chain.db
-	db.Close()
+	chain.triedb.CloseFreezer() // ugly hack, release freezer flock
+	chain.db.Close()
 
 	// Start a new blockchain back up and see where the repair leads us
 	newdb, err := rawdb.NewLevelDBDatabaseWithFreezer(snaptest.datadir, 0, 0, snaptest.datadir, "", false)
@@ -409,6 +409,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 	// and state committed.
 	chain.Stop()
 
+	// Disable snapshot and insert a few more blocks. It makes snapshot outdated.
 	config := &CacheConfig{
 		TrieCleanLimit: 256,
 		TrieDirtyLimit: 256,
@@ -423,7 +424,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 	newchain.InsertChain(newBlocks)
 	newchain.Stop()
 
-	// Restart the chain, the wiper should starts working
+	// Restart the chain and enable the snapshot again, it should be rebuilt in the background.
 	config = &CacheConfig{
 		TrieCleanLimit: 256,
 		TrieDirtyLimit: 256,
@@ -436,6 +437,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
 	// Simulate the blockchain crash.
+	newchain.triedb.CloseFreezer() // ugly hack, release the held flock
 
 	newchain, err = NewBlockChain(snaptest.db, nil, params.AllEthashProtocolChanges, snaptest.engine, vm.Config{}, nil, nil)
 	if err != nil {
@@ -560,10 +562,8 @@ func TestLowCommitCrashWithNewSnapshot(t *testing.T) {
 }
 
 // Tests a Geth was crashed and restarts with a broken snapshot. In this case
-// the chain head should be rewound to the point with available state. And also
-// the new head should must be lower than disk layer. But there is only a high
-// committed point so the chain should be rewound to genesis and the disk layer
-// should be left for recovery.
+// the chain head should be rewound to the point with available state. And the
+// new head should at least not higher than disk layer.
 func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 	// Chain:
 	//   G->C1->C2->C3->C4->C5->C6->C7->C8 (HEAD)
@@ -580,7 +580,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 	//
 	// Expected head header    : C8
 	// Expected head fast block: C8
-	// Expected head block     : G
+	// Expected head block     : C4
 	// Expected snapshot disk  : C4
 	test := &crashSnapshotTest{
 		snapshotTestBasic{
@@ -590,7 +590,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 			expCanonicalBlocks: 8,
 			expHeadHeader:      8,
 			expHeadFastBlock:   8,
-			expHeadBlock:       0,
+			expHeadBlock:       4,
 			expSnapshotBottom:  4, // Last committed disk layer, wait recovery
 		},
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -134,7 +135,6 @@ type ChtIndexerBackend struct {
 	diskdb, trieTable    ethdb.Database
 	odr                  OdrBackend
 	triedb               *trie.Database
-	trieset              mapset.Set
 	section, sectionSize uint64
 	lastHash             common.Hash
 	trie                 *trie.Trie
@@ -147,8 +147,7 @@ func NewChtIndexer(db ethdb.Database, odr OdrBackend, size, confirms uint64, dis
 		diskdb:         db,
 		odr:            odr,
 		trieTable:      trieTable,
-		triedb:         trie.NewDatabaseWithConfig(trieTable, &trie.Config{Cache: 1}), // Use a tiny cache only to keep memory down
-		trieset:        mapset.NewSet(),
+		triedb:         trie.NewDatabase(trieTable, &trie.Config{Cache: 1, Legacy: true}), // Use a tiny cache only to keep memory down
 		sectionSize:    size,
 		disablePruning: disablePruning,
 	}
@@ -187,12 +186,12 @@ func (c *ChtIndexerBackend) Reset(ctx context.Context, section uint64, lastSecti
 		root = GetChtRoot(c.diskdb, section-1, lastSectionHead)
 	}
 	var err error
-	c.trie, err = trie.New(root, c.triedb)
+	c.trie, err = trie.New(root, common.Hash{}, root, c.triedb)
 
 	if err != nil && c.odr != nil {
 		err = c.fetchMissingNodes(ctx, section, root)
 		if err == nil {
-			c.trie, err = trie.New(root, c.triedb)
+			c.trie, err = trie.New(root, common.Hash{}, root, c.triedb)
 		}
 	}
 	c.section = section
@@ -217,43 +216,47 @@ func (c *ChtIndexerBackend) Process(ctx context.Context, header *types.Header) e
 
 // Commit implements core.ChainIndexerBackend
 func (c *ChtIndexerBackend) Commit() error {
-	root, _, err := c.trie.Commit(nil)
+	root, nodes, err := c.trie.Commit(nil)
 	if err != nil {
 		return err
 	}
+	hashes := make(map[common.Hash]struct{})
+	nodes.ForEach(func(_ []byte, blob []byte) {
+		hashes[crypto.Keccak256Hash(blob)] = struct{}{}
+	})
+	if err := c.triedb.Commit(common.Hash{}, common.Hash{}, nodes); err != nil {
+		return err // hashes are not used
+	}
 	// Pruning historical trie nodes if necessary.
 	if !c.disablePruning {
-		// Flush the triedb and track the latest trie nodes.
-		c.trieset.Clear()
-		c.triedb.Commit(root, false, func(hash common.Hash) { c.trieset.Add(hash) })
-
 		it := c.trieTable.NewIterator(nil, nil)
 		defer it.Release()
 
 		var (
-			deleted   int
-			remaining int
-			t         = time.Now()
+			deleted int
+			batch   = c.trieTable.NewBatch()
+			t       = time.Now()
 		)
 		for it.Next() {
 			trimmed := bytes.TrimPrefix(it.Key(), []byte(ChtTablePrefix))
-			if !c.trieset.Contains(common.BytesToHash(trimmed)) {
-				c.trieTable.Delete(trimmed)
-				deleted += 1
-			} else {
-				remaining += 1
+			if len(trimmed) == common.HashLength {
+				if _, ok := hashes[common.BytesToHash(trimmed)]; !ok {
+					batch.Delete(trimmed)
+					deleted += 1
+				}
 			}
 		}
-		log.Debug("Prune historical CHT trie nodes", "deleted", deleted, "remaining", remaining, "elapsed", common.PrettyDuration(time.Since(t)))
-	} else {
-		c.triedb.Commit(root, false, nil)
+		if err := batch.Write(); err != nil {
+			return err
+		}
+		log.Debug("Prune historical CHT trie nodes", "deleted", deleted, "remaining", len(hashes), "elapsed", common.PrettyDuration(time.Since(t)))
 	}
 	log.Info("Storing CHT", "section", c.section, "head", fmt.Sprintf("%064x", c.lastHash), "root", fmt.Sprintf("%064x", root))
 	StoreChtRoot(c.diskdb, c.section, c.lastHash, root)
 	return nil
 }
 
-// PruneSections implements core.ChainIndexerBackend which deletes all
+// Prune implements core.ChainIndexerBackend which deletes all
 // chain data(except hash<->number mappings) older than the specified
 // threshold.
 func (c *ChtIndexerBackend) Prune(threshold uint64) error {
@@ -322,9 +325,9 @@ func StoreBloomTrieRoot(db ethdb.Database, sectionIdx uint64, sectionHead, root 
 type BloomTrieIndexerBackend struct {
 	disablePruning    bool
 	diskdb, trieTable ethdb.Database
-	triedb            *trie.Database
 	trieset           mapset.Set
 	odr               OdrBackend
+	triedb            *trie.Database
 	section           uint64
 	parentSize        uint64
 	size              uint64
@@ -340,8 +343,7 @@ func NewBloomTrieIndexer(db ethdb.Database, odr OdrBackend, parentSize, size uin
 		diskdb:         db,
 		odr:            odr,
 		trieTable:      trieTable,
-		triedb:         trie.NewDatabaseWithConfig(trieTable, &trie.Config{Cache: 1}), // Use a tiny cache only to keep memory down
-		trieset:        mapset.NewSet(),
+		triedb:         trie.NewDatabase(trieTable, &trie.Config{Cache: 1, Legacy: true}), // Use a tiny cache only to keep memory down
 		parentSize:     parentSize,
 		size:           size,
 		disablePruning: disablePruning,
@@ -404,11 +406,12 @@ func (b *BloomTrieIndexerBackend) Reset(ctx context.Context, section uint64, las
 		root = GetBloomTrieRoot(b.diskdb, section-1, lastSectionHead)
 	}
 	var err error
-	b.trie, err = trie.New(root, b.triedb)
+	b.trie, err = trie.New(root, common.Hash{}, root, b.triedb)
+
 	if err != nil && b.odr != nil {
 		err = b.fetchMissingNodes(ctx, section, root)
 		if err == nil {
-			b.trie, err = trie.New(root, b.triedb)
+			b.trie, err = trie.New(root, common.Hash{}, root, b.triedb)
 		}
 	}
 	b.section = section
@@ -454,36 +457,41 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 			b.trie.Delete(encKey[:])
 		}
 	}
-	root, _, err := b.trie.Commit(nil)
+	root, nodes, err := b.trie.Commit(nil)
+	if err != nil {
+		return err
+	}
+	hashes := make(map[common.Hash]struct{})
+	nodes.ForEach(func(_ []byte, blob []byte) {
+		hashes[crypto.Keccak256Hash(blob)] = struct{}{}
+	})
+	err = b.triedb.Commit(common.Hash{}, common.Hash{}, nodes)
 	if err != nil {
 		return err
 	}
 	// Pruning historical trie nodes if necessary.
 	if !b.disablePruning {
-		// Flush the triedb and track the latest trie nodes.
-		b.trieset.Clear()
-		b.triedb.Commit(root, false, func(hash common.Hash) { b.trieset.Add(hash) })
-
 		it := b.trieTable.NewIterator(nil, nil)
 		defer it.Release()
 
 		var (
-			deleted   int
-			remaining int
-			t         = time.Now()
+			deleted int
+			batch   = b.trieTable.NewBatch()
+			t       = time.Now()
 		)
 		for it.Next() {
 			trimmed := bytes.TrimPrefix(it.Key(), []byte(BloomTrieTablePrefix))
-			if !b.trieset.Contains(common.BytesToHash(trimmed)) {
-				b.trieTable.Delete(trimmed)
-				deleted += 1
-			} else {
-				remaining += 1
+			if len(trimmed) == common.HashLength {
+				if _, ok := hashes[common.BytesToHash(trimmed)]; !ok {
+					batch.Delete(trimmed)
+					deleted += 1
+				}
 			}
 		}
-		log.Debug("Prune historical bloom trie nodes", "deleted", deleted, "remaining", remaining, "elapsed", common.PrettyDuration(time.Since(t)))
-	} else {
-		b.triedb.Commit(root, false, nil)
+		if err := batch.Write(); err != nil {
+			return err
+		}
+		log.Debug("Prune historical bloom trie nodes", "deleted", deleted, "remaining", len(hashes), "elapsed", common.PrettyDuration(time.Since(t)))
 	}
 	sectionHead := b.sectionHeads[b.bloomTrieRatio-1]
 	StoreBloomTrieRoot(b.diskdb, b.section, sectionHead, root)

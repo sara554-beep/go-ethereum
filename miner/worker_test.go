@@ -111,6 +111,7 @@ func init() {
 // testWorkerBackend implements worker.Backend interfaces and wraps all information needed during the testing.
 type testWorkerBackend struct {
 	db         ethdb.Database
+	sdb        state.Database
 	txPool     *core.TxPool
 	chain      *core.BlockChain
 	testTxFeed event.Feed
@@ -141,7 +142,7 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 	txpool := core.NewTxPool(testTxPoolConfig, chainConfig, chain)
 
 	// Generate a small n-block chain and an uncle block for it
-	sdb := state.NewDatabase(db)
+	sdb := chain.StateCache()
 	if n > 0 {
 		blocks, _ := core.GenerateChain(chainConfig, genesis, engine, sdb, n, func(i int, gen *core.BlockGen) {
 			gen.SetCoinbase(testBankAddress)
@@ -157,9 +158,9 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 	blocks, _ := core.GenerateChain(chainConfig, parent, engine, sdb, 1, func(i int, gen *core.BlockGen) {
 		gen.SetCoinbase(testUserAddress)
 	})
-
 	return &testWorkerBackend{
 		db:         db,
+		sdb:        sdb,
 		chain:      chain,
 		txPool:     txpool,
 		genesis:    &gspec,
@@ -181,7 +182,7 @@ func (b *testWorkerBackend) newRandomUncle() *types.Block {
 	} else {
 		parent = b.chain.GetBlockByHash(b.chain.CurrentBlock().ParentHash())
 	}
-	blocks, _ := core.GenerateChain(b.chain.Config(), parent, b.chain.Engine(), state.NewDatabase(b.db), 1, func(i int, gen *core.BlockGen) {
+	blocks, _ := core.GenerateChain(b.chain.Config(), parent, b.chain.Engine(), b.sdb, 1, func(i int, gen *core.BlockGen) {
 		var addr = make([]byte, common.AddressLength)
 		rand.Read(addr)
 		gen.SetCoinbase(common.BytesToAddress(addr))
@@ -231,7 +232,6 @@ func testGenerateBlockAndImport(t *testing.T, isClique bool) {
 		engine = ethash.NewFaker()
 	}
 
-	chainConfig.LondonBlock = big.NewInt(0)
 	w, b := newTestWorker(t, chainConfig, engine, db, 0)
 	defer w.close()
 

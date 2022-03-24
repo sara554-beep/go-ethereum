@@ -37,19 +37,15 @@ import (
 
 var (
 	testdb       = rawdb.NewMemoryDatabase()
-	gendb        = state.NewDatabase(testdb)
 	testKey, _   = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	testAddress  = crypto.PubkeyToAddress(testKey.PublicKey)
 	genesis      = core.GenesisBlockForTesting(testdb, testAddress, big.NewInt(1000000000000000))
+	gendb        = state.NewDatabase(testdb)
 	unknownBlock = types.NewBlock(&types.Header{GasLimit: params.GenesisGasLimit, BaseFee: big.NewInt(params.InitialBaseFee)}, nil, nil, nil, trie.NewStackTrie(nil))
 )
 
-// makeChain creates a chain of n blocks starting at and including parent.
-// the returned hash chain is ordered head->parent. In addition, every 3rd block
-// contains a transaction and every 5th an uncle to allow testing correct block
-// reassembly.
-func makeChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common.Hash]*types.Block) {
-	blocks, _ := core.GenerateChain(params.TestChainConfig, parent, ethash.NewFaker(), gendb, n, func(i int, block *core.BlockGen) {
+func genChain(n int, seed byte, parent *types.Block, db state.Database) ([]common.Hash, map[common.Hash]*types.Block) {
+	blocks, _ := core.GenerateChain(params.TestChainConfig, parent, ethash.NewFaker(), db, n, func(i int, block *core.BlockGen) {
 		block.SetCoinbase(common.Address{seed})
 
 		// If the block number is multiple of 3, send a bonus transaction to the miner
@@ -75,6 +71,14 @@ func makeChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common
 		blockm[b.Hash()] = b
 	}
 	return hashes, blockm
+}
+
+// makeChain creates a chain of n blocks starting at and including parent.
+// the returned hash chain is ordered head->parent. In addition, every 3rd block
+// contains a transaction and every 5th an uncle to allow testing correct block
+// reassembly.
+func makeChain(n int, seed byte, parent *types.Block) ([]common.Hash, map[common.Hash]*types.Block) {
+	return genChain(n, seed, parent, gendb)
 }
 
 // fetcherTester is a test simulator for mocking out local block chain.
@@ -818,7 +822,7 @@ func TestHashMemoryExhaustionAttack(t *testing.T) {
 	validHeaderFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	validBodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
-	attack, _ := makeChain(targetBlocks, 0, unknownBlock)
+	attack, _ := genChain(targetBlocks, 0, unknownBlock, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	attackerHeaderFetcher := tester.makeHeaderFetcher("attacker", nil, -gatherSlack)
 	attackerBodyFetcher := tester.makeBodyFetcher("attacker", nil, 0)
 
@@ -864,7 +868,7 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 	attack := make(map[common.Hash]*types.Block)
 	for i := byte(0); len(attack) < blockLimit+2*maxQueueDist; i++ {
-		hashes, blocks := makeChain(maxQueueDist-1, i, unknownBlock)
+		hashes, blocks := genChain(maxQueueDist-1, i, unknownBlock, state.NewDatabase(rawdb.NewMemoryDatabase()))
 		for _, hash := range hashes[:maxQueueDist-2] {
 			attack[hash] = blocks[hash]
 		}

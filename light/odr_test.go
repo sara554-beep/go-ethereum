@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -57,6 +56,7 @@ type testOdr struct {
 	OdrBackend
 	indexerConfig *IndexerConfig
 	sdb, ldb      ethdb.Database
+	serverState   state.Database
 	disable       bool
 }
 
@@ -82,7 +82,19 @@ func (odr *testOdr) Retrieve(ctx context.Context, req OdrRequest) error {
 			req.Receipts = rawdb.ReadRawReceipts(odr.sdb, req.Hash, *number)
 		}
 	case *TrieRequest:
-		t, _ := trie.NewWithOwner(common.BytesToHash(req.Id.AccKey), req.Id.Root, trie.NewDatabase(odr.sdb))
+		var (
+			err error
+			t   state.Trie
+		)
+		if len(req.Id.AccKey) > 0 {
+			block := rawdb.ReadBlock(odr.sdb, req.Id.BlockHash, req.Id.BlockNumber)
+			t, err = odr.serverState.OpenStorageTrie(block.Root(), common.BytesToHash(req.Id.AccKey), req.Id.Root)
+		} else {
+			t, err = odr.serverState.OpenTrie(req.Id.Root)
+		}
+		if err != nil {
+			panic(err)
+		}
 		nodes := NewNodeSet()
 		t.Prove(req.Key, 0, nodes)
 		req.Proof = nodes
@@ -149,7 +161,7 @@ func odrAccounts(ctx context.Context, db ethdb.Database, bc *core.BlockChain, lc
 		st = NewState(ctx, header, lc.Odr())
 	} else {
 		header := bc.GetHeaderByHash(bhash)
-		st, _ = state.New(header.Root, state.NewDatabase(db), nil)
+		st, _ = state.New(header.Root, bc.StateCache(), nil)
 	}
 
 	var res []byte
@@ -189,7 +201,7 @@ func odrContractCall(ctx context.Context, db ethdb.Database, bc *core.BlockChain
 		} else {
 			chain = bc
 			header = bc.GetHeaderByHash(bhash)
-			st, _ = state.New(header.Root, state.NewDatabase(db), nil)
+			st, _ = state.New(header.Root, bc.StateCache(), nil)
 		}
 
 		// Perform read-only call.
@@ -267,7 +279,7 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 		t.Fatal(err)
 	}
 
-	odr := &testOdr{sdb: sdb, ldb: ldb, indexerConfig: TestClientIndexerConfig}
+	odr := &testOdr{sdb: sdb, ldb: ldb, serverState: blockchain.StateCache(), indexerConfig: TestClientIndexerConfig}
 	lightchain, err := NewLightChain(odr, params.TestChainConfig, ethash.NewFullFaker(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +299,6 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 			if err != nil {
 				t.Fatalf("error in full-node test for block %d: %v", i, err)
 			}
-
 			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			defer cancel()
 
@@ -296,7 +307,6 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 			if err != nil && exp {
 				t.Errorf("error in ODR test for block %d: %v", i, err)
 			}
-
 			eq := bytes.Equal(b1, b2)
 			if exp && !eq {
 				t.Errorf("ODR test output for block %d doesn't match full node", i)
@@ -304,10 +314,10 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 		}
 	}
 
-	// expect retrievals to fail (except genesis block) without a les peer
+	// expect retrievals to fail (include genesis block) without a les peer
 	t.Log("checking without ODR")
 	odr.disable = true
-	test(1)
+	test(0)
 
 	// expect all retrievals to pass with ODR enabled
 	t.Log("checking with ODR")

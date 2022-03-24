@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 var emptyCodeHash = crypto.Keccak256(nil)
@@ -158,9 +159,9 @@ func (s *stateObject) getTrie(db Database) Trie {
 		}
 		if s.trie == nil {
 			var err error
-			s.trie, err = db.OpenStorageTrie(s.addrHash, s.data.Root)
+			s.trie, err = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, s.data.Root)
 			if err != nil {
-				s.trie, _ = db.OpenStorageTrie(s.addrHash, common.Hash{})
+				s.trie, _ = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, common.Hash{})
 				s.setError(fmt.Errorf("can't create storage trie: %v", err))
 			}
 		}
@@ -375,23 +376,45 @@ func (s *stateObject) updateRoot(db Database) {
 
 // CommitTrie the storage trie of the object to db.
 // This updates the trie root.
-func (s *stateObject) CommitTrie(db Database) (int, error) {
+func (s *stateObject) CommitTrie(db Database) (*trie.NodeSet, error) {
 	// If nothing changed, don't bother with hashing anything
 	if s.updateTrie(db) == nil {
-		return 0, nil
+		return nil, nil
 	}
 	if s.dbErr != nil {
-		return 0, s.dbErr
+		return nil, s.dbErr
 	}
 	// Track the amount of time wasted on committing the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 	}
-	root, committed, err := s.trie.Commit(nil)
+	root, nodes, err := s.trie.Commit(nil)
 	if err == nil {
 		s.data.Root = root
 	}
-	return committed, err
+	return nodes, err
+}
+
+// DeleteTrie the storage trie of the object from db.
+func (s *stateObject) DeleteTrie(db Database) ([][]byte, [][]byte) {
+	// Track the amount of time wasted on iterating and deleting the storage trie
+	if metrics.EnabledExpensive {
+		defer func(start time.Time) { s.db.StorageDeletes += time.Since(start) }(time.Now())
+	}
+	// It can be an attack vector when iterating a huge contract. TODO(rjl493456442)
+	var (
+		keys [][]byte
+		vals [][]byte
+		iter = s.getTrie(db).NodeIterator(nil)
+	)
+	for iter.Next(true) {
+		if iter.Hash() == (common.Hash{}) {
+			continue
+		}
+		keys = append(keys, iter.StorageKey())
+		vals = append(vals, iter.NodeBlob())
+	}
+	return keys, vals
 }
 
 // AddBalance adds amount to s's balance.

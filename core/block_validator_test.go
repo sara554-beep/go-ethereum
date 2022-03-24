@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -42,7 +41,7 @@ func TestHeaderVerification(t *testing.T) {
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 8, nil)
+		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
@@ -112,8 +111,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		copy(genspec.ExtraData[32:], addr[:])
 		genesis := genspec.MustCommit(testdb)
 
-		statedb := state.NewDatabase(testdb)
-		preBlocks, _ = GenerateChain(params.AllCliqueProtocolChanges, genesis, engine, statedb, 8, nil)
+		preBlocks, _ = GenerateChain(params.AllCliqueProtocolChanges, genesis, engine, testdb, 8, nil)
 
 		// calculate td
 		td := 0
@@ -132,15 +130,14 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		}
 		config := *params.AllCliqueProtocolChanges
 		config.TerminalTotalDifficulty = big.NewInt(int64(td))
-		postBlocks, _ = GenerateChain(&config, preBlocks[len(preBlocks)-1], engine, statedb, 8, nil)
+		postBlocks, _ = GenerateChain(&config, preBlocks[len(preBlocks)-1], engine, testdb, 8, nil)
 		chainConfig = &config
 	} else {
 		gspec := &Genesis{Config: params.TestChainConfig}
 		genesis := gspec.MustCommit(testdb)
 		engine = beacon.New(ethash.NewFaker())
-		statedb := state.NewDatabase(testdb)
 
-		preBlocks, _ = GenerateChain(params.TestChainConfig, genesis, engine, statedb, 8, nil)
+		preBlocks, _ = GenerateChain(params.TestChainConfig, genesis, engine, testdb, 8, nil)
 		td := 0
 		for _, block := range preBlocks {
 			// calculate td
@@ -150,7 +147,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		config.TerminalTotalDifficulty = big.NewInt(int64(td))
 
 		// TODO(rjl493456442) the post-merge blocks are generated incorrectly.
-		postBlocks, _ = GenerateChain(params.TestChainConfig, preBlocks[len(preBlocks)-1], engine, statedb, 8, nil)
+		postBlocks, _ = GenerateChain(params.TestChainConfig, preBlocks[len(preBlocks)-1], engine, testdb, 8, nil)
 		chainConfig = &config
 	}
 
@@ -168,7 +165,6 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		blob, _ := json.Marshal(block.Header())
 		t.Logf("Log header after the merging %d: %v", block.NumberU64(), string(blob))
 	}
-
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
 	chain, _ := NewBlockChain(testdb, nil, chainConfig, engine, vm.Config{}, nil, nil)
 	defer chain.Stop()
@@ -259,7 +255,7 @@ func testHeaderConcurrentVerification(t *testing.T, threads int) {
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 8, nil)
+		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	seals := make([]bool, len(blocks))
@@ -331,7 +327,7 @@ func testHeaderConcurrentAbortion(t *testing.T, threads int) {
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 1024, nil)
+		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 1024, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	seals := make([]bool, len(blocks))
