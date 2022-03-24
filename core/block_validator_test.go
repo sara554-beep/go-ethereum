@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -38,11 +39,13 @@ import (
 // Tests that simple header verification works, for both good and bad blocks.
 func TestHeaderVerification(t *testing.T) {
 	// Create a simple chain to verify
+	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+
 	var (
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
+		blocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
@@ -113,7 +116,8 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		genesis := genspec.MustCommit(testdb)
 
 		genEngine := beacon.New(engine)
-		preBlocks, _ = GenerateChain(params.AllCliqueProtocolChanges, genesis, genEngine, testdb, 8, nil)
+		statedb := state.NewDatabase(testdb)
+		preBlocks, _ = GenerateChainWithInMemoryDB(params.AllCliqueProtocolChanges, genesis, genEngine, statedb, 8, nil)
 		td := 0
 		for i, block := range preBlocks {
 			header := block.Header()
@@ -131,15 +135,17 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		}
 		config := *params.AllCliqueProtocolChanges
 		config.TerminalTotalDifficulty = big.NewInt(int64(td))
-		postBlocks, _ = GenerateChain(&config, preBlocks[len(preBlocks)-1], genEngine, testdb, 8, nil)
+		postBlocks, _ = GenerateChainWithInMemoryDB(&config, preBlocks[len(preBlocks)-1], genEngine, statedb, 8, nil)
 		chainConfig = &config
+
 		runEngine = beacon.New(engine)
 	} else {
 		gspec := &Genesis{Config: params.TestChainConfig}
 		genesis := gspec.MustCommit(testdb)
 		genEngine := beacon.New(ethash.NewFaker())
+		statedb := state.NewDatabase(testdb)
 
-		preBlocks, _ = GenerateChain(params.TestChainConfig, genesis, genEngine, testdb, 8, nil)
+		preBlocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, genEngine, statedb, 8, nil)
 		td := 0
 		for _, block := range preBlocks {
 			// calculate td
@@ -147,7 +153,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		}
 		config := *params.TestChainConfig
 		config.TerminalTotalDifficulty = big.NewInt(int64(td))
-		postBlocks, _ = GenerateChain(params.TestChainConfig, preBlocks[len(preBlocks)-1], genEngine, testdb, 8, nil)
+		postBlocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, preBlocks[len(preBlocks)-1], genEngine, statedb, 8, nil)
 
 		chainConfig = &config
 		runEngine = beacon.New(ethash.NewFaker())
@@ -215,6 +221,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		case <-time.After(25 * time.Millisecond):
 		}
 		chain.InsertBlockWithoutSetHead(postBlocks[i])
+		chain.SetChainHead(postBlocks[i])
 	}
 
 	// Verify the blocks with pre-merge blocks and post-merge blocks
@@ -255,12 +262,14 @@ func TestHeaderConcurrentVerification8(t *testing.T)  { testHeaderConcurrentVeri
 func TestHeaderConcurrentVerification32(t *testing.T) { testHeaderConcurrentVerification(t, 32) }
 
 func testHeaderConcurrentVerification(t *testing.T, threads int) {
+	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+
 	// Create a simple chain to verify
 	var (
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
+		blocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	seals := make([]bool, len(blocks))
@@ -332,7 +341,7 @@ func testHeaderConcurrentAbortion(t *testing.T, threads int) {
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 1024, nil)
+		blocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 1024, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	seals := make([]bool, len(blocks))

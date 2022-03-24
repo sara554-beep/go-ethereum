@@ -59,7 +59,6 @@ type snapshotTestBasic struct {
 func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Block) {
 	// Create a temporary persistent database
 	datadir := t.TempDir()
-
 	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -96,7 +95,7 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 		startPoint = point
 
 		if basic.commitBlock > 0 && basic.commitBlock == point {
-			chain.stateCache.TrieDB().Commit(blocks[point-1].Root(), true, nil)
+			chain.triedb.Cap(blocks[point-1].Root(), 0)
 		}
 		if basic.snapshotBlock > 0 && basic.snapshotBlock == point {
 			// Flushing the entire snap tree into the disk, the
@@ -240,6 +239,7 @@ func (snaptest *crashSnapshotTest) test(t *testing.T) {
 	chain, blocks := snaptest.prepare(t)
 
 	// Pull the plug on the database, simulating a hard crash
+	chain.triedb.Close() // ugly hack, release freezer flock
 	db := chain.db
 	db.Close()
 
@@ -436,6 +436,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
 	// Simulate the blockchain crash.
+	newchain.triedb.Close() // ugly hack, release the held flock
 
 	newchain, err = NewBlockChain(snaptest.db, nil, params.AllEthashProtocolChanges, snaptest.engine, vm.Config{}, nil, nil)
 	if err != nil {
@@ -580,7 +581,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 	//
 	// Expected head header    : C8
 	// Expected head fast block: C8
-	// Expected head block     : G
+	// Expected head block     : G4
 	// Expected snapshot disk  : C4
 	test := &crashSnapshotTest{
 		snapshotTestBasic{
@@ -590,7 +591,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 			expCanonicalBlocks: 8,
 			expHeadHeader:      8,
 			expHeadFastBlock:   8,
-			expHeadBlock:       0,
+			expHeadBlock:       4,
 			expSnapshotBottom:  4, // Last committed disk layer, wait recovery
 		},
 	}
