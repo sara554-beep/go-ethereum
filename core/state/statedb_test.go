@@ -32,14 +32,18 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Tests that updating a state trie does not leak any database writes prior to
 // actually committing the state.
 func TestUpdateLeaks(t *testing.T) {
 	// Create an empty state database
-	db := rawdb.NewMemoryDatabase()
-	state, _ := New(common.Hash{}, NewDatabase(db), nil)
+	var (
+		db  = rawdb.NewMemoryDatabase()
+		tdb = trie.NewDatabase(db, nil)
+	)
+	state, _ := New(common.Hash{}, NewDatabaseWithNodeDB(db, tdb), nil)
 
 	// Update it with some accounts
 	for i := byte(0); i < 255; i++ {
@@ -55,7 +59,7 @@ func TestUpdateLeaks(t *testing.T) {
 	}
 
 	root := state.IntermediateRoot(false)
-	if err := state.Database().TrieDB().Commit(root, false, nil); err != nil {
+	if err := tdb.Commit(root); err != nil {
 		t.Errorf("can not commit trie %v to persistent database", root.Hex())
 	}
 
@@ -106,7 +110,7 @@ func TestIntermediateLeaks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to commit transition state: %v", err)
 	}
-	if err = transState.Database().TrieDB().Commit(transRoot, false, nil); err != nil {
+	if err = transState.Database().NodeDB().(*trie.Database).Commit(transRoot); err != nil {
 		t.Errorf("can not commit trie %v to persistent database", transRoot.Hex())
 	}
 
@@ -114,7 +118,7 @@ func TestIntermediateLeaks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to commit final state: %v", err)
 	}
-	if err = finalState.Database().TrieDB().Commit(finalRoot, false, nil); err != nil {
+	if err = finalState.Database().NodeDB().(*trie.Database).Commit(finalRoot); err != nil {
 		t.Errorf("can not commit trie %v to persistent database", finalRoot.Hex())
 	}
 
@@ -714,7 +718,7 @@ func TestMissingTrieNodes(t *testing.T) {
 		root, _ = state.Commit(false)
 		t.Logf("root: %x", root)
 		// force-flush
-		state.Database().TrieDB().Cap(0)
+		state.Database().NodeDB().(*trie.Database).Commit(root)
 	}
 	// Create a new state on the old root
 	state, _ = New(root, db, nil)
@@ -921,7 +925,8 @@ func TestFlushOrderDataLoss(t *testing.T) {
 	// Create a state trie with many accounts and slots
 	var (
 		memdb    = rawdb.NewMemoryDatabase()
-		statedb  = NewDatabase(memdb)
+		triedb   = trie.NewDatabase(memdb, &trie.Config{Scheme: trie.HashScheme})
+		statedb  = NewDatabaseWithNodeDB(memdb, triedb)
 		state, _ = New(common.Hash{}, statedb, nil)
 	)
 	for a := byte(0); a < 10; a++ {
@@ -934,11 +939,11 @@ func TestFlushOrderDataLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to commit state trie: %v", err)
 	}
-	statedb.TrieDB().Reference(root, common.Hash{})
-	if err := statedb.TrieDB().Cap(1024); err != nil {
+	triedb.Reference(root, common.Hash{})
+	if err := triedb.Cap(1024); err != nil {
 		t.Fatalf("failed to cap trie dirty cache: %v", err)
 	}
-	if err := statedb.TrieDB().Commit(root, false, nil); err != nil {
+	if err := triedb.Commit(root); err != nil {
 		t.Fatalf("failed to commit state trie: %v", err)
 	}
 	// Reopen the state trie from flushed disk and verify it

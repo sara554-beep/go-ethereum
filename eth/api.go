@@ -506,13 +506,13 @@ func (api *DebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]c
 	if startBlock.Number().Uint64() >= endBlock.Number().Uint64() {
 		return nil, fmt.Errorf("start block height (%d) must be less than end block height (%d)", startBlock.Number().Uint64(), endBlock.Number().Uint64())
 	}
-	triedb := api.eth.BlockChain().StateCache().TrieDB()
+	triedb := api.eth.BlockChain().StateCache().NodeDB()
 
-	oldTrie, err := trie.NewStateTrie(common.Hash{}, startBlock.Root(), triedb)
+	oldTrie, err := trie.NewStateTrie(startBlock.Root(), common.Hash{}, startBlock.Root(), triedb)
 	if err != nil {
 		return nil, err
 	}
-	newTrie, err := trie.NewStateTrie(common.Hash{}, endBlock.Root(), triedb)
+	newTrie, err := trie.NewStateTrie(endBlock.Root(), common.Hash{}, endBlock.Root(), triedb)
 	if err != nil {
 		return nil, err
 	}

@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // A BlockTest checks handling of entire blocks.
@@ -120,7 +121,7 @@ func (t *BlockTest) Run(snapshotter bool) error {
 	} else {
 		engine = ethash.NewShared()
 	}
-	cache := &core.CacheConfig{TrieCleanLimit: 0}
+	cache := &core.CacheConfig{TrieCleanLimit: 0, NodeScheme: trie.HashScheme}
 	if snapshotter {
 		cache.SnapshotLimit = 1
 		cache.SnapshotWait = true

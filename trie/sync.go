@@ -68,10 +68,10 @@ func NewSyncPath(path []byte) SyncPath {
 	// clashing between account leaf and storage root. It's fine though
 	// because having a trie node at 64 depth means a hash collision was
 	// found and we're long dead.
-	if len(path) < 64 {
+	if len(path) < 2*common.HashLength {
 		return SyncPath{hexToCompact(path)}
 	}
-	return SyncPath{hexToKeybytes(path[:64]), hexToCompact(path[64:])}
+	return SyncPath{hexToKeybytes(path[:2*common.HashLength]), hexToCompact(path[2*common.HashLength:])}
 }
 
 // LeafCallback is a callback type invoked when a trie operation reaches a leaf

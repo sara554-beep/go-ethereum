@@ -29,15 +29,15 @@ import (
 )
 
 func newEmptySecure() *StateTrie {
-	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
+	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	return trie
 }
 
 // makeTestStateTrie creates a large enough secure trie for testing.
 func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
 	// Create an empty trie
-	triedb := NewDatabase(rawdb.NewMemoryDatabase())
-	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, triedb)
+	triedb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
 	content := make(map[string][]byte)
@@ -62,11 +62,11 @@ func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
 	if err != nil {
 		panic(fmt.Errorf("failed to commit trie %v", err))
 	}
-	if err := triedb.Update(NewWithNodeSet(nodes)); err != nil {
+	if err := triedb.Update(root, common.Hash{}, NewWithNodeSet(nodes)); err != nil {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
 	// Re-create the trie based on the new state
-	trie, _ = NewStateTrie(common.Hash{}, root, triedb)
+	trie, _ = NewStateTrie(root, common.Hash{}, root, triedb)
 	return triedb, trie, content
 }
 

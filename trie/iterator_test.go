@@ -31,7 +31,7 @@ import (
 )
 
 func TestEmptyIterator(t *testing.T) {
-	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
+	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	iter := trie.NodeIterator(nil)
 
 	seen := make(map[string]struct{})
@@ -44,7 +44,7 @@ func TestEmptyIterator(t *testing.T) {
 }
 
 func TestIterator(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
+	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie := NewEmpty(db)
 	vals := []struct{ k, v string }{
 		{"do", "verb"},
@@ -64,9 +64,9 @@ func TestIterator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to commit trie %v", err)
 	}
-	db.Update(NewWithNodeSet(nodes))
+	db.Update(root, common.Hash{}, NewWithNodeSet(nodes))
 
-	trie, _ = New(common.Hash{}, root, db)
+	trie, _ = New(root, common.Hash{}, root, db)
 	found := make(map[string]string)
 	it := NewIterator(trie.NodeIterator(nil))
 	for it.Next() {
@@ -86,7 +86,7 @@ type kv struct {
 }
 
 func TestIteratorLargeData(t *testing.T) {
-	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
+	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	vals := make(map[string]*kv)
 
 	for i := byte(0); i < 255; i++ {
@@ -118,39 +118,59 @@ func TestIteratorLargeData(t *testing.T) {
 	}
 }
 
+type iterationElement struct {
+	hash common.Hash
+	path []byte
+	blob []byte
+}
+
 // Tests that the node iterator indeed walks over the entire database contents.
-func TestNodeIteratorCoverage(t *testing.T) {
+func TestNodeIteratorCoverageHashBased(t *testing.T) { testNodeIteratorCoverage(t, HashScheme) }
+func TestNodeIteratorCoveragePathBased(t *testing.T) { testNodeIteratorCoverage(t, PathScheme) }
+
+func testNodeIteratorCoverage(t *testing.T, scheme string) {
 	// Create some arbitrary test trie to iterate
-	db, trie, _ := makeTestTrie()
+	db, nodeDb, trie, _ := makeTestTrie(scheme)
 
 	// Gather all the node hashes found by the iterator
-	hashes := make(map[common.Hash]struct{})
+	var elements = make(map[common.Hash]iterationElement)
 	for it := trie.NodeIterator(nil); it.Next(true); {
 		if it.Hash() != (common.Hash{}) {
-			hashes[it.Hash()] = struct{}{}
-		}
-	}
-	// Cross check the hashes and the database itself
-	for hash := range hashes {
-		if _, err := db.Node(hash); err != nil {
-			t.Errorf("failed to retrieve reported node %x: %v", hash, err)
-		}
-	}
-	for hash, obj := range db.dirties {
-		if obj != nil && hash != (common.Hash{}) {
-			if _, ok := hashes[hash]; !ok {
-				t.Errorf("state entry not reported %x", hash)
+			elements[it.Hash()] = iterationElement{
+				hash: it.Hash(),
+				path: common.CopyBytes(it.Path()),
+				blob: common.CopyBytes(it.NodeBlob()),
 			}
 		}
 	}
-	it := db.diskdb.NewIterator(nil, nil)
+	// Cross check the hashes and the database itself
+	for _, element := range elements {
+		if blob, err := nodeDb.GetReader(trie.Hash()).NodeBlob(common.Hash{}, element.path, element.hash); err != nil {
+			t.Errorf("failed to retrieve reported node %x: %v", element.hash, err)
+		} else if !bytes.Equal(blob, element.blob) {
+			t.Errorf("node blob is different, want %v got %v", element.blob, blob)
+		}
+	}
+	var (
+		count int
+		it    = db.NewIterator(nil, nil)
+	)
 	for it.Next() {
-		key := it.Key()
-		if _, ok := hashes[common.BytesToHash(key)]; !ok {
-			t.Errorf("state entry not reported %x", key)
+		res, _ := nodeDb.Scheme().IsTrieNode(it.Key())
+		if !res {
+			continue
+		}
+		count += 1
+		if elem, ok := elements[crypto.Keccak256Hash(it.Value())]; !ok {
+			t.Error("state entry not reported")
+		} else if !bytes.Equal(it.Value(), elem.blob) {
+			t.Errorf("node blob is different, want %v got %v", elem.blob, it.Value())
 		}
 	}
 	it.Release()
+	if count != len(elements) {
+		t.Errorf("state entry is mismatched %d %d", count, len(elements))
+	}
 }
 
 type kvs struct{ k, v string }
@@ -179,7 +199,7 @@ var testdata2 = []kvs{
 }
 
 func TestIteratorSeek(t *testing.T) {
-	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
+	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	for _, val := range testdata1 {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
@@ -220,23 +240,23 @@ func checkIteratorOrder(want []kvs, it *Iterator) error {
 }
 
 func TestDifferenceIterator(t *testing.T) {
-	dba := NewDatabase(rawdb.NewMemoryDatabase())
+	dba := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	triea := NewEmpty(dba)
 	for _, val := range testdata1 {
 		triea.Update([]byte(val.k), []byte(val.v))
 	}
 	rootA, nodesA, _ := triea.Commit(false)
-	dba.Update(NewWithNodeSet(nodesA))
-	triea, _ = New(common.Hash{}, rootA, dba)
+	dba.Update(rootA, common.Hash{}, NewWithNodeSet(nodesA))
+	triea, _ = New(rootA, common.Hash{}, rootA, dba)
 
-	dbb := NewDatabase(rawdb.NewMemoryDatabase())
+	dbb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trieb := NewEmpty(dbb)
 	for _, val := range testdata2 {
 		trieb.Update([]byte(val.k), []byte(val.v))
 	}
 	rootB, nodesB, _ := trieb.Commit(false)
-	dbb.Update(NewWithNodeSet(nodesB))
-	trieb, _ = New(common.Hash{}, rootB, dbb)
+	dbb.Update(rootB, common.Hash{}, NewWithNodeSet(nodesB))
+	trieb, _ = New(rootB, common.Hash{}, rootB, dbb)
 
 	found := make(map[string]string)
 	di, _ := NewDifferenceIterator(triea.NodeIterator(nil), trieb.NodeIterator(nil))
@@ -262,23 +282,23 @@ func TestDifferenceIterator(t *testing.T) {
 }
 
 func TestUnionIterator(t *testing.T) {
-	dba := NewDatabase(rawdb.NewMemoryDatabase())
+	dba := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	triea := NewEmpty(dba)
 	for _, val := range testdata1 {
 		triea.Update([]byte(val.k), []byte(val.v))
 	}
 	rootA, nodesA, _ := triea.Commit(false)
-	dba.Update(NewWithNodeSet(nodesA))
-	triea, _ = New(common.Hash{}, rootA, dba)
+	dba.Update(rootA, common.Hash{}, NewWithNodeSet(nodesA))
+	triea, _ = New(rootA, common.Hash{}, rootA, dba)
 
-	dbb := NewDatabase(rawdb.NewMemoryDatabase())
+	dbb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trieb := NewEmpty(dbb)
 	for _, val := range testdata2 {
 		trieb.Update([]byte(val.k), []byte(val.v))
 	}
 	rootB, nodesB, _ := trieb.Commit(false)
-	dbb.Update(NewWithNodeSet(nodesB))
-	trieb, _ = New(common.Hash{}, rootB, dbb)
+	dbb.Update(rootB, common.Hash{}, NewWithNodeSet(nodesB))
+	trieb, _ = New(rootB, common.Hash{}, rootB, dbb)
 
 	di, _ := NewUnionIterator([]NodeIterator{triea.NodeIterator(nil), trieb.NodeIterator(nil)})
 	it := NewIterator(di)
@@ -315,7 +335,7 @@ func TestUnionIterator(t *testing.T) {
 }
 
 func TestIteratorNoDups(t *testing.T) {
-	tr := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
+	tr := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	for _, val := range testdata1 {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
@@ -323,79 +343,109 @@ func TestIteratorNoDups(t *testing.T) {
 }
 
 // This test checks that nodeIterator.Next can be retried after inserting missing trie nodes.
-func TestIteratorContinueAfterErrorDisk(t *testing.T)    { testIteratorContinueAfterError(t, false) }
-func TestIteratorContinueAfterErrorMemonly(t *testing.T) { testIteratorContinueAfterError(t, true) }
+func TestIteratorContinueAfterErrorDiskHashBased(t *testing.T) {
+	testIteratorContinueAfterError(t, false, HashScheme)
+}
+func TestIteratorContinueAfterErrorMemonlyHashBased(t *testing.T) {
+	testIteratorContinueAfterError(t, true, HashScheme)
+}
+func TestIteratorContinueAfterErrorDiskPathBased(t *testing.T) {
+	testIteratorContinueAfterError(t, false, PathScheme)
+}
+func TestIteratorContinueAfterErrorMemonlyPathBased(t *testing.T) {
+	testIteratorContinueAfterError(t, true, PathScheme)
+}
 
-func testIteratorContinueAfterError(t *testing.T, memonly bool) {
+func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 	diskdb := rawdb.NewMemoryDatabase()
-	triedb := NewDatabase(diskdb)
+	tdb := NewDatabase(diskdb, &Config{Scheme: scheme})
 
-	tr := NewEmpty(triedb)
+	tr := NewEmpty(tdb)
 	for _, val := range testdata1 {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
-	_, nodes, _ := tr.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
+	root, nodes, _ := tr.Commit(false)
+	tdb.Update(root, common.Hash{}, NewWithNodeSet(nodes))
 	if !memonly {
-		triedb.Commit(tr.Hash(), true, nil)
+		tdb.Commit(root)
 	}
+	tr, _ = New(root, common.Hash{}, root, tdb)
 	wantNodeCount := checkIteratorNoDups(t, tr.NodeIterator(nil), nil)
 
 	var (
-		diskKeys [][]byte
-		memKeys  []common.Hash
+		paths  [][]byte
+		hashes []common.Hash
 	)
 	if memonly {
-		memKeys = triedb.Nodes()
+		for path, n := range nodes.updates.nodes {
+			paths = append(paths, []byte(path))
+			hashes = append(hashes, n.hash)
+		}
 	} else {
 		it := diskdb.NewIterator(nil, nil)
 		for it.Next() {
-			diskKeys = append(diskKeys, it.Key())
+			ok, nodeKey := tdb.Scheme().IsTrieNode(it.Key())
+			if !ok {
+				continue
+			}
+			if tdb.Scheme().Name() == PathScheme {
+				_, path := decodeStorageKey(nodeKey)
+				paths = append(paths, path)
+			} else {
+				paths = append(paths, nil) // useless for hash-scheme
+			}
+			hashes = append(hashes, crypto.Keccak256Hash(it.Value()))
 		}
 		it.Release()
 	}
 	for i := 0; i < 20; i++ {
 		// Create trie that will load all nodes from DB.
-		tr, _ := New(common.Hash{}, tr.Hash(), triedb)
+		tr, _ := New(tr.Hash(), common.Hash{}, tr.Hash(), tdb)
 
 		// Remove a random node from the database. It can't be the root node
 		// because that one is already loaded.
 		var (
-			rkey common.Hash
-			rval []byte
-			robj *cachedNode
+			rval  []byte
+			rpath []byte
+			rhash common.Hash
 		)
 		for {
 			if memonly {
-				rkey = memKeys[rand.Intn(len(memKeys))]
+				rpath = paths[rand.Intn(len(paths))]
+				node := nodes.updates.nodes[string(rpath)]
+				if node == nil {
+					continue
+				}
+				rhash = node.hash
 			} else {
-				copy(rkey[:], diskKeys[rand.Intn(len(diskKeys))])
+				index := rand.Intn(len(paths))
+				rpath = paths[index]
+				rhash = hashes[index]
 			}
-			if rkey != tr.Hash() {
+			if rhash != tr.Hash() {
 				break
 			}
 		}
 		if memonly {
-			robj = triedb.dirties[rkey]
-			delete(triedb.dirties, rkey)
+			tr.reader.banned = map[string]struct{}{string(rpath): {}}
 		} else {
-			rval, _ = diskdb.Get(rkey[:])
-			diskdb.Delete(rkey[:])
+			rval = tdb.Scheme().ReadTrieNode(diskdb, common.Hash{}, rpath, rhash)
+			tdb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, rpath, rhash)
 		}
 		// Iterate until the error is hit.
 		seen := make(map[string]bool)
 		it := tr.NodeIterator(nil)
 		checkIteratorNoDups(t, it, seen)
 		missing, ok := it.Error().(*MissingNodeError)
-		if !ok || missing.NodeHash != rkey {
+		if !ok || missing.NodeHash != rhash {
 			t.Fatal("didn't hit missing node, got", it.Error())
 		}
 
 		// Add the node back and continue iteration.
 		if memonly {
-			triedb.dirties[rkey] = robj
+			delete(tr.reader.banned, string(rpath))
 		} else {
-			diskdb.Put(rkey[:], rval)
+			tdb.Scheme().WriteTrieNode(diskdb, common.Hash{}, rpath, rhash, rval)
 		}
 		checkIteratorNoDups(t, it, seen)
 		if it.Error() != nil {
@@ -410,42 +460,55 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 // Similar to the test above, this one checks that failure to create nodeIterator at a
 // certain key prefix behaves correctly when Next is called. The expectation is that Next
 // should retry seeking before returning true for the first time.
-func TestIteratorContinueAfterSeekErrorDisk(t *testing.T) {
-	testIteratorContinueAfterSeekError(t, false)
+func TestIteratorContinueAfterSeekErrorDiskHashBased(t *testing.T) {
+	testIteratorContinueAfterSeekError(t, false, HashScheme)
 }
-func TestIteratorContinueAfterSeekErrorMemonly(t *testing.T) {
-	testIteratorContinueAfterSeekError(t, true)
+func TestIteratorContinueAfterSeekErrorMemonlyHashBased(t *testing.T) {
+	testIteratorContinueAfterSeekError(t, true, HashScheme)
+}
+func TestIteratorContinueAfterSeekErrorDiskPathBased(t *testing.T) {
+	testIteratorContinueAfterSeekError(t, false, PathScheme)
+}
+func TestIteratorContinueAfterSeekErrorMemonlyPathBased(t *testing.T) {
+	testIteratorContinueAfterSeekError(t, true, PathScheme)
 }
 
-func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
+func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme string) {
 	// Commit test trie to db, then remove the node containing "bars".
+	var (
+		barNodePath []byte
+		barNodeHash = common.HexToHash("05041990364eb72fcb1127652ce40d8bab765f2bfe53225b1170d276cc101c2e")
+	)
 	diskdb := rawdb.NewMemoryDatabase()
-	triedb := NewDatabase(diskdb)
-
+	triedb := NewDatabase(diskdb, &Config{Scheme: scheme})
 	ctr := NewEmpty(triedb)
 	for _, val := range testdata1 {
 		ctr.Update([]byte(val.k), []byte(val.v))
 	}
 	root, nodes, _ := ctr.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
-	if !memonly {
-		triedb.Commit(root, true, nil)
+
+	for path, node := range nodes.updates.nodes {
+		if node.hash == barNodeHash {
+			barNodePath = []byte(path)
+			break
+		}
 	}
-	barNodeHash := common.HexToHash("05041990364eb72fcb1127652ce40d8bab765f2bfe53225b1170d276cc101c2e")
+	triedb.Update(root, common.Hash{}, NewWithNodeSet(nodes))
+	if !memonly {
+		triedb.Commit(root)
+	}
 	var (
 		barNodeBlob []byte
-		barNodeObj  *cachedNode
 	)
+	tr, _ := New(root, common.Hash{}, root, triedb)
 	if memonly {
-		barNodeObj = triedb.dirties[barNodeHash]
-		delete(triedb.dirties, barNodeHash)
+		tr.reader.banned = map[string]struct{}{string(barNodePath): {}}
 	} else {
-		barNodeBlob, _ = diskdb.Get(barNodeHash[:])
-		diskdb.Delete(barNodeHash[:])
+		barNodeBlob = triedb.Scheme().ReadTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash)
+		triedb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash)
 	}
 	// Create a new iterator that seeks to "bars". Seeking can't proceed because
 	// the node is missing.
-	tr, _ := New(common.Hash{}, root, triedb)
 	it := tr.NodeIterator([]byte("bars"))
 	missing, ok := it.Error().(*MissingNodeError)
 	if !ok {
@@ -455,9 +518,9 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 	}
 	// Reinsert the missing node.
 	if memonly {
-		triedb.dirties[barNodeHash] = barNodeObj
+		delete(tr.reader.banned, string(barNodePath))
 	} else {
-		diskdb.Put(barNodeHash[:], barNodeBlob)
+		triedb.Scheme().WriteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash, barNodeBlob)
 	}
 	// Check that iteration produces the right set of values.
 	if err := checkIteratorOrder(testdata1[2:], NewIterator(it)); err != nil {
@@ -477,6 +540,9 @@ func checkIteratorNoDups(t *testing.T, it NodeIterator, seen map[string]bool) in
 	}
 	return len(seen)
 }
+
+func TestIteratorNodeBlobHashBased(t *testing.T) { testIteratorNodeBlob(t, HashScheme) }
+func TestIteratorNodeBlobPathBased(t *testing.T) { testIteratorNodeBlob(t, PathScheme) }
 
 type loggingDb struct {
 	getCount uint64
@@ -532,8 +598,8 @@ func (l *loggingDb) Close() error {
 func makeLargeTestTrie() (*Database, *StateTrie, *loggingDb) {
 	// Create an empty trie
 	logDb := &loggingDb{0, memorydb.New()}
-	triedb := NewDatabase(rawdb.NewDatabase(logDb))
-	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, triedb)
+	triedb := NewDatabase(rawdb.NewDatabase(logDb), nil)
+	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
 	for i := 0; i < 10000; i++ {
@@ -545,8 +611,8 @@ func makeLargeTestTrie() (*Database, *StateTrie, *loggingDb) {
 		val = crypto.Keccak256(val)
 		trie.Update(key, val)
 	}
-	_, nodes, _ := trie.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
+	root, nodes, _ := trie.Commit(false)
+	triedb.Update(root, common.Hash{}, NewWithNodeSet(nodes))
 	// Return the generated trie
 	return triedb, trie, logDb
 }
@@ -565,10 +631,10 @@ func TestNodeIteratorLargeTrie(t *testing.T) {
 	}
 }
 
-func TestIteratorNodeBlob(t *testing.T) {
+func testIteratorNodeBlob(t *testing.T, scheme string) {
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		triedb = NewDatabase(db)
+		triedb = NewDatabase(db, &Config{Scheme: scheme})
 		trie   = NewEmpty(triedb)
 	)
 	vals := []struct{ k, v string }{
@@ -585,11 +651,12 @@ func TestIteratorNodeBlob(t *testing.T) {
 		all[val.k] = val.v
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
-	_, nodes, _ := trie.Commit(false)
-	triedb.Update(NewWithNodeSet(nodes))
-	triedb.Cap(0)
+	root, nodes, _ := trie.Commit(false)
+	triedb.Update(root, common.Hash{}, NewWithNodeSet(nodes))
+	triedb.Commit(root)
 
-	found := make(map[common.Hash][]byte)
+	var found = make(map[common.Hash][]byte)
+	trie, _ = New(root, common.Hash{}, root, triedb)
 	it := trie.NodeIterator(nil)
 	for it.Next(true) {
 		if it.Hash() == (common.Hash{}) {
@@ -603,9 +670,13 @@ func TestIteratorNodeBlob(t *testing.T) {
 
 	var count int
 	for dbIter.Next() {
-		got, present := found[common.BytesToHash(dbIter.Key())]
+		ok, _ := triedb.Scheme().IsTrieNode(dbIter.Key())
+		if !ok {
+			continue
+		}
+		got, present := found[crypto.Keccak256Hash(dbIter.Value())]
 		if !present {
-			t.Fatalf("Miss trie node %v", dbIter.Key())
+			t.Fatal("Miss trie node")
 		}
 		if !bytes.Equal(got, dbIter.Value()) {
 			t.Fatalf("Unexpected trie node want %v got %v", dbIter.Value(), got)

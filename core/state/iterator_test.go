@@ -17,17 +17,22 @@
 package state
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Tests that the node iterator indeed walks over the entire database contents.
-func TestNodeIteratorCoverage(t *testing.T) {
+func TestNodeIteratorCoverageHashBased(t *testing.T) { testNodeIteratorCoverage(t, trie.HashScheme) }
+func TestNodeIteratorCoveragePathBased(t *testing.T) { testNodeIteratorCoverage(t, trie.PathScheme) }
+
+func testNodeIteratorCoverage(t *testing.T, scheme string) {
 	// Create some arbitrary test state to iterate
-	db, sdb, root, _ := makeTestState()
-	sdb.TrieDB().Commit(root, false, nil)
+	db, sdb, ndb, root, _ := makeTestState(scheme)
+	ndb.Commit(root)
 
 	state, err := New(root, sdb, nil)
 	if err != nil {
@@ -40,29 +45,50 @@ func TestNodeIteratorCoverage(t *testing.T) {
 			hashes[it.Hash] = struct{}{}
 		}
 	}
-	// Cross check the iterated hashes and the database/nodepool content
-	for hash := range hashes {
-		if _, err = sdb.TrieDB().Node(hash); err != nil {
-			_, err = sdb.ContractCode(common.Hash{}, hash)
-		}
-		if err != nil {
-			t.Errorf("failed to retrieve reported node %x", hash)
-		}
-	}
-	for _, hash := range sdb.TrieDB().Nodes() {
-		if _, ok := hashes[hash]; !ok {
-			t.Errorf("state entry not reported %x", hash)
-		}
-	}
+	// Check in-disk nodes
+	var (
+		seenNodes = make(map[common.Hash]struct{})
+		seenCodes = make(map[common.Hash]struct{})
+	)
 	it := db.NewIterator(nil, nil)
 	for it.Next() {
-		key := it.Key()
-		if bytes.HasPrefix(key, []byte("secure-key-")) {
+		if ok, _ := ndb.Scheme().IsTrieNode(it.Key()); !ok {
 			continue
 		}
-		if _, ok := hashes[common.BytesToHash(key)]; !ok {
-			t.Errorf("state entry not reported %x", key)
+		if scheme == trie.HashScheme {
+			seenNodes[common.BytesToHash(it.Key())] = struct{}{}
+		} else {
+			hash := crypto.Keccak256Hash(it.Value())
+			if _, ok := hashes[hash]; !ok {
+				t.Errorf("state entry not reported %x", it.Key())
+			}
+			seenNodes[hash] = struct{}{}
 		}
 	}
 	it.Release()
+
+	// Check in-disk codes
+	it = db.NewIterator(nil, nil)
+	for it.Next() {
+		ok, hash := rawdb.IsCodeKey(it.Key())
+		if !ok {
+			continue
+		}
+		if _, ok := hashes[common.BytesToHash(hash)]; !ok {
+			t.Errorf("state entry not reported %x", it.Key())
+		}
+		seenCodes[common.BytesToHash(hash)] = struct{}{}
+	}
+	it.Release()
+
+	// Cross check the iterated hashes and the database/nodepool content
+	for hash := range hashes {
+		_, ok := seenNodes[hash]
+		if !ok {
+			_, ok = seenCodes[hash]
+		}
+		if !ok {
+			t.Errorf("failed to retrieve reported node %x", hash)
+		}
+	}
 }

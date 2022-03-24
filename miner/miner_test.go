@@ -246,8 +246,9 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	}
 	// Create chainConfig
 	chainDB := rawdb.NewMemoryDatabase()
+	triedb := trie.NewDatabase(chainDB, &trie.Config{Scheme: trie.HashScheme})
 	genesis := core.DeveloperGenesisBlock(15, 11_500_000, common.HexToAddress("12345"))
-	chainConfig, _, err := core.SetupGenesisBlock(chainDB, trie.NewDatabase(chainDB), genesis)
+	chainConfig, _, err := core.SetupGenesisBlock(chainDB, triedb, genesis)
 	if err != nil {
 		t.Fatalf("can't create new chain config: %v", err)
 	}
@@ -258,7 +259,7 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	if err != nil {
 		t.Fatalf("can't create new chain %v", err)
 	}
-	statedb, _ := state.New(common.Hash{}, state.NewDatabase(chainDB), nil)
+	statedb, _ := state.New(bc.Genesis().Root(), bc.StateCache(), nil)
 	blockchain := &testBlockChain{statedb, 10000000, new(event.Feed)}
 
 	pool := core.NewTxPool(testTxPoolConfig, chainConfig, blockchain)

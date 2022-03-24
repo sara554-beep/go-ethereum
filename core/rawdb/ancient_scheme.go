@@ -16,7 +16,10 @@
 
 package rawdb
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // The list of table names of chain freezer.
 const (
@@ -49,10 +52,11 @@ var chainFreezerNoSnappy = map[string]bool{
 // The list of identifiers of ancient stores.
 var (
 	chainFreezerName = "chain" // the folder name of chain segment ancient store.
+	rdiffFreezerName = "rdiff" // the folder name of reverse diff ancient store.
 )
 
 // freezers the collections of all builtin freezers.
-var freezers = []string{chainFreezerName}
+var freezers = []string{chainFreezerName, rdiffFreezerName}
 
 // InspectFreezerTable dumps out the index of a specific freezer table. The passed
 // ancient indicates the path of root ancient directory where the chain freezer can
@@ -66,6 +70,8 @@ func InspectFreezerTable(ancient string, freezerName string, tableName string, s
 	switch freezerName {
 	case chainFreezerName:
 		path, tables = resolveChainFreezerDir(ancient), chainFreezerNoSnappy
+	case rdiffFreezerName:
+		path, tables = filepath.Join(ancient, rdiffFreezerName), reverseDiffFreezerNoSnappy
 	default:
 		return fmt.Errorf("unknown freezer, supported ones: %v", freezers)
 	}

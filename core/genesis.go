@@ -122,7 +122,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database, triedb *trie.Database) error {
 	}
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
-		err = triedb.Commit(root, true, nil)
+		err = triedb.Commit(root)
 		if err != nil {
 			return err
 		}
@@ -287,10 +287,10 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 		applyOverrides(genesis.Config)
 		return genesis.Config, block.Hash(), nil
 	}
-	// We have the genesis block in database(perhaps in ancient database)
-	// but the corresponding state is missing.
-	header := rawdb.ReadHeader(db, stored, 0)
-	if _, err := state.New(header.Root, state.NewDatabaseWithNodeDB(db, triedb), nil); err != nil {
+	// The genesis block is present(perhaps in ancient database) while the
+	// state database is empty. It can happen that the node is initialized
+	// with an external ancient store. Commit genesis state in this case.
+	if triedb.IsEmpty() && genesis.ToBlock().Root() != types.EmptyRootHash {
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
 		}
@@ -480,7 +480,7 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *trie.Database) (*types.Block
 // Note the state changes will be committed in hash-based scheme, use Commit
 // if path-scheme is preferred.
 func (g *Genesis) MustCommit(db ethdb.Database) *types.Block {
-	block, err := g.Commit(db, trie.NewDatabase(db))
+	block, err := g.Commit(db, trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}))
 	if err != nil {
 		panic(err)
 	}

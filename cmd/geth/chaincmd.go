@@ -49,7 +49,7 @@ var (
 		Name:      "init",
 		Usage:     "Bootstrap and initialize a new genesis block",
 		ArgsUsage: "<genesisPath>",
-		Flags:     flags.Merge([]cli.Flag{utils.CachePreimagesFlag}, utils.DatabasePathFlags),
+		Flags:     flags.Merge([]cli.Flag{utils.CachePreimagesFlag}, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Description: `
 The init command initializes a new genesis block and definition for the network.
 This is a destructive action and changes the network in which you will be
@@ -93,7 +93,7 @@ The dumpgenesis command dumps the genesis block configuration in JSON format to 
 			utils.MetricsInfluxDBBucketFlag,
 			utils.MetricsInfluxDBOrganizationFlag,
 			utils.TxLookupLimitFlag,
-		}, utils.DatabasePathFlags),
+		}, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Description: `
 The import command imports blocks from an RLP-encoded form. The form can be one file
 with several RLP-encoded blocks, or several files can be used.
@@ -109,7 +109,7 @@ processing will proceed even if an individual RLP-file import failure occurs.`,
 		Flags: flags.Merge([]cli.Flag{
 			utils.CacheFlag,
 			utils.SyncModeFlag,
-		}, utils.DatabasePathFlags),
+		}, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Description: `
 Requires a first argument of the file to write to.
 Optional second and third arguments control the first and
@@ -158,7 +158,7 @@ It's deprecated, please use "geth db export" instead.
 			utils.IncludeIncompletesFlag,
 			utils.StartKeyFlag,
 			utils.DumpLimitFlag,
-		}, utils.DatabasePathFlags),
+		}, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Description: `
 This command dumps out the state for a given block (or latest, if none provided).
 `,
@@ -194,13 +194,16 @@ func initGenesis(ctx *cli.Context) error {
 		if err != nil {
 			utils.Fatalf("Failed to open database: %v", err)
 		}
-		triedb := trie.NewDatabaseWithConfig(chaindb, &trie.Config{
+		config := &trie.Config{
 			Preimages: ctx.Bool(utils.CachePreimagesFlag.Name),
-		})
+			Scheme:    utils.ParseTrieScheme(ctx),
+		}
+		triedb := trie.NewDatabase(chaindb, config)
 		_, hash, err := core.SetupGenesisBlock(chaindb, triedb, genesis)
 		if err != nil {
 			utils.Fatalf("Failed to write genesis block: %v", err)
 		}
+		triedb.Close()
 		chaindb.Close()
 		log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
 	}
@@ -440,6 +443,8 @@ func dump(ctx *cli.Context) error {
 		return err
 	}
 	config := &trie.Config{
+		ReadOnly:  true,
+		Scheme:    utils.ParseTrieScheme(ctx),
 		Preimages: true, // always enable preimage lookup
 	}
 	state, err := state.New(root, state.NewDatabaseWithConfig(db, config), nil)

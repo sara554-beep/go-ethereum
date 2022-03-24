@@ -43,7 +43,7 @@ type Database interface {
 	OpenTrie(root common.Hash) (Trie, error)
 
 	// OpenStorageTrie opens the storage trie of an account.
-	OpenStorageTrie(addrHash, root common.Hash) (Trie, error)
+	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
 
 	// CopyTrie returns an independent copy of the given trie.
 	CopyTrie(Trie) Trie
@@ -57,8 +57,8 @@ type Database interface {
 	// DiskDB returns the underlying key-value disk database.
 	DiskDB() ethdb.KeyValueStore
 
-	// TrieDB retrieves the low level trie database used for data storage.
-	TrieDB() *trie.Database
+	// NodeDB returns the underlying node database for managing trie nodes.
+	NodeDB() trie.NodeDatabase
 }
 
 // Trie is a Ethereum Merkle Patricia trie.
@@ -133,7 +133,7 @@ func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
 	return &cachingDB{
 		db:            db,
-		triedb:        trie.NewDatabaseWithConfig(db, config),
+		nodeDb:        trie.NewDatabase(db, config),
 		codeSizeCache: csc,
 		codeCache:     fastcache.New(codeCacheSize),
 	}
@@ -144,22 +144,34 @@ func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
 	return &cachingDB{
 		db:            db,
-		triedb:        triedb,
+		nodeDb:        triedb,
 		codeSizeCache: csc,
 		codeCache:     fastcache.New(codeCacheSize),
 	}
 }
 
+// NewDatabaseWithSnapshot creates a state database from the live snapshot.
+// It has data isolation and is safe to apply the mutation on the top.
+func NewDatabaseWithSnapshot(snap trie.NodeDatabase, db ethdb.KeyValueStore) (Database, error) {
+	csc, _ := lru.New(codeSizeCacheSize)
+	return &cachingDB{
+		db:            db,
+		nodeDb:        snap,
+		codeSizeCache: csc,
+		codeCache:     fastcache.New(codeCacheSize),
+	}, nil
+}
+
 type cachingDB struct {
 	db            ethdb.KeyValueStore
-	triedb        *trie.Database
+	nodeDb        trie.NodeDatabase
 	codeSizeCache *lru.Cache
 	codeCache     *fastcache.Cache
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
-	tr, err := trie.NewStateTrie(common.Hash{}, root, db.triedb)
+	tr, err := trie.NewStateTrie(root, common.Hash{}, root, db.nodeDb)
 	if err != nil {
 		return nil, err
 	}
@@ -167,8 +179,8 @@ func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash) (Trie, error) {
-	tr, err := trie.NewStateTrie(addrHash, root, db.triedb)
+func (db *cachingDB) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error) {
+	tr, err := trie.NewStateTrie(stateRoot, addrHash, root, db.nodeDb)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +241,7 @@ func (db *cachingDB) DiskDB() ethdb.KeyValueStore {
 	return db.db
 }
 
-// TrieDB retrieves any intermediate trie-node caching layer.
-func (db *cachingDB) TrieDB() *trie.Database {
-	return db.triedb
+// NodeDB returns the underlying database for storing nodes.
+func (db *cachingDB) NodeDB() trie.NodeDatabase {
+	return db.nodeDb
 }

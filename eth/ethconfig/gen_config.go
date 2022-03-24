@@ -25,7 +25,9 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		SnapDiscoveryURLs                     []string
 		NoPruning                             bool
 		NoPrefetch                            bool
-		TxLookupLimit                         uint64                 `toml:",omitempty"`
+		TxLookupLimit                         uint64 `toml:",omitempty"`
+		StateLimit                            uint64 `toml:",omitempty"`
+		NodeScheme                            string
 		RequiredBlocks                        map[uint64]common.Hash `toml:"-"`
 		LightServ                             int                    `toml:",omitempty"`
 		LightIngress                          int                    `toml:",omitempty"`
@@ -60,7 +62,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		RPCTxFeeCap                           float64
 		Checkpoint                            *params.TrustedCheckpoint      `toml:",omitempty"`
 		CheckpointOracle                      *params.CheckpointOracleConfig `toml:",omitempty"`
-		OverrideTerminalTotalDifficulty       *big.Int                       `toml:",omitempty"`
+		OverrideGrayGlacier                   *big.Int                       `toml:",omitempty"`
 		OverrideTerminalTotalDifficultyPassed *bool                          `toml:",omitempty"`
 	}
 	var enc Config
@@ -72,6 +74,8 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.NoPruning = c.NoPruning
 	enc.NoPrefetch = c.NoPrefetch
 	enc.TxLookupLimit = c.TxLookupLimit
+	enc.StateLimit = c.StateLimit
+	enc.NodeScheme = c.NodeScheme
 	enc.RequiredBlocks = c.RequiredBlocks
 	enc.LightServ = c.LightServ
 	enc.LightIngress = c.LightIngress
@@ -106,7 +110,6 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
 	enc.Checkpoint = c.Checkpoint
 	enc.CheckpointOracle = c.CheckpointOracle
-	enc.OverrideTerminalTotalDifficulty = c.OverrideTerminalTotalDifficulty
 	enc.OverrideTerminalTotalDifficultyPassed = c.OverrideTerminalTotalDifficultyPassed
 	return &enc, nil
 }
@@ -121,7 +124,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		SnapDiscoveryURLs                     []string
 		NoPruning                             *bool
 		NoPrefetch                            *bool
-		TxLookupLimit                         *uint64                `toml:",omitempty"`
+		TxLookupLimit                         *uint64 `toml:",omitempty"`
+		StateLimit                            *uint64 `toml:",omitempty"`
+		NodeScheme                            *string
 		RequiredBlocks                        map[uint64]common.Hash `toml:"-"`
 		LightServ                             *int                   `toml:",omitempty"`
 		LightIngress                          *int                   `toml:",omitempty"`
@@ -156,6 +161,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		RPCTxFeeCap                           *float64
 		Checkpoint                            *params.TrustedCheckpoint      `toml:",omitempty"`
 		CheckpointOracle                      *params.CheckpointOracleConfig `toml:",omitempty"`
+		OverrideGrayGlacier                   *big.Int                       `toml:",omitempty"`
 		OverrideTerminalTotalDifficulty       *big.Int                       `toml:",omitempty"`
 		OverrideTerminalTotalDifficultyPassed *bool                          `toml:",omitempty"`
 	}
@@ -186,6 +192,12 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.TxLookupLimit != nil {
 		c.TxLookupLimit = *dec.TxLookupLimit
+	}
+	if dec.StateLimit != nil {
+		c.StateLimit = *dec.StateLimit
+	}
+	if dec.NodeScheme != nil {
+		c.NodeScheme = *dec.NodeScheme
 	}
 	if dec.RequiredBlocks != nil {
 		c.RequiredBlocks = dec.RequiredBlocks
