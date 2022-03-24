@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie"
 	"os"
 	"runtime"
 	"sync"
@@ -112,7 +113,7 @@ func (context *chainContext) GetHeader(hash common.Hash, number uint64) *types.H
 	return header
 }
 
-// chainContext construts the context reader which is used by the evm for reading
+// chainContext constructs the context reader which is used by the evm for reading
 // the necessary chain context.
 func (api *API) chainContext(ctx context.Context) core.ChainContext {
 	return &chainContext{api: api, ctx: ctx}
@@ -389,8 +390,9 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// if the relevant state is available in disk.
 			var preferDisk bool
 			if statedb != nil {
-				s1, s2 := statedb.Database().TrieDB().Size()
-				preferDisk = s1+s2 > defaultTracechainMemLimit
+				if tdb, ok := statedb.Database().NodeDB().(*trie.Database); ok {
+					preferDisk = tdb.Size() > defaultTracechainMemLimit
+				}
 			}
 			statedb, release, err = api.backend.StateAtBlock(ctx, block, reexec, statedb, false, preferDisk)
 			if err != nil {
@@ -859,7 +861,6 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if err != nil {
 		return nil, err
 	}
-	// try to recompute the state
 	reexec := defaultTraceReexec
 	if config != nil && config.Reexec != nil {
 		reexec = *config.Reexec

@@ -1,4 +1,4 @@
-// Copyright 2022 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -50,7 +50,6 @@ func newTracer() *tracer {
 	}
 }
 
-/*
 // onRead tracks the newly loaded trie node and caches the rlp-encoded blob internally.
 // Don't change the value outside of function since it's not deep-copied.
 func (t *tracer) onRead(key []byte, val []byte) {
@@ -60,7 +59,6 @@ func (t *tracer) onRead(key []byte, val []byte) {
 	}
 	t.origin[string(key)] = val
 }
-*/
 
 // onInsert tracks the newly inserted trie node. If it's already in the deletion set
 // (resurrected node), then just wipe it from the deletion set as the "untouched".
@@ -117,16 +115,14 @@ func (t *tracer) deleteList() [][]byte {
 	return ret
 }
 
-/*
 // getPrev returns the cached original value of the specified node.
 func (t *tracer) getPrev(key []byte) []byte {
-	// Don't panic on uninitialized tracer, it's possible in testing.
+	// Tracer isn't used right now, remove this check later.
 	if t == nil {
 		return nil
 	}
 	return t.origin[string(key)]
 }
-*/
 
 // reset clears the content tracked by tracer.
 func (t *tracer) reset() {
