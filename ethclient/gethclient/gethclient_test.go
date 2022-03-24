@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -83,7 +84,7 @@ func generateTestChain() (*core.Genesis, []*types.Block) {
 		g.OffsetTime(5)
 		g.SetExtra([]byte("test"))
 	}
-	gblock := genesis.ToBlock(db)
+	gblock, _ := genesis.Commit(db, trie.HashScheme)
 	engine := ethash.NewFaker()
 	blocks, _ := core.GenerateChain(config, gblock, engine, db, 1, generate)
 	blocks = append([]*types.Block{gblock}, blocks...)
@@ -120,11 +121,11 @@ func TestGethClient(t *testing.T) {
 			"TestGetNodeInfo",
 			func(t *testing.T) { testGetNodeInfo(t, client) },
 		}, {
-			"TestSetHead",
-			func(t *testing.T) { testSetHead(t, client) },
-		}, {
 			"TestSubscribePendingTxs",
 			func(t *testing.T) { testSubscribePendingTransactions(t, client) },
+		}, {
+			"TestSetHead",
+			func(t *testing.T) { testSetHead(t, client) },
 		}, {
 			"TestCallContract",
 			func(t *testing.T) { testCallContract(t, client) },

@@ -453,6 +453,7 @@ type testClient struct {
 	db      ethdb.Database
 	peer    *testPeer
 	handler *clientHandler
+	gspec   core.Genesis
 
 	chtIndexer       *core.ChainIndexer
 	bloomIndexer     *core.ChainIndexer

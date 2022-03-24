@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -184,7 +185,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 		return nil, nil, common.Hash{}, UnsupportedForkError{subtest.Fork}
 	}
 	vmconfig.ExtraEips = eips
-	block := t.genesis(config).ToBlock(nil)
+	block := t.genesis(config).ToBlock()
 	snaps, statedb := MakePreState(rawdb.NewMemoryDatabase(), t.json.Pre, snapshotter)
 
 	var baseFee *big.Int
@@ -266,7 +267,7 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter boo
 
 	var snaps *snapshot.Tree
 	if snapshotter {
-		snaps, _ = snapshot.New(db, sdb.TrieDB(), 1, root, false, true, false)
+		snaps, _ = snapshot.New(db, sdb.NodeDB().(*trie.Database), 1, root, false, true, false)
 	}
 	statedb, _ = state.New(root, sdb, snaps)
 	return snaps, statedb

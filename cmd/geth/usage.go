@@ -224,12 +224,12 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 	},
 	{
 		Name: "MISC",
-		Flags: []cli.Flag{
+		Flags: utils.GroupFlags([]cli.Flag{
 			utils.SnapshotFlag,
 			utils.BloomFilterSizeFlag,
 			utils.IgnoreLegacyReceiptsFlag,
 			cli.HelpFlag,
-		},
+		}, utils.TrieSchemeFlags),
 	},
 }
 

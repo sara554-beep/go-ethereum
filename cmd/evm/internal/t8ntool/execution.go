@@ -269,7 +269,8 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 }
 
 func MakePreState(db ethdb.Database, accounts core.GenesisAlloc) *state.StateDB {
-	sdb := state.NewDatabase(db)
+	triedb := trie.NewDatabase(db, &trie.Config{Preimages: true})
+	sdb := state.NewDatabaseWithNodeDB(triedb)
 	statedb, _ := state.New(common.Hash{}, sdb, nil)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)

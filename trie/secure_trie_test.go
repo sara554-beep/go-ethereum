@@ -23,20 +23,20 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
 func newEmptySecure() *SecureTrie {
-	trie, _ := NewSecure(common.Hash{}, common.Hash{}, NewDatabase(memorydb.New()))
+	trie, _ := NewSecure(common.Hash{}, common.Hash{}, common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	return trie
 }
 
 // makeTestSecureTrie creates a large enough secure trie for testing.
 func makeTestSecureTrie() (*Database, *SecureTrie, map[string][]byte) {
 	// Create an empty trie
-	triedb := NewDatabase(memorydb.New())
-	trie, _ := NewSecure(common.Hash{}, common.Hash{}, triedb)
+	triedb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	trie, _ := NewSecure(common.Hash{}, common.Hash{}, common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
 	content := make(map[string][]byte)
@@ -57,7 +57,9 @@ func makeTestSecureTrie() (*Database, *SecureTrie, map[string][]byte) {
 			trie.Update(key, val)
 		}
 	}
-	trie.Commit(nil)
+	root, nodes, _ := trie.Commit()
+	triedb.Update(root, common.Hash{}, nodes)
+	triedb.Commit(root)
 
 	// Return the generated trie
 	return triedb, trie, content
@@ -135,7 +137,7 @@ func TestSecureTrieConcurrency(t *testing.T) {
 					tries[index].Update(key, val)
 				}
 			}
-			tries[index].Commit(nil)
+			tries[index].Commit()
 		}(i)
 	}
 	// Wait for all threads to finish

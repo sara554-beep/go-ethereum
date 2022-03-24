@@ -22,7 +22,6 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethdb"
 )
 
 // Iterator is a key-value trie iterator that traverses a Trie.
@@ -118,7 +117,11 @@ type NodeIterator interface {
 	// Before adding a similar mechanism to any other place in Geth, consider
 	// making trie.Database an interface and wrapping at that level. It's a huge
 	// refactor, but it could be worth it if another occurrence arises.
-	AddResolver(ethdb.KeyValueReader)
+	AddResolver(func([]byte, common.Hash) []byte)
+
+	// StorageKey returns the database key of the current iterated node.
+	// If the node is an embedded node in its parent, nil is returned.
+	StorageKey() []byte
 }
 
 // nodeIteratorState represents the iteration state at one particular node of the
@@ -137,7 +140,7 @@ type nodeIterator struct {
 	path  []byte               // Path to the current node
 	err   error                // Failure set in case of an internal error in the iterator
 
-	resolver ethdb.KeyValueReader // Optional intermediate resolver above the disk layer
+	resolver func([]byte, common.Hash) []byte
 }
 
 // errIteratorEnd is stored in nodeIterator.err when iteration is done.
@@ -165,7 +168,7 @@ func newNodeIterator(trie *Trie, start []byte) NodeIterator {
 	return it
 }
 
-func (it *nodeIterator) AddResolver(resolver ethdb.KeyValueReader) {
+func (it *nodeIterator) AddResolver(resolver func([]byte, common.Hash) []byte) {
 	it.resolver = resolver
 }
 
@@ -239,6 +242,13 @@ func (it *nodeIterator) NodeBlob() []byte {
 		return nil
 	}
 	return blob
+}
+
+func (it *nodeIterator) StorageKey() []byte {
+	if it.Hash() == (common.Hash{}) {
+		return nil
+	}
+	return EncodeStorageKey(it.trie.owner, it.path)
 }
 
 func (it *nodeIterator) Error() error {
@@ -369,23 +379,24 @@ func (it *nodeIterator) peekSeek(seekKey []byte) (*nodeIteratorState, *int, []by
 
 func (it *nodeIterator) resolveHash(hash hashNode, path []byte) (node, error) {
 	if it.resolver != nil {
-		if blob, err := it.resolver.Get(hash); err == nil && len(blob) > 0 {
+		if blob := it.resolver(it.StorageKey(), common.BytesToHash(hash)); len(blob) > 0 {
 			if resolved, err := decodeNode(hash, blob); err == nil {
 				return resolved, nil
 			}
 		}
 	}
-	resolved, err := it.trie.resolveHash(hash, path)
-	return resolved, err
+	// load node from underlying node store to avoid polluting trie tracer.
+	return it.trie.nodes.readNode(it.trie.owner, common.BytesToHash(hash), path)
 }
 
 func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) {
 	if it.resolver != nil {
-		if blob, err := it.resolver.Get(hash); err == nil && len(blob) > 0 {
+		if blob := it.resolver(it.StorageKey(), common.BytesToHash(hash)); len(blob) > 0 {
 			return blob, nil
 		}
 	}
-	return it.trie.resolveBlob(hash, path)
+	// load node from underlying node store to avoid polluting trie tracer.
+	return it.trie.nodes.readBlob(it.trie.owner, common.BytesToHash(hash), path)
 }
 
 func (st *nodeIteratorState) resolve(it *nodeIterator, path []byte) error {
@@ -580,7 +591,7 @@ func (it *differenceIterator) NodeBlob() []byte {
 	return it.b.NodeBlob()
 }
 
-func (it *differenceIterator) AddResolver(resolver ethdb.KeyValueReader) {
+func (it *differenceIterator) AddResolver(resolver func([]byte, common.Hash) []byte) {
 	panic("not implemented")
 }
 
@@ -631,6 +642,10 @@ func (it *differenceIterator) Error() error {
 		return err
 	}
 	return it.b.Error()
+}
+
+func (it *differenceIterator) StorageKey() []byte {
+	return it.b.StorageKey()
 }
 
 type nodeIteratorHeap []NodeIterator
@@ -695,7 +710,7 @@ func (it *unionIterator) NodeBlob() []byte {
 	return (*it.items)[0].NodeBlob()
 }
 
-func (it *unionIterator) AddResolver(resolver ethdb.KeyValueReader) {
+func (it *unionIterator) AddResolver(resolver func([]byte, common.Hash) []byte) {
 	panic("not implemented")
 }
 
@@ -746,4 +761,8 @@ func (it *unionIterator) Error() error {
 		}
 	}
 	return nil
+}
+
+func (it *unionIterator) StorageKey() []byte {
+	return (*it.items)[0].StorageKey()
 }

@@ -105,7 +105,7 @@ func (context *chainContext) GetHeader(hash common.Hash, number uint64) *types.H
 	return header
 }
 
-// chainContext construts the context reader which is used by the evm for reading
+// chainContext constructs the context reader which is used by the evm for reading
 // the necessary chain context.
 func (api *API) chainContext(ctx context.Context) core.ChainContext {
 	return &chainContext{api: api, ctx: ctx}
@@ -420,7 +420,6 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				Hash:   res.block.Hash(),
 				Traces: res.results,
 			}
-			// Schedule any parent tries held in memory by this task for dereferencing
 			done[uint64(result.Block)] = result
 
 			// Stream completed traces to the user, aborting on the first error
@@ -841,7 +840,6 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if err != nil {
 		return nil, err
 	}
-	// try to recompute the state
 	reexec := defaultTraceReexec
 	if config != nil && config.Reexec != nil {
 		reexec = *config.Reexec

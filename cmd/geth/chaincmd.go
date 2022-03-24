@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/node"
+	"github.com/ethereum/go-ethereum/trie"
 	"gopkg.in/urfave/cli.v1"
 )
 
@@ -47,7 +48,7 @@ var (
 		Name:      "init",
 		Usage:     "Bootstrap and initialize a new genesis block",
 		ArgsUsage: "<genesisPath>",
-		Flags:     utils.DatabasePathFlags,
+		Flags:     utils.GroupFlags(utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Category:  "BLOCKCHAIN COMMANDS",
 		Description: `
 The init command initializes a new genesis block and definition for the network.
@@ -71,7 +72,7 @@ The dumpgenesis command dumps the genesis block configuration in JSON format to 
 		Name:      "import",
 		Usage:     "Import a blockchain file",
 		ArgsUsage: "<filename> (<filename 2> ... <filename N>) ",
-		Flags: append([]cli.Flag{
+		Flags: utils.GroupFlags(utils.DatabasePathFlags, utils.TrieSchemeFlags, append([]cli.Flag{
 			utils.CacheFlag,
 			utils.SyncModeFlag,
 			utils.GCModeFlag,
@@ -93,7 +94,7 @@ The dumpgenesis command dumps the genesis block configuration in JSON format to 
 			utils.MetricsInfluxDBBucketFlag,
 			utils.MetricsInfluxDBOrganizationFlag,
 			utils.TxLookupLimitFlag,
-		}, utils.DatabasePathFlags...),
+		})),
 		Category: "BLOCKCHAIN COMMANDS",
 		Description: `
 The import command imports blocks from an RLP-encoded form. The form can be one file
@@ -107,10 +108,10 @@ processing will proceed even if an individual RLP-file import failure occurs.`,
 		Name:      "export",
 		Usage:     "Export blockchain into file",
 		ArgsUsage: "<filename> [<blockNumFirst> <blockNumLast>]",
-		Flags: append([]cli.Flag{
+		Flags: utils.GroupFlags([]cli.Flag{
 			utils.CacheFlag,
 			utils.SyncModeFlag,
-		}, utils.DatabasePathFlags...),
+		}, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Category: "BLOCKCHAIN COMMANDS",
 		Description: `
 Requires a first argument of the file to write to.
@@ -196,7 +197,7 @@ func initGenesis(ctx *cli.Context) error {
 		if err != nil {
 			utils.Fatalf("Failed to open database: %v", err)
 		}
-		_, hash, err := core.SetupGenesisBlock(chaindb, genesis)
+		_, hash, err := core.SetupGenesisBlock(chaindb, utils.ParseTrieScheme(ctx), genesis)
 		if err != nil {
 			utils.Fatalf("Failed to write genesis block: %v", err)
 		}
@@ -438,7 +439,7 @@ func dump(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := state.New(root, state.NewDatabase(db), nil)
+	state, err := state.New(root, state.NewDatabaseWithConfig(db, &trie.Config{ReadOnly: true}), nil)
 	if err != nil {
 		return err
 	}

@@ -137,7 +137,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if err != nil {
 		return nil, err
 	}
-	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlockWithOverride(chainDb, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
+	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlockWithOverride(chainDb, config.NodeScheme, config.Genesis, config.OverrideArrowGlacier, config.OverrideTerminalTotalDifficulty)
 	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
 		return nil, genesisErr
 	}
@@ -201,6 +201,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			TrieTimeLimit:       config.TrieTimeout,
 			SnapshotLimit:       config.SnapshotCache,
 			Preimages:           config.Preimages,
+			StateLimit:          config.StateLimit,
+			NodeScheme:          config.NodeScheme,
 		}
 	)
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, chainConfig, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
