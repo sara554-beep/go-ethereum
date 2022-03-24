@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // A BlockTest checks handling of entire blocks.
@@ -107,10 +108,7 @@ func (t *BlockTest) Run(snapshotter bool) error {
 	// import pre accounts & construct test genesis block & state root
 	db := rawdb.NewMemoryDatabase()
 	gspec := t.genesis(config)
-	gblock, err := gspec.Commit(db)
-	if err != nil {
-		return err
-	}
+	gblock := gspec.MustCommit(db)
 	if gblock.Hash() != t.json.Genesis.Hash {
 		return fmt.Errorf("genesis block hash doesn't match test: computed=%x, test=%x", gblock.Hash().Bytes()[:6], t.json.Genesis.Hash[:6])
 	}
@@ -123,7 +121,7 @@ func (t *BlockTest) Run(snapshotter bool) error {
 	} else {
 		engine = ethash.NewShared()
 	}
-	cache := &core.CacheConfig{TrieCleanLimit: 0}
+	cache := &core.CacheConfig{TrieCleanLimit: 0, NodeScheme: trie.HashScheme}
 	if snapshotter {
 		cache.SnapshotLimit = 1
 		cache.SnapshotWait = true

@@ -65,6 +65,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 	pcsclite "github.com/gballet/go-libpcsclite"
 	gopsutil "github.com/shirou/gopsutil/mem"
 	"github.com/urfave/cli/v2"
@@ -272,6 +273,17 @@ var (
 		Name:     "override.terminaltotaldifficultypassed",
 		Usage:    "Manually specify TerminalTotalDifficultyPassed, overriding the bundled setting",
 		Category: flags.EthCategory,
+	}
+	PathBasedSchemeFlag = &cli.BoolFlag{
+		Name:     "trie.pathbased",
+		Usage:    "Enables experiment path-based trie scheme (default = disabled)",
+		Category: flags.MiscCategory,
+	}
+	StateLimitFlag = &cli.Uint64Flag{
+		Name:     "trie.statelimit",
+		Usage:    "Number of recent blocks to maintain state history for (default = 90,000 blocks 0 = entire chain)",
+		Value:    ethconfig.Defaults.StateLimit,
+		Category: flags.MiscCategory,
 	}
 	// Light server and client settings
 	LightServeFlag = &cli.IntFlag{
@@ -997,6 +1009,11 @@ var (
 		DataDirFlag,
 		AncientFlag,
 		RemoteDBFlag,
+	}
+	// TrieSchemeFlags is the flag group of all trie node scheme flags
+	TrieSchemeFlags = []cli.Flag{
+		StateLimitFlag,
+		PathBasedSchemeFlag,
 	}
 )
 
@@ -1797,6 +1814,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.Preimages = true
 		log.Info("Enabling recording of key preimages since archive mode is used")
 	}
+	if ctx.IsSet(StateLimitFlag.Name) {
+		cfg.StateLimit = ctx.Uint64(StateLimitFlag.Name)
+	}
+	if ctx.IsSet(PathBasedSchemeFlag.Name) {
+		cfg.NodeScheme = ParseTrieScheme(ctx)
+	}
 	if ctx.IsSet(TxLookupLimitFlag.Name) {
 		cfg.TxLookupLimit = ctx.Uint64(TxLookupLimitFlag.Name)
 	}
@@ -2190,6 +2213,8 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (*core.BlockChain, ethdb.Data
 		TrieTimeLimit:       ethconfig.Defaults.TrieTimeout,
 		SnapshotLimit:       ethconfig.Defaults.SnapshotCache,
 		Preimages:           ctx.Bool(CachePreimagesFlag.Name),
+		NodeScheme:          ParseTrieScheme(ctx),
+		StateLimit:          ctx.Uint64(StateLimitFlag.Name),
 	}
 	if cache.TrieDirtyDisabled && !cache.Preimages {
 		cache.Preimages = true
@@ -2229,4 +2254,12 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 		preloads = append(preloads, strings.TrimSpace(file))
 	}
 	return preloads
+}
+
+// ParseTrieScheme resolves scheme identifier from CLI flag.
+func ParseTrieScheme(ctx *cli.Context) string {
+	if ctx.Bool(PathBasedSchemeFlag.Name) {
+		return trie.PathScheme
+	}
+	return trie.HashScheme
 }

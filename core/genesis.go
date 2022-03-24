@@ -103,8 +103,8 @@ func (ga *GenesisAlloc) deriveHash() (common.Hash, error) {
 // flush is very similar with deriveHash, but the main difference is
 // all the generated states will be persisted into the given database.
 // Also, the genesis state specification will be flushed as well.
-func (ga *GenesisAlloc) flush(db ethdb.Database) error {
-	statedb, err := state.New(common.Hash{}, state.NewDatabaseWithConfig(db, &trie.Config{Preimages: true}), nil)
+func (ga *GenesisAlloc) flush(db *trie.Database) error {
+	statedb, err := state.New(common.Hash{}, state.NewDatabaseWithNodeDB(db), nil)
 	if err != nil {
 		return err
 	}
@@ -120,24 +120,27 @@ func (ga *GenesisAlloc) flush(db ethdb.Database) error {
 	if err != nil {
 		return err
 	}
-	err = statedb.Database().TrieDB().Commit(root, true, nil)
-	if err != nil {
-		return err
+	// Commit newly generated states into disk if it's not empty.
+	if root != types.EmptyRootHash {
+		err = db.Commit(root)
+		if err != nil {
+			return err
+		}
 	}
 	// Marshal the genesis state specification and persist.
 	blob, err := json.Marshal(ga)
 	if err != nil {
 		return err
 	}
-	rawdb.WriteGenesisStateSpec(db, root, blob)
+	rawdb.WriteGenesisStateSpec(db.DiskDB(), root, blob)
 	return nil
 }
 
 // CommitGenesisState loads the stored genesis state with the given block
-// hash and commits them into the given database handler.
-func CommitGenesisState(db ethdb.Database, hash common.Hash) error {
+// hash and commits it into the provided trie database.
+func CommitGenesisState(db *trie.Database, hash common.Hash) error {
 	var alloc GenesisAlloc
-	blob := rawdb.ReadGenesisStateSpec(db, hash)
+	blob := rawdb.ReadGenesisStateSpec(db.DiskDB(), hash)
 	if len(blob) != 0 {
 		if err := alloc.UnmarshalJSON(blob); err != nil {
 			return err
@@ -249,14 +252,15 @@ type ChainOverrides struct {
 // error is a *params.ConfigCompatError and the new, unwritten config is returned.
 //
 // The returned chain configuration is never nil.
-func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
-	return SetupGenesisBlockWithOverride(db, genesis, nil)
+func SetupGenesisBlock(triedb *trie.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
+	return SetupGenesisBlockWithOverride(triedb, genesis, nil)
 }
 
-func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, overrides *ChainOverrides) (*params.ChainConfig, common.Hash, error) {
+func SetupGenesisBlockWithOverride(triedb *trie.Database, genesis *Genesis, overrides *ChainOverrides) (*params.ChainConfig, common.Hash, error) {
 	if genesis != nil && genesis.Config == nil {
 		return params.AllEthashProtocolChanges, common.Hash{}, errGenesisNoConfig
 	}
+	db := triedb.DiskDB()
 
 	applyOverrides := func(config *params.ChainConfig) {
 		if config != nil {
@@ -278,17 +282,17 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		} else {
 			log.Info("Writing custom genesis block")
 		}
-		block, err := genesis.Commit(db)
+		block, err := genesis.Commit(triedb)
 		if err != nil {
 			return genesis.Config, common.Hash{}, err
 		}
 		applyOverrides(genesis.Config)
 		return genesis.Config, block.Hash(), nil
 	}
-	// We have the genesis block in database(perhaps in ancient database)
-	// but the corresponding state is missing.
-	header := rawdb.ReadHeader(db, stored, 0)
-	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil), nil); err != nil {
+	// The genesis block is present(perhaps in ancient database) while the
+	// state database is empty. It can happen that the node is initialized
+	// with an external ancient store. Commit genesis state in this case.
+	if triedb.IsEmpty() && genesis.ToBlock().Root() != types.EmptyRootHash {
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
 		}
@@ -297,7 +301,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
-		block, err := genesis.Commit(db)
+		block, err := genesis.Commit(triedb)
 		if err != nil {
 			return genesis.Config, hash, err
 		}
@@ -441,7 +445,7 @@ func (g *Genesis) ToBlock() *types.Block {
 
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
-func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+func (g *Genesis) Commit(triedb *trie.Database) (*types.Block, error) {
 	block := g.ToBlock()
 	if block.Number().Sign() != 0 {
 		return nil, errors.New("can't commit genesis block with number > 0")
@@ -459,9 +463,10 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	// All the checks has passed, flush the states derived from the genesis
 	// specification as well as the specification itself into the provided
 	// database.
-	if err := g.Alloc.flush(db); err != nil {
+	if err := g.Alloc.flush(triedb); err != nil {
 		return nil, err
 	}
+	db := triedb.DiskDB()
 	rawdb.WriteTd(db, block.Hash(), block.NumberU64(), block.Difficulty())
 	rawdb.WriteBlock(db, block)
 	rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), nil)
@@ -475,8 +480,10 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 
 // MustCommit writes the genesis block and state to db, panicking on error.
 // The block is committed as the canonical head block.
+// Note the state changes will be committed in hash-based scheme, use Commit
+// if path-scheme is preferred.
 func (g *Genesis) MustCommit(db ethdb.Database) *types.Block {
-	block, err := g.Commit(db)
+	block, err := g.Commit(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}))
 	if err != nil {
 		panic(err)
 	}

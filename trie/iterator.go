@@ -22,7 +22,6 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethdb"
 )
 
 // Iterator is a key-value trie iterator that traverses a Trie.
@@ -118,7 +117,7 @@ type NodeIterator interface {
 	// Before adding a similar mechanism to any other place in Geth, consider
 	// making trie.Database an interface and wrapping at that level. It's a huge
 	// refactor, but it could be worth it if another occurrence arises.
-	AddResolver(ethdb.KeyValueReader)
+	AddResolver(func(common.Hash, []byte, common.Hash) []byte)
 }
 
 // nodeIteratorState represents the iteration state at one particular node of the
@@ -137,7 +136,7 @@ type nodeIterator struct {
 	path  []byte               // Path to the current node
 	err   error                // Failure set in case of an internal error in the iterator
 
-	resolver ethdb.KeyValueReader // Optional intermediate resolver above the disk layer
+	resolver func(common.Hash, []byte, common.Hash) []byte
 }
 
 // errIteratorEnd is stored in nodeIterator.err when iteration is done.
@@ -165,7 +164,7 @@ func newNodeIterator(trie *Trie, start []byte) NodeIterator {
 	return it
 }
 
-func (it *nodeIterator) AddResolver(resolver ethdb.KeyValueReader) {
+func (it *nodeIterator) AddResolver(resolver func(common.Hash, []byte, common.Hash) []byte) {
 	it.resolver = resolver
 }
 
@@ -369,22 +368,22 @@ func (it *nodeIterator) peekSeek(seekKey []byte) (*nodeIteratorState, *int, []by
 
 func (it *nodeIterator) resolveHash(hash hashNode, path []byte) (node, error) {
 	if it.resolver != nil {
-		if blob, err := it.resolver.Get(hash); err == nil && len(blob) > 0 {
+		if blob := it.resolver(it.trie.owner, path, common.BytesToHash(hash)); len(blob) > 0 {
 			if resolved, err := decodeNode(hash, blob); err == nil {
 				return resolved, nil
 			}
 		}
 	}
-	return it.trie.resolveHash(hash, path)
+	return it.trie.reader.node(it.trie.owner, path, common.BytesToHash(hash))
 }
 
 func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) {
 	if it.resolver != nil {
-		if blob, err := it.resolver.Get(hash); err == nil && len(blob) > 0 {
+		if blob := it.resolver(it.trie.owner, path, common.BytesToHash(hash)); len(blob) > 0 {
 			return blob, nil
 		}
 	}
-	return it.trie.resolveBlob(hash, path)
+	return it.trie.reader.nodeBlob(it.trie.owner, path, common.BytesToHash(hash))
 }
 
 func (st *nodeIteratorState) resolve(it *nodeIterator, path []byte) error {
@@ -579,7 +578,7 @@ func (it *differenceIterator) NodeBlob() []byte {
 	return it.b.NodeBlob()
 }
 
-func (it *differenceIterator) AddResolver(resolver ethdb.KeyValueReader) {
+func (it *differenceIterator) AddResolver(resolver func(common.Hash, []byte, common.Hash) []byte) {
 	panic("not implemented")
 }
 
@@ -694,7 +693,7 @@ func (it *unionIterator) NodeBlob() []byte {
 	return (*it.items)[0].NodeBlob()
 }
 
-func (it *unionIterator) AddResolver(resolver ethdb.KeyValueReader) {
+func (it *unionIterator) AddResolver(resolver func(common.Hash, []byte, common.Hash) []byte) {
 	panic("not implemented")
 }
 

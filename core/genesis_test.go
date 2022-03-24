@@ -17,6 +17,7 @@
 package core
 
 import (
+	"encoding/json"
 	"math/big"
 	"reflect"
 	"testing"
@@ -28,12 +29,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 func TestInvalidCliqueConfig(t *testing.T) {
 	block := DefaultGoerliGenesisBlock()
 	block.ExtraData = []byte{}
-	if _, err := block.Commit(nil); err == nil {
+	if _, err := block.Commit(trie.NewDatabase(rawdb.NewMemoryDatabase(), &trie.Config{Scheme: trie.HashScheme})); err == nil {
 		t.Fatal("Expected error on invalid clique config")
 	}
 }
@@ -60,7 +62,7 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "genesis without ChainConfig",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				return SetupGenesisBlock(db, new(Genesis))
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), new(Genesis))
 			},
 			wantErr:    errGenesisNoConfig,
 			wantConfig: params.AllEthashProtocolChanges,
@@ -68,7 +70,7 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "no block in DB, genesis == nil",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				return SetupGenesisBlock(db, nil)
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), nil)
 			},
 			wantHash:   params.MainnetGenesisHash,
 			wantConfig: params.MainnetChainConfig,
@@ -77,7 +79,7 @@ func TestSetupGenesis(t *testing.T) {
 			name: "mainnet block in DB, genesis == nil",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				DefaultGenesisBlock().MustCommit(db)
-				return SetupGenesisBlock(db, nil)
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), nil)
 			},
 			wantHash:   params.MainnetGenesisHash,
 			wantConfig: params.MainnetChainConfig,
@@ -86,7 +88,7 @@ func TestSetupGenesis(t *testing.T) {
 			name: "custom block in DB, genesis == nil",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				customg.MustCommit(db)
-				return SetupGenesisBlock(db, nil)
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), nil)
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
@@ -95,7 +97,7 @@ func TestSetupGenesis(t *testing.T) {
 			name: "custom block in DB, genesis == ropsten",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				customg.MustCommit(db)
-				return SetupGenesisBlock(db, DefaultRopstenGenesisBlock())
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), DefaultRopstenGenesisBlock())
 			},
 			wantErr:    &GenesisMismatchError{Stored: customghash, New: params.RopstenGenesisHash},
 			wantHash:   params.RopstenGenesisHash,
@@ -105,7 +107,7 @@ func TestSetupGenesis(t *testing.T) {
 			name: "compatible config in DB",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				oldcustomg.MustCommit(db)
-				return SetupGenesisBlock(db, &customg)
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), &customg)
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
@@ -122,9 +124,9 @@ func TestSetupGenesis(t *testing.T) {
 
 				blocks, _ := GenerateChain(oldcustomg.Config, genesis, ethash.NewFaker(), db, 4, nil)
 				bc.InsertChain(blocks)
-				bc.CurrentBlock()
+
 				// This should return a compatibility error.
-				return SetupGenesisBlock(db, &customg)
+				return SetupGenesisBlock(trie.NewDatabase(db, &trie.Config{Scheme: trie.HashScheme}), &customg)
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
@@ -193,6 +195,7 @@ func TestGenesis_Commit(t *testing.T) {
 
 	db := rawdb.NewMemoryDatabase()
 	genesisBlock := genesis.MustCommit(db)
+
 	if genesis.Difficulty != nil {
 		t.Fatalf("assumption wrong")
 	}
@@ -219,7 +222,8 @@ func TestReadWriteGenesisAlloc(t *testing.T) {
 		}
 		hash, _ = alloc.deriveHash()
 	)
-	alloc.flush(db)
+	blob, _ := json.Marshal(alloc)
+	rawdb.WriteGenesisStateSpec(db, hash, blob)
 
 	var reload GenesisAlloc
 	err := reload.UnmarshalJSON(rawdb.ReadGenesisStateSpec(db, hash))

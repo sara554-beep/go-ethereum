@@ -78,17 +78,17 @@ func TestHexKeybytes(t *testing.T) {
 }
 
 func TestHexToCompactInPlace(t *testing.T) {
-	for i, keyS := range []string{
+	for i, key := range []string{
 		"00",
 		"060a040c0f000a090b040803010801010900080d090a0a0d0903000b10",
 		"10",
 	} {
-		hexBytes, _ := hex.DecodeString(keyS)
+		hexBytes, _ := hex.DecodeString(key)
 		exp := hexToCompact(hexBytes)
 		sz := hexToCompactInPlace(hexBytes)
 		got := hexBytes[:sz]
 		if !bytes.Equal(exp, got) {
-			t.Fatalf("test %d: encoding err\ninp %v\ngot %x\nexp %x\n", i, keyS, got, exp)
+			t.Fatalf("test %d: encoding err\ninp %v\ngot %x\nexp %x\n", i, key, got, exp)
 		}
 	}
 }
@@ -107,6 +107,53 @@ func TestHexToCompactInPlaceRandom(t *testing.T) {
 		if !bytes.Equal(exp, got) {
 			t.Fatalf("encoding err \ncpt %x\nhex %x\ngot %x\nexp %x\n",
 				key, hexOrig, got, exp)
+		}
+	}
+}
+
+func TestRightPadding(t *testing.T) {
+	tests := []struct{ hex, padded []byte }{
+		// empty keys
+		{hex: []byte{}, padded: append(bytes.Repeat([]byte{0x0}, 32), []byte{0x0}...)},
+		// odd length
+		{
+			hex: bytes.Repeat([]byte{1}, 15),
+			padded: append(
+				append(bytes.Repeat([]byte{0x11}, 7), []byte{0x10}...),
+				append(bytes.Repeat([]byte{0x0}, 24), []byte{0x0f}...)...,
+			),
+		},
+		// even length
+		{
+			hex: bytes.Repeat([]byte{1}, 16),
+			padded: append(
+				bytes.Repeat([]byte{0x11}, 8),
+				append(bytes.Repeat([]byte{0x0}, 24), []byte{0x10}...)...,
+			),
+		},
+		// odd length
+		{
+			hex: bytes.Repeat([]byte{1}, 63),
+			padded: append(
+				bytes.Repeat([]byte{0x11}, 31),
+				[]byte{0x10, 0x3f}...,
+			),
+		},
+		// even length
+		{
+			hex: bytes.Repeat([]byte{1}, 62),
+			padded: append(
+				bytes.Repeat([]byte{0x11}, 31),
+				[]byte{0x00, 0x3e}...,
+			),
+		},
+	}
+	for _, test := range tests {
+		if c := hexToRightPadding(test.hex); !bytes.Equal(c, test.padded) {
+			t.Errorf("hexToRightPadding(%x) -> %x, want %x", test.hex, c, test.padded)
+		}
+		if h := rightPaddingToHex(test.padded); !bytes.Equal(h, test.hex) {
+			t.Errorf("rightPaddingToHex(%x) -> %x, want %x", test.padded, h, test.hex)
 		}
 	}
 }

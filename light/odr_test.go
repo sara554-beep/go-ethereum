@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 var (
@@ -57,7 +56,7 @@ type testOdr struct {
 	OdrBackend
 	indexerConfig *IndexerConfig
 	sdb, ldb      ethdb.Database
-	triedb        *trie.Database
+	serverState   state.Database
 	disable       bool
 }
 
@@ -83,7 +82,18 @@ func (odr *testOdr) Retrieve(ctx context.Context, req OdrRequest) error {
 			req.Receipts = rawdb.ReadRawReceipts(odr.sdb, req.Hash, *number)
 		}
 	case *TrieRequest:
-		t, _ := trie.New(common.BytesToHash(req.Id.AccKey), req.Id.Root, odr.triedb)
+		var (
+			err error
+			t   state.Trie
+		)
+		if len(req.Id.AccKey) > 0 {
+			t, err = odr.serverState.OpenStorageTrie(req.Id.StateRoot, common.BytesToHash(req.Id.AccKey), req.Id.Root)
+		} else {
+			t, err = odr.serverState.OpenTrie(req.Id.Root)
+		}
+		if err != nil {
+			panic(err)
+		}
 		nodes := NewNodeSet()
 		t.Prove(req.Key, 0, nodes)
 		req.Proof = nodes
@@ -266,8 +276,9 @@ func testChainOdr(t *testing.T, protocol int, fn odrTestFn) {
 	if _, err := blockchain.InsertChain(gchain); err != nil {
 		t.Fatal(err)
 	}
+
 	gspec.MustCommit(ldb)
-	odr := &testOdr{sdb: sdb, ldb: ldb, triedb: blockchain.StateCache().TrieDB(), indexerConfig: TestClientIndexerConfig}
+	odr := &testOdr{sdb: sdb, ldb: ldb, serverState: blockchain.StateCache(), indexerConfig: TestClientIndexerConfig}
 	lightchain, err := NewLightChain(odr, gspec.Config, ethash.NewFullFaker(), nil)
 	if err != nil {
 		t.Fatal(err)

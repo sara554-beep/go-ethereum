@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // This nil assignment ensures at compile time that SimulatedBackend implements bind.ContractBackend.
@@ -83,7 +84,9 @@ func NewSimulatedBackendWithDatabase(database ethdb.Database, alloc core.Genesis
 		GasLimit: gasLimit,
 		Alloc:    alloc,
 	}
-	blockchain, _ := core.NewBlockChain(database, nil, &genesis, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+	// Hash-based scheme is picked forcibly so that all state data
+	// created by chain can be shared with chain maker.
+	blockchain, _ := core.NewBlockChain(database, core.DefaultCacheConfigWithScheme(trie.HashScheme), &genesis, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 
 	backend := &SimulatedBackend{
 		database:   database,
@@ -791,7 +794,7 @@ func (b *SimulatedBackend) AdjustTime(adjustment time.Duration) error {
 	defer b.mu.Unlock()
 
 	if len(b.pendingBlock.Transactions()) != 0 {
-		return errors.New("Could not adjust time on non-empty block")
+		return errors.New("could not adjust time on non-empty block")
 	}
 
 	blocks, _ := core.GenerateChain(b.config, b.blockchain.CurrentBlock(), ethash.NewFaker(), b.database, 1, func(number int, block *core.BlockGen) {

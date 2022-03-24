@@ -51,7 +51,7 @@ func TestNodeIterator(t *testing.T) {
 
 	gspec.MustCommit(lightdb)
 	ctx := context.Background()
-	odr := &testOdr{sdb: fulldb, ldb: lightdb, triedb: blockchain.StateCache().TrieDB(), indexerConfig: TestClientIndexerConfig}
+	odr := &testOdr{sdb: fulldb, ldb: lightdb, serverState: blockchain.StateCache(), indexerConfig: TestClientIndexerConfig}
 	head := blockchain.CurrentHeader()
 	lightTrie, _ := NewStateDatabase(ctx, head, odr).OpenTrie(head.Root)
 	fullTrie, _ := blockchain.StateCache().OpenTrie(head.Root)
