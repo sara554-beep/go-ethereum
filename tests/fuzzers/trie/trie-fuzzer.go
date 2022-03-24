@@ -22,7 +22,8 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -83,9 +84,17 @@ func (ds *dataSource) Ended() bool {
 	return ds.reader.Len() == 0
 }
 
-func Generate(input []byte) randTest {
-	var allKeys [][]byte
+func Generate(input []byte) (string, randTest) {
+	var (
+		scheme  string
+		allKeys [][]byte
+	)
 	r := newDataSource(input)
+	if r.readByte()%2 == 0 {
+		scheme = trie.HashScheme
+	} else {
+		scheme = trie.PathScheme
+	}
 	genKey := func() []byte {
 		if len(allKeys) < 2 || r.readByte() < 0x0f {
 			// new key
@@ -97,9 +106,7 @@ func Generate(input []byte) randTest {
 		// use existing key
 		return allKeys[int(r.readByte())%len(allKeys)]
 	}
-
 	var steps randTest
-
 	for i := 0; !r.Ended(); i++ {
 		step := randTestStep{op: int(r.readByte()) % opMax}
 		switch step.op {
@@ -115,8 +122,7 @@ func Generate(input []byte) randTest {
 			break
 		}
 	}
-
-	return steps
+	return scheme, steps
 }
 
 // The function must return
@@ -127,22 +133,23 @@ func Generate(input []byte) randTest {
 // 0  otherwise
 // other values are reserved for future use.
 func Fuzz(input []byte) int {
-	program := Generate(input)
+	scheme, program := Generate(input)
 	if len(program) == 0 {
 		return 0
 	}
-	if err := runRandTest(program); err != nil {
+	if err := runRandTest(scheme, program); err != nil {
 		panic(err)
 	}
 	return 1
 }
 
-func runRandTest(rt randTest) error {
-	triedb := trie.NewDatabase(memorydb.New())
-
-	tr := trie.NewEmpty(triedb)
-	values := make(map[string]string) // tracks content of the trie
-
+func runRandTest(scheme string, rt randTest) error {
+	var (
+		origin = convertEmpty(common.Hash{})
+		triedb = trie.NewDatabase(rawdb.NewMemoryDatabase(), &trie.Config{Scheme: scheme})
+		tr, _  = trie.New(origin, common.Hash{}, origin, triedb)
+		values = make(map[string]string) // tracks content of the trie
+	)
 	for i, step := range rt {
 		switch step.op {
 		case opUpdate:
@@ -158,28 +165,35 @@ func runRandTest(rt randTest) error {
 				rt[i].err = fmt.Errorf("mismatch for key %#x, got %#x want %#x", step.key, v, want)
 			}
 		case opCommit:
-			_, nodes, err := tr.Commit(false)
-			if err != nil {
-				rt[i].err = err
-			}
-			if nodes != nil {
-				if err := triedb.Update(trie.NewWithNodeSet(nodes)); err != nil {
-					return err
-				}
-			}
-		case opHash:
-			tr.Hash()
-		case opReset:
-			hash, nodes, err := tr.Commit(false)
+			root, nodes, err := tr.Commit(false)
 			if err != nil {
 				return err
 			}
-			if nodes != nil {
-				if err := triedb.Update(trie.NewWithNodeSet(nodes)); err != nil {
+			root = convertEmpty(root)
+			if root != origin {
+				err = triedb.Update(root, origin, trie.NewWithNodeSet(nodes))
+				if err != nil {
+					rt[i].err = err
 					return err
 				}
 			}
-			newtr, err := trie.New(common.Hash{}, hash, triedb)
+			origin = root
+		case opHash:
+			tr.Hash()
+		case opReset:
+			root, nodes, err := tr.Commit(false)
+			if err != nil {
+				return err
+			}
+			root = convertEmpty(root)
+			if root != origin {
+				err = triedb.Update(root, origin, trie.NewWithNodeSet(nodes))
+				if err != nil {
+					return err
+				}
+			}
+			origin = root
+			newtr, err := trie.New(origin, common.Hash{}, origin, triedb)
 			if err != nil {
 				return err
 			}
@@ -202,4 +216,12 @@ func runRandTest(rt randTest) error {
 		}
 	}
 	return nil
+}
+
+// convertEmpty converts the given hash to predefined emptyHash if it's empty.
+func convertEmpty(hash common.Hash) common.Hash {
+	if hash == (common.Hash{}) {
+		return types.EmptyRootHash
+	}
+	return hash
 }

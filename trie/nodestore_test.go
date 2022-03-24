@@ -18,7 +18,6 @@ package trie
 
 import (
 	"bytes"
-	"math/rand"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -28,7 +27,7 @@ import (
 
 func TestNodeStoreCopy(t *testing.T) {
 	// Insert a batch of entries into trie
-	triedb := NewDatabase(rawdb.NewMemoryDatabase())
+	triedb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie := NewEmpty(triedb)
 	vals := []struct{ k, v string }{
 		{"do", "verb"},
@@ -71,7 +70,7 @@ func TestNodeStoreCopy(t *testing.T) {
 		node = randomNode()
 		path = randomHash()
 	)
-	store.write(string(path.Bytes()), node)
+	store.insert(path.Bytes(), node)
 	blob, err := store.readBlob(common.Hash{}, node.hash, path.Bytes())
 	if err != nil {
 		t.Fatalf("Failed to read blob %v", err)
@@ -93,23 +92,5 @@ func TestNodeStoreCopy(t *testing.T) {
 	}
 	if !bytes.Equal(blob, node.rlp()) {
 		t.Fatal("Unexpected node")
-	}
-}
-
-// randomHash generates a random blob of data and returns it as a hash.
-func randomHash() common.Hash {
-	var hash common.Hash
-	if n, err := rand.Read(hash[:]); n != common.HashLength || err != nil {
-		panic(err)
-	}
-	return hash
-}
-
-func randomNode() *memoryNode {
-	val := randBytes(100)
-	return &memoryNode{
-		hash: crypto.Keccak256Hash(val),
-		node: rawNode(val),
-		size: 100,
 	}
 }

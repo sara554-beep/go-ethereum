@@ -33,25 +33,32 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Tests that simple header verification works, for both good and bad blocks.
-func TestHeaderVerification(t *testing.T) {
+func TestHeaderVerificationHashBased(t *testing.T) { testHeaderVerification(t, trie.HashScheme) }
+func TestHeaderVerificationPathBased(t *testing.T) { testHeaderVerification(t, trie.PathScheme) }
+
+func testHeaderVerification(t *testing.T, scheme string) {
 	// Create a simple chain to verify
 	var (
-		testdb    = rawdb.NewMemoryDatabase()
+		gendb     = rawdb.NewMemoryDatabase()
+		diskdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
-		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
+		genesis   = gspec.MustCommit(gendb)
+		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), gendb, 8, nil)
 	)
+	// Initialize the chain with provided trie scheme.
+	gspec.Commit(diskdb, scheme)
+	chain, _ := NewBlockChain(diskdb, DefaultCacheConfigWithScheme(scheme), params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
+	defer chain.Stop()
+
+	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
 		headers[i] = block.Header()
 	}
-	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, _ := NewBlockChain(testdb, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
-	defer chain.Stop()
-
 	for i := 0; i < len(blocks); i++ {
 		for j, valid := range []bool{true, false} {
 			var results <-chan error

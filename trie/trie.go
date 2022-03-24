@@ -100,15 +100,15 @@ func (t *Trie) Copy() *Trie {
 // trie is initially empty and does not require a database. Otherwise,
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
-func New(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
-	store, err := newNodeStore(db)
+func New(stateRoot common.Hash, owner common.Hash, root common.Hash, db NodeReader) (*Trie, error) {
+	store, err := newNodeStore(db.GetReader(stateRoot))
 	if err != nil {
 		return nil, err
 	}
 	trie := &Trie{
-		owner: owner,
-		nodes: store,
-		//tracer: newTracer(),
+		owner:  owner,
+		nodes:  store,
+		tracer: newTracer(),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
 		rootnode, err := trie.resolveHash(root[:], nil)
@@ -122,7 +122,7 @@ func New(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
 
 // NewEmpty is a shortcut to create empty tree. It's mostly used in tests.
 func NewEmpty(db *Database) *Trie {
-	tr, _ := New(common.Hash{}, common.Hash{}, db)
+	tr, _ := New(common.Hash{}, common.Hash{}, common.Hash{}, db)
 	return tr
 }
 
@@ -561,9 +561,23 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 }
 
 // resolveHash loads node from the underlying store with the given
-// node hash and path prefix.
+// node hash and path prefix. The rlp-encoded value of loaded node
+// will also be tracked.
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	return t.nodes.readNode(t.owner, common.BytesToHash(n), prefix)
+	node, err := t.nodes.readNode(t.owner, common.BytesToHash(n), prefix)
+	if err != nil {
+		return nil, err
+	}
+	// Track the rlp-encoded value whenever load nodes from underlying
+	// reader. They can be regarded as previous value which is vital
+	// for constructing state reverse diff. TODO how can we avoid this
+	// additional lookup?
+	blob, err := t.nodes.readBlob(t.owner, common.BytesToHash(n), prefix)
+	if err != nil {
+		return nil, err
+	}
+	t.tracer.onRead(prefix, blob)
+	return node, nil
 }
 
 // Hash returns the root hash of the trie. It does not write to the
@@ -590,18 +604,19 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *NodeSet, error) {
 	// in the following procedure that all nodes are hashed.
 	rootHash := t.Hash()
 
-	h := newCommitter(t.owner, collectLeaf)
+	h := newCommitter(t.owner, t.tracer, t.nodes, collectLeaf)
 	defer returnCommitterToPool(h)
 
-	// Do a quick check if we really need to commit. This can happen e.g.
-	// if we load a trie for reading storage values, but don't write to it.
+	// Do a quick check if we really need to commit, before we spin
+	// up goroutines. This can happen e.g. if we load a trie for
+	// reading storage values, but don't write to it.
 	if hashedNode, dirty := t.root.cache(); !dirty {
 		// Replace the root node with the origin hash in order to
 		// ensure all resolved nodes are dropped after the commit.
 		t.root = hashedNode
 		return rootHash, nil, nil
 	}
-	newRoot, nodes, err := h.Commit(t.root, t.nodes)
+	newRoot, nodes, err := h.Commit(t.root)
 	if err != nil {
 		return common.Hash{}, nil, err
 	}

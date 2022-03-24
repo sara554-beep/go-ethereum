@@ -34,13 +34,22 @@ var errUnexpectedNode = errors.New("unexpected node")
 //
 // nodeStore is not safe for concurrent use.
 type nodeStore struct {
-	db    *Database
-	nodes map[string]*memoryNode
+	reader Reader
+	nodes  map[string]*memoryNode
+
+	// Marker to prevent node from being accessed, only used for testing
+	banned map[string]struct{}
 }
 
 // readNode retrieves the node in canonical representation.
 // Returns an MissingNodeError error if the node is not found.
 func (s *nodeStore) readNode(owner common.Hash, hash common.Hash, path []byte) (node, error) {
+	// Perform the logics in tests for preventing trie node access.
+	if s.banned != nil {
+		if _, ok := s.banned[string(path)]; ok {
+			return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
+		}
+	}
 	// Load the node from the local cache first.
 	mn, ok := s.nodes[string(path)]
 	if ok {
@@ -52,19 +61,25 @@ func (s *nodeStore) readNode(owner common.Hash, hash common.Hash, path []byte) (
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, mn.hash, hash, owner, path)
 	}
 	// Load the node from the underlying database then
-	if s.db == nil {
+	if s.reader == nil {
 		return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
 	}
-	n := s.db.node(hash)
+	n, err := s.reader.Node(owner, path, hash)
 	if n != nil {
 		return n, nil
 	}
-	return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
+	return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path, err: err}
 }
 
 // readBlob retrieves the node in rlp-encoded representation.
 // Returns an MissingNodeError error if the node is not found.
 func (s *nodeStore) readBlob(owner common.Hash, hash common.Hash, path []byte) ([]byte, error) {
+	// Perform the logics in tests for preventing trie node access.
+	if s.banned != nil {
+		if _, ok := s.banned[string(path)]; ok {
+			return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
+		}
+	}
 	// Load the node from the local cache first
 	mn, ok := s.nodes[string(path)]
 	if ok {
@@ -76,19 +91,19 @@ func (s *nodeStore) readBlob(owner common.Hash, hash common.Hash, path []byte) (
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, mn.hash, hash, owner, path)
 	}
 	// Load the node from the underlying database then
-	if s.db == nil {
+	if s.reader == nil {
 		return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path}
 	}
-	blob, err := s.db.Node(hash)
+	blob, err := s.reader.NodeBlob(owner, path, hash)
 	if len(blob) > 0 {
 		return blob, nil
 	}
 	return nil, &MissingNodeError{Owner: owner, NodeHash: hash, Path: path, err: err}
 }
 
-// write inserts a dirty node into the store. It happens in trie commit procedure.
-func (s *nodeStore) write(path string, node *memoryNode) {
-	s.nodes[path] = node
+// insert inserts a dirty node into the store. It happens in trie commit procedure.
+func (s *nodeStore) insert(path []byte, node *memoryNode) {
+	s.nodes[string(path)] = node
 }
 
 // copy deep copies the nodeStore and returns an independent handler but with
@@ -99,8 +114,8 @@ func (s *nodeStore) copy() *nodeStore {
 		nodes[k] = n
 	}
 	return &nodeStore{
-		db:    s.db, // safe to copy directly.
-		nodes: nodes,
+		reader: s.reader, // safe to copy directly.
+		nodes:  nodes,
 	}
 }
 
@@ -114,10 +129,10 @@ func (s *nodeStore) size() common.StorageSize {
 }
 
 // newNodeStore initializes the nodeStore with the given node reader.
-func newNodeStore(db *Database) (*nodeStore, error) {
+func newNodeStore(reader Reader) (*nodeStore, error) {
 	return &nodeStore{
-		db:    db,
-		nodes: make(map[string]*memoryNode),
+		reader: reader,
+		nodes:  make(map[string]*memoryNode),
 	}, nil
 }
 
