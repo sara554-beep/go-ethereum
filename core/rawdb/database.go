@@ -324,21 +324,24 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		logged = time.Now()
 
 		// Key-value store statistics
-		headers         stat
-		bodies          stat
-		receipts        stat
-		tds             stat
-		numHashPairings stat
-		hashNumPairings stat
-		tries           stat
-		codes           stat
-		txLookups       stat
-		accountSnaps    stat
-		storageSnaps    stat
-		preimages       stat
-		bloomBits       stat
-		beaconHeaders   stat
-		cliqueSnaps     stat
+		headers            stat
+		bodies             stat
+		receipts           stat
+		tds                stat
+		numHashPairings    stat
+		hashNumPairings    stat
+		tries              stat
+		trieSnaps          stat
+		legacyTries        stat
+		reverseDiffLookups stat
+		codes              stat
+		txLookups          stat
+		accountSnaps       stat
+		storageSnaps       stat
+		preimages          stat
+		bloomBits          stat
+		beaconHeaders      stat
+		cliqueSnaps        stat
 
 		// Ancient store statistics
 		ancientHeadersSize  common.StorageSize
@@ -378,8 +381,14 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			numHashPairings.Add(size)
 		case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
 			hashNumPairings.Add(size)
-		case len(key) == common.HashLength:
+		case bytes.HasPrefix(key, TrieNodePrefix) && len(key) > len(TrieNodePrefix) && len(key) < len(TrieNodePrefix)+maxTrieNodeStorageKeyLen:
 			tries.Add(size)
+		case bytes.HasPrefix(key, TrieNodeSnapshotPrefix) && len(key) > len(TrieNodeSnapshotPrefix) && len(key) < len(TrieNodeSnapshotPrefix)+maxTrieNodeStorageKeyLen:
+			trieSnaps.Add(size)
+		case len(key) == common.HashLength:
+			legacyTries.Add(size)
+		case bytes.HasPrefix(key, ReverseDiffLookupPrefix) && len(key) == len(ReverseDiffLookupPrefix)+common.HashLength:
+			reverseDiffLookups.Add(size)
 		case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
 			codes.Add(size)
 		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
@@ -417,6 +426,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 				fastTrieProgressKey, snapshotDisabledKey, SnapshotRootKey, snapshotJournalKey,
 				snapshotGeneratorKey, snapshotRecoveryKey, txIndexTailKey, fastTxLookupLimitKey,
 				uncleanShutdownKey, badBlockKey, transitionStatusKey, skeletonSyncStatusKey,
+				ReverseDiffHeadKey, triesJournalKey, snapshotSyncStatusKey,
 			} {
 				if bytes.Equal(key, meta) {
 					metadata.Add(size)
@@ -459,6 +469,9 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Bloombit index", bloomBits.Size(), bloomBits.Count()},
 		{"Key-Value store", "Contract codes", codes.Size(), codes.Count()},
 		{"Key-Value store", "Trie nodes", tries.Size(), tries.Count()},
+		{"Key-Value store", "Trie node snapshots", trieSnaps.Size(), trieSnaps.Count()},
+		{"Key-Value store", "Legacy trie nodes", legacyTries.Size(), legacyTries.Count()},
+		{"Key-Value store", "Reverse diff lookups", reverseDiffLookups.Size(), reverseDiffLookups.Count()},
 		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
 		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},
 		{"Key-Value store", "Storage snapshot", storageSnaps.Size(), storageSnaps.Count()},

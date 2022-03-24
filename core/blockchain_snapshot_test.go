@@ -96,7 +96,7 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 		startPoint = point
 
 		if basic.commitBlock > 0 && basic.commitBlock == point {
-			chain.stateCache.TrieDB().Commit(blocks[point-1].Root(), true, nil)
+			chain.triedb.Cap(blocks[point-1].Root(), 0)
 		}
 		if basic.snapshotBlock > 0 && basic.snapshotBlock == point {
 			// Flushing the entire snap tree into the disk, the
@@ -580,7 +580,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 	//
 	// Expected head header    : C8
 	// Expected head fast block: C8
-	// Expected head block     : G
+	// Expected head block     : G4
 	// Expected snapshot disk  : C4
 	test := &crashSnapshotTest{
 		snapshotTestBasic{
@@ -590,7 +590,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 			expCanonicalBlocks: 8,
 			expHeadHeader:      8,
 			expHeadFastBlock:   8,
-			expHeadBlock:       0,
+			expHeadBlock:       4,
 			expSnapshotBottom:  4, // Last committed disk layer, wait recovery
 		},
 	}
