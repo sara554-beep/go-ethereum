@@ -47,7 +47,8 @@ var chainFreezerNoSnappy = map[string]bool{
 // The list of identifiers of ancient stores.
 var (
 	chainFreezerName = "chain" // the folder name of chain segment ancient store.
+	rdiffFreezerName = "rdiff" // the folder name of reverse diff ancient store.
 )
 
 // freezers the collections of all builtin freezers.
-var freezers = []string{chainFreezerName}
+var freezers = []string{chainFreezerName, rdiffFreezerName}

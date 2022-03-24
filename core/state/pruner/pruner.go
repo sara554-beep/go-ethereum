@@ -101,7 +101,7 @@ func NewPruner(db ethdb.Database, config Config) (*Pruner, error) {
 		NoBuild:    true,
 		AsyncBuild: false,
 	}
-	snaptree, err := snapshot.New(snapconfig, db, trie.NewDatabase(db), headBlock.Root())
+	snaptree, err := snapshot.New(snapconfig, db, trie.NewHashDatabase(db), headBlock.Root())
 	if err != nil {
 		return nil, err // The relevant snapshot(s) might not exist
 	}
@@ -276,7 +276,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 	// Ensure the root is really present. The weak assumption
 	// is the presence of root can indicate the presence of the
 	// entire trie.
-	if !rawdb.HasTrieNode(p.db, root) {
+	if !rawdb.HasLegacyTrieNode(p.db, root) {
 		// The special case is for clique based networks(rinkeby, goerli
 		// and some other private networks), it's possible that two
 		// consecutive blocks will have same root. In this case snapshot
@@ -290,7 +290,7 @@ func (p *Pruner) Prune(root common.Hash) error {
 		// as the pruning target.
 		var found bool
 		for i := len(layers) - 2; i >= 2; i-- {
-			if rawdb.HasTrieNode(p.db, layers[i].Root()) {
+			if rawdb.HasLegacyTrieNode(p.db, layers[i].Root()) {
 				root = layers[i].Root()
 				found = true
 				log.Info("Selecting middle-layer as the pruning target", "root", root, "depth", i)
@@ -379,7 +379,7 @@ func RecoverPruning(datadir string, db ethdb.Database, trieCachePath string) err
 		NoBuild:    true,
 		AsyncBuild: false,
 	}
-	snaptree, err := snapshot.New(snapconfig, db, trie.NewDatabase(db), headBlock.Root())
+	snaptree, err := snapshot.New(snapconfig, db, trie.NewHashDatabase(db), headBlock.Root())
 	if err != nil {
 		return err // The relevant snapshot(s) might not exist
 	}
@@ -427,7 +427,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 	if genesis == nil {
 		return errors.New("missing genesis block")
 	}
-	t, err := trie.NewStateTrie(trie.StateTrieID(genesis.Root()), trie.NewDatabase(db))
+	t, err := trie.NewStateTrie(trie.StateTrieID(genesis.Root()), trie.NewHashDatabase(db))
 	if err != nil {
 		return err
 	}
@@ -448,7 +448,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 			}
 			if acc.Root != emptyRoot {
 				id := trie.StorageTrieID(genesis.Root(), common.BytesToHash(accIter.LeafKey()), acc.Root)
-				storageTrie, err := trie.NewStateTrie(id, trie.NewDatabase(db))
+				storageTrie, err := trie.NewStateTrie(id, trie.NewHashDatabase(db))
 				if err != nil {
 					return err
 				}
