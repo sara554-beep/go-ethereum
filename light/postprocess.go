@@ -145,7 +145,7 @@ func NewChtIndexer(db ethdb.Database, odr OdrBackend, size, confirms uint64, dis
 		diskdb:         db,
 		odr:            odr,
 		trieTable:      trieTable,
-		triedb:         trie.NewDatabaseWithConfig(trieTable, &trie.Config{Cache: 1}), // Use a tiny cache only to keep memory down
+		triedb:         trie.NewDatabase(trieTable, &trie.Config{Cache: 16, Scheme: trie.HashScheme}), // Use a tiny cache only to keep memory down
 		sectionSize:    size,
 		disablePruning: disablePruning,
 	}
@@ -220,10 +220,10 @@ func (c *ChtIndexerBackend) Commit() error {
 	}
 	// Commit trie changes into trie database in case it's not nil.
 	if nodes != nil {
-		if err := c.triedb.Update(trie.NewWithNodeSet(nodes)); err != nil {
+		if err := c.triedb.Update(common.Hash{}, common.Hash{}, trie.NewWithNodeSet(nodes)); err != nil {
 			return err
 		}
-		if err := c.triedb.Commit(root, false, nil); err != nil {
+		if err := c.triedb.Commit(root); err != nil {
 			return err
 		}
 	}
@@ -267,8 +267,9 @@ func (c *ChtIndexerBackend) Commit() error {
 	return nil
 }
 
-// Prune implements core.ChainIndexerBackend which deletes all chain data
-// (except hash<->number mappings) older than the specified threshold.
+// Prune implements core.ChainIndexerBackend which deletes all
+// chain data(except hash<->number mappings) older than the specified
+// threshold.
 func (c *ChtIndexerBackend) Prune(threshold uint64) error {
 	// Short circuit if the light pruning is disabled.
 	if c.disablePruning {
@@ -352,7 +353,7 @@ func NewBloomTrieIndexer(db ethdb.Database, odr OdrBackend, parentSize, size uin
 		diskdb:         db,
 		odr:            odr,
 		trieTable:      trieTable,
-		triedb:         trie.NewDatabaseWithConfig(trieTable, &trie.Config{Cache: 1}), // Use a tiny cache only to keep memory down
+		triedb:         trie.NewDatabase(trieTable, &trie.Config{Cache: 16, Scheme: trie.HashScheme}), // Use a tiny cache only to keep memory down
 		parentSize:     parentSize,
 		size:           size,
 		disablePruning: disablePruning,
@@ -471,10 +472,10 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 	}
 	// Commit trie changes into trie database in case it's not nil.
 	if nodes != nil {
-		if err := b.triedb.Update(trie.NewWithNodeSet(nodes)); err != nil {
+		if err := b.triedb.Update(common.Hash{}, common.Hash{}, trie.NewWithNodeSet(nodes)); err != nil {
 			return err
 		}
-		if err := b.triedb.Commit(root, false, nil); err != nil {
+		if err := b.triedb.Commit(root); err != nil {
 			return err
 		}
 	}
