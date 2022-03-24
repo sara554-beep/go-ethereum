@@ -120,7 +120,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database) error {
 	if err != nil {
 		return err
 	}
-	err = statedb.Database().TrieDB().Commit(root, true, nil)
+	err = db.Commit(root)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database) error {
 
 // CommitGenesisState loads the stored genesis state with the given block
 // hash and commits them into the given database handler.
-func CommitGenesisState(db ethdb.Database, hash common.Hash) error {
+func CommitGenesisState(db *trie.Database, hash common.Hash) error {
 	var alloc GenesisAlloc
 	blob := rawdb.ReadGenesisStateSpec(db, hash)
 	if len(blob) != 0 {
@@ -244,11 +244,11 @@ func (e *GenesisMismatchError) Error() string {
 // error is a *params.ConfigCompatError and the new, unwritten config is returned.
 //
 // The returned chain configuration is never nil.
-func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
-	return SetupGenesisBlockWithOverride(db, genesis, nil, nil)
+func SetupGenesisBlock(db ethdb.Database, scheme string, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
+	return SetupGenesisBlockWithOverride(db, scheme, genesis, nil, nil)
 }
 
-func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, overrideTerminalTotalDifficulty *big.Int, overrideTerminalTotalDifficultyPassed *bool) (*params.ChainConfig, common.Hash, error) {
+func SetupGenesisBlockWithOverride(db ethdb.Database, scheme string, genesis *Genesis, overrideTerminalTotalDifficulty *big.Int, overrideTerminalTotalDifficultyPassed *bool) (*params.ChainConfig, common.Hash, error) {
 	if genesis != nil && genesis.Config == nil {
 		return params.AllEthashProtocolChanges, common.Hash{}, errGenesisNoConfig
 	}
@@ -273,17 +273,17 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		} else {
 			log.Info("Writing custom genesis block")
 		}
-		block, err := genesis.Commit(db)
+		block, err := genesis.Commit(db, scheme)
 		if err != nil {
 			return genesis.Config, common.Hash{}, err
 		}
 		applyOverrides(genesis.Config)
 		return genesis.Config, block.Hash(), nil
 	}
-	// We have the genesis block in database(perhaps in ancient database)
-	// but the corresponding state is missing.
-	header := rawdb.ReadHeader(db, stored, 0)
-	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil), nil); err != nil {
+	// The genesis block is present(perhaps in ancient database) while the
+	// state database is empty. It can happen that the node is initialized
+	// with an external ancient store. Commit genesis state in this case.
+	if trie.NewDatabase(db, &trie.Config{ReadOnly: true, Scheme: scheme}).IsEmpty() {
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
 		}
@@ -292,7 +292,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
-		block, err := genesis.Commit(db)
+		block, err := genesis.Commit(db, scheme)
 		if err != nil {
 			return genesis.Config, hash, err
 		}
@@ -434,8 +434,10 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 
 // MustCommit writes the genesis block and state to db, panicking on error.
 // The block is committed as the canonical head block.
+// Note the state changes will be committed in hash-based scheme, use Commit
+// if path-scheme is preferred.
 func (g *Genesis) MustCommit(db ethdb.Database) *types.Block {
-	block, err := g.Commit(db)
+	block, err := g.Commit(db, trie.HashScheme)
 	if err != nil {
 		panic(err)
 	}

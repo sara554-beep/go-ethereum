@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // FullNodeGPO contains default gasprice oracle settings for full node.
@@ -74,6 +75,8 @@ var Defaults = Config{
 	},
 	NetworkId:               1,
 	TxLookupLimit:           2350000,
+	StateLimit:              params.FullImmutabilityThreshold,
+	NodeScheme:              trie.HashScheme,
 	LightPeers:              100,
 	UltraLightFraction:      75,
 	DatabaseCache:           512,
@@ -137,6 +140,8 @@ type Config struct {
 	NoPrefetch bool // Whether to disable prefetching and only load state on demand
 
 	TxLookupLimit uint64 `toml:",omitempty"` // The maximum number of blocks from head whose tx indices are reserved.
+	StateLimit    uint64 `toml:",omitempty"` // The maximum number of blocks from head whose state histories are reserved.
+	NodeScheme    string // Disk scheme used to interact with trie nodes.
 
 	// RequiredBlocks is a set of block number -> hash mappings which must be in the
 	// canonical chain of all remote peers. Setting the option makes geth verify the

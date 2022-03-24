@@ -81,7 +81,7 @@ the trie clean cache with default directory will be deleted.
 				Usage:     "Recalculate state hash based on the snapshot for verification",
 				ArgsUsage: "<root>",
 				Action:    verifyState,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabasePathFlags),
+				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 				Description: `
 geth snapshot verify-state <state-root>
 will traverse the whole accounts and storages set based on the specified
@@ -116,7 +116,7 @@ information about the specified address.
 				Usage:     "Traverse the state with given root hash and perform quick verification",
 				ArgsUsage: "<root>",
 				Action:    traverseState,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabasePathFlags),
+				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 				Description: `
 geth snapshot traverse-state <state-root>
 will traverse the whole state from the given state root and will abort if any
@@ -131,7 +131,7 @@ It's also usable without snapshot enabled.
 				Usage:     "Traverse the state with given root hash and perform detailed verification",
 				ArgsUsage: "<root>",
 				Action:    traverseRawState,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabasePathFlags),
+				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 				Description: `
 geth snapshot traverse-rawstate <state-root>
 will traverse the whole state from the given root and will abort if any referenced
@@ -152,7 +152,7 @@ It's also usable without snapshot enabled.
 					utils.ExcludeStorageFlag,
 					utils.StartKeyFlag,
 					utils.DumpLimitFlag,
-				}, utils.NetworkFlags, utils.DatabasePathFlags),
+				}, utils.NetworkFlags, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 				Description: `
 This command is semantically equivalent to 'geth dump', but uses the snapshots
 as the backend data source, making this command a lot faster. 
@@ -165,6 +165,8 @@ block is used.
 	}
 )
 
+// Deprecation: this command should be deprecated once the path-based
+// scheme is the default one.
 func pruneState(ctx *cli.Context) error {
 	stack, config := makeConfigNode(ctx)
 	defer stack.Close()
@@ -204,7 +206,8 @@ func verifyState(ctx *cli.Context) error {
 		log.Error("Failed to load head block")
 		return errors.New("no head block")
 	}
-	snaptree, err := snapshot.New(chaindb, trie.NewDatabase(chaindb), 256, headBlock.Root(), false, false, false)
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true, Scheme: utils.ParseTrieScheme(ctx)})
+	snaptree, err := snapshot.New(chaindb, triedb, 256, headBlock.Root(), false, false, false)
 	if err != nil {
 		log.Error("Failed to open snapshot tree", "err", err)
 		return err
@@ -256,8 +259,8 @@ func traverseState(ctx *cli.Context) error {
 		return errors.New("too many arguments")
 	}
 	var (
-		root common.Hash
 		err  error
+		root common.Hash
 	)
 	if ctx.NArg() == 1 {
 		root, err = parseRoot(ctx.Args().First())
@@ -270,8 +273,8 @@ func traverseState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	triedb := trie.NewDatabase(chaindb)
-	t, err := trie.NewStateTrie(common.Hash{}, root, triedb)
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true, Scheme: utils.ParseTrieScheme(ctx)})
+	t, err := trie.NewStateTrie(root, common.Hash{}, root, triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
 		return err
@@ -292,7 +295,7 @@ func traverseState(ctx *cli.Context) error {
 			return err
 		}
 		if acc.Root != emptyRoot {
-			storageTrie, err := trie.NewStateTrie(common.BytesToHash(accIter.Key), acc.Root, triedb)
+			storageTrie, err := trie.NewStateTrie(root, common.BytesToHash(accIter.Key), acc.Root, triedb)
 			if err != nil {
 				log.Error("Failed to open storage trie", "root", acc.Root, "err", err)
 				return err
@@ -345,8 +348,8 @@ func traverseRawState(ctx *cli.Context) error {
 		return errors.New("too many arguments")
 	}
 	var (
-		root common.Hash
 		err  error
+		root common.Hash
 	)
 	if ctx.NArg() == 1 {
 		root, err = parseRoot(ctx.Args().First())
@@ -359,8 +362,8 @@ func traverseRawState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	triedb := trie.NewDatabase(chaindb)
-	t, err := trie.NewStateTrie(common.Hash{}, root, triedb)
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true, Scheme: utils.ParseTrieScheme(ctx)})
+	t, err := trie.NewStateTrie(root, common.Hash{}, root, triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
 		return err
@@ -374,6 +377,7 @@ func traverseRawState(ctx *cli.Context) error {
 		start      = time.Now()
 		hasher     = crypto.NewKeccakState()
 		got        = make([]byte, 32)
+		reader     = triedb.GetReader(root)
 	)
 	accIter := t.NodeIterator(nil)
 	for accIter.Next(true) {
@@ -383,7 +387,9 @@ func traverseRawState(ctx *cli.Context) error {
 		// Check the present for non-empty hash node(embedded node doesn't
 		// have their own hash).
 		if node != (common.Hash{}) {
-			blob := rawdb.ReadTrieNode(chaindb, node)
+			// Check the present for non-empty hash node(embedded node doesn't
+			// have their own hash).
+			blob, _ := reader.NodeBlob(common.Hash{}, accIter.Path(), node)
 			if len(blob) == 0 {
 				log.Error("Missing trie node(account)", "hash", node)
 				return errors.New("missing account")
@@ -406,7 +412,7 @@ func traverseRawState(ctx *cli.Context) error {
 				return errors.New("invalid account")
 			}
 			if acc.Root != emptyRoot {
-				storageTrie, err := trie.NewStateTrie(common.BytesToHash(accIter.LeafKey()), acc.Root, triedb)
+				storageTrie, err := trie.NewStateTrie(root, common.BytesToHash(accIter.LeafKey()), acc.Root, triedb)
 				if err != nil {
 					log.Error("Failed to open storage trie", "root", acc.Root, "err", err)
 					return errors.New("missing storage trie")
@@ -419,7 +425,7 @@ func traverseRawState(ctx *cli.Context) error {
 					// Check the present for non-empty hash node(embedded node doesn't
 					// have their own hash).
 					if node != (common.Hash{}) {
-						blob := rawdb.ReadTrieNode(chaindb, node)
+						blob, _ := reader.NodeBlob(common.BytesToHash(accIter.LeafKey()), storageIter.Path(), node)
 						if len(blob) == 0 {
 							log.Error("Missing trie node(storage)", "hash", node)
 							return errors.New("missing storage")
@@ -479,7 +485,8 @@ func dumpState(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	snaptree, err := snapshot.New(db, trie.NewDatabase(db), 256, root, false, false, false)
+	triedb := trie.NewDatabase(db, &trie.Config{ReadOnly: true, Scheme: utils.ParseTrieScheme(ctx)})
+	snaptree, err := snapshot.New(db, triedb, 256, root, false, false, false)
 	if err != nil {
 		return err
 	}

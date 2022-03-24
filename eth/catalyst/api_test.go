@@ -69,7 +69,7 @@ func generatePreMergeChain(n int) (*core.Genesis, []*types.Block) {
 		g.AddTx(tx)
 		testNonce++
 	}
-	gblock := genesis.MustCommit(db)
+	gblock, _ := genesis.Commit(db, trie.HashScheme)
 	engine := ethash.NewFaker()
 	blocks, _ := core.GenerateChain(config, gblock, engine, db, n, generate)
 	totalDifficulty := big.NewInt(0)

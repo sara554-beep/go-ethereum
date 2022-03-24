@@ -69,6 +69,9 @@ var (
 	// skeletonSyncStatusKey tracks the skeleton sync status across restarts.
 	skeletonSyncStatusKey = []byte("SkeletonSyncStatus")
 
+	// triesJournalKey tracks the in-memory diff trie node layers across restarts.
+	triesJournalKey = []byte("TriesJournal")
+
 	// txIndexTailKey tracks the oldest block whose transactions have been indexed.
 	txIndexTailKey = []byte("TransactionIndexTail")
 
@@ -99,6 +102,10 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	skeletonHeaderPrefix  = []byte("S") // skeletonHeaderPrefix + num (uint64 big endian) -> header
+	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
+
+	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
+	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -109,6 +116,10 @@ var (
 
 	preimageCounter    = metrics.NewRegisteredCounter("db/preimage/total", nil)
 	preimageHitCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
+
+	// maxTrieNodeStorageKeyLen is the upper limit of trie node storage key length.
+	// Check trie.MaxStorageKeyLen for more details.
+	maxTrieNodeStorageKeyLen = 65
 )
 
 // LegacyTxLookupEntry is the legacy TxLookupEntry definition with some unnecessary
@@ -211,6 +222,41 @@ func codeKey(hash common.Hash) []byte {
 func IsCodeKey(key []byte) (bool, []byte) {
 	if bytes.HasPrefix(key, CodePrefix) && len(key) == common.HashLength+len(CodePrefix) {
 		return true, key[len(CodePrefix):]
+	}
+	return false, nil
+}
+
+// trieNodeKey = TrieNodePrefix + encoded node key
+func trieNodeKey(key []byte) []byte {
+	return append(TrieNodePrefix, key...)
+}
+
+// IsTrieNodeKey reports whether the given byte slice is the key of trie node.
+// if so return the raw encoded trie key as well.
+func IsTrieNodeKey(key []byte) (bool, []byte) {
+	if bytes.HasPrefix(key, TrieNodePrefix) {
+		storageKey := key[len(TrieNodePrefix):]
+		// Check trie.MaxStorageKeyLen for the key length upper limit calculation.
+		if len(storageKey) > 0 && len(storageKey) < maxTrieNodeStorageKeyLen {
+			return true, storageKey
+		}
+		return false, nil
+	}
+	return false, nil
+}
+
+// reverseDiffLookupKey = ReverseDiffLookupPrefix + root (32 bytes)
+func reverseDiffLookupKey(root common.Hash) []byte {
+	return append(ReverseDiffLookupPrefix, root.Bytes()...)
+}
+
+// IsReverseDiffLookup reports whether the given byte slice is the key of reverse diff lookup.
+func IsReverseDiffLookup(key []byte) (bool, []byte) {
+	if bytes.HasPrefix(key, ReverseDiffLookupPrefix) {
+		rkey := key[len(ReverseDiffLookupPrefix):]
+		if len(rkey) == common.HashLength {
+			return true, rkey
+		}
 	}
 	return false, nil
 }

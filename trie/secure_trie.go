@@ -31,8 +31,8 @@ type SecureTrie = StateTrie
 
 // NewSecure creates a new StateTrie.
 // Deprecated: use NewStateTrie.
-func NewSecure(owner common.Hash, root common.Hash, db *Database) (*SecureTrie, error) {
-	return NewStateTrie(owner, root, db)
+func NewSecure(stateRoot common.Hash, owner common.Hash, root common.Hash, db *Database) (*SecureTrie, error) {
+	return NewStateTrie(stateRoot, owner, root, db)
 }
 
 // StateTrie wraps a trie with key hashing. In a secure trie, all
@@ -64,15 +64,19 @@ type StateTrie struct {
 // Loaded nodes are kept around until their 'cache generation' expires.
 // A new cache generation is created by each call to Commit.
 // cachelimit sets the number of past cache generations to keep.
-func NewStateTrie(owner common.Hash, root common.Hash, db *Database) (*StateTrie, error) {
+func NewStateTrie(stateRoot common.Hash, owner common.Hash, root common.Hash, db NodeDatabase) (*StateTrie, error) {
 	if db == nil {
 		panic("trie.NewSecure called without a database")
 	}
-	trie, err := New(owner, root, db)
+	trie, err := New(stateRoot, owner, root, db)
 	if err != nil {
 		return nil, err
 	}
-	return &StateTrie{trie: *trie, preimages: db.preimages}, nil
+	var preimages *preimageStore
+	if db, ok := db.(*Database); ok {
+		preimages = db.preimages
+	}
+	return &SecureTrie{trie: *trie, preimages: preimages}, nil
 }
 
 // Get returns the value for key stored in the trie.

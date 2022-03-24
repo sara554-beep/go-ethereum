@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Verify that Client implements the ethereum interfaces.
@@ -248,7 +249,7 @@ func generateTestChain() []*types.Block {
 			g.AddTx(testTx2)
 		}
 	}
-	gblock := genesis.MustCommit(db)
+	gblock, _ := genesis.Commit(db, trie.HashScheme)
 	engine := ethash.NewFaker()
 	blocks, _ := core.GenerateChain(genesis.Config, gblock, engine, db, 2, generate)
 	blocks = append([]*types.Block{gblock}, blocks...)

@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Test chain parameters.
@@ -217,7 +218,7 @@ func newTestBlockchain(blocks []*types.Block) *core.BlockChain {
 			panic("Requested chain generation outside of init")
 		}
 		db := rawdb.NewMemoryDatabase()
-		testGspec.MustCommit(db)
+		testGspec.Commit(db, trie.HashScheme)
 
 		chain, err := core.NewBlockChain(db, nil, params.TestChainConfig, ethash.NewFaker(), vm.Config{}, nil, nil)
 		if err != nil {
