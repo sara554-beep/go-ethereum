@@ -202,6 +202,7 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, 
 		}
 		base.genPending = make(chan struct{})
 		base.genAbort = make(chan chan *generatorStats)
+		base.scanner = newDanglingScanner(diskdb)
 
 		var origin uint64
 		if len(generator.Marker) >= 8 {

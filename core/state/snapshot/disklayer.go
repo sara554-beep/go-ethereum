@@ -40,6 +40,7 @@ type diskLayer struct {
 	genMarker  []byte                    // Marker for the state that's indexed during initial layer generation
 	genPending chan struct{}             // Notification channel when generation is done (test synchronicity)
 	genAbort   chan chan *generatorStats // Notification channel to abort generating the snapshot in this layer
+	scanner    *danglingScanner          // Scanner used to detect and cleanup dangling storages
 
 	lock sync.RWMutex
 }

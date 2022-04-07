@@ -164,6 +164,7 @@ func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache i
 		genMarker:  genMarker,
 		genPending: make(chan struct{}),
 		genAbort:   make(chan chan *generatorStats),
+		scanner:    newDanglingScanner(diskdb),
 	}
 	go base.generate(stats)
 	log.Debug("Start snapshot generation", "root", root)
@@ -760,6 +761,18 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		abort <- stats
 		return
 	}
+	// Check dangling storages at the end of the generation. It's possible to happen
+	// that during snap sync geth pulls in pieces of storage slots, but between two
+	// cycles, the contract might get deleted. In that case if the deletion happens
+	// in between an interrupt, the old slots will end up on disk, but the old account
+	// not. So in disk there are dangling storage slots, but no accounts on top.
+	//
+	// This procedure can be interrupted and resumed as well.
+	abort = dl.scanner.detect(dl.genAbort)
+	if abort != nil {
+		abort <- stats
+		return
+	}
 	// Snapshot fully generated, set the marker to nil.
 	// Note even there is nothing to commit, persist the
 	// generator anyway to mark the snapshot is complete.
@@ -779,6 +792,7 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 	dl.lock.Lock()
 	dl.genMarker = nil
 	close(dl.genPending)
+	dl.scanner = nil
 	dl.lock.Unlock()
 
 	// Someone will be looking for us, wait it out
