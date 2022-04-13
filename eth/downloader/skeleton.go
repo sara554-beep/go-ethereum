@@ -911,6 +911,7 @@ func (s *skeleton) processResponse(res *headerResponse) (linked bool, merged boo
 				consumed++
 
 				rawdb.WriteSkeletonHeader(batch, header)
+				log.Info("Write skeleton header", "number", header.Number)
 				s.pulled++
 
 				s.progress.Subchains[0].Tail--
@@ -930,6 +931,7 @@ func (s *skeleton) processResponse(res *headerResponse) (linked bool, merged boo
 				)
 				if hasBody && hasReceipt {
 					linked = true
+					log.Info("Linked with local chain", "number", header.Number, "hash", header.Hash(), "parent", header.Number.Uint64()-1, "parentHash", header.ParentHash)
 					break
 				}
 			}
