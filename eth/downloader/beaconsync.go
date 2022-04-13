@@ -269,6 +269,9 @@ func (d *Downloader) fetchBeaconHeaders(from uint64) error {
 			if header == nil {
 				header = d.lightchain.GetHeaderByNumber(from)
 			}
+			if header == nil {
+				log.Error("Empty header", "number", from)	
+			}
 			headers = append(headers, header)
 			hashes = append(hashes, headers[i].Hash())
 			from++
