@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -115,7 +116,7 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[s
 // which may or may not overflow and cascade to disk. Since this last layer's
 // survival is only known *after* capping, we need to omit it from the count if
 // we want to ensure that *at least* the requested number of diff layers remain.
-func (tree *layerTree) cap(root common.Hash, layers int) error {
+func (tree *layerTree) cap(root common.Hash, layers int, freezer *rawdb.Freezer) error {
 	// Retrieve the head snapshot to cap from
 	root = convertEmpty(root)
 	snap := tree.get(root)
@@ -131,7 +132,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 
 	// If full commit was requested, flatten the diffs and merge onto disk
 	if layers == 0 {
-		base, err := diff.persist(true)
+		base, err := diff.persist(freezer, true)
 		if err != nil {
 			return err
 		}
@@ -160,7 +161,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		// parent is linked correctly.
 		diff.lock.Lock()
 
-		base, err := parent.persist(false)
+		base, err := parent.persist(freezer, false)
 		if err != nil {
 			diff.lock.Unlock()
 			return err

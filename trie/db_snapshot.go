@@ -88,7 +88,7 @@ func (snap *DatabaseSnapshot) Cap(root common.Hash, layers int) error {
 	if snap.released {
 		return errSnapshotReleased
 	}
-	return snap.tree.cap(root, layers)
+	return snap.tree.cap(root, layers, nil)
 }
 
 // DiskDB returns the underlying database handler.

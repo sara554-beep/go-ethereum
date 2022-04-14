@@ -75,7 +75,8 @@ import (
 //
 // The state should be rewound the destination state S after applying the reverse diff n.
 
-const reverseDiffVersion = uint64(0) // Initial version of reverse diff structure
+// reverseDiffVersion is the initial version of reverse diff structure.
+const reverseDiffVersion = uint64(0)
 
 // stateDiff represents a reverse change of a state data. The value refers to the
 // content before the change is applied.
@@ -95,8 +96,8 @@ type reverseDiff struct {
 }
 
 // loadReverseDiff reads and decodes the reverse diff by the given id.
-func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
-	blob := rawdb.ReadReverseDiff(db, id)
+func loadReverseDiff(freezer *rawdb.Freezer, id uint64) (*reverseDiff, error) {
+	blob := rawdb.ReadReverseDiff(freezer, id)
 	if len(blob) == 0 {
 		return nil, errors.New("reverse diff not found")
 	}
@@ -114,7 +115,7 @@ func loadReverseDiff(db ethdb.Database, id uint64) (*reverseDiff, error) {
 // diff layer. After storing the corresponding reverse diff, it will also prune
 // the stale reverse diffs from the disk with the given threshold.
 // This function will panic if it's called for non-bottom-most diff layer.
-func storeReverseDiff(dl *diffLayer, limit uint64) error {
+func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error {
 	var (
 		startTime = time.Now()
 		base      = dl.Parent().(*diskLayer)
@@ -140,7 +141,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	// places, so there is no atomicity guarantee. It's possible that reverse
 	// diff object is written but lookup is not, vice versa. So double-check
 	// the presence when using the reverse diff.
-	rawdb.WriteReverseDiff(base.diskdb, dl.diffid, blob, base.root)
+	rawdb.WriteReverseDiff(freezer, dl.diffid, blob, base.root)
 	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.diffid)
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
@@ -151,7 +152,7 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 	}
 	// Prune stale reverse diffs if necessary
 	if dl.diffid > limit {
-		pruned, err := truncateFromTail(base.diskdb, dl.diffid-limit)
+		pruned, err := truncateFromTail(freezer, base.diskdb, dl.diffid-limit)
 		if err != nil {
 			return err
 		}
@@ -168,51 +169,43 @@ func storeReverseDiff(dl *diffLayer, limit uint64) error {
 // truncateFromHead removes the extra reverse diff from the head with the
 // given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
-func truncateFromHead(db ethdb.Database, nhead uint64) (int, error) {
-	return 0, nil
-	//ohead, err := db.Ancients(rawdb.ReverseDiffFreezer)
-	//if err != nil {
-	//	return 0, nil // It's non-freezer database, skip it
-	//}
-	//batch := db.NewBatch()
-	//for id := nhead + 1; id <= ohead; id++ {
-	//	hash := rawdb.ReadReverseDiffHash(db, id)
-	//	if hash != (common.Hash{}) {
-	//		rawdb.DeleteReverseDiffLookup(batch, hash)
-	//	}
-	//}
-	//if err := batch.Write(); err != nil {
-	//	return 0, err
-	//}
-	//if err := db.TruncateHead(rawdb.ReverseDiffFreezer, nhead); err != nil {
-	//	return 0, err
-	//}
-	//return int(ohead - nhead), nil
+func truncateFromHead(freezer *rawdb.Freezer, disk ethdb.Database, nhead uint64) (int, error) {
+	ohead, _ := freezer.Ancients()
+	batch := disk.NewBatch()
+	for id := nhead + 1; id <= ohead; id++ {
+		hash := rawdb.ReadReverseDiffHash(disk, id)
+		if hash != (common.Hash{}) {
+			rawdb.DeleteReverseDiffLookup(batch, hash)
+		}
+	}
+	if err := batch.Write(); err != nil {
+		return 0, err
+	}
+	if err := freezer.TruncateHead(nhead); err != nil {
+		return 0, err
+	}
+	return int(ohead - nhead), nil
 }
 
 // truncateFromTail removes the extra reverse diff from the tail with the
 // given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
-func truncateFromTail(db ethdb.Database, ntail uint64) (int, error) {
-	return 0, nil
-	//otail, err := db.Tail(rawdb.ReverseDiffFreezer)
-	//if err != nil {
-	//	return 0, nil // It's non-freezer database, skip it
-	//}
-	//batch := db.NewBatch()
-	//for id := otail + 1; id <= ntail; id++ {
-	//	hash := rawdb.ReadReverseDiffHash(db, id)
-	//	if hash != (common.Hash{}) {
-	//		rawdb.DeleteReverseDiffLookup(batch, hash)
-	//	}
-	//}
-	//if err := batch.Write(); err != nil {
-	//	return 0, err
-	//}
-	//if err := db.TruncateTail(rawdb.ReverseDiffFreezer, ntail); err != nil {
-	//	return 0, err
-	//}
-	//return int(ntail - otail), nil
+func truncateFromTail(freezer *rawdb.Freezer, disk ethdb.Database, ntail uint64) (int, error) {
+	otail, _ := freezer.Tail() // ignore the error
+	batch := disk.NewBatch()
+	for id := otail + 1; id <= ntail; id++ {
+		hash := rawdb.ReadReverseDiffHash(disk, id)
+		if hash != (common.Hash{}) {
+			rawdb.DeleteReverseDiffLookup(batch, hash)
+		}
+	}
+	if err := batch.Write(); err != nil {
+		return 0, err
+	}
+	if err := freezer.TruncateTail(ntail); err != nil {
+		return 0, err
+	}
+	return int(ntail - otail), nil
 }
 
 // purgeReverseDiffs deletes all the stored reverse diffs from the
@@ -221,25 +214,21 @@ func truncateFromTail(db ethdb.Database, ntail uint64) (int, error) {
 // the corresponding reverse diff ids are no longer available. So
 // this function will also return the smallest available reverse diff
 // id and reset the reverse diff head id to that number.
-func purgeReverseDiffs(db ethdb.Database) (uint64, error) {
-	return 0, nil
-	//tail, err := db.Tail(rawdb.ReverseDiffFreezer)
-	//if err != nil {
-	//	return 0, nil // It's non-freezer database, skip it
-	//}
-	//_, err = truncateFromHead(db, tail)
-	//if err != nil {
-	//	return 0, err
-	//}
-	//rawdb.WriteReverseDiffHead(db, tail)
-	//return tail, nil
+func purgeReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database) (uint64, error) {
+	tail, _ := freezer.Tail()
+	_, err := truncateFromHead(freezer, disk, tail)
+	if err != nil {
+		return 0, err
+	}
+	rawdb.WriteReverseDiffHead(disk, tail)
+	return tail, nil
 }
 
 // repairReverseDiffs is called when database is constructed. It ensures
 // reverse diff history is aligned with disk layer, and truncate the extra
 // diffs from the freezer.
-func repairReverseDiffs(db ethdb.Database, target uint64) {
-	pruned, err := truncateFromHead(db, target)
+func repairReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target uint64) {
+	pruned, err := truncateFromHead(freezer, disk, target)
 	if err != nil {
 		log.Crit("Failed to truncate extra reverse diffs", "err", err)
 	}

@@ -125,7 +125,8 @@ func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (*diskLayerSnapshot,
 	}
 	// Apply the reverse diffs with the given order.
 	for snap.diffid >= *id {
-		diff, err := loadReverseDiff(snap.diskdb, snap.diffid)
+		// TODO
+		diff, err := loadReverseDiff(nil, snap.diffid)
 		if err != nil {
 			return nil, err
 		}

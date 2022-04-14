@@ -192,35 +192,33 @@ func DeleteTrieNodeSnapshots(db ethdb.KeyValueStore, prefix []byte) {
 // block hash and number. Because reverse diff is encoded from 1 in Geth, while
 // encoded from 0 in freezer, so do the conversion here implicitly.
 func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
-	return nil
-	//blob, err := db.Ancient(ReverseDiffFreezer, freezerReverseDiffTable, id-1)
-	//if err != nil {
-	//	return nil
-	//}
-	//return blob
+	blob, err := db.Ancient(freezerReverseDiffTable, id-1)
+	if err != nil {
+		return nil
+	}
+	return blob
 }
 
 // ReadReverseDiffHash retrieves the state root corresponding to the specified
 // reverse diff. Because reverse diff is encoded from 1 in Geth, while encoded
 // from 0 in freezer, so do the conversion here implicitly.
 func ReadReverseDiffHash(db ethdb.AncientReader, id uint64) common.Hash {
-	return common.Hash{}
-	//blob, err := db.Ancient(ReverseDiffFreezer, freezerReverseDiffHashTable, id-1)
-	//if err != nil {
-	//	return common.Hash{}
-	//}
-	//return common.BytesToHash(blob)
+	blob, err := db.Ancient(freezerReverseDiffHashTable, id-1)
+	if err != nil {
+		return common.Hash{}
+	}
+	return common.BytesToHash(blob)
 }
 
 // WriteReverseDiff writes the provided reverse diff to database. Because reverse
 // diff is encoded from 1 in Geth, while encoded from 0 in freezer, so do the
 // conversion here implicitly.
 func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte, state common.Hash) {
-	//db.ModifyAncients(ReverseDiffFreezer, func(op ethdb.AncientWriteOp) error {
-	//	op.AppendRaw(freezerReverseDiffTable, id-1, blob)
-	//	op.AppendRaw(freezerReverseDiffHashTable, id-1, state.Bytes())
-	//	return nil
-	//})
+	db.ModifyAncients(func(op ethdb.AncientWriteOp) error {
+		op.AppendRaw(freezerReverseDiffTable, id-1, blob)
+		op.AppendRaw(freezerReverseDiffHashTable, id-1, state.Bytes())
+		return nil
+	})
 }
 
 // ReadReverseDiffLookup retrieves the reverse diff id with the given associated

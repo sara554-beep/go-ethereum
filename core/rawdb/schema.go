@@ -135,12 +135,6 @@ const (
 
 	// freezerDifficultyTable indicates the name of the freezer total difficulty table.
 	freezerDifficultyTable = "diffs"
-
-	// freezerReverseDiffTable indicates the name of the freezer reverse diff table.
-	freezerReverseDiffTable = "rdiffs"
-
-	// freezerReverseDiffHashTable indicates the name of the freezer reverse diff hash table.
-	freezerReverseDiffHashTable = "rdiff.hashes"
 )
 
 // FreezerNoSnappy configures whether compression is disabled for the ancient-chain-tables.
@@ -151,13 +145,6 @@ var FreezerNoSnappy = map[string]bool{
 	freezerBodiesTable:     false,
 	freezerReceiptTable:    false,
 	freezerDifficultyTable: true,
-}
-
-// ReveseDiffFreezerNoSnappy configures whether compression is disabled for the ancient
-// reverse diffs.
-var ReveseDiffFreezerNoSnappy = map[string]bool{
-	freezerReverseDiffTable:     false,
-	freezerReverseDiffHashTable: true,
 }
 
 // LegacyTxLookupEntry is the legacy TxLookupEntry definition with some unnecessary
@@ -316,23 +303,25 @@ func genesisKey(hash common.Hash) []byte {
 
 // FreezerTableInfo retrieves the basic information about the specified freezer table.
 func FreezerTableInfo(kind string) (bool, bool, string) {
-	if noCompression, ok := FreezerNoSnappy[kind]; ok {
-		return true, noCompression, ""
-	}
-	if noCompression, ok := ReveseDiffFreezerNoSnappy[kind]; ok {
-		return true, noCompression, ""
-	}
-	return false, false, "" // non-existent
+	return false, false, ""
+	//if noCompression, ok := FreezerNoSnappy[kind]; ok {
+	//	return true, noCompression, ""
+	//}
+	//if noCompression, ok := ReveseDiffFreezerNoSnappy[kind]; ok {
+	//	return true, noCompression, ""
+	//}
+	//return false, false, "" // non-existent
 }
 
 // FreezerTables returns all supported tables in the freezer.
 func FreezerTables() []string {
-	var ret []string
-	for table := range FreezerNoSnappy {
-		ret = append(ret, table)
-	}
-	for table := range ReveseDiffFreezerNoSnappy {
-		ret = append(ret, table)
-	}
-	return ret
+	return nil
+	//var ret []string
+	//for table := range FreezerNoSnappy {
+	//	ret = append(ret, table)
+	//}
+	//for table := range ReveseDiffFreezerNoSnappy {
+	//	ret = append(ret, table)
+	//}
+	//return ret
 }

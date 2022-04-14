@@ -157,7 +157,7 @@ func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*
 // commit merges the given bottom-most diff layer into the local cache
 // and returns a newly constructed disk layer. Note the current disk
 // layer must be tagged as stale first to prevent re-access.
-func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
+func (dl *diskLayer) commit(freezer *rawdb.Freezer, bottom *diffLayer, force bool) (*diskLayer, error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
@@ -168,7 +168,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// after storing the reverse diff but without flushing the corresponding
 	// states(journal), the stored reverse diff will be truncated in
 	// the next restart.
-	if err := storeReverseDiff(bottom, params.FullImmutabilityThreshold); err != nil {
+	if err := storeReverseDiff(freezer, bottom, params.FullImmutabilityThreshold); err != nil {
 		return nil, err
 	}
 	// Drop the unneeded previous value to reduce memory usage.

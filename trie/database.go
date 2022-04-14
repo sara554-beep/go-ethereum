@@ -192,6 +192,7 @@ type Database struct {
 	config   *Config
 	lock     sync.RWMutex     // Lock to prevent concurrent mutations and readOnly flag
 	diskdb   ethdb.Database   // Persistent database to store the snapshot
+	freezer  *rawdb.Freezer   // Freezer to store reverse diffs
 	cleans   *fastcache.Cache // Megabytes permitted using for read caches
 	tree     *layerTree       // The group for all known layers
 	preimage *preimageStore   // The store for caching preimages
@@ -201,7 +202,7 @@ type Database struct {
 // key-value store (with a number of memory layers from a journal). If the journal
 // is not matched with the base persistent layer, all the recorded diff layers
 // are discarded.
-func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
+func NewDatabase(diskdb ethdb.Database, freezerDir string, config *Config) *Database {
 	var cleans *fastcache.Cache
 	if config != nil && config.Cache > 0 {
 		if config.Journal == "" {
@@ -211,12 +212,19 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		}
 	}
 	readOnly := config != nil && config.ReadOnly
+
+	// Open the freezer for reverse diffs.
+	freezer, err := rawdb.NewReverseDiffFreezer(freezerDir, "eth/db/triedata", readOnly)
+	if err != nil {
+		log.Crit("Failed to open reverse diff freezer", "err", err)
+	}
 	db := &Database{
 		readOnly: readOnly,
 		config:   config,
 		diskdb:   diskdb,
+		freezer:  freezer,
 		cleans:   cleans,
-		tree:     newLayerTree(loadSnapshot(diskdb, cleans, readOnly)),
+		tree:     newLayerTree(loadSnapshot(diskdb, freezer, cleans, readOnly)),
 	}
 	if config == nil || config.Preimages {
 		db.preimage = newPreimageStore(diskdb)
@@ -277,7 +285,7 @@ func (db *Database) Cap(root common.Hash, layers int) error {
 	if db.preimage != nil {
 		db.preimage.commit()
 	}
-	return db.tree.cap(root, layers)
+	return db.tree.cap(root, layers, db.freezer)
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
@@ -353,7 +361,7 @@ func (db *Database) Clean(root common.Hash) error {
 		return true
 	})
 	// Delete all remaining reverse diffs in disk
-	head, err := purgeReverseDiffs(db.diskdb)
+	head, err := purgeReverseDiffs(db.freezer, db.diskdb)
 	if err != nil {
 		return err
 	}
@@ -373,7 +381,7 @@ func (db *Database) revert(diffid uint64, diff *reverseDiff) error {
 	rawdb.DeleteReverseDiffLookup(db.diskdb, diff.Parent)
 
 	// Truncate the reverse diff from the freezer in the last step
-	_, err = truncateFromHead(db.diskdb, diffid-1)
+	_, err = truncateFromHead(db.freezer, db.diskdb, diffid-1)
 	if err != nil {
 		return err
 	}
@@ -413,7 +421,7 @@ func (db *Database) Rollback(target common.Hash) error {
 	})
 	// Apply the reverse diffs with the given order.
 	for current >= *id {
-		diff, err := loadReverseDiff(db.diskdb, current)
+		diff, err := loadReverseDiff(db.freezer, current)
 		if err != nil {
 			return err
 		}

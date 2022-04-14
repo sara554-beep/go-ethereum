@@ -91,7 +91,7 @@ func loadJournal(disk ethdb.Database, diskRoot common.Hash, cleans *fastcache.Ca
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, readOnly bool) snapshot {
+func loadSnapshot(diskdb ethdb.Database, freezer *rawdb.Freezer, cleans *fastcache.Cache, readOnly bool) snapshot {
 	// Retrieve the root node of single persisted in-disk state.
 	_, root := rawdb.ReadTrieNode(diskdb, EncodeStorageKey(common.Hash{}, nil))
 	if root == (common.Hash{}) {
@@ -115,7 +115,7 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, readOnly bool)
 				root = base
 			}
 			if !readOnly {
-				diffid, err = purgeReverseDiffs(diskdb)
+				diffid, err = purgeReverseDiffs(freezer, diskdb)
 				if err != nil {
 					log.Crit("Failed to purge reverse diffs", "err", err)
 				}
@@ -124,7 +124,7 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, readOnly bool)
 		}
 		// Journal is not usable, construct the snaptree with in-disk content.
 		if !readOnly {
-			repairReverseDiffs(diskdb, diffid)
+			repairReverseDiffs(freezer, diskdb, diffid)
 		}
 		return newDiskLayer(root, diffid, cleans, newDiskcache(nil, 0), diskdb)
 	}
@@ -168,7 +168,7 @@ func loadDiskLayer(r *rlp.Stream, clean *fastcache.Cache, disk ethdb.Database, r
 	// Truncate extra reverse diffs on top. It can happen the reverse
 	// diffs are persisted while the journal is not.
 	if !readOnly {
-		repairReverseDiffs(disk, diffid)
+		repairReverseDiffs(nil, disk, diffid) // TODO
 	}
 	// Calculate the internal state transitions by id difference.
 	seq := diffid - rawdb.ReadReverseDiffHead(disk)

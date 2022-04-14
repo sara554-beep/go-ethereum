@@ -110,7 +110,7 @@ type Trie interface {
 // concurrent use, but does not retain any recent trie nodes in memory. To keep some
 // historical state in memory, use the NewDatabaseWithConfig constructor.
 func NewDatabase(db ethdb.Database) Database {
-	return NewDatabaseWithConfig(trie.NewDatabase(db, nil))
+	return NewDatabaseWithConfig(trie.NewDatabase(db, "", nil))
 }
 
 // NewDatabaseWithConfig creates a backing store for state. The returned database
