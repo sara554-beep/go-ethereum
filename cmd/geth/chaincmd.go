@@ -440,7 +440,7 @@ func dump(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	state, err := state.New(root, state.NewDatabaseWithConfig(trie.NewDatabase(db, &trie.Config{ReadOnly: true})), nil)
+	state, err := state.New(root, state.NewDatabaseWithConfig(trie.NewDatabase(db, utils.ResolveStateDiffDir(ctx, stack), &trie.Config{ReadOnly: true})), nil)
 	if err != nil {
 		return err
 	}

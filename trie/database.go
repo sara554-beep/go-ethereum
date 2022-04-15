@@ -211,23 +211,32 @@ func NewDatabase(diskdb ethdb.Database, freezerDir string, config *Config) *Data
 			cleans = fastcache.LoadFromFileOrNew(config.Journal, config.Cache*1024*1024)
 		}
 	}
+	var preimage *preimageStore
+	if config == nil || config.Preimages {
+		preimage = newPreimageStore(diskdb)
+	}
 	readOnly := config != nil && config.ReadOnly
 
 	// Open the freezer for reverse diffs.
-	freezer, err := rawdb.NewReverseDiffFreezer(freezerDir, "eth/db/triedata", readOnly)
+	freezer, err := openFreezer(freezerDir, readOnly)
 	if err != nil {
 		log.Crit("Failed to open reverse diff freezer", "err", err)
 	}
+	tail, _ := freezer.Tail()
+
 	db := &Database{
 		readOnly: readOnly,
 		config:   config,
 		diskdb:   diskdb,
 		freezer:  freezer,
 		cleans:   cleans,
-		tree:     newLayerTree(loadSnapshot(diskdb, freezer, cleans, readOnly)),
+		tree:     newLayerTree(loadSnapshot(diskdb, cleans, tail)),
+		preimage: preimage,
 	}
-	if config == nil || config.Preimages {
-		db.preimage = newPreimageStore(diskdb)
+	// Truncate the extra reverse diffs if necessary.
+	if !readOnly {
+		layer := db.tree.bottom().(*diskLayer)
+		truncateReverseDiffs(freezer, diskdb, layer.diffid)
 	}
 	return db
 }
@@ -342,8 +351,7 @@ func (db *Database) Clean(root common.Hash) error {
 	if db.readOnly {
 		return ErrSnapshotReadOnly
 	}
-	// TODO check if the given root node is existent
-	// before applying any mutations.
+	// TODO check if the given root node is existent before applying any mutations.
 	rawdb.DeleteTrieJournal(db.diskdb)
 
 	// Iterate over all layers and mark them as stale
@@ -361,12 +369,12 @@ func (db *Database) Clean(root common.Hash) error {
 		return true
 	})
 	// Delete all remaining reverse diffs in disk
-	head, err := purgeReverseDiffs(db.freezer, db.diskdb)
-	if err != nil {
-		return err
-	}
-	db.tree = newLayerTree(newDiskLayer(root, head, db.cleans, newDiskcache(nil, 0), db.diskdb))
-	log.Info("Rebuild triedb", "root", root, "diffid", head)
+	tail, _ := db.freezer.Tail()
+	rawdb.WriteReverseDiffHead(db.diskdb, tail)
+	truncateReverseDiffs(db.freezer, db.diskdb, tail)
+
+	db.tree = newLayerTree(newDiskLayer(root, tail, db.cleans, newDiskcache(nil, 0), db.diskdb))
+	log.Info("Rebuild triedb", "root", root, "diffid", tail)
 	return nil
 }
 

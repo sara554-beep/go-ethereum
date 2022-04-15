@@ -119,6 +119,10 @@ var (
 		Name:  "datadir.ancient",
 		Usage: "Data directory for ancient chain segments (default = inside chaindata)",
 	}
+	StateDiffFlag = DirectoryFlag{
+		Name:  "datadir.statediff",
+		Usage: "Data directory for reverse state diff segments (default = inside chaindata)",
+	}
 	MinFreeDiskSpaceFlag = DirectoryFlag{
 		Name:  "datadir.minfreedisk",
 		Usage: "Minimum free disk space in MB, once reached triggers auto shut down (default = --cache.gc converted to MB, 0 = disabled)",
@@ -842,6 +846,7 @@ var (
 	DatabasePathFlags = []cli.Flag{
 		DataDirFlag,
 		AncientFlag,
+		StateDiffFlag,
 	}
 )
 
@@ -2065,6 +2070,21 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 		preloads = append(preloads, strings.TrimSpace(file))
 	}
 	return preloads
+}
+
+// ResolveStateDiffDir resolves the directory of state reverse diff.
+func ResolveStateDiffDir(ctx *cli.Context, stack *node.Node) string {
+	var (
+		freezer = ctx.GlobalString(StateDiffFlag.Name)
+		root    = stack.ResolvePath("chaindata") // The base directory for data
+	)
+	switch {
+	case freezer == "":
+		freezer = filepath.Join(root, "statediff")
+	case !filepath.IsAbs(freezer):
+		freezer = stack.ResolvePath(freezer)
+	}
+	return freezer
 }
 
 // MigrateFlags sets the global flag from a local flag when it's set.

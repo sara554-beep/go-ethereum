@@ -177,6 +177,8 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, bottom *diffLayer, force boo
 		slim[key] = n.unwrap()
 	}
 	ndl := newDiskLayer(bottom.root, bottom.diffid, dl.clean, dl.dirty.commit(slim), dl.diskdb)
+
+	// Persist the content in disk layer if there are too many nodes cached.
 	if err := ndl.dirty.flush(ndl.diskdb, ndl.clean, ndl.diffid, force); err != nil {
 		return nil, err
 	}

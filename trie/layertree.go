@@ -18,10 +18,10 @@ package trie
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 )
 
 // layerTree is a group of state layers identified by the state root.
@@ -196,6 +196,26 @@ func (tree *layerTree) cap(root common.Hash, layers int, freezer *rawdb.Freezer)
 		}
 	}
 	return nil
+}
+
+// bottom returns the bottom-most snapshot layer in this tree. The returned
+// layer can be diskLayer, diskLayerSnapshot or nil if something corrupted.
+func (tree *layerTree) bottom() snapshot {
+	tree.lock.RLock()
+	defer tree.lock.RUnlock()
+
+	if len(tree.layers) == 0 {
+		return nil // Shouldn't happen, empty tree
+	}
+	var current snapshot
+	for _, layer := range tree.layers {
+		current = layer
+		break
+	}
+	for current.Parent() != nil {
+		current = current.Parent()
+	}
+	return current
 }
 
 // convertEmpty converts the given hash to predefined emptyHash if it's empty.

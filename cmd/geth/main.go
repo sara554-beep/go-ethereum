@@ -65,6 +65,7 @@ var (
 		utils.BootnodesFlag,
 		utils.DataDirFlag,
 		utils.AncientFlag,
+		utils.StateDiffFlag,
 		utils.MinFreeDiskSpaceFlag,
 		utils.KeyStoreDirFlag,
 		utils.ExternalSignerFlag,

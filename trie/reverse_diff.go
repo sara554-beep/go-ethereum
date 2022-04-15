@@ -19,6 +19,8 @@ package trie
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -26,6 +28,10 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+)
+
+var (
+	DefaultDatadir = func(base string) string { return filepath.Join(base, "reverse")}
 )
 
 // Reverse diff records the state changes involved in executing a corresponding block.
@@ -178,6 +184,7 @@ func truncateFromHead(freezer *rawdb.Freezer, disk ethdb.Database, nhead uint64)
 			rawdb.DeleteReverseDiffLookup(batch, hash)
 		}
 	}
+	// TODO(rjl493456442) split the batch if it's too large
 	if err := batch.Write(); err != nil {
 		return 0, err
 	}
@@ -191,7 +198,7 @@ func truncateFromHead(freezer *rawdb.Freezer, disk ethdb.Database, nhead uint64)
 // given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
 func truncateFromTail(freezer *rawdb.Freezer, disk ethdb.Database, ntail uint64) (int, error) {
-	otail, _ := freezer.Tail() // ignore the error
+	otail, _ := freezer.Tail()
 	batch := disk.NewBatch()
 	for id := otail + 1; id <= ntail; id++ {
 		hash := rawdb.ReadReverseDiffHash(disk, id)
@@ -199,6 +206,7 @@ func truncateFromTail(freezer *rawdb.Freezer, disk ethdb.Database, ntail uint64)
 			rawdb.DeleteReverseDiffLookup(batch, hash)
 		}
 	}
+	// TODO(rjl493456442) split the batch if it's too large
 	if err := batch.Write(); err != nil {
 		return 0, err
 	}
@@ -208,26 +216,10 @@ func truncateFromTail(freezer *rawdb.Freezer, disk ethdb.Database, ntail uint64)
 	return int(ntail - otail), nil
 }
 
-// purgeReverseDiffs deletes all the stored reverse diffs from the
-// key-value store and ancient store. Considering that some reverse
-// diffs have been permanently deleted from the ancient store and
-// the corresponding reverse diff ids are no longer available. So
-// this function will also return the smallest available reverse diff
-// id and reset the reverse diff head id to that number.
-func purgeReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database) (uint64, error) {
-	tail, _ := freezer.Tail()
-	_, err := truncateFromHead(freezer, disk, tail)
-	if err != nil {
-		return 0, err
-	}
-	rawdb.WriteReverseDiffHead(disk, tail)
-	return tail, nil
-}
-
-// repairReverseDiffs is called when database is constructed. It ensures
-// reverse diff history is aligned with disk layer, and truncate the extra
+// truncateReverseDiffs is called when database is constructed. It ensures
+// reverse diff history is aligned with disk layer, and truncates the extra
 // diffs from the freezer.
-func repairReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target uint64) {
+func truncateReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target uint64) {
 	pruned, err := truncateFromHead(freezer, disk, target)
 	if err != nil {
 		log.Crit("Failed to truncate extra reverse diffs", "err", err)
@@ -235,4 +227,12 @@ func repairReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target uint
 	if pruned != 0 {
 		log.Info("Truncated extra reverse diff", "number", pruned, "head", target)
 	}
+}
+
+// openFreezer initializes the freezer instance for storing reverse diffs.
+func openFreezer(datadir string, readOnly bool) (*rawdb.Freezer, error) {
+	if datadir == "" {
+		datadir = os.TempDir()
+	}
+	return rawdb.NewReverseDiffFreezer(datadir, "eth/db/statediff", readOnly)
 }

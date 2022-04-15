@@ -299,8 +299,8 @@ func TestPurgeReverseDiffs(t *testing.T) {
 	}
 }
 
-// TestRepairReverseDiff tests the reverse diff history repairReverseDiffs. It simulates
-// a few corner cases and checks if the database has the expected repairReverseDiffs behaviour.
+// TestRepairReverseDiff tests the reverse diff history truncateReverseDiffs. It simulates
+// a few corner cases and checks if the database has the expected truncateReverseDiffs behaviour.
 func TestRepairReverseDiff(t *testing.T) {
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
@@ -338,7 +338,7 @@ func TestRepairReverseDiff(t *testing.T) {
 		defer teardown()
 
 		// Block9's root.
-		repairReverseDiffs(db, 9)
+		truncateReverseDiffs(db, 9)
 		assertReverseDiffInRange(t, db, uint64(1), uint64(9), true)
 		assertReverseDiff(t, db, uint64(10), false)
 	})
@@ -351,7 +351,7 @@ func TestRepairReverseDiff(t *testing.T) {
 		db, _, teardown := setup()
 		defer teardown()
 
-		repairReverseDiffs(db, 10)
+		truncateReverseDiffs(db, 10)
 		assertReverseDiffInRange(t, db, uint64(1), uint64(10), true)
 	})
 }
