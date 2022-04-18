@@ -104,7 +104,7 @@ func checkTrieConsistency(db ethdb.Database, root common.Hash) error {
 	if v, _ := db.Get(root[:]); v == nil {
 		return nil // Consider a non existent state consistent.
 	}
-	trie, err := trie.New(root, trie.NewDatabase(db, nil))
+	trie, err := trie.New(root, trie.NewDatabase(db, "", nil))
 	if err != nil {
 		return err
 	}

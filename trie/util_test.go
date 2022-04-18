@@ -25,7 +25,7 @@ import (
 
 // Tests if the trie diffs are tracked correctly.
 func TestTrieTracer(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	db := NewDatabase(rawdb.NewMemoryDatabase(), "", nil)
 	trie, _ := New(common.Hash{}, db)
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
@@ -94,7 +94,7 @@ func TestTrieTracer(t *testing.T) {
 }
 
 func TestTrieTracerNoop(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	db := NewDatabase(rawdb.NewMemoryDatabase(), "", nil)
 	trie, _ := New(common.Hash{}, db)
 
 	// Insert a batch of entries, all the nodes should be marked as inserted

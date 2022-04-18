@@ -19,8 +19,6 @@ package trie
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -28,10 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
-)
-
-var (
-	DefaultDatadir = func(base string) string { return filepath.Join(base, "reverse") }
 )
 
 // Reverse diff records the state changes involved in executing a corresponding block.
@@ -231,8 +225,5 @@ func truncateReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target ui
 
 // openFreezer initializes the freezer instance for storing reverse diffs.
 func openFreezer(datadir string, readOnly bool) (*rawdb.Freezer, error) {
-	if datadir == "" {
-		datadir = os.TempDir()
-	}
 	return rawdb.NewReverseDiffFreezer(datadir, "eth/db/statediff", readOnly)
 }

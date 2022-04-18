@@ -128,12 +128,13 @@ func fillDB() *testEnv {
 	if err != nil {
 		panic("Failed to allocate tempdir")
 	}
-	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, path.Join(dir, "test-frdb"), "", false)
+	ancient := path.Join(dir, "test-frdb")
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, ancient, "", false)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create database %v", err))
 	}
 	var (
-		db      = NewDatabase(diskdb, nil)
+		db      = NewDatabase(diskdb, path.Join(ancient, "rdiffs"), nil)
 		numbers []uint64
 		roots   []common.Hash
 
@@ -190,7 +191,7 @@ func TestDatabaseRollback(t *testing.T) {
 	// Ensure all the reverse diffs are stored properly
 	var parent = emptyRoot
 	for i := 0; i <= diskIndex; i++ {
-		diff, err := loadReverseDiff(env.db.diskdb, uint64(i+1))
+		diff, err := loadReverseDiff(env.db.freezer, uint64(i+1))
 		if err != nil {
 			t.Errorf("Failed to load reverse diff, index %d, err %v", i+1, err)
 		}

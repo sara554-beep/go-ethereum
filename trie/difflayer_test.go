@@ -123,7 +123,7 @@ func BenchmarkSearchBottom(b *testing.B) { benchmarkSearch(b, 0) }
 func BenchmarkSearchTop(b *testing.B) { benchmarkSearch(b, 127) }
 
 func benchmarkGetNode(b *testing.B, getBlob bool) {
-	db := NewDatabase(rawdb.NewDatabase(rawdb.NewMemoryDatabase()), nil)
+	db := NewDatabase(rawdb.NewDatabase(rawdb.NewMemoryDatabase()), "", nil)
 	trie, _ := New(common.Hash{}, db)
 
 	k := make([]byte, 32)
@@ -195,7 +195,7 @@ func BenchmarkPersist(b *testing.B) {
 		if !ok {
 			break
 		}
-		dl.persist(false)
+		dl.persist(nil, false)
 		b.StopTimer()
 	}
 }
