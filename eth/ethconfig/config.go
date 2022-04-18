@@ -170,6 +170,7 @@ type Config struct {
 	TrieTimeout             time.Duration
 	SnapshotCache           int
 	Preimages               bool
+	ReverseDiffPath         string
 
 	// Mining options
 	Miner miner.Config

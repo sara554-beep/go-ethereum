@@ -177,7 +177,7 @@ func TestDatabaseRollback(t *testing.T) {
 
 	var (
 		env       = fillDB()
-		dl        = env.db.disklayer()
+		dl        = env.db.tree.bottom().(*diskLayer)
 		diskIndex int
 	)
 	defer env.teardown()
@@ -211,7 +211,7 @@ func TestDatabaseRollback(t *testing.T) {
 		if err := env.db.Rollback(env.roots[i-1]); err != nil {
 			t.Error("Failed to revert db status", "err", err)
 		}
-		dl := env.db.disklayer()
+		dl := env.db.tree.bottom().(*diskLayer)
 		if dl.Root() != env.roots[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
@@ -252,7 +252,7 @@ func TestDatabaseBatchRollback(t *testing.T) {
 
 	var (
 		env       = fillDB()
-		dl        = env.db.disklayer()
+		dl        = env.db.tree.bottom().(*diskLayer)
 		diskIndex int
 	)
 	defer env.teardown()
@@ -265,7 +265,7 @@ func TestDatabaseBatchRollback(t *testing.T) {
 	if err := env.db.Rollback(common.Hash{}); err != nil {
 		t.Error("Failed to revert db status", "err", err)
 	}
-	ndl := env.db.disklayer()
+	ndl := env.db.tree.bottom().(*diskLayer)
 	if ndl.Root() != emptyRoot {
 		t.Error("Unexpected disk layer root")
 	}

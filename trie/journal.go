@@ -91,7 +91,7 @@ func loadJournal(disk ethdb.Database, diskRoot common.Hash, cleans *fastcache.Ca
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, tail uint64) snapshot {
+func (db *Database) loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache) snapshot {
 	// Retrieve the root node of single persisted in-disk state.
 	_, root := rawdb.ReadTrieNode(diskdb, EncodeStorageKey(common.Hash{}, nil))
 	if root == (common.Hash{}) {
@@ -116,8 +116,12 @@ func loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache, tail uint64) s
 		if base != (common.Hash{}) {
 			root = base
 		}
-		rawdb.WriteReverseDiffHead(diskdb, tail)
-		return newDiskLayer(root, tail, cleans, newDiskcache(nil, 0), diskdb)
+		var diffid uint64
+		if db.freezer != nil {
+			diffid, _ = db.freezer.Tail()
+			rawdb.WriteReverseDiffHead(diskdb, diffid)
+		}
+		return newDiskLayer(root, diffid, cleans, newDiskcache(nil, 0), diskdb)
 	}
 	// Construct the snap tree with the single in-disk state.
 	return newDiskLayer(root, rawdb.ReadReverseDiffHead(diskdb), cleans, newDiskcache(nil, 0), diskdb)

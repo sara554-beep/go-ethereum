@@ -260,7 +260,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	// The genesis block is present(perhaps in ancient database) while the
 	// state database is empty. It can happen that the node is initialized
 	// with an external ancient store. Commit genesis state in this case.
-	if trie.NewDatabase(db, &trie.Config{ReadOnly: true}).IsEmpty() {
+	if trie.NewDatabase(db, "", &trie.Config{ReadOnly: true}).IsEmpty() {
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
 		}

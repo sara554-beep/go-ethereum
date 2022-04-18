@@ -168,8 +168,10 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, bottom *diffLayer, force boo
 	// after storing the reverse diff but without flushing the corresponding
 	// states(journal), the stored reverse diff will be truncated in
 	// the next restart.
-	if err := storeReverseDiff(freezer, bottom, params.FullImmutabilityThreshold); err != nil {
-		return nil, err
+	if freezer != nil {
+		if err := storeReverseDiff(freezer, bottom, params.FullImmutabilityThreshold); err != nil {
+			return nil, err
+		}
 	}
 	// Drop the unneeded previous value to reduce memory usage.
 	slim := make(map[string]*cachedNode)

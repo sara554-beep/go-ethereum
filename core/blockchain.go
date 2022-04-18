@@ -122,7 +122,7 @@ const (
 	BlockChainVersion uint64 = 9
 )
 
-// CacheConfig contains the configuration values for the trie caching/pruning
+// CacheConfig contains the configuration values for the trie database
 // that's resident in a blockchain.
 type CacheConfig struct {
 	TrieCleanLimit      int           // Memory allowance (MB) to use for caching trie nodes in memory
@@ -134,6 +134,7 @@ type CacheConfig struct {
 	TrieTimeLimit       time.Duration // Time limit after which to flush the current in-memory trie to disk
 	SnapshotLimit       int           // Memory allowance (MB) to use for caching snapshot entries in memory
 	Preimages           bool          // Whether to store preimage of trie key to the disk
+	ReverseDiffPath     string        // The absolute directory path of reverse diff freezer
 
 	SnapshotWait bool // Wait for snapshot construction on startup. TODO(karalabe): This is a dirty hack for testing, nuke it
 }
@@ -248,7 +249,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		vmConfig:      vmConfig,
 	}
 	bc.forker = NewForkChoice(bc, shouldPreserve)
-	bc.triedb = trie.NewDatabase(db, &trie.Config{
+	bc.triedb = trie.NewDatabase(db, cacheConfig.ReverseDiffPath, &trie.Config{
 		Cache:     cacheConfig.TrieCleanLimit,
 		Journal:   cacheConfig.TrieCleanJournal,
 		Preimages: cacheConfig.Preimages,

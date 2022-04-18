@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -90,7 +91,7 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[s
 		if root == emptyRoot {
 			return nil
 		}
-		return errSnapshotCycle
+		return errors.New("snapshot cycle")
 	}
 	parent := tree.get(parentRoot)
 	if parent == nil {

@@ -27,7 +27,7 @@ func TestJournal(t *testing.T) {
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 	var (
 		env       = fillDB()
-		dl        = env.db.disklayer()
+		dl        = env.db.tree.bottom().(*diskLayer)
 		diskIndex int
 	)
 	defer env.teardown()
@@ -35,7 +35,7 @@ func TestJournal(t *testing.T) {
 	if err := env.db.Journal(env.roots[len(env.roots)-1]); err != nil {
 		t.Error("Failed to journal triedb", "err", err)
 	}
-	newdb := NewDatabase(env.db.diskdb, env.db.config)
+	newdb := NewDatabase(env.db.diskdb, "", env.db.config)
 
 	for diskIndex = 0; diskIndex < len(env.roots); diskIndex++ {
 		if env.roots[diskIndex] == dl.root {

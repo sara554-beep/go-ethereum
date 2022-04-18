@@ -29,36 +29,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var (
-	triedbCleanHitMeter   = metrics.NewRegisteredMeter("trie/triedb/clean/hit", nil)
-	triedbCleanMissMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/miss", nil)
-	triedbCleanReadMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/read", nil)
-	triedbCleanWriteMeter = metrics.NewRegisteredMeter("trie/triedb/clean/write", nil)
-
-	triedbFallbackHitMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/fallback/hit", nil)
-	triedbFallbackReadMeter = metrics.NewRegisteredMeter("trie/triedb/clean/fallback/read", nil)
-
-	triedbDirtyHitMeter   = metrics.NewRegisteredMeter("trie/triedb/dirty/hit", nil)
-	triedbDirtyMissMeter  = metrics.NewRegisteredMeter("trie/triedb/dirty/miss", nil)
-	triedbDirtyReadMeter  = metrics.NewRegisteredMeter("trie/triedb/dirty/read", nil)
-	triedbDirtyWriteMeter = metrics.NewRegisteredMeter("trie/triedb/dirty/write", nil)
-
-	triedbDirtyNodeHitDepthHist = metrics.NewRegisteredHistogram("trie/triedb/dirty/depth", nil, metrics.NewExpDecaySample(1028, 0.015))
-
-	triedbCommitTimeTimer  = metrics.NewRegisteredTimer("trie/triedb/commit/time", nil)
-	triedbCommitNodesMeter = metrics.NewRegisteredMeter("trie/triedb/commit/nodes", nil)
-	triedbCommitSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/commit/size", nil)
-
-	triedbDiffLayerSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/diff/size", nil)
-	triedbDiffLayerNodesMeter = metrics.NewRegisteredMeter("trie/triedb/diff/nodes", nil)
-
-	triedbReverseDiffTimeTimer = metrics.NewRegisteredTimer("trie/triedb/reversediff/time", nil)
-	triedbReverseDiffSizeMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/size", nil)
-
 	// ErrSnapshotReadOnly is returned if the database is opened in read only mode
 	// and mutation is requested.
 	ErrSnapshotReadOnly = errors.New("read only")
@@ -72,10 +46,6 @@ var (
 	// not hash matched or marked as deleted.
 	errUnexpectedNode = errors.New("unexpected node")
 
-	// errSnapshotCycle is returned if a snapshot is attempted to be inserted
-	// that forms a cycle in the snapshot tree.
-	errSnapshotCycle = errors.New("snapshot cycle")
-
 	// errUnmatchedReverseDiff is returned if an unmatched reverse-diff is applied
 	// to the database for state rollback.
 	errUnmatchedReverseDiff = errors.New("reverse diff is not matched")
@@ -83,10 +53,6 @@ var (
 	// errStateUnrecoverable is returned if state is required to be reverted to
 	// a destination without associated reverse diff available.
 	errStateUnrecoverable = errors.New("state is unrecoverable")
-
-	// errImmatureState is returned if state is required to be reverted to an
-	// immature destination.
-	errImmatureState = errors.New("immature state")
 )
 
 // Snapshot represents the functionality supported by a snapshot storage layer.
@@ -151,7 +117,7 @@ type StateWriter interface {
 	// Update adds a new snapshot into the tree, if that can be linked to an existing
 	// old parent. It is disallowed to insert a disk layer (the origin of all).
 	// The passed keys must all be encoded in the **storage** format.
-	Update(root common.Hash, parentRoot common.Hash, nodes map[string]*nodeWithPreValue) error
+	Update(root common.Hash, parent common.Hash, nodes map[string]*nodeWithPreValue) error
 
 	// Cap traverses downwards the snapshot tree from a head block hash until the
 	// number of allowed layers are crossed. All layers beyond the permitted number
@@ -186,16 +152,17 @@ type Config struct {
 // diffs tracked in the disk.
 type Database struct {
 	// readOnly is the flag whether the mutation is allowed to be applied.
-	// It will be set automatically when the database is journaled during
-	// the shutdown to reject all following unexpected mutations.
+	// It will be set automatically when the database is journaled(closed)
+	// during the shutdown to reject all following unexpected mutations.
 	readOnly bool
-	config   *Config
-	lock     sync.RWMutex     // Lock to prevent concurrent mutations and readOnly flag
+
+	config   *Config          // Configuration for trie database.
 	diskdb   ethdb.Database   // Persistent database to store the snapshot
-	freezer  *rawdb.Freezer   // Freezer to store reverse diffs
 	cleans   *fastcache.Cache // Megabytes permitted using for read caches
 	tree     *layerTree       // The group for all known layers
 	preimage *preimageStore   // The store for caching preimages
+	freezer  *rawdb.Freezer   // Freezer to store reverse diffs, nil possible in tests
+	lock     sync.RWMutex     // Lock to prevent concurrent mutations and readOnly flag
 }
 
 // NewDatabase attempts to load an already existing snapshot from a persistent
@@ -217,26 +184,31 @@ func NewDatabase(diskdb ethdb.Database, freezerDir string, config *Config) *Data
 	}
 	readOnly := config != nil && config.ReadOnly
 
-	// Open the freezer for reverse diffs.
-	freezer, err := openFreezer(freezerDir, readOnly)
-	if err != nil {
-		log.Crit("Failed to open reverse diff freezer", "err", err)
-	}
-	tail, _ := freezer.Tail()
-
 	db := &Database{
 		readOnly: readOnly,
 		config:   config,
 		diskdb:   diskdb,
-		freezer:  freezer,
 		cleans:   cleans,
-		tree:     newLayerTree(loadSnapshot(diskdb, cleans, tail)),
 		preimage: preimage,
 	}
-	// Truncate the extra reverse diffs if necessary.
-	if !readOnly {
+	// Open the freezer for reverse diffs if the directory path is specified.
+	// Otherwise, all the relevant functionalities are disabled.
+	if freezerDir != "" {
+		freezer, err := openFreezer(freezerDir, readOnly)
+		if err != nil {
+			log.Crit("Failed to open reverse diff freezer", "err", err)
+		}
+		db.freezer = freezer
+	}
+	// Construct the layer tree by resolving the in-disk singleton state
+	// and in-memory layer journal.
+	db.tree = newLayerTree(db.loadSnapshot(diskdb, cleans))
+
+	// Truncate the extra reverse diffs in freezer in case it's not aligned
+	// with the disk layer.
+	if !readOnly && db.freezer != nil {
 		layer := db.tree.bottom().(*diskLayer)
-		truncateReverseDiffs(freezer, diskdb, layer.diffid)
+		truncateReverseDiffs(db.freezer, diskdb, layer.diffid)
 	}
 	return db
 }
@@ -348,10 +320,16 @@ func (db *Database) Clean(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// Short circuit if the database is in read only mode.
 	if db.readOnly {
 		return ErrSnapshotReadOnly
 	}
-	// TODO check if the given root node is existent before applying any mutations.
+	// Ensure the specified state is present in disk, try to avoid
+	// destroying everything.
+	_, hash := rawdb.ReadTrieNode(db.diskdb, EncodeStorageKey(common.Hash{}, nil))
+	if hash != root {
+		return errors.New("state is non-existent")
+	}
 	rawdb.DeleteTrieJournal(db.diskdb)
 
 	// Iterate over all layers and mark them as stale
@@ -369,19 +347,21 @@ func (db *Database) Clean(root common.Hash) error {
 		return true
 	})
 	// Delete all remaining reverse diffs in disk
-	tail, _ := db.freezer.Tail()
-	rawdb.WriteReverseDiffHead(db.diskdb, tail)
-	truncateReverseDiffs(db.freezer, db.diskdb, tail)
-
-	db.tree = newLayerTree(newDiskLayer(root, tail, db.cleans, newDiskcache(nil, 0), db.diskdb))
-	log.Info("Rebuild triedb", "root", root, "diffid", tail)
+	var diffid uint64
+	if db.freezer != nil {
+		diffid, _ = db.freezer.Tail()
+		rawdb.WriteReverseDiffHead(db.diskdb, diffid)
+		truncateReverseDiffs(db.freezer, db.diskdb, diffid)
+	}
+	db.tree = newLayerTree(newDiskLayer(root, diffid, db.cleans, newDiskcache(nil, 0), db.diskdb))
+	log.Info("Rebuild triedb", "root", root, "diffid", diffid)
 	return nil
 }
 
 // revert applies the reverse diffs to the database by reverting the disk layer
 // content. This function assumes the lock in db is already held.
 func (db *Database) revert(diffid uint64, diff *reverseDiff) error {
-	ndl, err := db.disklayer().revert(diff, diffid)
+	ndl, err := db.tree.bottom().(*diskLayer).revert(diff, diffid)
 	if err != nil {
 		return err
 	}
@@ -393,7 +373,7 @@ func (db *Database) revert(diffid uint64, diff *reverseDiff) error {
 	if err != nil {
 		return err
 	}
-	// Recreate the disk layer with newly created clean cache
+	// Recreate the layer tree with newly created disk layer
 	db.tree = newLayerTree(ndl)
 	return nil
 }
@@ -405,15 +385,23 @@ func (db *Database) Rollback(target common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
+	// Short circuit if the database is in read only mode.
+	if db.readOnly {
+		return ErrSnapshotReadOnly
+	}
+	// Short circuit if the whole state rollback functionality is disabled.
+	if db.freezer == nil {
+		return errors.New("state revert is disabled")
+	}
 	// Ensure the destination is recoverable
 	target = convertEmpty(target)
 	id := rawdb.ReadReverseDiffLookup(db.diskdb, target)
 	if id == nil {
 		return errStateUnrecoverable
 	}
-	current := db.disklayer().ID()
+	current := db.tree.bottom().(*diskLayer).ID()
 	if *id > current {
-		return fmt.Errorf("%w dest: %d head: %d", errImmatureState, *id, current)
+		return fmt.Errorf("%w dest: %d head: %d", errors.New("immature state"), *id, current)
 	}
 	// Clean up the database, wipe all existent diff layers and journal as well.
 	rawdb.DeleteTrieJournal(db.diskdb)
@@ -448,7 +436,7 @@ func (db *Database) StateRecoverable(root common.Hash) bool {
 	if id == nil {
 		return false
 	}
-	if db.disklayer().ID() < *id {
+	if db.tree.bottom().(*diskLayer).ID() < *id {
 		return false
 	}
 	// In theory all the reverse diffs starts from the given id until
@@ -461,19 +449,6 @@ func (db *Database) StateRecoverable(root common.Hash) bool {
 // DiskDB retrieves the persistent storage backing the trie database.
 func (db *Database) DiskDB() ethdb.KeyValueStore {
 	return db.diskdb
-}
-
-// disklayer is an internal helper function to return the disk layer.
-// The lock of trieDB is assumed to be held already.
-func (db *Database) disklayer() (ret *diskLayer) {
-	db.tree.forEach(func(hash common.Hash, layer snapshot) bool {
-		if dl, ok := layer.(*diskLayer); ok {
-			ret = dl
-			return false
-		}
-		return true
-	})
-	return ret
 }
 
 // Size returns the current storage size of the memory cache in front of the

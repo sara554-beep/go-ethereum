@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	DefaultDatadir = func(base string) string { return filepath.Join(base, "reverse")}
+	DefaultDatadir = func(base string) string { return filepath.Join(base, "reverse") }
 )
 
 // Reverse diff records the state changes involved in executing a corresponding block.

@@ -38,4 +38,3 @@ var reverseDiffFreezerNoSnappy = map[string]bool{
 func NewReverseDiffFreezer(datadir string, namespace string, readOnly bool) (*Freezer, error) {
 	return NewFreezer(datadir, namespace, readOnly, reverseDiffTableSize, reverseDiffFreezerNoSnappy)
 }
-

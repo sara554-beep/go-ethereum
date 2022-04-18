@@ -25,6 +25,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"path"
 	"path/filepath"
 	godebug "runtime/debug"
 	"strconv"
@@ -118,10 +119,6 @@ var (
 	AncientFlag = DirectoryFlag{
 		Name:  "datadir.ancient",
 		Usage: "Data directory for ancient chain segments (default = inside chaindata)",
-	}
-	StateDiffFlag = DirectoryFlag{
-		Name:  "datadir.statediff",
-		Usage: "Data directory for reverse state diff segments (default = inside chaindata)",
 	}
 	MinFreeDiskSpaceFlag = DirectoryFlag{
 		Name:  "datadir.minfreedisk",
@@ -846,7 +843,6 @@ var (
 	DatabasePathFlags = []cli.Flag{
 		DataDirFlag,
 		AncientFlag,
-		StateDiffFlag,
 	}
 )
 
@@ -2074,17 +2070,7 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 
 // ResolveStateDiffDir resolves the directory of state reverse diff.
 func ResolveStateDiffDir(ctx *cli.Context, stack *node.Node) string {
-	var (
-		freezer = ctx.GlobalString(StateDiffFlag.Name)
-		root    = stack.ResolvePath("chaindata") // The base directory for data
-	)
-	switch {
-	case freezer == "":
-		freezer = filepath.Join(root, "statediff")
-	case !filepath.IsAbs(freezer):
-		freezer = stack.ResolvePath(freezer)
-	}
-	return freezer
+	return path.Join(stack.ResolveAncient("chaindata", ctx.GlobalString(AncientFlag.Name)), "reversediff")
 }
 
 // MigrateFlags sets the global flag from a local flag when it's set.
