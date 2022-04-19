@@ -22,6 +22,7 @@ package core
 
 import (
 	"math/big"
+	"path"
 	"testing"
 	"time"
 
@@ -1882,7 +1883,7 @@ func TestIssue23496(t *testing.T) {
 	// Create a temporary persistent database
 	datadir := t.TempDir()
 
-	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	db, err := rawdb.NewLevelDBDatabase(datadir, 0, 0, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
 	}
@@ -1890,14 +1891,16 @@ func TestIssue23496(t *testing.T) {
 
 	// Initialize a fresh chain
 	var (
-		genesis = (&Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}).MustCommit(db)
+		gspec   = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}
+		genesis = gspec.MustCommit(db)
 		engine  = ethash.NewFullFaker()
 		config  = &CacheConfig{
-			TrieCleanLimit: 256,
-			TrieDirtyLimit: 256,
-			TrieTimeLimit:  5 * time.Minute,
-			SnapshotLimit:  256,
-			SnapshotWait:   true,
+			TrieCleanLimit:  256,
+			TrieDirtyLimit:  256,
+			TrieTimeLimit:   5 * time.Minute,
+			SnapshotLimit:   256,
+			SnapshotWait:    true,
+			ReverseDiffPath: path.Join(datadir, "ancient", "rdiffs"),
 		}
 	)
 	chain, err := NewBlockChain(db, config, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
@@ -1935,16 +1938,17 @@ func TestIssue23496(t *testing.T) {
 	}
 
 	// Pull the plug on the database, simulating a hard crash
+	chain.triedb.Close() // ugly hack
 	db.Close()
 
 	// Start a new blockchain back up and see where the repair leads us
-	db, err = rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	db, err = rawdb.NewLevelDBDatabase(datadir, 0, 0, "", false)
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, nil, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
+	chain, err = NewBlockChain(db, config, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}

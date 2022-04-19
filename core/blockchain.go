@@ -149,6 +149,14 @@ var defaultCacheConfig = &CacheConfig{
 	SnapshotWait:   true,
 }
 
+// defaultWithStateFreezer returns the default caching values and also enables the
+// reverse state diff freezer with the given directory path. It's only used in tests.
+func defaultWithStateFreezer(dir string) *CacheConfig {
+	config := defaultCacheConfig
+	config.ReverseDiffPath = dir
+	return config
+}
+
 // BlockChain represents the canonical chain given a database with a genesis
 // block. The Blockchain manages chain imports, reverts, chain reorganisations.
 //
@@ -829,6 +837,9 @@ func (bc *BlockChain) Stop() {
 	// cache warmup when node restarts.
 	if bc.cacheConfig.TrieCleanJournal != "" {
 		bc.triedb.SaveCache(bc.cacheConfig.TrieCleanJournal)
+	}
+	if err := bc.triedb.Close(); err != nil {
+		log.Info("Failed to close triedb", "err", err)
 	}
 	log.Info("Blockchain stopped")
 }

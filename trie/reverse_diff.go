@@ -99,7 +99,7 @@ type reverseDiff struct {
 func loadReverseDiff(freezer *rawdb.Freezer, id uint64) (*reverseDiff, error) {
 	blob := rawdb.ReadReverseDiff(freezer, id)
 	if len(blob) == 0 {
-		return nil, errors.New("reverse diff not found")
+		return nil, fmt.Errorf("reverse diff not found %d", id)
 	}
 	var diff reverseDiff
 	if err := rlp.DecodeBytes(blob, &diff); err != nil {

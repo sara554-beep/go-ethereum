@@ -2027,6 +2027,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (*core.BlockChain, ethdb.Data
 		TrieTimeLimit:       ethconfig.Defaults.TrieTimeout,
 		SnapshotLimit:       ethconfig.Defaults.SnapshotCache,
 		Preimages:           ctx.GlobalBool(CachePreimagesFlag.Name),
+		//ReverseDiffPath:     "", // TODO should we enable reverse diff freezer here?
 	}
 	if cache.TrieDirtyDisabled && !cache.Preimages {
 		cache.Preimages = true

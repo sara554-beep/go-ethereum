@@ -116,8 +116,10 @@ func (db *Database) loadSnapshot(diskdb ethdb.Database, cleans *fastcache.Cache)
 		if base != (common.Hash{}) {
 			root = base
 		}
+		// Purge the reverse diff freezer in case the disk layer is built
+		// from the scratch.
 		var diffid uint64
-		if db.freezer != nil {
+		if db.freezer != nil && !db.readOnly {
 			diffid, _ = db.freezer.Tail()
 			rawdb.WriteReverseDiffHead(diskdb, diffid)
 		}

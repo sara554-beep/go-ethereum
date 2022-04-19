@@ -155,6 +155,7 @@ type Database struct {
 	// It will be set automatically when the database is journaled(closed)
 	// during the shutdown to reject all following unexpected mutations.
 	readOnly bool
+	closed   bool
 
 	config   *Config          // Configuration for trie database.
 	diskdb   ethdb.Database   // Persistent database to store the snapshot
@@ -310,7 +311,7 @@ func (db *Database) Journal(root common.Hash) error {
 
 	// Set the db in read only mode to reject all following mutations
 	db.readOnly = true
-	log.Info("Stored snapshot journal in triedb", "disk", diskroot, "size", common.StorageSize(journal.Len()))
+	log.Info("Stored journal in triedb", "disk", diskroot, "size", common.StorageSize(journal.Len()))
 	return nil
 }
 
@@ -523,4 +524,20 @@ func (db *Database) IsEmpty() bool {
 		return true
 	})
 	return !nonEmpty
+}
+
+// Close releases the held resources. It's safe to call Close multiple times.
+func (db *Database) Close() error {
+	db.lock.Lock()
+	defer db.lock.Unlock()
+
+	if db.closed {
+		return nil
+	}
+	db.closed = true
+
+	if db.freezer == nil {
+		return nil
+	}
+	return db.freezer.Close()
 }

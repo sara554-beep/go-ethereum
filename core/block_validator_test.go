@@ -39,11 +39,13 @@ import (
 // Tests that simple header verification works, for both good and bad blocks.
 func TestHeaderVerification(t *testing.T) {
 	// Create a simple chain to verify
+	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+
 	var (
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
+		blocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	for i, block := range blocks {
@@ -260,12 +262,14 @@ func TestHeaderConcurrentVerification8(t *testing.T)  { testHeaderConcurrentVeri
 func TestHeaderConcurrentVerification32(t *testing.T) { testHeaderConcurrentVerification(t, 32) }
 
 func testHeaderConcurrentVerification(t *testing.T, threads int) {
+	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+
 	// Create a simple chain to verify
 	var (
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 8, nil)
+		blocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 8, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	seals := make([]bool, len(blocks))
@@ -337,7 +341,7 @@ func testHeaderConcurrentAbortion(t *testing.T, threads int) {
 		testdb    = rawdb.NewMemoryDatabase()
 		gspec     = &Genesis{Config: params.TestChainConfig}
 		genesis   = gspec.MustCommit(testdb)
-		blocks, _ = GenerateChain(params.TestChainConfig, genesis, ethash.NewFaker(), testdb, 1024, nil)
+		blocks, _ = GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), state.NewDatabase(testdb), 1024, nil)
 	)
 	headers := make([]*types.Header, len(blocks))
 	seals := make([]bool, len(blocks))
