@@ -71,7 +71,7 @@ func (dl *diskLayer) getSnapshot(nocache bool) (snap *diskLayerSnapshot, err err
 	}()
 	if !nocache {
 		// The requested state is located in the embedded disk
-		// cache, flushest all cached nodes into the ephemeral
+		// cache, flushes all cached nodes into the ephemeral
 		// disk area and apply the reverse diffs later. Note
 		// the following operation may take a few seconds.
 		batch := dl.diskdb.NewBatch()
@@ -94,6 +94,8 @@ func (dl *diskLayer) getSnapshot(nocache bool) (snap *diskLayerSnapshot, err err
 			clean:  fastcache.New(16 * 1024 * 1024), // tiny cache
 		}
 	} else {
+		// Construct the base layer from the in-disk state. The following
+		// state reverts can be applied on this directly.
 		_, diskRoot := rawdb.ReadTrieNode(dl.diskdb, EncodeStorageKey(common.Hash{}, nil))
 		snap = &diskLayerSnapshot{
 			prefix: prefix,

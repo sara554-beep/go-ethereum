@@ -44,6 +44,8 @@ func TestGetSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to retrieve snapshot %v", err)
 		}
+		defer layer.Release()
+
 		keys, vals := env.keys[i], env.vals[i]
 		for j, key := range keys {
 			if len(vals[j]) == 0 {
