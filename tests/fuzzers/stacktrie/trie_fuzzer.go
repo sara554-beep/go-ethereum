@@ -142,7 +142,7 @@ func (f *fuzzer) fuzz() int {
 
 	// This spongeDb is used to check the sequence of disk-db-writes
 	var (
-		dbA         = trie.NewDatabase(rawdb.NewMemoryDatabase(), "", nil)
+		dbA         = trie.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		trieA, _    = trie.New(common.Hash{}, dbA)
 		trieB       = trie.NewStackTrie(rawdb.NewMemoryDatabase())
 		vals        kvs

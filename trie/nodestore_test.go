@@ -26,10 +26,7 @@ import (
 
 func TestNodeStoreCopy(t *testing.T) {
 	t.SkipNow()
-
-	env := fillDB()
-	defer env.teardown()
-
+	env := fillDB(t)
 	reader, err := newSnapStore(env.roots[len(env.roots)-1], common.Hash{}, env.db)
 	if err != nil {
 		t.Fatalf("Failed to create reader %v", err)

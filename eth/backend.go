@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"path"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -191,7 +190,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			TrieTimeLimit:       config.TrieTimeout,
 			SnapshotLimit:       config.SnapshotCache,
 			Preimages:           config.Preimages,
-			ReverseDiffPath:     path.Join(config.DatabaseFreezer, "rdiffs"),
 		}
 	)
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, chainConfig, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)

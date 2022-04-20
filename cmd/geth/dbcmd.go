@@ -290,7 +290,7 @@ func inspect(ctx *cli.Context) error {
 	return rawdb.InspectDatabase(db, prefix, start)
 }
 
-func showLeveldbStats(db ethdb.Stater) {
+func showLeveldbStats(db ethdb.KeyValueStater) {
 	if stats, err := db.Stat("leveldb.stats"); err != nil {
 		log.Warn("Failed to read database stats", "error", err)
 	} else {
@@ -454,7 +454,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 			return err
 		}
 	}
-	theTrie, err := trie.New(stRoot, trie.NewDatabase(db, "", &trie.Config{ReadOnly: true}))
+	theTrie, err := trie.New(stRoot, trie.NewDatabase(db, &trie.Config{ReadOnly: true}))
 	if err != nil {
 		return err
 	}

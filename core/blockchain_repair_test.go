@@ -21,8 +21,9 @@
 package core
 
 import (
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
-	"path"
+	"os"
 	"testing"
 	"time"
 
@@ -1751,12 +1752,11 @@ func testLongReorgedSnapSyncingDeepRepair(t *testing.T, snapshots bool) {
 
 func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 	// It's hard to follow the test case, visualize the input
-	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+	// log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 	// fmt.Println(tt.dump(true))
 
 	// Create a temporary persistent database
 	datadir := t.TempDir()
-
 	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -1825,6 +1825,7 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 		rawdb.WriteLastPivotNumber(db, *tt.pivotBlock)
 	}
 	// Pull the plug on the database, simulating a hard crash
+	chain.triedb.Close()
 	db.Close()
 
 	// Start a new blockchain back up and see where the repair leads us
@@ -1878,12 +1879,11 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 // state.
 func TestIssue23496(t *testing.T) {
 	// It's hard to follow the test case, visualize the input
-	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// Create a temporary persistent database
 	datadir := t.TempDir()
-
-	db, err := rawdb.NewLevelDBDatabase(datadir, 0, 0, "", false)
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
 	}
@@ -1891,19 +1891,10 @@ func TestIssue23496(t *testing.T) {
 
 	// Initialize a fresh chain
 	var (
-		gspec   = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}
-		genesis = gspec.MustCommit(db)
+		genesis = (&Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}).MustCommit(db)
 		engine  = ethash.NewFullFaker()
-		config  = &CacheConfig{
-			TrieCleanLimit:  256,
-			TrieDirtyLimit:  256,
-			TrieTimeLimit:   5 * time.Minute,
-			SnapshotLimit:   256,
-			SnapshotWait:    true,
-			ReverseDiffPath: path.Join(datadir, "ancient", "rdiffs"),
-		}
 	)
-	chain, err := NewBlockChain(db, config, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
+	chain, err := NewBlockChain(db, nil, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -1942,13 +1933,13 @@ func TestIssue23496(t *testing.T) {
 	db.Close()
 
 	// Start a new blockchain back up and see where the repair leads us
-	db, err = rawdb.NewLevelDBDatabase(datadir, 0, 0, "", false)
+	db, err = rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, config, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
+	chain, err = NewBlockChain(db, nil, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}

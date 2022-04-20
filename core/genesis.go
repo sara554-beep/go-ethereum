@@ -83,7 +83,10 @@ func (ga *GenesisAlloc) UnmarshalJSON(data []byte) error {
 // flush adds allocated genesis accounts into a fresh new statedb and
 // commit the state changes into the given database handler.
 func (ga *GenesisAlloc) flush(db ethdb.Database) (common.Hash, error) {
-	statedb, err := state.New(common.Hash{}, state.NewDatabase(db), nil)
+	triedb := trie.NewDatabase(db, nil)
+	defer triedb.Close()
+
+	statedb, err := state.New(common.Hash{}, state.NewDatabaseWithConfig(triedb), nil)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -260,7 +263,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	// The genesis block is present(perhaps in ancient database) while the
 	// state database is empty. It can happen that the node is initialized
 	// with an external ancient store. Commit genesis state in this case.
-	if trie.NewDatabase(db, "", &trie.Config{ReadOnly: true}).IsEmpty() {
+	if trie.NewDatabase(db, &trie.Config{ReadOnly: true}).IsEmpty() {
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
 		}

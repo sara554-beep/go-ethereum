@@ -57,7 +57,7 @@ func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[st
 	}
 	triedbDiffLayerSizeMeter.Mark(int64(dl.memory))
 	triedbDiffLayerNodesMeter.Mark(int64(len(nodes)))
-	log.Debug("Created new diff layer", "nodes", len(nodes), "size", common.StorageSize(dl.memory))
+	log.Debug("Created new diff layer", "diffid", diffid, "nodes", len(nodes), "size", common.StorageSize(dl.memory))
 	return dl
 }
 

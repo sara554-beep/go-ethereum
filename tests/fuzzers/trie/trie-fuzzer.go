@@ -143,7 +143,7 @@ func Fuzz(input []byte) int {
 func runRandTest(rt randTest) error {
 	var (
 		origin common.Hash
-		triedb = trie.NewDatabase(rawdb.NewMemoryDatabase(), "", nil)
+		triedb = trie.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		tr, _  = trie.New(origin, triedb)
 		values = make(map[string]string) // tracks content of the trie
 		prev   *trie.CommitResult

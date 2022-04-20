@@ -17,8 +17,6 @@
 package trie
 
 import (
-	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"path"
@@ -66,14 +64,12 @@ func makeDiffs(n int) []reverseDiff {
 }
 
 func TestLoadStoreReverseDiff(t *testing.T) {
-	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	dir := t.TempDir()
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, dir, "", false)
 	if err != nil {
-		panic("Failed to allocate tempdir")
+		panic("Failed to create database")
 	}
-	defer os.RemoveAll(dir)
-
 	freezer, _ := openFreezer(path.Join(dir, "freezer"), false)
-	db := rawdb.NewMemoryDatabase()
 
 	var diffs = makeDiffs(10)
 	for i := 0; i < len(diffs); i++ {
@@ -135,14 +131,12 @@ func assertReverseDiffInRange(t *testing.T, freezer *rawdb.Freezer, db ethdb.Dat
 }
 
 func TestTruncateHeadReverseDiff(t *testing.T) {
-	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	dir := t.TempDir()
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, dir, "", false)
 	if err != nil {
-		panic("Failed to allocate tempdir")
+		panic("Failed to create database")
 	}
-	defer os.RemoveAll(dir)
-
 	freezer, _ := openFreezer(path.Join(dir, "freezer"), false)
-	db := rawdb.NewMemoryDatabase()
 
 	var diffs = makeDiffs(10)
 	for i := 0; i < len(diffs); i++ {
@@ -167,14 +161,12 @@ func TestTruncateHeadReverseDiff(t *testing.T) {
 }
 
 func TestTruncateTailReverseDiff(t *testing.T) {
-	dir, err := ioutil.TempDir(os.TempDir(), "testing")
+	dir := t.TempDir()
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, dir, "", false)
 	if err != nil {
-		panic("Failed to allocate tempdir")
+		panic("Failed to create database")
 	}
-	defer os.RemoveAll(dir)
-
 	freezer, _ := openFreezer(path.Join(dir, "freezer"), false)
-	db := rawdb.NewMemoryDatabase()
 
 	var diffs = makeDiffs(10)
 	for i := 0; i < len(diffs); i++ {
@@ -213,14 +205,12 @@ func TestTruncateTailReverseDiffs(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		dir, err := ioutil.TempDir(os.TempDir(), "testing")
+		dir := t.TempDir()
+		db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, dir, "", false)
 		if err != nil {
-			panic("Failed to allocate tempdir")
+			panic("Failed to create database")
 		}
-		defer os.RemoveAll(dir)
-
 		freezer, _ := openFreezer(path.Join(dir, "freezer"), false)
-		db := rawdb.NewMemoryDatabase()
 
 		var diffs = makeDiffs(10)
 		for i := 0; i < len(diffs); i++ {
@@ -251,12 +241,12 @@ func TestRepairReverseDiff(t *testing.T) {
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	setup := func() (ethdb.Database, *rawdb.Freezer, []reverseDiff, func()) {
-		dir, err := ioutil.TempDir(os.TempDir(), fmt.Sprintf("testing-%d", rand.Uint64()))
+		dir := t.TempDir()
+		db, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, dir, "", false)
 		if err != nil {
-			panic("Failed to allocate tempdir")
+			panic("Failed to create database")
 		}
 		freezer, _ := openFreezer(path.Join(dir, "freezer"), false)
-		db := rawdb.NewMemoryDatabase()
 
 		var diffs = makeDiffs(10)
 		for i := 0; i < len(diffs); i++ {

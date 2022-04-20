@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"path"
 	"runtime"
 	"sync"
 	"time"
@@ -170,7 +171,7 @@ type Database struct {
 // key-value store (with a number of memory layers from a journal). If the journal
 // is not matched with the base persistent layer, all the recorded diff layers
 // are discarded.
-func NewDatabase(diskdb ethdb.Database, freezerDir string, config *Config) *Database {
+func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	var cleans *fastcache.Cache
 	if config != nil && config.Cache > 0 {
 		if config.Journal == "" {
@@ -192,10 +193,11 @@ func NewDatabase(diskdb ethdb.Database, freezerDir string, config *Config) *Data
 		cleans:   cleans,
 		preimage: preimage,
 	}
-	// Open the freezer for reverse diffs if the directory path is specified.
-	// Otherwise, all the relevant functionalities are disabled.
-	if freezerDir != "" {
-		freezer, err := openFreezer(freezerDir, readOnly)
+	// Open the freezer for reverse diffs if the passed database contains an
+	// ancient store. Otherwise, all the relevant functionalities are disabled.
+	ancientRoot, err := diskdb.AncientDatadir()
+	if err == nil {
+		freezer, err := openFreezer(path.Join(ancientRoot, "rdiffs"), readOnly)
 		if err != nil {
 			log.Crit("Failed to open reverse diff freezer", "err", err)
 		}

@@ -146,7 +146,7 @@ func verifyState(ctx *cli.Context) error {
 		log.Error("Failed to load head block")
 		return errors.New("no head block")
 	}
-	triedb := trie.NewDatabase(chaindb, "", &trie.Config{ReadOnly: true})
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true})
 	snaptree, err := snapshot.New(chaindb, triedb, 256, headBlock.Root(), false, false, false)
 	if err != nil {
 		log.Error("Failed to open snapshot tree", "err", err)
@@ -188,7 +188,7 @@ func checkDanglingStorage(ctx *cli.Context) error {
 		log.Error("Failed to load head block")
 		return errors.New("no head block")
 	}
-	triedb := trie.NewDatabase(chaindb, "", &trie.Config{ReadOnly: true})
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true})
 	snaptree, err := snapshot.New(chaindb, triedb, 256, headBlock.Root(), false, false, false)
 	if err != nil {
 		log.Error("Failed to open snapshot tree", "err", err)
@@ -276,7 +276,7 @@ func traverseState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	triedb := trie.NewDatabase(chaindb, "", &trie.Config{ReadOnly: true})
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true})
 	t, err := trie.NewSecure(root, triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
@@ -365,7 +365,7 @@ func traverseRawState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	triedb := trie.NewDatabase(chaindb, "", &trie.Config{ReadOnly: true})
+	triedb := trie.NewDatabase(chaindb, &trie.Config{ReadOnly: true})
 	t, err := trie.NewSecure(root, triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
@@ -472,7 +472,7 @@ func dumpState(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	triedb := trie.NewDatabase(db, "", &trie.Config{ReadOnly: true})
+	triedb := trie.NewDatabase(db, &trie.Config{ReadOnly: true})
 	snaptree, err := snapshot.New(db, triedb, 256, root, false, false, false)
 	if err != nil {
 		return err

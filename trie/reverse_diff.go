@@ -225,5 +225,5 @@ func truncateReverseDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target ui
 
 // openFreezer initializes the freezer instance for storing reverse diffs.
 func openFreezer(datadir string, readOnly bool) (*rawdb.Freezer, error) {
-	return rawdb.NewReverseDiffFreezer(datadir, "eth/db/statediff", readOnly)
+	return rawdb.NewReverseDiffFreezer(datadir, "eth/db/rdiffs", readOnly)
 }

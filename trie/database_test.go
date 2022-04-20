@@ -19,10 +19,7 @@ package trie
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
-	"os"
-	"path"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -32,12 +29,11 @@ import (
 
 // testEnv is the container for all testing fields.
 type testEnv struct {
-	db       *Database
-	numbers  []uint64
-	roots    []common.Hash
-	keys     [][]string
-	vals     [][][]byte
-	teardown func()
+	db      *Database
+	numbers []uint64
+	roots   []common.Hash
+	keys    [][]string
+	vals    [][][]byte
 }
 
 // fill randomly creates the nodes for layer and commits
@@ -123,18 +119,14 @@ func fill(db *Database, n int, testkeys [][]string, testvals [][][]byte, parentH
 	return root.hash, root.rlp(), parentNumber + 1, keys, vals
 }
 
-func fillDB() *testEnv {
-	dir, err := ioutil.TempDir(os.TempDir(), "testing")
-	if err != nil {
-		panic("Failed to allocate tempdir")
-	}
-	ancient := path.Join(dir, "test-frdb")
-	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, ancient, "", false)
+func fillDB(t *testing.T) *testEnv {
+	dir := t.TempDir()
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(dir, 16, 16, dir, "", false)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create database %v", err))
 	}
 	var (
-		db      = NewDatabase(diskdb, path.Join(ancient, "rdiffs"), nil)
+		db      = NewDatabase(diskdb, nil)
 		numbers []uint64
 		roots   []common.Hash
 
@@ -163,9 +155,6 @@ func fillDB() *testEnv {
 		roots:   roots,
 		keys:    testKeys,
 		vals:    testVals,
-		teardown: func() {
-			os.RemoveAll(dir)
-		},
 	}
 }
 
@@ -173,24 +162,21 @@ func TestDatabaseRollback(t *testing.T) {
 	defer func(origin uint64) {
 		cacheSizeLimit = origin
 	}(cacheSizeLimit)
-
 	cacheSizeLimit = 1024 * 256 // Lower the dirty cache size
 
 	var (
-		env       = fillDB()
-		dl        = env.db.tree.bottom().(*diskLayer)
-		diskIndex int
+		env   = fillDB(t)
+		dl    = env.db.tree.bottom().(*diskLayer)
+		index int
 	)
-	defer env.teardown()
-
-	for diskIndex = 0; diskIndex < len(env.roots); diskIndex++ {
-		if env.roots[diskIndex] == dl.root {
+	for index = 0; index < len(env.roots); index++ {
+		if env.roots[index] == dl.root {
 			break
 		}
 	}
 	// Ensure all the reverse diffs are stored properly
 	var parent = emptyRoot
-	for i := 0; i <= diskIndex; i++ {
+	for i := 0; i <= index; i++ {
 		diff, err := loadReverseDiff(env.db.freezer, uint64(i+1))
 		if err != nil {
 			t.Errorf("Failed to load reverse diff, index %d, err %v", i+1, err)
@@ -201,14 +187,14 @@ func TestDatabaseRollback(t *testing.T) {
 		parent = diff.Root
 	}
 	// Ensure immature reverse diffs are not present
-	for i := diskIndex + 1; i < len(env.numbers); i++ {
+	for i := index + 1; i < len(env.numbers); i++ {
 		blob := rawdb.ReadReverseDiff(env.db.diskdb, uint64(i+1))
 		if len(blob) != 0 {
 			t.Error("Unexpected reverse diff", "index", i)
 		}
 	}
 	// Revert the db to historical point with reverse state available
-	for i := diskIndex; i > 0; i-- {
+	for i := index; i > 0; i-- {
 		if err := env.db.Rollback(env.roots[i-1]); err != nil {
 			t.Error("Failed to revert db status", "err", err)
 		}
@@ -248,17 +234,15 @@ func TestDatabaseBatchRollback(t *testing.T) {
 	defer func(origin uint64) {
 		cacheSizeLimit = origin
 	}(cacheSizeLimit)
-
 	cacheSizeLimit = 1024 * 256 // Lower the dirty cache size
 
 	var (
-		env       = fillDB()
-		dl        = env.db.tree.bottom().(*diskLayer)
-		diskIndex int
+		env   = fillDB(t)
+		dl    = env.db.tree.bottom().(*diskLayer)
+		index int
 	)
-	defer env.teardown()
-	for diskIndex = 0; diskIndex < len(env.roots); diskIndex++ {
-		if env.roots[diskIndex] == dl.root {
+	for index = 0; index < len(env.roots); index++ {
+		if env.roots[index] == dl.root {
 			break
 		}
 	}

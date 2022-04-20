@@ -21,6 +21,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie"
 	"math/big"
 	"strings"
 	"testing"
@@ -1955,7 +1956,6 @@ func testSetHead(t *testing.T, tt *rewindTest, snapshots bool) {
 
 	// Create a temporary persistent database
 	datadir := t.TempDir()
-
 	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -2010,7 +2010,9 @@ func testSetHead(t *testing.T, tt *rewindTest, snapshots bool) {
 		t.Fatalf("Failed to import canonical chain tail: %v", err)
 	}
 	// Manually dereference anything not committed to not have to work with 128+ tries
-	chain.stateCache = state.NewDatabase(db)
+	chain.triedb.Close()
+	chain.triedb = trie.NewDatabase(db, nil)
+	chain.stateCache = state.NewDatabaseWithConfig(chain.triedb)
 
 	// Force run a freeze cycle
 	type freezer interface {

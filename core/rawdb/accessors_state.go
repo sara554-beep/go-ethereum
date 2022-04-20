@@ -191,7 +191,7 @@ func DeleteTrieNodeSnapshots(db ethdb.KeyValueStore, prefix []byte) {
 // ReadReverseDiff retrieves the state reverse diff with the given associated
 // block hash and number. Because reverse diff is encoded from 1 in Geth, while
 // encoded from 0 in freezer, so do the conversion here implicitly.
-func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
+func ReadReverseDiff(db ethdb.AncientReaderOp, id uint64) []byte {
 	blob, err := db.Ancient(freezerReverseDiffTable, id-1)
 	if err != nil {
 		return nil
@@ -202,7 +202,7 @@ func ReadReverseDiff(db ethdb.AncientReader, id uint64) []byte {
 // ReadReverseDiffHash retrieves the state root corresponding to the specified
 // reverse diff. Because reverse diff is encoded from 1 in Geth, while encoded
 // from 0 in freezer, so do the conversion here implicitly.
-func ReadReverseDiffHash(db ethdb.AncientReader, id uint64) common.Hash {
+func ReadReverseDiffHash(db ethdb.AncientReaderOp, id uint64) common.Hash {
 	blob, err := db.Ancient(freezerReverseDiffHashTable, id-1)
 	if err != nil {
 		return common.Hash{}

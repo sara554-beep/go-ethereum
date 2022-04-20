@@ -150,7 +150,7 @@ type testHelper struct {
 
 func newHelper() *testHelper {
 	diskdb := rawdb.NewMemoryDatabase()
-	triedb := trie.NewDatabase(diskdb, "", nil)
+	triedb := trie.NewDatabase(diskdb, nil)
 	accTrie, _ := trie.NewSecure(common.Hash{}, triedb)
 	return &testHelper{
 		diskdb:  diskdb,

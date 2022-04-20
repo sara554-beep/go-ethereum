@@ -46,18 +46,18 @@ func init() {
 
 // Used for testing
 func newEmpty() *Trie {
-	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), "", nil))
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	return trie
 }
 
 func newEmptyAndDatabase() (*Trie, *Database) {
-	db := NewDatabase(rawdb.NewMemoryDatabase(), "", nil)
+	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie, _ := New(common.Hash{}, db)
 	return trie, db
 }
 
 func TestEmptyTrie(t *testing.T) {
-	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), "", nil))
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	res := trie.Hash()
 	exp := emptyRoot
 	if res != exp {
@@ -66,7 +66,7 @@ func TestEmptyTrie(t *testing.T) {
 }
 
 func TestNull(t *testing.T) {
-	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), "", nil))
+	trie, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	key := make([]byte, 32)
 	value := []byte("test")
 	trie.Update(key, value)
@@ -76,7 +76,7 @@ func TestNull(t *testing.T) {
 }
 
 func TestMissingRoot(t *testing.T) {
-	trie, err := New(common.HexToHash("0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"), NewDatabase(rawdb.NewMemoryDatabase(), "", nil))
+	trie, err := New(common.HexToHash("0beec7b5ea3f0fdbc95d0dd47f3c5bc275da8a33"), NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	if trie != nil {
 		t.Error("New returned non-nil trie for invalid root")
 	}
@@ -90,7 +90,7 @@ func TestMissingNodeMemonly(t *testing.T) { testMissingNode(t, true) }
 
 func testMissingNode(t *testing.T, memonly bool) {
 	diskdb := rawdb.NewMemoryDatabase()
-	triedb := NewDatabase(diskdb, "", nil)
+	triedb := NewDatabase(diskdb, nil)
 
 	trie, _ := New(common.Hash{}, triedb)
 	updateString(trie, "120000", "qwerqwerqwerqwerqwerqwerqwerqwer")
@@ -437,7 +437,7 @@ func (randTest) Generate(r *rand.Rand, size int) reflect.Value {
 
 func runRandTest(rt randTest) bool {
 	var (
-		triedb      = NewDatabase(rawdb.NewMemoryDatabase(), "", nil)
+		triedb      = NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		original    common.Hash
 		diffs       = make(map[string]*nodeWithPreValue)
 		tr, _       = New(original, triedb)
@@ -953,7 +953,7 @@ func tempDB(tb testing.TB) *Database {
 	if err != nil {
 		panic(fmt.Sprintf("can't create temporary database: %v", err))
 	}
-	return NewDatabase(rawdb.NewDatabase(diskdb), "", nil)
+	return NewDatabase(rawdb.NewDatabase(diskdb), nil)
 }
 
 func getString(trie *Trie, k string) []byte {

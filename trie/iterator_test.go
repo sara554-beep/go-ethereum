@@ -316,7 +316,7 @@ func TestUnionIterator(t *testing.T) {
 }
 
 func TestIteratorNoDups(t *testing.T) {
-	tr, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), "", nil))
+	tr, _ := New(common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	for _, val := range testdata1 {
 		tr.Update([]byte(val.k), []byte(val.v))
 	}
@@ -329,7 +329,7 @@ func TestIteratorContinueAfterErrorMemonly(t *testing.T) { testIteratorContinueA
 
 func testIteratorContinueAfterError(t *testing.T, memonly bool) {
 	diskdb := rawdb.NewMemoryDatabase()
-	tdb := NewDatabase(diskdb, "", nil)
+	tdb := NewDatabase(diskdb, nil)
 
 	tr, _ := New(common.Hash{}, tdb)
 	for _, val := range testdata1 {
@@ -444,7 +444,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool) {
 		barNodeKey  []byte
 	)
 	diskdb := rawdb.NewMemoryDatabase()
-	triedb := NewDatabase(diskdb, "", nil)
+	triedb := NewDatabase(diskdb, nil)
 	ctr, _ := New(common.Hash{}, triedb)
 	for _, val := range testdata1 {
 		ctr.Update([]byte(val.k), []byte(val.v))
@@ -574,7 +574,7 @@ func (l *loggingDb) Close() error {
 func makeLargeTestTrie() (*Database, *SecureTrie, *loggingDb) {
 	// Create an empty trie
 	logDb := &loggingDb{0, memorydb.New()}
-	triedb := NewDatabase(rawdb.NewDatabase(logDb), "", nil)
+	triedb := NewDatabase(rawdb.NewDatabase(logDb), nil)
 	trie, _ := NewSecure(common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
@@ -611,7 +611,7 @@ func TestNodeIteratorLargeTrie(t *testing.T) {
 func TestIteratorNodeBlob(t *testing.T) {
 	var (
 		db      = rawdb.NewMemoryDatabase()
-		triedb  = NewDatabase(db, "", nil)
+		triedb  = NewDatabase(db, nil)
 		trie, _ = New(common.Hash{}, triedb)
 	)
 	vals := []struct{ k, v string }{

@@ -37,7 +37,7 @@ func TestDAOForkRangeExtradata(t *testing.T) {
 	db := rawdb.NewMemoryDatabase()
 	gspec := &Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}
 	genesis := gspec.MustCommit(db)
-	statedb := state.NewDatabaseWithConfig(trie.NewDatabase(db, "", nil))
+	statedb := state.NewDatabaseWithConfig(trie.NewDatabase(db, nil))
 
 	prefix, _ := GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, ethash.NewFaker(), statedb, int(forkBlock.Int64()-1), func(i int, gen *BlockGen) {})
 

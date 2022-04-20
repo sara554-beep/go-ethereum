@@ -26,23 +26,22 @@ import (
 func TestJournal(t *testing.T) {
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 	var (
-		env       = fillDB()
-		dl        = env.db.tree.bottom().(*diskLayer)
-		diskIndex int
+		env   = fillDB(t)
+		dl    = env.db.tree.bottom().(*diskLayer)
+		index int
 	)
-	defer env.teardown()
-
 	if err := env.db.Journal(env.roots[len(env.roots)-1]); err != nil {
 		t.Error("Failed to journal triedb", "err", err)
 	}
-	newdb := NewDatabase(env.db.diskdb, "", env.db.config)
+	env.db.Close()
 
-	for diskIndex = 0; diskIndex < len(env.roots); diskIndex++ {
-		if env.roots[diskIndex] == dl.root {
+	newdb := NewDatabase(env.db.diskdb, env.db.config)
+	for index = 0; index < len(env.roots); index++ {
+		if env.roots[index] == dl.root {
 			break
 		}
 	}
-	for i := diskIndex; i < len(env.numbers); i++ {
+	for i := index; i < len(env.numbers); i++ {
 		keys, vals := env.keys[i], env.vals[i]
 		for j := 0; j < len(keys); j++ {
 			if vals[j] == nil {
