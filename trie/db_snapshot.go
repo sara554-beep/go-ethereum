@@ -45,9 +45,9 @@ type DatabaseSnapshot struct {
 // should be released otherwise resource leak will happen.
 func NewDatabaseSnapshot(db *Database, root common.Hash) (*DatabaseSnapshot, error) {
 	if db.freezer == nil {
-		return nil, errors.New("unrecoverable triedb")
+		return nil, errors.New("unrecoverable trie database")
 	}
-	snap, err := db.tree.bottom().(*diskLayer).GetSnapshotAndRewind(root, db.freezer)
+	snap, err := db.tree.bottom().(*diskLayer).GetSnapshot(root, db.freezer)
 	if err != nil {
 		return nil, err
 	}
@@ -71,14 +71,14 @@ func (snap *DatabaseSnapshot) Snapshot(blockRoot common.Hash) Snapshot {
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
 // The passed keys must all be encoded in the **storage** format.
-func (snap *DatabaseSnapshot) Update(root common.Hash, parentRoot common.Hash, nodes map[string]*nodeWithPreValue) error {
+func (snap *DatabaseSnapshot) Update(root common.Hash, parent common.Hash, nodes map[string]*nodeWithPreValue) error {
 	snap.lock.RLock()
 	defer snap.lock.RUnlock()
 
 	if snap.released {
 		return errSnapshotReleased
 	}
-	return snap.tree.add(root, parentRoot, nodes)
+	return snap.tree.add(root, parent, nodes)
 }
 
 // Cap traverses downwards the snapshot tree from a head block hash until the

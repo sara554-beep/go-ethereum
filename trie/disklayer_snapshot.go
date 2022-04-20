@@ -107,11 +107,11 @@ func (dl *diskLayer) getSnapshot(nocache bool) (snap *diskLayerSnapshot, err err
 	return snap, nil
 }
 
-// GetSnapshotAndRewind creates a disk layer snapshot and rewinds the snapshot
-// to the specified state. In order to store the temporary mutations happened,
-// the unique database namespace will be allocated for the snapshot and it's
-// expected to be released after the usage.
-func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash, freezer *rawdb.Freezer) (*diskLayerSnapshot, error) {
+// GetSnapshot creates a disk layer snapshot and rewinds the snapshot
+// to the specified state. In order to store the temporary mutations,
+// the unique database namespace will be allocated for the snapshot,
+// and it's expected to be released after the usage.
+func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*diskLayerSnapshot, error) {
 	id := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
 	if id == nil {
 		return nil, errStateUnrecoverable

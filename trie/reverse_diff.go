@@ -73,7 +73,7 @@ import (
 //           |  Destination state S  |--------->|   n   |       (Key-value store)
 //           +-----------------------+          +-------+
 //
-// The state should be rewound the destination state S after applying the reverse diff n.
+// The state should be rewound to destination state S after applying the reverse diff n.
 
 // reverseDiffVersion is the initial version of reverse diff structure.
 const reverseDiffVersion = uint64(0)

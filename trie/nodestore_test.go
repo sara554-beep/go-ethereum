@@ -25,23 +25,22 @@ import (
 )
 
 func TestNodeStoreCopy(t *testing.T) {
-	t.SkipNow()
 	env := fillDB(t)
-	reader, err := newSnapStore(env.roots[len(env.roots)-1], common.Hash{}, env.db)
+	store, err := newSnapStore(env.roots[len(env.roots)-1], common.Hash{}, env.db)
 	if err != nil {
-		t.Fatalf("Failed to create reader %v", err)
+		t.Fatalf("Failed to create store %v", err)
 	}
 	keys, vals := env.keys[len(env.keys)-1], env.vals[len(env.vals)-1]
 
-	readerCopy := reader.copy()
-
+	// Create the node store copy, ensure all nodes can be retrieved back.
+	storeCopy := store.copy()
 	for i := 0; i < len(keys); i++ {
 		if len(vals[i]) == 0 {
 			continue
 		}
 		_, path := DecodeStorageKey([]byte(keys[i]))
-		blob1, err1 := reader.readBlob(common.Hash{}, crypto.Keccak256Hash(vals[i]), path)
-		blob2, err2 := readerCopy.readBlob(common.Hash{}, crypto.Keccak256Hash(vals[i]), path)
+		blob1, err1 := store.readBlob(common.Hash{}, crypto.Keccak256Hash(vals[i]), path)
+		blob2, err2 := storeCopy.readBlob(common.Hash{}, crypto.Keccak256Hash(vals[i]), path)
 		if err1 != nil || err2 != nil {
 			t.Fatalf("Failed to read node, %v, %v", err1, err2)
 		}
@@ -55,21 +54,24 @@ func TestNodeStoreCopy(t *testing.T) {
 		node = randomNode()
 		path = randomHash()
 	)
-	blob, err := reader.readBlob(common.Hash{}, node.hash, path.Bytes())
+	store.commit(map[string]*cachedNode{
+		string(EncodeStorageKey(common.Hash{}, path.Bytes())): node,
+	})
+	blob, err := store.readBlob(common.Hash{}, node.hash, path.Bytes())
 	if err != nil {
 		t.Fatalf("Failed to read blob %v", err)
 	}
 	if !bytes.Equal(blob, node.rlp()) {
 		t.Fatal("Unexpected node")
 	}
-	_, err = readerCopy.readBlob(common.Hash{}, node.hash, path.Bytes())
+	_, err = storeCopy.readBlob(common.Hash{}, node.hash, path.Bytes())
 	missing, ok := err.(*MissingNodeError)
 	if !ok || missing.NodeHash != node.hash {
 		t.Fatal("didn't hit missing node, got", err)
 	}
 
 	// Create a new copy, it should retrieve the node correctly
-	copyTwo := reader.copy()
+	copyTwo := store.copy()
 	blob, err = copyTwo.readBlob(common.Hash{}, node.hash, path.Bytes())
 	if err != nil {
 		t.Fatalf("Failed to read blob %v", err)
