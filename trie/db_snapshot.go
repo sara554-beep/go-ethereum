@@ -44,7 +44,10 @@ type DatabaseSnapshot struct {
 // live database and the target state identifier. The returned snapshot
 // should be released otherwise resource leak will happen.
 func NewDatabaseSnapshot(db *Database, root common.Hash) (*DatabaseSnapshot, error) {
-	snap, err := db.tree.bottom().(*diskLayer).GetSnapshotAndRewind(root)
+	if db.freezer == nil {
+		return nil, errors.New("unrecoverable triedb")
+	}
+	snap, err := db.tree.bottom().(*diskLayer).GetSnapshotAndRewind(root, db.freezer)
 	if err != nil {
 		return nil, err
 	}

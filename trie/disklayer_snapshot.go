@@ -111,7 +111,7 @@ func (dl *diskLayer) getSnapshot(nocache bool) (snap *diskLayerSnapshot, err err
 // to the specified state. In order to store the temporary mutations happened,
 // the unique database namespace will be allocated for the snapshot and it's
 // expected to be released after the usage.
-func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (*diskLayerSnapshot, error) {
+func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash, freezer *rawdb.Freezer) (*diskLayerSnapshot, error) {
 	id := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
 	if id == nil {
 		return nil, errStateUnrecoverable
@@ -125,8 +125,7 @@ func (dl *diskLayer) GetSnapshotAndRewind(root common.Hash) (*diskLayerSnapshot,
 	}
 	// Apply the reverse diffs with the given order.
 	for snap.diffid >= *id {
-		// TODO
-		diff, err := loadReverseDiff(nil, snap.diffid)
+		diff, err := loadReverseDiff(freezer, snap.diffid)
 		if err != nil {
 			return nil, err
 		}

@@ -156,8 +156,6 @@ type Database struct {
 	// It will be set automatically when the database is journaled(closed)
 	// during the shutdown to reject all following unexpected mutations.
 	readOnly bool
-	closed   bool
-
 	config   *Config          // Configuration for trie database.
 	diskdb   ethdb.Database   // Persistent database to store the snapshot
 	cleans   *fastcache.Cache // Megabytes permitted using for read caches
@@ -532,11 +530,6 @@ func (db *Database) IsEmpty() bool {
 func (db *Database) Close() error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
-
-	if db.closed {
-		return nil
-	}
-	db.closed = true
 
 	if db.freezer == nil {
 		return nil
