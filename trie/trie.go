@@ -620,7 +620,10 @@ func (t *Trie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
 	// Do a quick check if we really need to commit, before we spin
 	// up goroutines. This can happen e.g. if we load a trie for reading storage
 	// values, but don't write to it.
-	if _, dirty := t.root.cache(); !dirty {
+	if hashedNode, dirty := t.root.cache(); !dirty {
+		// Replace the root node with the origin hash in order to
+		// ensure all resolved nodes are dropped after the commit.
+		t.root = hashedNode
 		return rootHash, 0, nil
 	}
 	var wg sync.WaitGroup
@@ -665,6 +668,12 @@ func (t *Trie) hashRoot() (node, node, error) {
 // Reset drops the referenced root node and cleans all internal state.
 func (t *Trie) Reset() {
 	t.root = nil
+	t.owner = common.Hash{}
 	t.unhashed = 0
 	t.tracer.reset()
+}
+
+// Owner returns the associated trie owner.
+func (t *Trie) Owner() common.Hash {
+	return t.owner
 }
