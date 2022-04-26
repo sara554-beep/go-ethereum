@@ -162,15 +162,15 @@ func runRandTest(rt randTest) error {
 				rt[i].err = fmt.Errorf("mismatch for key 0x%x, got 0x%x want 0x%x", step.key, v, want)
 			}
 		case opCommit:
-			_, _, rt[i].err = tr.Commit(nil)
+			_, rt[i].err = tr.Commit(nil)
 		case opHash:
 			tr.Hash()
 		case opReset:
-			hash, _, err := tr.Commit(nil)
+			result, err := tr.Commit(nil)
 			if err != nil {
 				return err
 			}
-			newtr, err := trie.New(hash, triedb)
+			newtr, err := trie.New(result.Root, triedb)
 			if err != nil {
 				return err
 			}

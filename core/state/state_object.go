@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie"
 	"io"
 	"math/big"
 	"time"
@@ -375,23 +376,23 @@ func (s *stateObject) updateRoot(db Database) {
 
 // CommitTrie the storage trie of the object to db.
 // This updates the trie root.
-func (s *stateObject) CommitTrie(db Database) (int, error) {
+func (s *stateObject) CommitTrie(db Database) (*trie.CommitResult, error) {
 	// If nothing changed, don't bother with hashing anything
 	if s.updateTrie(db) == nil {
-		return 0, nil
+		return nil, nil
 	}
 	if s.dbErr != nil {
-		return 0, s.dbErr
+		return nil, s.dbErr
 	}
 	// Track the amount of time wasted on committing the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 	}
-	root, committed, err := s.trie.Commit(nil)
+	result, err := s.trie.Commit(nil)
 	if err == nil {
-		s.data.Root = root
+		s.data.Root = result.Root
 	}
-	return committed, err
+	return result, err
 }
 
 // AddBalance adds amount to s's balance.

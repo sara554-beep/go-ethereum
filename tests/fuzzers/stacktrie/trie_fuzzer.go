@@ -175,12 +175,12 @@ func (f *fuzzer) fuzz() int {
 		return 0
 	}
 	// Flush trie -> database
-	rootA, _, err := trieA.Commit(nil)
+	result, err := trieA.Commit(nil)
 	if err != nil {
 		panic(err)
 	}
 	// Flush memdb -> disk (sponge)
-	dbA.Commit(rootA, false, nil)
+	dbA.Commit(result.Root, false, nil)
 
 	// Stacktrie requires sorted insertion
 	sort.Sort(vals)
@@ -194,8 +194,8 @@ func (f *fuzzer) fuzz() int {
 	if _, err := trieB.Commit(); err != nil {
 		panic(err)
 	}
-	if rootA != rootB {
-		panic(fmt.Sprintf("roots differ: (trie) %x != %x (stacktrie)", rootA, rootB))
+	if result.Root != rootB {
+		panic(fmt.Sprintf("roots differ: (trie) %x != %x (stacktrie)", result.Root, rootB))
 	}
 	sumA := spongeA.sponge.Sum(nil)
 	sumB := spongeB.sponge.Sum(nil)

@@ -37,6 +37,7 @@ import (
 // SecureTrie is not safe for concurrent use.
 type SecureTrie struct {
 	trie             Trie
+	db               *Database
 	hashKeyBuf       [common.HashLength]byte
 	secKeyCache      map[string][]byte
 	secKeyCacheOwner *SecureTrie // Pointer to self, replace the key cache on mismatch
@@ -61,7 +62,7 @@ func NewSecure(root common.Hash, db *Database) (*SecureTrie, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SecureTrie{trie: *trie}, nil
+	return &SecureTrie{trie: *trie, db: db}, nil
 }
 
 // NewSecureWithOwner creates secure trie with specified trie owner.
@@ -73,7 +74,7 @@ func NewSecureWithOwner(owner common.Hash, root common.Hash, db *Database) (*Sec
 	if err != nil {
 		return nil, err
 	}
-	return &SecureTrie{trie: *trie}, nil
+	return &SecureTrie{trie: *trie, db: db}, nil
 }
 
 // Get returns the value for key stored in the trie.
@@ -165,7 +166,7 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 	if key, ok := t.getSecKeyCache()[string(shaKey)]; ok {
 		return key
 	}
-	return t.trie.db.preimage(common.BytesToHash(shaKey))
+	return t.db.preimage(common.BytesToHash(shaKey))
 }
 
 // Commit writes all nodes and the secure hash pre-images to the trie's database.
@@ -173,15 +174,15 @@ func (t *SecureTrie) GetKey(shaKey []byte) []byte {
 //
 // Committing flushes nodes from memory. Subsequent Get calls will load nodes
 // from the database.
-func (t *SecureTrie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
+func (t *SecureTrie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	// Write all the pre-images to the actual disk database
 	if len(t.getSecKeyCache()) > 0 {
-		if t.trie.db.preimages != nil { // Ugly direct check but avoids the below write lock
-			t.trie.db.lock.Lock()
+		if t.db.preimages != nil { // Ugly direct check but avoids the below write lock
+			t.db.lock.Lock()
 			for hk, key := range t.secKeyCache {
-				t.trie.db.insertPreimage(common.BytesToHash([]byte(hk)), key)
+				t.db.insertPreimage(common.BytesToHash([]byte(hk)), key)
 			}
-			t.trie.db.lock.Unlock()
+			t.db.lock.Unlock()
 		}
 		t.secKeyCache = make(map[string][]byte)
 	}
@@ -199,6 +200,7 @@ func (t *SecureTrie) Hash() common.Hash {
 func (t *SecureTrie) Copy() *SecureTrie {
 	return &SecureTrie{
 		trie:        *t.trie.Copy(),
+		db:          t.db,
 		secKeyCache: t.secKeyCache,
 	}
 }

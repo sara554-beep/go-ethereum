@@ -17,7 +17,6 @@
 package trie
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 
@@ -44,6 +43,10 @@ type leaf struct {
 type committer struct {
 	onleaf LeafCallback
 	leafCh chan *leaf
+
+	// The list of dirty nodes gathered during the commit
+	// which are pending for persisting.
+	nodes []*commitNode
 }
 
 // committers live in a global sync.Pool
@@ -61,27 +64,25 @@ func newCommitter() *committer {
 func returnCommitterToPool(h *committer) {
 	h.onleaf = nil
 	h.leafCh = nil
+	h.nodes = nil
 	committerPool.Put(h)
 }
 
 // Commit collapses a node down into a hash node and inserts it into the database
-func (c *committer) Commit(n node, db *Database) (hashNode, int, error) {
-	if db == nil {
-		return nil, 0, errors.New("no db provided")
-	}
-	h, committed, err := c.commit(n, db)
+func (c *committer) Commit(n node) (hashNode, error) {
+	h, err := c.commit(n)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	return h.(hashNode), committed, nil
+	return h.(hashNode), nil
 }
 
 // commit collapses a node down into a hash node and inserts it into the database
-func (c *committer) commit(n node, db *Database) (node, int, error) {
+func (c *committer) commit(n node) (node, error) {
 	// if this path is clean, use available cached data
 	hash, dirty := n.cache()
 	if hash != nil && !dirty {
-		return hash, 0, nil
+		return hash, nil
 	}
 	// Commit children, then parent, and remove the dirty flag.
 	switch cn := n.(type) {
@@ -91,36 +92,35 @@ func (c *committer) commit(n node, db *Database) (node, int, error) {
 
 		// If the child is fullNode, recursively commit,
 		// otherwise it can only be hashNode or valueNode.
-		var childCommitted int
 		if _, ok := cn.Val.(*fullNode); ok {
-			childV, committed, err := c.commit(cn.Val, db)
+			childV, err := c.commit(cn.Val)
 			if err != nil {
-				return nil, 0, err
+				return nil, err
 			}
-			collapsed.Val, childCommitted = childV, committed
+			collapsed.Val = childV
 		}
 		// The key needs to be copied, since we're delivering it to database
 		collapsed.Key = hexToCompact(cn.Key)
-		hashedNode := c.store(collapsed, db)
+		hashedNode := c.store(collapsed)
 		if hn, ok := hashedNode.(hashNode); ok {
-			return hn, childCommitted + 1, nil
+			return hn, nil
 		}
-		return collapsed, childCommitted, nil
+		return collapsed, nil
 	case *fullNode:
-		hashedKids, childCommitted, err := c.commitChildren(cn, db)
+		hashedKids, err := c.commitChildren(cn)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		collapsed := cn.copy()
 		collapsed.Children = hashedKids
 
-		hashedNode := c.store(collapsed, db)
+		hashedNode := c.store(collapsed)
 		if hn, ok := hashedNode.(hashNode); ok {
-			return hn, childCommitted + 1, nil
+			return hn, nil
 		}
-		return collapsed, childCommitted, nil
+		return collapsed, nil
 	case hashNode:
-		return cn, 0, nil
+		return cn, nil
 	default:
 		// nil, valuenode shouldn't be committed
 		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
@@ -128,11 +128,8 @@ func (c *committer) commit(n node, db *Database) (node, int, error) {
 }
 
 // commitChildren commits the children of the given fullnode
-func (c *committer) commitChildren(n *fullNode, db *Database) ([17]node, int, error) {
-	var (
-		committed int
-		children  [17]node
-	)
+func (c *committer) commitChildren(n *fullNode) ([17]node, error) {
+	var children [17]node
 	for i := 0; i < 16; i++ {
 		child := n.Children[i]
 		if child == nil {
@@ -148,71 +145,64 @@ func (c *committer) commitChildren(n *fullNode, db *Database) ([17]node, int, er
 		// Commit the child recursively and store the "hashed" value.
 		// Note the returned node can be some embedded nodes, so it's
 		// possible the type is not hashNode.
-		hashed, childCommitted, err := c.commit(child, db)
+		hashed, err := c.commit(child)
 		if err != nil {
-			return children, 0, err
+			return children, err
 		}
 		children[i] = hashed
-		committed += childCommitted
 	}
 	// For the 17th child, it's possible the type is valuenode.
 	if n.Children[16] != nil {
 		children[16] = n.Children[16]
 	}
-	return children, committed, nil
+	return children, nil
 }
 
 // store hashes the node n and if we have a storage layer specified, it writes
 // the key/value pair to it and tracks any node->child references as well as any
 // node->external trie references.
-func (c *committer) store(n node, db *Database) node {
+func (c *committer) store(n node) node {
 	// Larger nodes are replaced by their hash and stored in the database.
-	var (
-		hash, _ = n.cache()
-		size    int
-	)
+	var hash, _ = n.cache()
+
+	// This was not generated - must be a small node stored in the parent.
+	// In theory, we should apply the leafCall here if it's not nil(embedded
+	// node usually contains value). But small value(less than 32bytes) is
+	// not our target.
 	if hash == nil {
-		// This was not generated - must be a small node stored in the parent.
-		// In theory, we should apply the leafCall here if it's not nil(embedded
-		// node usually contains value). But small value(less than 32bytes) is
-		// not our target.
 		return n
-	} else {
+	}
+	var (
 		// We have the hash already, estimate the RLP encoding-size of the node.
 		// The size is used for mem tracking, does not need to be exact
-		size = estimateSize(n)
-	}
+		size  = estimateSize(n)
+		nhash = common.BytesToHash(hash)
+	)
+	c.nodes = append(c.nodes, &commitNode{
+		hash: nhash,
+		node: n,
+		slim: simplifyNode(n),
+		size: size,
+	})
 	// If we're using channel-based leaf-reporting, send to channel.
 	// The leaf channel will be active only when there an active leaf-callback
 	if c.leafCh != nil {
 		c.leafCh <- &leaf{
 			size: size,
-			hash: common.BytesToHash(hash),
+			hash: nhash,
 			node: n,
 		}
-	} else if db != nil {
-		// No leaf-callback used, but there's still a database. Do serial
-		// insertion
-		db.lock.Lock()
-		db.insert(common.BytesToHash(hash), size, n)
-		db.lock.Unlock()
 	}
 	return hash
 }
 
 // commitLoop does the actual insert + leaf callback for nodes.
-func (c *committer) commitLoop(db *Database) {
+func (c *committer) commitLoop() {
 	for item := range c.leafCh {
 		var (
 			hash = item.hash
-			size = item.size
 			n    = item.node
 		)
-		// We are pooling the trie nodes into an intermediate memory cache
-		db.lock.Lock()
-		db.insert(hash, size, n)
-		db.lock.Unlock()
-
 		if c.onleaf != nil {
 			switch n := n.(type) {
 			case *shortNode:
@@ -257,4 +247,23 @@ func estimateSize(n node) int {
 	default:
 		panic(fmt.Sprintf("node type %T", n))
 	}
+}
+
+// CommitResult wraps the trie commit result in a single struct. It's not
+// thread-safe, handle the concurrency issues by callers themselves.
+type CommitResult struct {
+	Root  common.Hash   // The re-calculated trie root hash after commit
+	nodes []*commitNode // The list of dirty nodes involved in this commit
+}
+
+// WriteTo commits all cached nodes to the given database in the order of insertion.
+func (result *CommitResult) WriteTo(db *Database) {
+	for _, node := range result.nodes {
+		db.insert(node.hash, node.size, node.node)
+	}
+}
+
+// NodeLen returns the number of contained nodes.
+func (result *CommitResult) NodeLen() int {
+	return len(result.nodes)
 }

@@ -61,7 +61,6 @@ type LeafCallback func(paths [][]byte, hexpath []byte, leaf []byte, parent commo
 //
 // Trie is not safe for concurrent use.
 type Trie struct {
-	db    *Database
 	root  node
 	owner common.Hash
 
@@ -70,8 +69,11 @@ type Trie struct {
 	// actually unhashed nodes
 	unhashed int
 
-	// tracer is the state diff tracer can be used to track newly added/deleted
-	// trie node. It will be reset after each commit operation.
+	// nodes is the handler to access trie node and cache un-persisted nodes.
+	nodes *nodeStore
+
+	// tracer is the state diff tracer can be used to track the trie changes.
+	// It will be reset after each commit operation.
 	tracer *tracer
 }
 
@@ -83,9 +85,10 @@ func (t *Trie) newFlag() nodeFlag {
 // Copy returns a copy of Trie.
 func (t *Trie) Copy() *Trie {
 	return &Trie{
-		db:       t.db,
 		root:     t.root,
+		owner:    t.owner,
 		unhashed: t.unhashed,
+		nodes:    t.nodes.copy(),
 		tracer:   t.tracer.copy(),
 	}
 }
@@ -115,9 +118,9 @@ func NewWithOwner(owner common.Hash, root common.Hash, db *Database) (*Trie, err
 // It's only used by range prover.
 func newWithRootNode(root node) *Trie {
 	return &Trie{
-		root: root,
+		root:  root,
+		nodes: newNodeStore(NewDatabase(rawdb.NewMemoryDatabase())),
 		//tracer: newTracer(),
-		db: NewDatabase(rawdb.NewMemoryDatabase()),
 	}
 }
 
@@ -127,8 +130,8 @@ func newTrie(owner common.Hash, root common.Hash, db *Database) (*Trie, error) {
 		panic("trie.New called without a database")
 	}
 	trie := &Trie{
-		db:    db,
 		owner: owner,
+		nodes: newNodeStore(db),
 		//tracer: newTracer(),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
@@ -239,7 +242,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.db.Node(common.BytesToHash(hash))
+		blob, err := t.nodes.readBlob(t.owner, common.BytesToHash(hash), path)
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -576,20 +579,11 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 }
 
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	hash := common.BytesToHash(n)
-	if node := t.db.node(hash); node != nil {
-		return node, nil
-	}
-	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
+	return t.nodes.read(t.owner, common.BytesToHash(n), prefix)
 }
 
 func (t *Trie) resolveBlob(n hashNode, prefix []byte) ([]byte, error) {
-	hash := common.BytesToHash(n)
-	blob, _ := t.db.Node(hash)
-	if len(blob) != 0 {
-		return blob, nil
-	}
-	return nil, &MissingNodeError{Owner: t.owner, NodeHash: hash, Path: prefix}
+	return t.nodes.readBlob(t.owner, common.BytesToHash(n), prefix)
 }
 
 // Hash returns the root hash of the trie. It does not write to the
@@ -600,43 +594,50 @@ func (t *Trie) Hash() common.Hash {
 	return common.BytesToHash(hash.(hashNode))
 }
 
+// finalize submits the state changes to the internal nodeStore and wraps
+// a commit result object as return.
+func (t *Trie) finalize(root common.Hash, nodes []*commitNode) *CommitResult {
+	t.tracer.reset()
+	t.nodes.commit(nodes)
+
+	return &CommitResult{
+		Root:  root,
+		nodes: nodes,
+	}
+}
+
 // Commit writes all nodes to the trie's memory database, tracking the internal
 // and external (for account tries) references.
-func (t *Trie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
-	if t.db == nil {
-		panic("commit called on trie with nil database")
-	}
-	defer t.tracer.reset()
-
+func (t *Trie) Commit(onleaf LeafCallback) (*CommitResult, error) {
 	if t.root == nil {
-		return emptyRoot, 0, nil
+		return t.finalize(emptyRoot, nil), nil
 	}
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
 	rootHash := t.Hash()
+
 	h := newCommitter()
 	defer returnCommitterToPool(h)
 
 	// Do a quick check if we really need to commit, before we spin
-	// up goroutines. This can happen e.g. if we load a trie for reading storage
-	// values, but don't write to it.
+	// up goroutines. This can happen e.g. if we load a trie for
+	// reading storage values, but don't write to it.
 	if hashedNode, dirty := t.root.cache(); !dirty {
 		// Replace the root node with the origin hash in order to
 		// ensure all resolved nodes are dropped after the commit.
 		t.root = hashedNode
-		return rootHash, 0, nil
+		return t.finalize(rootHash, nil), nil
 	}
 	var wg sync.WaitGroup
 	if onleaf != nil {
-		h.onleaf = onleaf
-		h.leafCh = make(chan *leaf, leafChanSize)
+		h.onleaf, h.leafCh = onleaf, make(chan *leaf, leafChanSize)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			h.commitLoop(t.db)
+			h.commitLoop()
 		}()
 	}
-	newRoot, committed, err := h.Commit(t.root, t.db)
+	newRoot, err := h.Commit(t.root)
 	if onleaf != nil {
 		// The leafch is created in newCommitter if there was an onleaf callback
 		// provided. The commitLoop only _reads_ from it, and the commit
@@ -646,10 +647,21 @@ func (t *Trie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
 		wg.Wait()
 	}
 	if err != nil {
-		return common.Hash{}, 0, err
+		return nil, err
 	}
 	t.root = newRoot
-	return rootHash, committed, nil
+	return t.finalize(rootHash, h.nodes), nil
+}
+
+func (t *Trie) CommitAndFlush(onleaf LeafCallback, db *Database) (common.Hash, error) {
+	result, err := t.Commit(onleaf)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	for _, n := range result.nodes {
+		db.insert(n.hash, n.size, n.node)
+	}
+	return result.Root, nil
 }
 
 // hashRoot calculates the root hash of the given trie
@@ -670,6 +682,7 @@ func (t *Trie) Reset() {
 	t.root = nil
 	t.owner = common.Hash{}
 	t.unhashed = 0
+	t.nodes.reset()
 	t.tracer.reset()
 }
 

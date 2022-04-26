@@ -63,8 +63,7 @@ func (db *odrDatabase) CopyTrie(t state.Trie) state.Trie {
 	case *odrTrie:
 		cpy := &odrTrie{db: t.db, id: t.id}
 		if t.trie != nil {
-			cpytrie := *t.trie
-			cpy.trie = &cpytrie
+			cpy.trie = t.trie.Copy()
 		}
 		return cpy
 	default:
@@ -137,9 +136,9 @@ func (t *odrTrie) TryDelete(key []byte) error {
 	})
 }
 
-func (t *odrTrie) Commit(onleaf trie.LeafCallback) (common.Hash, int, error) {
+func (t *odrTrie) Commit(onleaf trie.LeafCallback) (*trie.CommitResult, error) {
 	if t.trie == nil {
-		return t.id.Root, 0, nil
+		return &trie.CommitResult{Root: t.id.Root}, nil
 	}
 	return t.trie.Commit(onleaf)
 }
@@ -169,7 +168,11 @@ func (t *odrTrie) do(key []byte, fn func() error) error {
 	for {
 		var err error
 		if t.trie == nil {
-			t.trie, err = trie.New(t.id.Root, trie.NewDatabase(t.db.backend.Database()))
+			var owner common.Hash
+			if len(t.id.AccKey) > 0 {
+				owner = common.BytesToHash(t.id.AccKey)
+			}
+			t.trie, err = trie.NewWithOwner(owner, t.id.Root, trie.NewDatabase(t.db.backend.Database()))
 		}
 		if err == nil {
 			err = fn()
@@ -195,7 +198,11 @@ func newNodeIterator(t *odrTrie, startkey []byte) trie.NodeIterator {
 	// Open the actual non-ODR trie if that hasn't happened yet.
 	if t.trie == nil {
 		it.do(func() error {
-			t, err := trie.New(t.id.Root, trie.NewDatabase(t.db.backend.Database()))
+			var owner common.Hash
+			if len(t.id.AccKey) > 0 {
+				owner = common.BytesToHash(t.id.AccKey)
+			}
+			t, err := trie.NewWithOwner(owner, t.id.Root, trie.NewDatabase(t.db.backend.Database()))
 			if err == nil {
 				it.t.trie = t
 			}

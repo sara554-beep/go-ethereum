@@ -217,10 +217,13 @@ func (c *ChtIndexerBackend) Process(ctx context.Context, header *types.Header) e
 
 // Commit implements core.ChainIndexerBackend
 func (c *ChtIndexerBackend) Commit() error {
-	root, _, err := c.trie.Commit(nil)
+	result, err := c.trie.Commit(nil)
 	if err != nil {
 		return err
 	}
+	root := result.Root
+	result.WriteTo(c.triedb)
+
 	// Pruning historical trie nodes if necessary.
 	if !c.disablePruning {
 		// Flush the triedb and track the latest trie nodes.
@@ -454,10 +457,13 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 			b.trie.Delete(encKey[:])
 		}
 	}
-	root, _, err := b.trie.Commit(nil)
+	result, err := b.trie.Commit(nil)
 	if err != nil {
 		return err
 	}
+	root := result.Root
+	result.WriteTo(b.triedb)
+
 	// Pruning historical trie nodes if necessary.
 	if !b.disablePruning {
 		// Flush the triedb and track the latest trie nodes.

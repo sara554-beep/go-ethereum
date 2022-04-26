@@ -917,11 +917,15 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				obj.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie
-			committed, err := obj.CommitTrie(s.db)
+			result, err := obj.CommitTrie(s.db)
 			if err != nil {
 				return common.Hash{}, err
 			}
-			storageCommitted += committed
+			if result != nil {
+				storageCommitted += result.NodeLen()
+				fmt.Println("/????????????????????", result.NodeLen())
+				result.WriteTo(s.db.TrieDB())
+			}
 		}
 	}
 	if len(s.stateObjectsDirty) > 0 {
@@ -940,7 +944,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	// The onleaf func is called _serially_, so we can reuse the same account
 	// for unmarshalling every time.
 	var account types.StateAccount
-	root, accountCommitted, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
+	result, err := s.trie.Commit(func(_ [][]byte, _ []byte, leaf []byte, parent common.Hash) error {
 		if err := rlp.DecodeBytes(leaf, &account); err != nil {
 			return nil
 		}
@@ -952,6 +956,9 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	if err != nil {
 		return common.Hash{}, err
 	}
+	root := result.Root
+	result.WriteTo(s.db.TrieDB())
+
 	if metrics.EnabledExpensive {
 		s.AccountCommits += time.Since(start)
 
@@ -959,7 +966,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		storageUpdatedMeter.Mark(int64(s.StorageUpdated))
 		accountDeletedMeter.Mark(int64(s.AccountDeleted))
 		storageDeletedMeter.Mark(int64(s.StorageDeleted))
-		accountCommittedMeter.Mark(int64(accountCommitted))
+		accountCommittedMeter.Mark(int64(result.NodeLen()))
 		storageCommittedMeter.Mark(int64(storageCommitted))
 		s.AccountUpdated, s.AccountDeleted = 0, 0
 		s.StorageUpdated, s.StorageDeleted = 0, 0
