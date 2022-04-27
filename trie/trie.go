@@ -85,6 +85,7 @@ func (t *Trie) Copy() *Trie {
 	return &Trie{
 		db:       t.db,
 		root:     t.root,
+		owner:    t.owner,
 		unhashed: t.unhashed,
 		tracer:   t.tracer.copy(),
 	}
