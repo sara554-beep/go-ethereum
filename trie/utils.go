@@ -51,6 +51,7 @@ func newTracer() *tracer {
 }
 
 // onRead tracks the newly loaded trie node and caches the rlp-encoded blob internally.
+// Don't change the value outside of function since it's not deep-copied.
 func (t *tracer) onRead(key []byte, val []byte) {
 	// Tracer isn't used right now, remove this check later.
 	if t == nil {
