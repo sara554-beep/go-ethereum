@@ -617,7 +617,14 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 	} else if mode == FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent(ttd, beaconMode) })
 	}
+	fetchers = append(fetchers, d.interruptTimer)
 	return d.spawnSync(fetchers)
+}
+
+func (d *Downloader) interruptTimer() error {
+	<-time.NewTimer(time.Minute).C
+	log.Warn("Interrupted syncing ......")
+	return errCanceled
 }
 
 // spawnSync runs d.process and all given fetcher functions to completion in
