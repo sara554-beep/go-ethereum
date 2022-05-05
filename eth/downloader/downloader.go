@@ -624,7 +624,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 func (d *Downloader) interruptTimer() error {
 	<-time.NewTimer(time.Minute).C
 	log.Warn("Interrupted syncing ......")
-	return errCanceled
+	return errors.New("interrupt sync manually")
 }
 
 // spawnSync runs d.process and all given fetcher functions to completion in
