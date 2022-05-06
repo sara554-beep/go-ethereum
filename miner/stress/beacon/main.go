@@ -260,6 +260,23 @@ func (mgr *nodeManager) getNodes(typ nodetype) []*ethNode {
 	return ret
 }
 
+func (mgr *nodeManager) deleteNode(typ nodetype) {
+	var nodes = make(map[string]*ethNode)
+	for _, node := range mgr.getNodes(typ) {
+		nodes[node.enode.String()] = node
+	}
+	for id, node := range nodes {
+		node.stack.Close()
+		for i, node := range mgr.nodes {
+			if node.enode.String() == id {
+				mgr.nodes = append(mgr.nodes[:i], mgr.nodes[i+1:]...)
+				mgr.enodes = append(mgr.enodes[:i], mgr.enodes[i+1:]...)
+			}
+		}
+		break
+	}
+}
+
 func (mgr *nodeManager) startMining() {
 	for _, node := range append(mgr.getNodes(eth2MiningNode), mgr.getNodes(legacyMiningNode)...) {
 		if err := node.ethBackend.StartMining(1); err != nil {
@@ -292,6 +309,10 @@ func (mgr *nodeManager) run() {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	<-timer.C // discard the initial tick
+
+	// Let's add a few more nodes, but not too many
+	newNodeTimer := time.NewTicker(20 * time.Second)
+	delNodeTimer := time.NewTicker(40 * time.Second)
 
 	// Handle the by default transition.
 	if transitionDifficulty.Sign() == 0 {
@@ -381,6 +402,18 @@ func (mgr *nodeManager) run() {
 			parentBlock = block
 			waitFinalise = append(waitFinalise, block)
 			timer.Reset(blockInterval)
+
+			// Create or remove normal full nodes in order to aggressively test sync.
+		case <-newNodeTimer.C:
+			if len(mgr.nodes) > 10 {
+				continue
+			}
+			mgr.createNode(eth2NormalNode)
+			log.Info("Created node", "total", len(mgr.nodes))
+
+		case <-delNodeTimer.C:
+			mgr.deleteNode(eth2NormalNode)
+			log.Info("Deleted node", "total", len(mgr.nodes))
 		}
 	}
 }
@@ -417,7 +450,11 @@ func main() {
 
 	// Start injecting transactions from the faucets like crazy
 	time.Sleep(3 * time.Second)
-	nonces := make([]uint64, len(faucets))
+
+	var (
+		nonces    = make([]uint64, len(faucets))
+		contracts = make(map[common.Address]struct{})
+	)
 	for {
 		// Pick a random mining node
 		nodes := manager.getNodes(eth2MiningNode)
@@ -434,7 +471,7 @@ func main() {
 
 			    constructor() {
 			        // check the storage is empty
-			        for (uint i = 0; i < 1000; i++) {
+			        for (uint i = 0; i < 100; i++) {
 			            // bail out if the storage is not clean, it should be
 			            // enough to create state difference
 			            if (data[i] != 0) {
@@ -443,8 +480,8 @@ func main() {
 			        }
 
 			        // populate storage with random data
-			        for (uint i = 0; i < 1000; i++) {
-			            data[i] = i+1; // 1, ..., 1000
+			        for (uint i = 0; i < 100; i++) {
+			            data[i] = i+1; // 1, ..., 100
 			        }
 			    }
 
@@ -454,24 +491,38 @@ func main() {
 			}
 		*/
 
-		// Create the transaction to deploy contract
-		tx, err := types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 800000, To: nil, Value: common.Big0, Data: common.FromHex(contract.ContractMetaData.Bin)}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
+		var (
+			err error
+			tx  *types.Transaction
+		)
+		state, err := node.ethBackend.BlockChain().State()
 		if err != nil {
 			panic(err)
 		}
-		go waitMined(tx, node.ethBackend.APIBackend)
-
-		address := crypto.CreateAddress(crypto.PubkeyToAddress(faucets[index].PublicKey), nonces[index])
-
-		if err := node.ethBackend.TxPool().AddLocal(tx); err != nil {
-			panic(err)
-		}
-		nonces[index]++
-
-		// Create the transaction to destruct contract
-		tx, err = types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 800000, To: &address, Value: common.Big0, Data: common.FromHex("0x6bdebcc9")}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
-		if err != nil {
-			panic(err)
+		if rand.Intn(2) == 0 && len(contracts) != 0 {
+			// Destruct the created contract randomly
+			var address common.Address
+			for addr := range contracts {
+				// Double check, ensure the contract is indeed deployed
+				if code := state.GetCode(addr); code == nil {
+					continue
+				}
+				address = addr
+				break
+			}
+			tx, err = types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(10_000_000_000), GasFeeCap: big.NewInt(100_000_000_000), Gas: 800000, To: &address, Value: common.Big0, Data: common.FromHex("0x6bdebcc9")}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
+			if err != nil {
+				panic(err)
+			}
+			delete(contracts, address)
+		} else {
+			// Create the transaction to deploy contract
+			tx, err = types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(10_000_000_000), GasFeeCap: big.NewInt(100_000_000_000), Gas: 6000_000, To: nil, Value: common.Big0, Data: common.FromHex(contract.ContractMetaData.Bin)}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
+			if err != nil {
+				panic(err)
+			}
+			address := crypto.CreateAddress(crypto.PubkeyToAddress(faucets[index].PublicKey), nonces[index])
+			contracts[address] = struct{}{}
 		}
 		if err := node.ethBackend.TxPool().AddLocal(tx); err != nil {
 			panic(err)
@@ -479,7 +530,7 @@ func main() {
 		nonces[index]++
 
 		// Wait if we're too saturated
-		if pend, _ := node.ethBackend.TxPool().Stats(); pend > 100 {
+		if pend, _ := node.ethBackend.TxPool().Stats(); pend > 1024 {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
@@ -494,10 +545,10 @@ func waitMined(tx *types.Transaction, backend *eth.EthAPIBackend) {
 		ethapi := ethapi.NewPublicTransactionPoolAPI(backend, nil)
 		data, _ := ethapi.GetTransactionReceipt(context.Background(), hash)
 		if data != nil {
-			log.Info("Transaction confirmed", "hash", hash.Hex())
+			log.Info("Transaction confirmed", "hash", hash.Hex(), "status", data["status"])
 			return
 		}
-		if time.Since(start) > time.Second * 60 {
+		if time.Since(start) > time.Minute*3 {
 			log.Error("Transaction lost", "hash", hash.Hex())
 			return
 		}
@@ -510,7 +561,7 @@ func waitMined(tx *types.Transaction, backend *eth.EthAPIBackend) {
 func makeGenesis(faucets []*ecdsa.PrivateKey) *core.Genesis {
 	genesis := core.DefaultRopstenGenesisBlock()
 	genesis.Difficulty = params.MinimumDifficulty
-	genesis.GasLimit = 10000000
+	genesis.GasLimit = 100_000_000 // 100M block :)
 
 	genesis.BaseFee = big.NewInt(params.InitialBaseFee)
 	genesis.Config = params.AllEthashProtocolChanges
@@ -548,9 +599,11 @@ func makeFullNode(genesis *core.Genesis) (*node.Node, *eth.Ethereum, *ethcatalys
 	econfig := &ethconfig.Config{
 		Genesis:         genesis,
 		NetworkId:       genesis.Config.ChainID.Uint64(),
-		SyncMode:        downloader.FullSync,
-		DatabaseCache:   256,
+		SyncMode:        downloader.SnapSync,
+		DatabaseCache:   16,
 		DatabaseHandles: 256,
+		SnapshotCache:   16,
+		TrieTimeout:     time.Minute * 60,
 		TxPool:          core.DefaultTxPoolConfig,
 		GPO:             ethconfig.Defaults.GPO,
 		Ethash:          ethconfig.Defaults.Ethash,

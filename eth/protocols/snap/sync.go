@@ -570,7 +570,7 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 		s.saveSyncStatus()
 	}()
 
-	log.Debug("Starting snapshot sync cycle", "root", root)
+	log.Info("Starting snapshot sync cycle", "root", root)
 
 	// Flush out the last committed raw states
 	defer func() {
@@ -616,6 +616,7 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 		trienodeHealResps    = make(chan *trienodeHealResponse)
 		bytecodeHealResps    = make(chan *bytecodeHealResponse)
 	)
+	var storageReqs int
 	for {
 		// Remove all completed tasks and terminate sync if everything's done
 		s.cleanStorageTasks()
@@ -661,6 +662,11 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 			s.processBytecodeResponse(res)
 		case res := <-storageResps:
 			s.processStorageResponse(res)
+			storageReqs += 1
+			if storageReqs > 10 && rand.Intn(2) == 0 {
+				time.Sleep(time.Second * 30) // ensure new blocks are generated to switch sync target
+				return errors.New("aborted by gary, let's go")
+			}
 		case res := <-trienodeHealResps:
 			s.processTrienodeHealResponse(res)
 		case res := <-bytecodeHealResps:
@@ -2782,6 +2788,10 @@ func (s *Syncer) onHealState(paths [][]byte, value []byte) error {
 		rawdb.WriteStorageSnapshot(s.stateWriter, common.BytesToHash(paths[0]), common.BytesToHash(paths[1]), value)
 		s.storageHealed += 1
 		s.storageHealedBytes += common.StorageSize(1 + 2*common.HashLength + len(value))
+
+		if rand.Intn(2) == 0 {
+			return errors.New("aborted by gary")
+		}
 	}
 	if s.stateWriter.ValueSize() > ethdb.IdealBatchSize {
 		s.stateWriter.Write() // It's fine to ignore the error here
