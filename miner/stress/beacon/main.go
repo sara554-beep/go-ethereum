@@ -18,8 +18,10 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"errors"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"io/ioutil"
 	"math/big"
 	"math/rand"
@@ -402,9 +404,9 @@ func main() {
 
 	manager.createNode(eth2NormalNode)
 	manager.createNode(eth2MiningNode)
-	manager.createNode(legacyMiningNode)
-	manager.createNode(legacyNormalNode)
-	manager.createNode(eth2LightClient)
+	//manager.createNode(legacyMiningNode)
+	//manager.createNode(legacyNormalNode)
+	//manager.createNode(eth2LightClient)
 
 	// Iterate over all the nodes and start mining
 	time.Sleep(3 * time.Second)
@@ -453,10 +455,12 @@ func main() {
 		*/
 
 		// Create the transaction to deploy contract
-		tx, err := types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 8000000, To: nil, Value: common.Big0, Data: common.FromHex(contract.ContractMetaData.Bin)}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
+		tx, err := types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 800000, To: nil, Value: common.Big0, Data: common.FromHex(contract.ContractMetaData.Bin)}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
 		if err != nil {
 			panic(err)
 		}
+		go waitMined(tx, node.ethBackend.APIBackend)
+
 		address := crypto.CreateAddress(crypto.PubkeyToAddress(faucets[index].PublicKey), nonces[index])
 
 		if err := node.ethBackend.TxPool().AddLocal(tx); err != nil {
@@ -465,7 +469,7 @@ func main() {
 		nonces[index]++
 
 		// Create the transaction to destruct contract
-		tx, err = types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 8000000, To: &address, Value: common.Big0, Data: common.Hex2Bytes("0x6bdebcc9")}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
+		tx, err = types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 800000, To: &address, Value: common.Big0, Data: common.FromHex("0x6bdebcc9")}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
 		if err != nil {
 			panic(err)
 		}
@@ -475,9 +479,29 @@ func main() {
 		nonces[index]++
 
 		// Wait if we're too saturated
-		if pend, _ := node.ethBackend.TxPool().Stats(); pend > 2048 {
+		if pend, _ := node.ethBackend.TxPool().Stats(); pend > 100 {
 			time.Sleep(100 * time.Millisecond)
 		}
+	}
+}
+
+func waitMined(tx *types.Transaction, backend *eth.EthAPIBackend) {
+	var (
+		hash  = tx.Hash()
+		start = time.Now()
+	)
+	for {
+		ethapi := ethapi.NewPublicTransactionPoolAPI(backend, nil)
+		data, _ := ethapi.GetTransactionReceipt(context.Background(), hash)
+		if data != nil {
+			log.Info("Transaction confirmed", "hash", hash.Hex())
+			return
+		}
+		if time.Since(start) > time.Second * 60 {
+			log.Error("Transaction lost", "hash", hash.Hex())
+			return
+		}
+		time.Sleep(time.Second)
 	}
 }
 
@@ -486,7 +510,7 @@ func main() {
 func makeGenesis(faucets []*ecdsa.PrivateKey) *core.Genesis {
 	genesis := core.DefaultRopstenGenesisBlock()
 	genesis.Difficulty = params.MinimumDifficulty
-	genesis.GasLimit = 50000000
+	genesis.GasLimit = 10000000
 
 	genesis.BaseFee = big.NewInt(params.InitialBaseFee)
 	genesis.Config = params.AllEthashProtocolChanges
