@@ -43,6 +43,7 @@ import (
 	lescatalyst "github.com/ethereum/go-ethereum/les/catalyst"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/miner"
+	"github.com/ethereum/go-ethereum/miner/stress/beacon/contract"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
@@ -78,7 +79,7 @@ func (typ nodetype) String() string {
 
 var (
 	// transitionDifficulty is the target total difficulty for transition
-	transitionDifficulty = new(big.Int).Mul(big.NewInt(20), params.MinimumDifficulty)
+	transitionDifficulty = new(big.Int).Mul(big.NewInt(20000000000), params.MinimumDifficulty)
 
 	// blockInterval is the time interval for creating a new eth2 block
 	blockInterval    = time.Second * 3
@@ -422,8 +423,49 @@ func main() {
 		index := rand.Intn(len(faucets))
 		node := nodes[index%len(nodes)]
 
-		// Create a self transaction and inject into the pool
-		tx, err := types.SignTx(types.NewTransaction(nonces[index], crypto.PubkeyToAddress(faucets[index].PublicKey), new(big.Int), 21000, big.NewInt(100000000000+rand.Int63n(65536)), nil), types.HomesteadSigner{}, faucets[index])
+		/*
+			// SPDX-License-Identifier: MIT
+			pragma solidity ^0.8.0;
+
+			contract Debugger {
+			    mapping(uint => uint) public data;
+
+			    constructor() {
+			        // check the storage is empty
+			        for (uint i = 0; i < 1000; i++) {
+			            // bail out if the storage is not clean, it should be
+			            // enough to create state difference
+			            if (data[i] != 0) {
+			                return;
+			            }
+			        }
+
+			        // populate storage with random data
+			        for (uint i = 0; i < 1000; i++) {
+			            data[i] = i+1; // 1, ..., 1000
+			        }
+			    }
+
+			    function destory() public {
+			        selfdestruct(payable(0x6FdF3234ffAC99cb8F2FC7ed65CFFE6528306Fe0));
+			    }
+			}
+		*/
+
+		// Create the transaction to deploy contract
+		tx, err := types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 8000000, To: nil, Value: common.Big0, Data: common.FromHex(contract.ContractMetaData.Bin)}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
+		if err != nil {
+			panic(err)
+		}
+		address := crypto.CreateAddress(crypto.PubkeyToAddress(faucets[index].PublicKey), nonces[index])
+
+		if err := node.ethBackend.TxPool().AddLocal(tx); err != nil {
+			panic(err)
+		}
+		nonces[index]++
+
+		// Create the transaction to destruct contract
+		tx, err = types.SignTx(types.NewTx(&types.DynamicFeeTx{ChainID: genesis.Config.ChainID, Nonce: nonces[index], GasTipCap: big.NewInt(100000000000), GasFeeCap: big.NewInt(100000000000), Gas: 8000000, To: &address, Value: common.Big0, Data: common.Hex2Bytes("0x6bdebcc9")}), types.NewLondonSigner(genesis.Config.ChainID), faucets[index])
 		if err != nil {
 			panic(err)
 		}
@@ -444,7 +486,7 @@ func main() {
 func makeGenesis(faucets []*ecdsa.PrivateKey) *core.Genesis {
 	genesis := core.DefaultRopstenGenesisBlock()
 	genesis.Difficulty = params.MinimumDifficulty
-	genesis.GasLimit = 25000000
+	genesis.GasLimit = 50000000
 
 	genesis.BaseFee = big.NewInt(params.InitialBaseFee)
 	genesis.Config = params.AllEthashProtocolChanges
