@@ -221,7 +221,7 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		case <-time.After(25 * time.Millisecond):
 		}
 		chain.InsertBlockWithoutSetHead(postBlocks[i])
-		chain.SetChainHead(postBlocks[i])
+		chain.SetCanonical(postBlocks[i])
 	}
 
 	// Verify the blocks with pre-merge blocks and post-merge blocks

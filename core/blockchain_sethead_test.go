@@ -21,7 +21,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie"
 	"math/big"
 	"strings"
 	"testing"
@@ -34,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // rewindTest is a test case for chain rollback upon user request.

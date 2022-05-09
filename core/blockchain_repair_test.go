@@ -21,7 +21,6 @@
 package core
 
 import (
-	"github.com/ethereum/go-ethereum/log"
 	"math/big"
 	"os"
 	"testing"
@@ -32,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 

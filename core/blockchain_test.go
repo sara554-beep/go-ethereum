@@ -3681,14 +3681,21 @@ func TestSetCanonical(t *testing.T) {
 		engine  = ethash.NewFaker()
 	)
 	// Generate and import the canonical chain
-	canon, _ := GenerateChain(params.TestChainConfig, genesis, engine, db, 2*TriesInMemory, func(i int, gen *BlockGen) {
+	canon, _ := GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, engine, state.NewDatabase(db), 2*TriesInMemory, func(i int, gen *BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, gen.header.BaseFee, nil), signer, key)
 		if err != nil {
 			panic(err)
 		}
 		gen.AddTx(tx)
 	})
-	diskdb := rawdb.NewMemoryDatabase()
+
+	// Create a temporary persistent database
+	datadir := t.TempDir()
+	diskdb, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	if err != nil {
+		t.Fatalf("Failed to create persistent database: %v", err)
+	}
+	defer diskdb.Close() // Might double close, should be fine
 	gspec.MustCommit(diskdb)
 
 	chain, err := NewBlockChain(diskdb, nil, params.TestChainConfig, engine, vm.Config{}, nil, nil)
@@ -3700,7 +3707,9 @@ func TestSetCanonical(t *testing.T) {
 	}
 
 	// Generate the side chain and import them
-	side, _ := GenerateChain(params.TestChainConfig, genesis, engine, db, 2*TriesInMemory, func(i int, gen *BlockGen) {
+	sideDB := rawdb.NewMemoryDatabase()
+	gspec.MustCommit(sideDB)
+	side, _ := GenerateChainWithInMemoryDB(params.TestChainConfig, genesis, engine, state.NewDatabase(sideDB), 2*TriesInMemory, func(i int, gen *BlockGen) {
 		tx, err := types.SignTx(types.NewTransaction(gen.TxNonce(address), common.Address{0x00}, big.NewInt(1), params.TxGas, gen.header.BaseFee, nil), signer, key)
 		if err != nil {
 			panic(err)
