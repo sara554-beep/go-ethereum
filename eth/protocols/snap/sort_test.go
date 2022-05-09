@@ -51,6 +51,7 @@ func TestRequestSorting(t *testing.T) {
 		return sp, tnps, hash
 	}
 	var (
+		keys     []string
 		hashes   []common.Hash
 		paths    []trie.SyncPath
 		pathsets []TrieNodePathSet
@@ -68,10 +69,11 @@ func TestRequestSorting(t *testing.T) {
 		"0x01234567890123456789012345678901012345678901234567890123456789011",
 	} {
 		sp, _, hash := f(x)
+		keys = append(keys, "")
 		hashes = append(hashes, hash)
 		paths = append(paths, sp)
 	}
-	_, paths, pathsets = sortByAccountPath(hashes, paths)
+	_, _, paths, pathsets = sortByAccountPath(keys, hashes, paths)
 	{
 		var b = new(bytes.Buffer)
 		for i := 0; i < len(paths); i++ {
