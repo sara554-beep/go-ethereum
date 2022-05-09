@@ -42,18 +42,18 @@ var (
 // LeafCallback is a callback type invoked when a trie operation reaches a leaf
 // node.
 //
-// The paths is a path tuple identifying a particular trie node either in a single
-// trie (account) or a layered trie (account -> storage). Each path in the tuple
+// The keys is a path tuple identifying a particular trie node either in a single
+// trie (account) or a layered trie (account -> storage). Each key in the tuple
 // is in the raw format(32 bytes).
 //
-// The hexpath is a composite hexary path identifying the trie node. All the key
+// The path is a composite hexary path identifying the trie node. All the key
 // bytes are converted to the hexary nibbles and composited with the parent path
 // if the trie node is in a layered trie.
 //
 // It's used by state sync and commit to allow handling external references
 // between account and storage tries. And also it's used in the state healing
 // for extracting the raw states(leaf nodes) with corresponding paths.
-type LeafCallback func(paths [][]byte, hexpath []byte, leaf []byte, parent common.Hash) error
+type LeafCallback func(keys [][]byte, path []byte, leaf []byte, parent common.Hash, parentPath []byte) error
 
 // Trie is a Merkle Patricia Trie.
 // The zero value is an empty trie with no database.
@@ -615,7 +615,7 @@ func (t *Trie) Commit(onleaf LeafCallback) (common.Hash, int, error) {
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
 	rootHash := t.Hash()
-	h := newCommitter()
+	h := newCommitter(t.owner)
 	defer returnCommitterToPool(h)
 
 	// Do a quick check if we really need to commit, before we spin
