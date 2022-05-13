@@ -92,6 +92,7 @@ type generatorContext struct {
 	storage *holdableIterator   // Iterator of storage snapshot data
 	batch   ethdb.Batch         // Database batch for writing batch data atomically
 	logged  time.Time           // The timestamp when last generation progress was displayed
+	itered  time.Time           // The timestamp when iterators were reopened last time
 }
 
 // newGeneratorContext initializes the context for generation.
@@ -101,6 +102,7 @@ func newGeneratorContext(stats *generatorStats, db ethdb.KeyValueStore, accMarke
 		db:     db,
 		batch:  db.NewBatch(),
 		logged: time.Now(),
+		itered: time.Now(),
 	}
 	ctx.openIterator(snapAccount, accMarker)
 	ctx.openIterator(snapStorage, storageMarker)

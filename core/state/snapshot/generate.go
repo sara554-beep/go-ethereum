@@ -496,8 +496,11 @@ func (dl *diskLayer) checkAndFlush(ctx *generatorContext, current []byte) error 
 			return newAbortErr(abort) // bubble up an error for interruption
 		}
 		// Don't hold the iterators too long, release them to let compactor works
-		ctx.reopenIterator(snapAccount)
-		ctx.reopenIterator(snapStorage)
+		if time.Since(ctx.itered) > time.Minute {
+			ctx.itered = time.Now()
+			ctx.reopenIterator(snapAccount)
+			ctx.reopenIterator(snapStorage)
+		}
 	}
 	if time.Since(ctx.logged) > 8*time.Second {
 		ctx.stats.Log("Generating state snapshot", dl.root, current)
@@ -629,15 +632,9 @@ func generateAccounts(ctx *generatorContext, dl *diskLayer, accMarker []byte) er
 		accMarker = nil
 		return nil
 	}
-	// Always reset the initial account range as 1 whenever recover from the
-	// interruption. TODO(rjl493456442) can we remove it?
-	var accountRange = accountCheckRange
-	if len(accMarker) > 0 {
-		accountRange = 1
-	}
 	origin := common.CopyBytes(accMarker)
 	for {
-		exhausted, last, err := dl.generateRange(ctx, dl.root, rawdb.SnapshotAccountPrefix, snapAccount, origin, accountRange, onAccount, FullAccountRLP)
+		exhausted, last, err := dl.generateRange(ctx, dl.root, rawdb.SnapshotAccountPrefix, snapAccount, origin, accountCheckRange, onAccount, FullAccountRLP)
 		if err != nil {
 			return err // The procedure it aborted, either by external signal or internal error.
 		}
@@ -649,7 +646,6 @@ func generateAccounts(ctx *generatorContext, dl *diskLayer, accMarker []byte) er
 			ctx.removeStorageLeft()
 			break
 		}
-		accountRange = accountCheckRange
 	}
 	return nil
 }
