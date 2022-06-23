@@ -383,7 +383,10 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				break
 			}
 			// Prepare the statedb for tracing. Don't use the live database for
-			// tracing to avoid persisting state junks into the database.
+			// tracing to avoid persisting state junks into the database. Switch
+			// over to `preferDisk` mode only if the memory usage exceeds the
+			// limit, the trie database will be reconstructed from scratch only
+			// if the relevant state is available in disk.
 			var preferDisk bool
 			if statedb != nil {
 				s1, s2 := statedb.Database().TrieDB().Size()
@@ -399,6 +402,12 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				failed = err
 				break
 			}
+			// Clean out any pending derefs. Note this step must be done after
+			// constructing tracing state, because the tracing state of block
+			// next depends on the parent state and construction may fail if
+			// we release too early.
+			reler.call()
+
 			// Send the block over to the concurrent tracers (if not in the fast-forward phase)
 			txs := next.Transactions()
 			select {
@@ -408,17 +417,11 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				return
 			}
 			traced += uint64(len(txs))
-
-			// Clean out any pending derefs. Note this step must be done after
-			// tracing state construction, because the tracing state of block
-			// next may depend on the tracing state of the previous block (as
-			// the parent) and construction may fail if we release too early.
-			reler.call()
 		}
 	}()
 
 	// Keep reading the trace results and stream them to result channel.
-	retCh := make(chan *blockTraceResult)
+	retCh := make(chan *blockTraceResult, 1024)
 	go func() {
 		defer close(retCh)
 		var (
@@ -432,12 +435,15 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				Hash:   res.block.Hash(),
 				Traces: res.results,
 			}
-			// Schedule any parent tries held in memory by this task for dereferencing
 			done[uint64(result.Block)] = result
 
-			// Stream completed traces to the user, aborting on the first error
+			// Stream completed traces to the result channel
 			for result, ok := done[next]; ok; result, ok = done[next] {
 				if len(result.Traces) > 0 || next == end.NumberU64() {
+					// It will be blocked in case the channel consumer doesn't take the
+					// tracing result in time(e.g. the websocket connect is not stable)
+					// which will eventually block the entire chain tracer. It's the
+					// expected behavior to not waste node resources for a non-active user.
 					retCh <- result
 				}
 				delete(done, next)

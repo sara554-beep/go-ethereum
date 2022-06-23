@@ -74,7 +74,8 @@ func (eth *Ethereum) StateAtBlock(block *types.Block, reexec uint64, base *state
 		}
 	}
 	// The state is both for reading and writing, or it's unavailable in disk,
-	// construct an ephemeral trie.Database for isolating the live one.
+	// try to construct/recover the state over an ephemeral trie.Database for
+	// isolating the live one.
 	if base != nil {
 		if preferDisk {
 			// Create an ephemeral trie.Database for isolating the live one. Otherwise
