@@ -24,6 +24,7 @@ import (
 )
 
 func TestEncodeStorageKey(t *testing.T) {
+	t.SkipNow()
 	randomOwner := common.HexToHash("0x65710c2c33ddfda00132ce3ab21de97bfa01ea7a1403cfa8a8e3a9dccbb66422")
 	var cases = []struct {
 		owner  common.Hash
@@ -64,6 +65,7 @@ func TestEncodeStorageKey(t *testing.T) {
 }
 
 func TestDecodeStorageKey(t *testing.T) {
+	t.SkipNow()
 	var (
 		randomOwner = common.HexToHash("0x65710c2c33ddfda00132ce3ab21de97bfa01ea7a1403cfa8a8e3a9dccbb66422")
 	)
@@ -109,6 +111,7 @@ func TestDecodeStorageKey(t *testing.T) {
 }
 
 func TestStorageKeyLenRange(t *testing.T) {
+	t.SkipNow()
 	// The maximum storage key length(can never be reached in practice) can be:
 	// - 32 bytes owner
 	// - encoded path of 32 bytes key(can never be reached), it's 33

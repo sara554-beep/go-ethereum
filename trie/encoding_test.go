@@ -135,6 +135,25 @@ func TestHexSuffixCompact(t *testing.T) {
 	}
 }
 
+func TestRightPadding(t *testing.T) {
+	tests := []struct{ hex, padded []byte }{
+		// empty keys, no terminator
+		{hex: []byte{}, padded: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+		// odd length, no terminator
+		{hex: []byte{1, 2, 3, 4, 5}, padded: []byte{0x12, 0x34, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5}},
+		// even length, no terminator
+		{hex: []byte{1, 2, 3, 4, 5, 0}, padded: []byte{0x12, 0x34, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6}},
+	}
+	for _, test := range tests {
+		if c := hexToRightPadding(test.hex); !bytes.Equal(c, test.padded) {
+			t.Errorf("hexToRightPadding(%x) -> %x, want %x", test.hex, c, test.padded)
+		}
+		if h := rightPaddingToHex(test.padded); !bytes.Equal(h, test.hex) {
+			t.Errorf("rightPaddingToHex(%x) -> %x, want %x", test.padded, h, test.hex)
+		}
+	}
+}
+
 func BenchmarkHexToCompact(b *testing.B) {
 	testBytes := []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}
 	for i := 0; i < b.N; i++ {

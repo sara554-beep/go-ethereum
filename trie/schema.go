@@ -38,16 +38,16 @@ func EncodeStorageKey(owner common.Hash, path []byte) []byte {
 	if owner != (common.Hash{}) {
 		ret = append(ret, owner.Bytes()...)
 	}
-	return append(ret, hexToSuffixCompact(path)...)
+	return append(ret, hexToRightPadding(path)...)
 }
 
 // DecodeStorageKey decodes the storage format node key and returns all the
 // key components. The returned key is in hex nibbles.
 func DecodeStorageKey(key []byte) (common.Hash, []byte) {
 	if len(key) <= common.HashLength {
-		return common.Hash{}, suffixCompactToHex(key)
+		return common.Hash{}, rightPaddingToHex(key)
 	}
-	return common.BytesToHash(key[:common.HashLength]), suffixCompactToHex(key[common.HashLength:])
+	return common.BytesToHash(key[:common.HashLength]), rightPaddingToHex(key[common.HashLength:])
 }
 
 // MaxStorageKeyLen returns the maximum storage key length. In practice,

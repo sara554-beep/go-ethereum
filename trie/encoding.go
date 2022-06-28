@@ -143,6 +143,37 @@ func suffixCompactToHex(compact []byte) []byte {
 	return base
 }
 
+func hexToRightPadding(hex []byte) []byte {
+	var padding int
+	switch {
+	case len(hex) <= 16:
+		padding = 8
+	case len(hex) <= 32:
+		padding = 16
+	default:
+		padding = 32
+	}
+	buf := make([]byte, padding+1)
+	buf[len(buf)-1] = byte(len(hex)) // encode length
+	if len(hex)&1 == 1 {
+		buf[len(hex)/2] |= hex[len(hex)-1] << 4
+		hex = hex[:len(hex)-1]
+	}
+	decodeNibbles(hex, buf[:len(hex)/2])
+	return buf
+}
+
+func rightPaddingToHex(padded []byte) []byte {
+	length := int(padded[len(padded)-1])
+	if length&1 == 1 {
+		key := keybytesToHex(padded[:length/2])
+		key[len(key)-1] = padded[length/2] >> 4
+		return key
+	}
+	key := keybytesToHex(padded[:length/2])
+	return key[:len(key)-1]
+}
+
 // keybytesToHex turns key bytes into hex nibbles.
 func keybytesToHex(str []byte) []byte {
 	l := len(str)*2 + 1
