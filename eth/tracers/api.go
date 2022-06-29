@@ -421,7 +421,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 	}()
 
 	// Keep reading the trace results and stream them to result channel.
-	retCh := make(chan *blockTraceResult, 1024)
+	retCh := make(chan *blockTraceResult)
 	go func() {
 		defer close(retCh)
 		var (
