@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"reflect"
 	"runtime"
 	"sync"
 	"time"
@@ -191,6 +190,7 @@ type StdTraceConfig struct {
 type txTraceResult struct {
 	Result interface{} `json:"result,omitempty"` // Trace results produced by the tracer
 	Error  string      `json:"error,omitempty"`  // Trace failure produced by the tracer
+	Size   int         `json:"size"`
 }
 
 // blockTraceTask represents a single block trace task when an entire chain is
@@ -205,7 +205,7 @@ type blockTraceTask struct {
 func (task *blockTraceTask) size() int {
 	var s int
 	for _, r := range task.results {
-		s += int(reflect.TypeOf(r).Size())
+		s += r.Size
 	}
 	return s
 }
@@ -321,15 +321,15 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 						TxIndex:   i,
 						TxHash:    tx.Hash(),
 					}
-					res, err := api.traceTx(ctx, msg, txctx, blockCtx, task.statedb, config)
+					res, size, err := api.traceTx(ctx, msg, txctx, blockCtx, task.statedb, config)
 					if err != nil {
-						task.results[i] = &txTraceResult{Error: err.Error()}
+						task.results[i] = &txTraceResult{Size: size, Error: err.Error()}
 						log.Warn("Tracing failed", "hash", tx.Hash(), "block", task.block.NumberU64(), "err", err)
 						break
 					}
 					// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
 					task.statedb.Finalise(api.backend.ChainConfig().IsEIP158(task.block.Number()))
-					task.results[i] = &txTraceResult{Result: res}
+					task.results[i] = &txTraceResult{Size: size, Result: res}
 				}
 				// Tracing state is used up, queue it for de-referencing
 				reler.add(task.release)
@@ -440,9 +440,11 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 	go func() {
 		defer close(retCh)
 		var (
-			logged  time.Time
-			next = start.NumberU64() + 1
-			done = make(map[uint64]*blockTraceResult)
+			logged time.Time
+			next   = start.NumberU64() + 1
+			done   = make(map[uint64]*blockTraceResult)
+
+			items  int
 			cached int
 		)
 		for res := range resCh {
@@ -455,9 +457,11 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			}
 			done[uint64(result.Block)] = result
 			cached += result.Size
+			items += 1
 
-			if time.Since(logged) > time.Second * 8 {
-				log.Info("Cached result size", "size", common.StorageSize(float64(cached)))
+			if time.Since(logged) > time.Second*8 {
+				log.Info("Cached result size", "items", items, "size", common.StorageSize(float64(cached)))
+				logged = time.Now()
 			}
 			// Stream completed traces to the result channel
 			for result, ok := done[next]; ok; result, ok = done[next] {
@@ -469,6 +473,8 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 					retCh <- result
 				}
 				cached -= result.Size
+				items -= 1
+
 				delete(done, next)
 				next++
 			}
@@ -655,7 +661,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 					TxIndex:   task.index,
 					TxHash:    txs[task.index].Hash(),
 				}
-				res, err := api.traceTx(ctx, msg, txctx, blockCtx, task.statedb, config)
+				res, _, err := api.traceTx(ctx, msg, txctx, blockCtx, task.statedb, config)
 				if err != nil {
 					results[task.index] = &txTraceResult{Error: err.Error()}
 					continue
@@ -852,7 +858,8 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 		TxIndex:   int(index),
 		TxHash:    hash,
 	}
-	return api.traceTx(ctx, msg, txctx, vmctx, statedb, config)
+	result, _, err := api.traceTx(ctx, msg, txctx, vmctx, statedb, config)
+	return result, err
 }
 
 // TraceCall lets you trace a given eth_call. It collects the structured logs
@@ -915,13 +922,14 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 			Reexec:  config.Reexec,
 		}
 	}
-	return api.traceTx(ctx, msg, new(Context), vmctx, statedb, traceConfig)
+	result, _, err := api.traceTx(ctx, msg, new(Context), vmctx, statedb, traceConfig)
+	return result, err
 }
 
 // traceTx configures a new tracer according to the provided configuration, and
 // executes the given message in the provided environment. The return value will
 // be tracer dependent.
-func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Context, vmctx vm.BlockContext, statedb *state.StateDB, config *TraceConfig) (interface{}, error) {
+func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Context, vmctx vm.BlockContext, statedb *state.StateDB, config *TraceConfig) (interface{}, int, error) {
 	var (
 		tracer    Tracer
 		err       error
@@ -936,13 +944,13 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 	if config.Tracer != nil {
 		tracer, err = New(*config.Tracer, txctx)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	// Define a meaningful timeout of a single transaction trace
 	if config.Timeout != nil {
 		if timeout, err = time.ParseDuration(*config.Timeout); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -959,9 +967,13 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 	// Call Prepare to clear out the statedb access list
 	statedb.Prepare(txctx.TxHash, txctx.TxIndex)
 	if _, err = core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas())); err != nil {
-		return nil, fmt.Errorf("tracing failed: %w", err)
+		return nil, 0, fmt.Errorf("tracing failed: %w", err)
 	}
-	return tracer.GetResult()
+	result, err := tracer.GetResult()
+	if err != nil {
+		return nil, 0, err
+	}
+	return result, len(result), nil
 }
 
 // APIs return the collection of RPC services the tracer package offers.
