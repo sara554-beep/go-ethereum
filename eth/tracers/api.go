@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"runtime"
 	"sync"
 	"time"
@@ -201,12 +202,21 @@ type blockTraceTask struct {
 	results []*txTraceResult // Trace results procudes by the task
 }
 
+func (task *blockTraceTask) size() int {
+	var s int
+	for _, r := range task.results {
+		s += int(reflect.TypeOf(r).Size())
+	}
+	return s
+}
+
 // blockTraceResult represets the results of tracing a single block when an entire
 // chain is being traced.
 type blockTraceResult struct {
 	Block  hexutil.Uint64   `json:"block"`  // Block number corresponding to this trace
 	Hash   common.Hash      `json:"hash"`   // Block hash corresponding to this trace
 	Traces []*txTraceResult `json:"traces"` // Trace results produced by the task
+	Size   int              `json:"size"`
 }
 
 // txTraceTask represents a single transaction trace task when an entire block
@@ -374,7 +384,8 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// Print progress logs if long enough time elapsed
 			if time.Since(logged) > 8*time.Second {
 				logged = time.Now()
-				log.Info("Tracing chain segment", "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
+				s1, s2 := statedb.Database().TrieDB().Size()
+				log.Info("Tracing chain segment", "memory", s1+s2, "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
 			}
 			// Retrieve the parent state to trace on top
 			block, err := api.blockByNumber(ctx, rpc.BlockNumber(number))
@@ -425,8 +436,10 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 	go func() {
 		defer close(retCh)
 		var (
+			logged  time.Time
 			next = start.NumberU64() + 1
 			done = make(map[uint64]*blockTraceResult)
+			cached int
 		)
 		for res := range resCh {
 			// Queue up next received result
@@ -434,9 +447,14 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 				Block:  hexutil.Uint64(res.block.NumberU64()),
 				Hash:   res.block.Hash(),
 				Traces: res.results,
+				Size:   res.size(),
 			}
 			done[uint64(result.Block)] = result
+			cached += result.Size
 
+			if time.Since(logged) > time.Second * 8 {
+				log.Info("Cached result size", "size", common.StorageSize(float64(cached)))
+			}
 			// Stream completed traces to the result channel
 			for result, ok := done[next]; ok; result, ok = done[next] {
 				if len(result.Traces) > 0 || next == end.NumberU64() {
@@ -446,6 +464,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 					// expected behavior to not waste node resources for a non-active user.
 					retCh <- result
 				}
+				cached -= result.Size
 				delete(done, next)
 				next++
 			}
