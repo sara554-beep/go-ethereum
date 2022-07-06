@@ -969,11 +969,12 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 	if _, err = core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas())); err != nil {
 		return nil, 0, fmt.Errorf("tracing failed: %w", err)
 	}
-	result, err := tracer.GetResult()
-	if err != nil {
-		return nil, 0, err
-	}
-	return result, len(result), nil
+	return nil, 0, nil
+	//result, err := tracer.GetResult()
+	//if err != nil {
+	//	return nil, 0, err
+	//}
+	//return result, len(result), nil
 }
 
 // APIs return the collection of RPC services the tracer package offers.
