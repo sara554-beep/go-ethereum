@@ -384,8 +384,12 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// Print progress logs if long enough time elapsed
 			if time.Since(logged) > 8*time.Second {
 				logged = time.Now()
-				s1, s2 := statedb.Database().TrieDB().Size()
-				log.Info("Tracing chain segment", "memory", s1+s2, "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
+				var size common.StorageSize
+				if statedb != nil {
+					s1, s2 := statedb.Database().TrieDB().Size()
+					size = s1 + s2
+				}
+				log.Info("Tracing chain segment", "memory", size, "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
 			}
 			// Retrieve the parent state to trace on top
 			block, err := api.blockByNumber(ctx, rpc.BlockNumber(number))
