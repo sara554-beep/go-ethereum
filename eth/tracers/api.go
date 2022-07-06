@@ -351,7 +351,12 @@ func (api *API) traceChain(ctx context.Context, start, end *types.Block, config 
 			// Print progress logs if long enough time elapsed
 			if time.Since(logged) > 8*time.Second {
 				logged = time.Now()
-				log.Info("Tracing chain segment", "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
+				var size common.StorageSize
+				if statedb != nil {
+					s1, s2 := statedb.Database().TrieDB().Size()
+					size = s1 + s2
+				}
+				log.Info("Tracing chain segment", "memory", size, "start", start.NumberU64(), "end", end.NumberU64(), "current", number, "transactions", traced, "elapsed", time.Since(begin))
 			}
 			// Retrieve the parent state to trace on top
 			block, err := api.blockByNumber(localctx, rpc.BlockNumber(number))
@@ -903,13 +908,14 @@ func (api *API) traceTx(ctx context.Context, message core.Message, txctx *Contex
 	defer cancel()
 
 	// Run the transaction with tracing enabled.
-	vmenv := vm.NewEVM(vmctx, txContext, statedb, api.backend.ChainConfig(), vm.Config{Debug: true, Tracer: tracer, NoBaseFee: true})
+	vmenv := vm.NewEVM(vmctx, txContext, statedb, api.backend.ChainConfig(), vm.Config{})
 	// Call Prepare to clear out the statedb access list
 	statedb.Prepare(txctx.TxHash, txctx.TxIndex)
 	if _, err = core.ApplyMessage(vmenv, message, new(core.GasPool).AddGas(message.Gas())); err != nil {
 		return nil, fmt.Errorf("tracing failed: %w", err)
 	}
-	return tracer.GetResult()
+	return nil, nil
+	//return tracer.GetResult()
 }
 
 // APIs return the collection of RPC services the tracer package offers.
