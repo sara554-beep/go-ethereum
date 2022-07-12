@@ -200,26 +200,26 @@ func openSnapDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *Co
 		diskdb:    diskdb,
 		cleans:    cleans,
 	}
+	// Construct the layer tree by resolving the in-disk singleton state
+	// and in-memory layer journal.
+	db.tree = newLayerTree(db.loadSnapshot())
+
 	// Open the freezer for reverse diffs if the passed database contains an
 	// ancient store. Otherwise, all the relevant functionalities are disabled.
 	//
 	// Because the freezer can only be opened once at the same time, this
 	// mechanism also ensures that at most one **non-readOnly** snap database
 	// is opened at the same time to prevent accidental mutation.
-	if ancient, err := diskdb.AncientDatadir(); err == nil && ancient != "" {
-		freezer, err := openFreezer(path.Join(ancient, "rdiffs"), readOnly)
-		if err != nil {
-			log.Crit("Failed to open reverse diff freezer", "err", err)
+	if !readOnly {
+		if ancient, err := diskdb.AncientDatadir(); err == nil && ancient != "" {
+			freezer, err := openFreezer(path.Join(ancient, "rdiffs"), readOnly)
+			if err != nil {
+				log.Crit("Failed to open reverse diff freezer", "err", err)
+			}
+			db.freezer = freezer
 		}
-		db.freezer = freezer
-	}
-	// Construct the layer tree by resolving the in-disk singleton state
-	// and in-memory layer journal.
-	db.tree = newLayerTree(db.loadSnapshot())
-
-	// Truncate the extra reverse diffs above in freezer in case it's not
-	// aligned with the disk layer.
-	if !readOnly && db.freezer != nil {
+		// Truncate the extra reverse diffs above in freezer in case it's not
+		// aligned with the disk layer.
 		truncateDiffs(db.freezer, diskdb, db.tree.bottom().ID())
 	}
 	log.Warn("Path-based trie scheme is an experimental feature")

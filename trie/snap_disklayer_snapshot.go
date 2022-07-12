@@ -79,7 +79,7 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 	}
 	// Flush all cached nodes in disk cache into ephemeral database,
 	// since the requested state may point to a GCed version embedded
-	// in disk cache.
+	// in disk cache. Note it can take a few seconds.
 	dl.dirty.forEach(func(key string, node *memoryNode) {
 		if node.node == nil {
 			rawdb.DeleteTrieNode(ndb, []byte(key))

@@ -35,8 +35,8 @@ var (
 type DatabaseSnapshot struct {
 	tree     *layerTree
 	released bool
+	refs     int
 	lock     sync.RWMutex
-	ref      int
 }
 
 // GetSnapshot initializes the database snapshot with the given target state
@@ -96,7 +96,7 @@ func (snap *DatabaseSnapshot) Hold() {
 	snap.lock.Lock()
 	defer snap.lock.Unlock()
 
-	snap.ref += 1
+	snap.refs += 1
 }
 
 // Release releases the snapshot and all relevant resources held
@@ -106,8 +106,8 @@ func (snap *DatabaseSnapshot) Release() {
 	snap.lock.Lock()
 	defer snap.lock.Unlock()
 
-	snap.ref -= 1
-	if snap.ref > 0 {
+	snap.refs -= 1
+	if snap.refs > 0 {
 		return
 	}
 	if snap.released {
