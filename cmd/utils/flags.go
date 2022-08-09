@@ -117,7 +117,7 @@ var (
 	}
 	NetworkIdFlag = &cli.Uint64Flag{
 		Name:     "networkid",
-		Usage:    "Explicitly set network id (integer)(For testnets: use --ropsten, --rinkeby, --goerli instead)",
+		Usage:    "Explicitly set network id (integer)(For testnets: use --ropsten, --rinkeby, --goerli, --sepolia instead)",
 		Value:    ethconfig.Defaults.NetworkId,
 		Category: flags.EthCategory,
 	}
@@ -1852,21 +1852,15 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Override any default configs for hard coded networks.
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 1
-		}
+		cfg.NetworkId = 1
 		cfg.Genesis = core.DefaultGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
 	case ctx.Bool(RopstenFlag.Name):
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 3
-		}
+		cfg.NetworkId = 3
 		cfg.Genesis = core.DefaultRopstenGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.RopstenGenesisHash)
 	case ctx.Bool(SepoliaFlag.Name):
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 11155111
-		}
+		cfg.NetworkId = 11155111
 		cfg.Genesis = core.DefaultSepoliaGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.SepoliaGenesisHash)
 	case ctx.Bool(RinkebyFlag.Name):
@@ -1880,21 +1874,15 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		log.Warn("--------------------------------------------------------------------------------")
 		log.Warn("")
 
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 4
-		}
+		cfg.NetworkId = 4
 		cfg.Genesis = core.DefaultRinkebyGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.RinkebyGenesisHash)
 	case ctx.Bool(GoerliFlag.Name):
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 5
-		}
+		cfg.NetworkId = 5
 		cfg.Genesis = core.DefaultGoerliGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.GoerliGenesisHash)
 	case ctx.Bool(KilnFlag.Name):
-		if !ctx.IsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 1337802
-		}
+		cfg.NetworkId = 1337802
 		cfg.Genesis = core.DefaultKilnGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.KilnGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):

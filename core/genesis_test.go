@@ -62,8 +62,7 @@ func TestSetupGenesis(t *testing.T) {
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				return SetupGenesisBlock(db, new(Genesis))
 			},
-			wantErr:    errGenesisNoConfig,
-			wantConfig: params.AllEthashProtocolChanges,
+			wantErr: errGenesisNoConfig,
 		},
 		{
 			name: "no block in DB, genesis == nil",
@@ -97,9 +96,7 @@ func TestSetupGenesis(t *testing.T) {
 				customg.MustCommit(db)
 				return SetupGenesisBlock(db, DefaultRopstenGenesisBlock())
 			},
-			wantErr:    &GenesisMismatchError{Stored: customghash, New: params.RopstenGenesisHash},
-			wantHash:   params.RopstenGenesisHash,
-			wantConfig: params.RopstenChainConfig,
+			wantErr: &GenesisMismatchError{Stored: customghash, New: params.RopstenGenesisHash},
 		},
 		{
 			name: "compatible config in DB",
@@ -122,7 +119,7 @@ func TestSetupGenesis(t *testing.T) {
 
 				blocks, _ := GenerateChain(oldcustomg.Config, genesis, ethash.NewFaker(), db, 4, nil)
 				bc.InsertChain(blocks)
-				bc.CurrentBlock()
+
 				// This should return a compatibility error.
 				return SetupGenesisBlock(db, &customg)
 			},

@@ -231,6 +231,149 @@ func (e *GenesisMismatchError) Error() string {
 	return fmt.Sprintf("database contains incompatible genesis (have %x, new %x)", e.Stored, e.New)
 }
 
+// SetupChainConfig writes or updates the chain config in db.
+// The chain config that will be used is:
+//
+//                               genesis == nil       genesis != nil
+//                            +------------------------------------------
+//     db has no chain config |  mainnet.config    |  genesis.config
+//     db has chain config    |  from DB           |  genesis.config (if compatible)
+//
+// The stored chain configuration will be updated if it is compatible (i.e. does not
+// specify a fork block below the local head block). In case of a conflict, the
+// error is a *params.ConfigCompatError and the new, unwritten config is returned.
+func SetupChainConfig(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, error) {
+	return SetupChainConfigWithOverride(db, genesis, nil, nil)
+}
+
+func SetupChainConfigWithOverride(db ethdb.Database, genesis *Genesis, overrideTerminalTotalDifficulty *big.Int, overrideTerminalTotalDifficultyPassed *bool) (*params.ChainConfig, error) {
+	// Load the stored chain config from the database. It can be nil
+	// in case the database is empty. Note we only care about the
+	// chain config corresponds to the canonical chain.
+	var (
+		storedcfg *params.ChainConfig // stored chain config
+		newcfg    *params.ChainConfig // newly passed config
+	)
+	stored := rawdb.ReadCanonicalHash(db, 0)
+	if stored != (common.Hash{}) {
+		storedcfg = rawdb.ReadChainConfig(db, stored)
+	}
+	if genesis != nil {
+		// Reject invalid genesis spec without valid chain config
+		if genesis.Config == nil {
+			return nil, errGenesisNoConfig
+		}
+		newcfg = genesis.Config
+	}
+	// applyAndCheck overrides the chain config with the provided settings
+	// and also checks the config validity.
+	applyAndCheck := func(config *params.ChainConfig) error {
+		if overrideTerminalTotalDifficulty != nil {
+			config.TerminalTotalDifficulty = overrideTerminalTotalDifficulty
+		}
+		if overrideTerminalTotalDifficultyPassed != nil {
+			config.TerminalTotalDifficultyPassed = *overrideTerminalTotalDifficultyPassed
+		}
+		return config.CheckConfigForkOrder()
+	}
+	// Perform a series of checks based on the obtained chain config
+	switch {
+	case storedcfg == nil && newcfg == nil:
+		// There is no stored chain config and no new config provided,
+		// use the default chain config(mainnet) for initialization
+		block := DefaultGenesisBlock()
+		config := block.Config
+		if err := applyAndCheck(config); err != nil {
+			return nil, err
+		}
+		rawdb.WriteChainConfig(db, block.ToBlock().Hash(), config)
+		return config, nil
+
+	case storedcfg != nil && newcfg == nil:
+		// No new chain config provided, use the stored one. Apply the
+		// overrides if necessary and return.
+		if err := applyAndCheck(storedcfg); err != nil {
+			return nil, err
+		}
+		rawdb.WriteChainConfig(db, stored, storedcfg) // stored must be non-empty
+		return storedcfg, nil
+
+	case storedcfg == nil && newcfg != nil:
+		// No chain config stored in database, persist the provided
+		// one into database. Apply the overrides if necessary and
+		// return.
+		if err := applyAndCheck(newcfg); err != nil {
+			return nil, err
+		}
+		rawdb.WriteChainConfig(db, genesis.ToBlock().Hash(), newcfg) // genesis must be non-nil
+		return newcfg, nil
+
+	default:
+		// There is a stored chain config in database and also a new
+		// config provided via genesis spec. Check the compatibility
+		// of them and use the new old if all checks can be passed.
+		if err := applyAndCheck(newcfg); err != nil {
+			return nil, err
+		}
+		// Check config compatibility and write the config. Compatibility errors
+		// are returned to the caller unless we're already at block zero.
+		height := rawdb.ReadHeaderNumber(db, stored) // stored must be non-empty
+		if height == nil {
+			return nil, fmt.Errorf("missing block number for head header hash")
+		}
+		compatErr := storedcfg.CheckCompatible(newcfg, *height)
+		if compatErr != nil && *height != 0 && compatErr.RewindTo != 0 {
+			return newcfg, compatErr
+		}
+		rawdb.WriteChainConfig(db, stored, newcfg)
+		return newcfg, nil
+	}
+}
+
+func SetupGenesisState(db ethdb.Database, genesis *Genesis) (common.Hash, error) {
+	// Just commit the new block if there is no stored genesis block.
+	stored := rawdb.ReadCanonicalHash(db, 0)
+	if (stored == common.Hash{}) {
+		if genesis == nil {
+			log.Info("Writing default main-net genesis block")
+			genesis = DefaultGenesisBlock()
+		} else {
+			log.Info("Writing custom genesis block")
+		}
+		block, err := genesis.Commit(db)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		return block.Hash(), nil
+	}
+	// We have the genesis block in database(perhaps in ancient database)
+	// but the corresponding state is missing, commit the genesis state
+	// to database.
+	header := rawdb.ReadHeader(db, stored, 0)
+	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil), nil); err != nil {
+		if genesis == nil {
+			genesis = DefaultGenesisBlock()
+		}
+		// Ensure the stored genesis matches with the given one.
+		hash := genesis.ToBlock().Hash()
+		if hash != stored {
+			return common.Hash{}, &GenesisMismatchError{stored, hash}
+		}
+		block, err := genesis.Commit(db)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		return block.Hash(), nil
+	}
+	// Check whether the genesis block is already written.
+	if genesis != nil {
+		hash := genesis.ToBlock().Hash()
+		if hash != stored {
+			return common.Hash{}, &GenesisMismatchError{stored, hash}
+		}
+	}
+}
+
 // SetupGenesisBlock writes or updates the genesis block in db.
 // The block that will be used is:
 //
@@ -243,16 +386,15 @@ func (e *GenesisMismatchError) Error() string {
 // specify a fork block below the local head block). In case of a conflict, the
 // error is a *params.ConfigCompatError and the new, unwritten config is returned.
 //
-// The returned chain configuration is never nil.
+// The returned chain configuration can be non-nil if the encountered error is
+// *params.ConfigCompatError.
 func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
 	return SetupGenesisBlockWithOverride(db, genesis, nil, nil)
 }
 
 func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, overrideTerminalTotalDifficulty *big.Int, overrideTerminalTotalDifficultyPassed *bool) (*params.ChainConfig, common.Hash, error) {
-	if genesis != nil && genesis.Config == nil {
-		return params.AllEthashProtocolChanges, common.Hash{}, errGenesisNoConfig
-	}
-
+	// applyOverrides is the tool to override the chain config with
+	// the provided parameters.
 	applyOverrides := func(config *params.ChainConfig) {
 		if config != nil {
 			if overrideTerminalTotalDifficulty != nil {
@@ -263,7 +405,11 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 			}
 		}
 	}
-
+	// Short circuit if the provided customized genesis doesn't contain
+	// chain config.
+	if genesis != nil && genesis.Config == nil {
+		return nil, common.Hash{}, errGenesisNoConfig
+	}
 	// Just commit the new block if there is no stored genesis block.
 	stored := rawdb.ReadCanonicalHash(db, 0)
 	if (stored == common.Hash{}) {
@@ -273,15 +419,16 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		} else {
 			log.Info("Writing custom genesis block")
 		}
+		applyOverrides(genesis.Config)
 		block, err := genesis.Commit(db)
 		if err != nil {
-			return genesis.Config, common.Hash{}, err
+			return nil, common.Hash{}, err
 		}
-		applyOverrides(genesis.Config)
 		return genesis.Config, block.Hash(), nil
 	}
 	// We have the genesis block in database(perhaps in ancient database)
-	// but the corresponding state is missing.
+	// but the corresponding state is missing, commit the genesis state
+	// to database.
 	header := rawdb.ReadHeader(db, stored, 0)
 	if _, err := state.New(header.Root, state.NewDatabaseWithConfig(db, nil), nil); err != nil {
 		if genesis == nil {
@@ -290,27 +437,27 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		// Ensure the stored genesis matches with the given one.
 		hash := genesis.ToBlock().Hash()
 		if hash != stored {
-			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
-		}
-		block, err := genesis.Commit(db)
-		if err != nil {
-			return genesis.Config, hash, err
+			return nil, common.Hash{}, &GenesisMismatchError{stored, hash}
 		}
 		applyOverrides(genesis.Config)
+		block, err := genesis.Commit(db)
+		if err != nil {
+			return nil, common.Hash{}, err
+		}
 		return genesis.Config, block.Hash(), nil
 	}
 	// Check whether the genesis block is already written.
 	if genesis != nil {
 		hash := genesis.ToBlock().Hash()
 		if hash != stored {
-			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
+			return nil, common.Hash{}, &GenesisMismatchError{stored, hash}
 		}
 	}
 	// Get the existing chain configuration.
 	newcfg := genesis.configOrDefault(stored)
 	applyOverrides(newcfg)
 	if err := newcfg.CheckConfigForkOrder(); err != nil {
-		return newcfg, common.Hash{}, err
+		return nil, common.Hash{}, err
 	}
 	storedcfg := rawdb.ReadChainConfig(db, stored)
 	if storedcfg == nil {
@@ -331,7 +478,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	// are returned to the caller unless we're already at block zero.
 	height := rawdb.ReadHeaderNumber(db, rawdb.ReadHeadHeaderHash(db))
 	if height == nil {
-		return newcfg, stored, fmt.Errorf("missing block number for head header hash")
+		return nil, common.Hash{}, fmt.Errorf("missing block number for head header hash")
 	}
 	compatErr := storedcfg.CheckCompatible(newcfg, *height)
 	if compatErr != nil && *height != 0 && compatErr.RewindTo != 0 {
@@ -428,7 +575,6 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	rawdb.WriteHeadBlockHash(db, block.Hash())
 	rawdb.WriteHeadFastBlockHash(db, block.Hash())
 	rawdb.WriteHeadHeaderHash(db, block.Hash())
-	rawdb.WriteChainConfig(db, block.Hash(), config)
 	return block, nil
 }
 
