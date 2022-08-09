@@ -103,10 +103,13 @@ func (ga *GenesisAlloc) deriveHash() (common.Hash, error) {
 // flush is very similar with deriveHash, but the main difference is
 // all the generated states will be persisted into the given database.
 // Also, the genesis state specification will be flushed as well.
-func (ga *GenesisAlloc) flush(db ethdb.Database) error {
-	statedb, err := state.New(common.Hash{}, state.NewDatabase(db), nil)
+func (ga *GenesisAlloc) flush(db *trie.Database) error {
+	statedb, err := state.New(common.Hash{}, state.NewDatabaseWithNodeDB(db), nil)
 	if err != nil {
 		return err
+	}
+	if len(*ga) == 0 {
+		return nil
 	}
 	for addr, account := range *ga {
 		statedb.AddBalance(addr, account.Balance)
@@ -129,7 +132,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database) error {
 	if err != nil {
 		return err
 	}
-	rawdb.WriteGenesisStateSpec(db, root, blob)
+	rawdb.WriteGenesisStateSpec(db.DiskDB(), root, blob)
 	return nil
 }
 
@@ -137,7 +140,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database) error {
 // hash and commits them into the given database handler.
 func CommitGenesisState(db *trie.Database, hash common.Hash) error {
 	var alloc GenesisAlloc
-	blob := rawdb.ReadGenesisStateSpec(db, hash)
+	blob := rawdb.ReadGenesisStateSpec(db.DiskDB(), hash)
 	if len(blob) != 0 {
 		if err := alloc.UnmarshalJSON(blob); err != nil {
 			return err
@@ -400,7 +403,7 @@ func (g *Genesis) ToBlock() *types.Block {
 
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
-func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
+func (g *Genesis) Commit(db ethdb.Database, scheme string) (*types.Block, error) {
 	block := g.ToBlock()
 	if block.Number().Sign() != 0 {
 		return nil, errors.New("can't commit genesis block with number > 0")
@@ -418,7 +421,9 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	// All the checks has passed, flush the states derived from the genesis
 	// specification as well as the specification itself into the provided
 	// database.
-	if err := g.Alloc.flush(db); err != nil {
+	triedb := trie.NewDatabase(db, &trie.Config{Scheme: scheme})
+	defer triedb.Close()
+	if err := g.Alloc.flush(triedb); err != nil {
 		return nil, err
 	}
 	rawdb.WriteTd(db, block.Hash(), block.NumberU64(), block.Difficulty())

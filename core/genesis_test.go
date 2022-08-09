@@ -17,6 +17,7 @@
 package core
 
 import (
+	"encoding/json"
 	"math/big"
 	"reflect"
 	"testing"
@@ -224,7 +225,8 @@ func TestReadWriteGenesisAlloc(t *testing.T) {
 		}
 		hash, _ = alloc.deriveHash()
 	)
-	alloc.flush(db)
+	blob, _ := json.Marshal(alloc)
+	rawdb.WriteGenesisStateSpec(db, hash, blob)
 
 	var reload GenesisAlloc
 	err := reload.UnmarshalJSON(rawdb.ReadGenesisStateSpec(db, hash))

@@ -228,7 +228,7 @@ func (c *ChtIndexerBackend) Commit() error {
 		}
 	}
 	// Re-create trie with newly generated root and updated database.
-	c.trie, err = trie.New(common.Hash{}, root, c.triedb)
+	c.trie, err = trie.New(root, common.Hash{}, root, c.triedb)
 	if err != nil {
 		return err
 	}
@@ -480,7 +480,7 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 		}
 	}
 	// Re-create trie with newly generated root and updated database.
-	b.trie, err = trie.New(common.Hash{}, root, b.triedb)
+	b.trie, err = trie.New(root, common.Hash{}, root, b.triedb)
 	if err != nil {
 		return err
 	}
