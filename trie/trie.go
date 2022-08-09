@@ -35,22 +35,6 @@ var (
 	emptyState = crypto.Keccak256Hash(nil)
 )
 
-// LeafCallback is a callback type invoked when a trie operation reaches a leaf
-// node.
-//
-// The keys is a path tuple identifying a particular trie node either in a single
-// trie (account) or a layered trie (account -> storage). Each key in the tuple
-// is in the raw format(32 bytes).
-//
-// The path is a composite hexary path identifying the trie node. All the key
-// bytes are converted to the hexary nibbles and composited with the parent path
-// if the trie node is in a layered trie.
-//
-// It's used by state sync and commit to allow handling external references
-// between account and storage tries. And also it's used in the state healing
-// for extracting the raw states(leaf nodes) with corresponding paths.
-type LeafCallback func(keys [][]byte, path []byte, leaf []byte, parent common.Hash, parentPath []byte) error
-
 // Trie is a Merkle Patricia Trie. Use New to create a trie that sits on
 // top of a database. Whenever trie performs a commit operation, the generated
 // nodes will be gathered and returned in a set. Once the trie is committed,
@@ -68,7 +52,7 @@ type Trie struct {
 	unhashed int
 
 	// reader is the handler trie can retrieve nodes from.
-	reader Reader
+	reader *trieReader
 
 	// tracer is the tool to track the trie changes.
 	// It will be reset after each commit operation.
@@ -99,13 +83,13 @@ func (t *Trie) Copy() *Trie {
 // New will panic if db is nil and returns a MissingNodeError if root does
 // not exist in the database. Accessing the trie loads nodes from db on demand.
 func New(stateRoot common.Hash, owner common.Hash, root common.Hash, db NodeReader) (*Trie, error) {
-	reader := db.GetReader(stateRoot)
-	if reader != nil {
-		return nil, fmt.Errorf("state not found #%x", stateRoot)
+	reader, err := newTrieReader(owner, stateRoot, db)
+	if err != nil {
+		return nil, err
 	}
 	trie := &Trie{
 		owner:  owner,
-		reader: db.GetReader(stateRoot),
+		reader: reader,
 		tracer: newTracer(),
 	}
 	if root != (common.Hash{}) && root != emptyRoot {
@@ -222,7 +206,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.reader.NodeBlob(t.owner, path, common.BytesToHash(hash)) // TODO empty blob
+		blob, err := t.reader.nodeBlob(t.owner, path, common.BytesToHash(hash))
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -560,20 +544,12 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 // node hash and path prefix. The rlp-encoded value of loaded node
 // will also be tracked.
 func (t *Trie) resolveHash(n hashNode, prefix []byte) (node, error) {
-	node, err := t.reader.Node(t.owner, prefix, common.BytesToHash(n))
-	if err != nil || node == nil {
-		return nil, &MissingNodeError{Owner: t.owner, NodeHash: common.BytesToHash(n), Path: prefix, err: err}
-	}
-	// Track the rlp-encoded value whenever load nodes from underlying
-	// reader. They can be regarded as previous value which is vital
-	// for constructing state reverse diff. TODO how can we avoid this
-	// additional lookup?
-	blob, err := t.reader.NodeBlob(t.owner, prefix, common.BytesToHash(n))
-	if err != nil || len(blob) == 0 {
-		return nil, &MissingNodeError{Owner: t.owner, NodeHash: common.BytesToHash(n), Path: prefix, err: err}
+	blob, err := t.reader.nodeBlob(t.owner, prefix, common.BytesToHash(n))
+	if err != nil {
+		return nil, err
 	}
 	t.tracer.onRead(prefix, blob)
-	return node, nil
+	return mustDecodeNode(n, blob), nil
 }
 
 // Hash returns the root hash of the trie. It does not write to the

@@ -28,7 +28,7 @@ import (
 )
 
 // makeTestTrie create a sample test trie to test node-wise reconstruction.
-func makeTestTrie(scheme string) (*Database, *SecureTrie, map[string][]byte) {
+func makeTestTrie(scheme string) (*Database, *StateTrie, map[string][]byte) {
 	// Create an empty trie
 	triedb := NewDatabase(rawdb.NewMemoryDatabase(), &Config{Scheme: scheme})
 	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, common.Hash{}, triedb)
@@ -729,6 +729,8 @@ func testSyncWithDynamicTarget(t *testing.T, scheme string) {
 		panic(err)
 	}
 	preRoot = root
+	srcTrie, _ = NewStateTrie(root, common.Hash{}, root, srcDb)
+
 	syncWith(t, srcTrie.Hash(), diskdb, srcDb)
 	checkTrieContents(t, diskdb, srcDb.Scheme(), srcTrie.Hash().Bytes(), diff)
 
@@ -755,6 +757,8 @@ func testSyncWithDynamicTarget(t *testing.T, scheme string) {
 		panic(err)
 	}
 	preRoot = root
+	srcTrie, _ = NewStateTrie(root, common.Hash{}, root, srcDb)
+
 	syncWith(t, srcTrie.Hash(), diskdb, srcDb)
 	checkTrieContents(t, diskdb, srcDb.Scheme(), srcTrie.Hash().Bytes(), reverted)
 }

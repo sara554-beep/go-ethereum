@@ -374,8 +374,7 @@ func (it *nodeIterator) resolveHash(hash hashNode, path []byte) (node, error) {
 			}
 		}
 	}
-	// load node from underlying node store to avoid polluting trie tracer.
-	return it.trie.reader.Node(it.trie.owner, path, common.BytesToHash(hash))
+	return it.trie.reader.node(it.trie.owner, path, common.BytesToHash(hash))
 }
 
 func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) {
@@ -384,8 +383,7 @@ func (it *nodeIterator) resolveBlob(hash hashNode, path []byte) ([]byte, error) 
 			return blob, nil
 		}
 	}
-	// load node from underlying node store to avoid polluting trie tracer.
-	return it.trie.reader.NodeBlob(it.trie.owner, path, common.BytesToHash(hash))
+	return it.trie.reader.nodeBlob(it.trie.owner, path, common.BytesToHash(hash))
 }
 
 func (st *nodeIteratorState) resolve(it *nodeIterator, path []byte) error {

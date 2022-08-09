@@ -82,7 +82,7 @@ func (snap *DatabaseSnapshot) Update(root common.Hash, parent common.Hash, nodes
 	}
 	// Merge all nodes(include the deleted one) together into a single map.
 	merged := make(map[string]*nodeWithPrev)
-	for _, subset := range nodes.nodes {
+	for _, subset := range nodes.sets {
 		for path, node := range subset.updates.nodes {
 			merged[string(encodeStorageKey(subset.owner, []byte(path)))] = node
 		}

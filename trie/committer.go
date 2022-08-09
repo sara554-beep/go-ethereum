@@ -56,12 +56,11 @@ func (c *committer) Commit(n node) (hashNode, *NodeSet, error) {
 	// itself. Iterate all deleted nodes tracked by tracer and marked them as
 	// deleted only if they are present in database previously.
 	for _, path := range c.tracer.deleteList() {
+		// There are a few possibilities for this scenario(the node is deleted
+		// but not present in database previously), for example the node was
+		// embedded in the parent and now deleted from the trie. In this case
+		// it's noop from database's perspective, filter it out.
 		val := c.tracer.getPrev(path)
-
-		// There are a few possibilities for this scenario(the node is
-		// not present in database previously), for example the node was
-		// embedded in the parent and now deleted from the trie. In this
-		// case it's noop from database's perspective, filter it out.
 		if val == nil {
 			continue
 		}

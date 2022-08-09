@@ -49,6 +49,10 @@ var (
 	// errStateUnrecoverable is returned if state is required to be reverted to
 	// a destination without associated reverse diff available.
 	errStateUnrecoverable = errors.New("state is unrecoverable")
+
+	// errUnexpectedNode is returned if the requested node with specified path is
+	// not hash matched or marked as deleted.
+	errUnexpectedNode = errors.New("unexpected node")
 )
 
 // maxDiffLayerDepth is the maximum depth allowed for a diff layer in the
@@ -188,7 +192,7 @@ func (db *snapDatabase) Update(root common.Hash, parentRoot common.Hash, nodes *
 	}
 	// Merge all nodes(include the deleted one) together into a single map.
 	merged := make(map[string]*nodeWithPrev)
-	for _, subset := range nodes.nodes {
+	for _, subset := range nodes.sets {
 		for path, node := range subset.updates.nodes {
 			merged[string(encodeStorageKey(subset.owner, []byte(path)))] = node
 		}

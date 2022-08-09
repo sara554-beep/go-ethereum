@@ -52,11 +52,11 @@ func (n *memoryNode) rlp() []byte {
 
 // obj returns the decoded and expanded trie node, either directly from the cache,
 // or by regenerating it from the rlp encoded blob.
-func (n *memoryNode) obj(hash common.Hash) node {
+func (n *memoryNode) obj() node {
 	if node, ok := n.node.(rawNode); ok {
-		return mustDecodeNode(hash[:], node)
+		return mustDecodeNode(n.hash[:], node)
 	}
-	return expandNode(hash[:], n.node)
+	return expandNode(n.hash[:], n.node)
 }
 
 // nodeWithPrev wraps the memoryNode with the previous node value.

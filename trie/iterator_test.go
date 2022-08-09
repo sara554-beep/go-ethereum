@@ -369,6 +369,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 	if !memonly {
 		tdb.Commit(root)
 	}
+	tr, _ = New(root, common.Hash{}, root, tdb)
 	wantNodeCount := checkIteratorNoDups(t, tr.NodeIterator(nil), nil)
 
 	var (
@@ -426,7 +427,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 			}
 		}
 		if memonly {
-			tr.nodes.banned = map[string]struct{}{string(rpath): {}}
+			tr.reader.banned = map[string]struct{}{string(rpath): {}}
 		} else {
 			rval = tdb.Scheme().ReadTrieNode(diskdb, common.Hash{}, rpath, rhash)
 			tdb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, rpath, rhash)
@@ -442,7 +443,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 
 		// Add the node back and continue iteration.
 		if memonly {
-			delete(tr.nodes.banned, string(rpath))
+			delete(tr.reader.banned, string(rpath))
 		} else {
 			tdb.Scheme().WriteTrieNode(diskdb, common.Hash{}, rpath, rhash, rval)
 		}
@@ -501,7 +502,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme strin
 	)
 	tr, _ := New(root, common.Hash{}, root, triedb)
 	if memonly {
-		tr.nodes.banned = map[string]struct{}{string(barNodePath): {}}
+		tr.reader.banned = map[string]struct{}{string(barNodePath): {}}
 	} else {
 		barNodeBlob = triedb.Scheme().ReadTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash)
 		triedb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash)
@@ -517,7 +518,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme strin
 	}
 	// Reinsert the missing node.
 	if memonly {
-		delete(tr.nodes.banned, string(barNodePath))
+		delete(tr.reader.banned, string(barNodePath))
 	} else {
 		triedb.Scheme().WriteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash, barNodeBlob)
 	}
@@ -597,7 +598,7 @@ func (l *loggingDb) Close() error {
 func makeLargeTestTrie() (*Database, *StateTrie, *loggingDb) {
 	// Create an empty trie
 	logDb := &loggingDb{0, memorydb.New()}
-	triedb := NewDatabase(logDb, nil)
+	triedb := NewDatabase(rawdb.NewDatabase(logDb), nil)
 	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data

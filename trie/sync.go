@@ -73,6 +73,22 @@ func NewSyncPath(path []byte) SyncPath {
 	return SyncPath{hexToKeybytes(path[:2*common.HashLength]), hexToCompact(path[2*common.HashLength:])}
 }
 
+// LeafCallback is a callback type invoked when a trie operation reaches a leaf
+// node.
+//
+// The keys is a path tuple identifying a particular trie node either in a single
+// trie (account) or a layered trie (account -> storage). Each key in the tuple
+// is in the raw format(32 bytes).
+//
+// The path is a composite hexary path identifying the trie node. All the key
+// bytes are converted to the hexary nibbles and composited with the parent path
+// if the trie node is in a layered trie.
+//
+// It's used by state sync and commit to allow handling external references
+// between account and storage tries. And also it's used in the state healing
+// for extracting the raw states(leaf nodes) with corresponding paths.
+type LeafCallback func(keys [][]byte, path []byte, leaf []byte, parent common.Hash, parentPath []byte) error
+
 // nodeRequest represents a scheduled or already in-flight trie node retrieval request.
 type nodeRequest struct {
 	hash common.Hash // Hash of the trie node to retrieve
