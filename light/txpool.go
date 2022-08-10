@@ -87,10 +87,10 @@ type TxRelayBackend interface {
 }
 
 // NewTxPool creates a new light transaction pool
-func NewTxPool(config *params.ChainConfig, chain *LightChain, relay TxRelayBackend) *TxPool {
+func NewTxPool(chain *LightChain, relay TxRelayBackend) *TxPool {
 	pool := &TxPool{
-		config:      config,
-		signer:      types.LatestSigner(config),
+		config:      chain.Config(),
+		signer:      types.LatestSigner(chain.Config()),
 		nonce:       make(map[common.Address]uint64),
 		pending:     make(map[common.Hash]*types.Transaction),
 		mined:       make(map[common.Hash][]*types.Transaction),

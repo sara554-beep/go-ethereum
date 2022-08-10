@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,8 @@ var (
 // headers, downloading block bodies and receipts on demand through an ODR
 // interface. It only does header validation during chain insertion.
 type LightChain struct {
+	chainConfig   *params.ChainConfig
+	checkpoint    *params.TrustedCheckpoint
 	hc            *core.HeaderChain
 	indexerConfig *IndexerConfig
 	chainDb       ethdb.Database
@@ -78,12 +81,29 @@ type LightChain struct {
 // NewLightChain returns a fully initialised light chain using information
 // available in the database. It initialises the default Ethereum header
 // validator.
-func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.Engine, checkpoint *params.TrustedCheckpoint) (*LightChain, error) {
+func NewLightChain(db ethdb.Database, genesis *core.Genesis, overrides *core.ChainOverrides, odr OdrBackend, engine consensus.Engine, checkpoint *params.TrustedCheckpoint) (*LightChain, error) {
 	bodyCache, _ := lru.New(bodyCacheLimit)
 	bodyRLPCache, _ := lru.New(bodyCacheLimit)
 	blockCache, _ := lru.New(blockCacheLimit)
 
+	chainConfig, genesisHash, genesisErr := core.SetupGenesisBlockWithOverride(db, genesis, overrides)
+	if _, isCompat := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !isCompat {
+		return nil, genesisErr
+	}
+	log.Info("")
+	log.Info(strings.Repeat("-", 153))
+	for _, line := range strings.Split(chainConfig.String(), "\n") {
+		log.Info(line)
+	}
+	log.Info(strings.Repeat("-", 153))
+	log.Info("")
+
+	if checkpoint == nil {
+		checkpoint = params.TrustedCheckpoints[genesisHash]
+	}
 	bc := &LightChain{
+		chainConfig:   chainConfig,
+		checkpoint:    checkpoint,
 		chainDb:       odr.Database(),
 		indexerConfig: odr.IndexerConfig(),
 		odr:           odr,
@@ -95,7 +115,7 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 	}
 	bc.forker = core.NewForkChoice(bc, nil)
 	var err error
-	bc.hc, err = core.NewHeaderChain(odr.Database(), config, bc.engine, bc.getProcInterrupt)
+	bc.hc, err = core.NewHeaderChain(db, chainConfig, bc.engine, bc.getProcInterrupt)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +123,8 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 	if bc.genesisBlock == nil {
 		return nil, core.ErrNoGenesis
 	}
-	if checkpoint != nil {
-		bc.AddTrustedCheckpoint(checkpoint)
+	if bc.checkpoint != nil {
+		bc.AddTrustedCheckpoint()
 	}
 	if err := bc.loadLastState(); err != nil {
 		return nil, err
@@ -117,11 +137,18 @@ func NewLightChain(odr OdrBackend, config *params.ChainConfig, engine consensus.
 			log.Info("Chain rewind was successful, resuming normal operation")
 		}
 	}
+	// Rewind the chain in case of an incompatible config upgrade.
+	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
+		log.Warn("Rewinding chain to upgrade configuration", "err", compat)
+		bc.SetHead(compat.RewindTo)
+		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
+	}
 	return bc, nil
 }
 
 // AddTrustedCheckpoint adds a trusted checkpoint to the blockchain
-func (lc *LightChain) AddTrustedCheckpoint(cp *params.TrustedCheckpoint) {
+func (lc *LightChain) AddTrustedCheckpoint() {
+	cp := lc.checkpoint
 	if lc.odr.ChtIndexer() != nil {
 		StoreChtRoot(lc.chainDb, cp.SectionIndex, cp.SectionHead, cp.CHTRoot)
 		lc.odr.ChtIndexer().AddCheckpoint(cp.SectionIndex, cp.SectionHead)
@@ -222,6 +249,10 @@ func (lc *LightChain) Engine() consensus.Engine { return lc.engine }
 // Genesis returns the genesis block
 func (lc *LightChain) Genesis() *types.Block {
 	return lc.genesisBlock
+}
+
+func (lc *LightChain) Checkpoint() *params.TrustedCheckpoint {
+	return lc.checkpoint
 }
 
 func (lc *LightChain) StateCache() state.Database {
@@ -512,7 +543,7 @@ func (lc *LightChain) GetHeaderByNumberOdr(ctx context.Context, number uint64) (
 }
 
 // Config retrieves the header chain's chain configuration.
-func (lc *LightChain) Config() *params.ChainConfig { return lc.hc.Config() }
+func (lc *LightChain) Config() *params.ChainConfig { return lc.chainConfig }
 
 // SyncCheckpoint fetches the checkpoint point block header according to
 // the checkpoint provided by the remote peer.
@@ -524,7 +555,7 @@ func (lc *LightChain) SyncCheckpoint(ctx context.Context, checkpoint *params.Tru
 	head := lc.CurrentHeader().Number.Uint64()
 
 	latest := (checkpoint.SectionIndex+1)*lc.indexerConfig.ChtSize - 1
-	if clique := lc.hc.Config().Clique; clique != nil {
+	if clique := lc.chainConfig.Clique; clique != nil {
 		latest -= latest % clique.Epoch // epoch snapshot for clique
 	}
 	if head >= latest {

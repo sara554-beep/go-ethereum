@@ -89,9 +89,7 @@ func NewLesServer(node *node.Node, e ethBackend, config *ethconfig.Config) (*Les
 	}
 	srv := &LesServer{
 		lesCommons: lesCommons{
-			genesis:          e.BlockChain().Genesis().Hash(),
 			config:           config,
-			chainConfig:      e.BlockChain().Config(),
 			iConfig:          light.DefaultServerIndexerConfig,
 			chainDb:          e.ChainDb(),
 			lesDb:            lesDb,
@@ -178,7 +176,7 @@ func (s *LesServer) Protocols() []p2p.Protocol {
 			return p.Info()
 		}
 		return nil
-	}, nil)
+	}, s.handler.blockchain.Genesis().Hash(), s.handler.blockchain.Config(), nil)
 	// Add "les" ENR entries.
 	for i := range ps {
 		ps[i].Attributes = []enr.Entry{&lesEntry{

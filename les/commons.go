@@ -47,9 +47,7 @@ type chainReader interface {
 
 // lesCommons contains fields needed by both server and client.
 type lesCommons struct {
-	genesis                      common.Hash
 	config                       *ethconfig.Config
-	chainConfig                  *params.ChainConfig
 	iConfig                      *light.IndexerConfig
 	chainDb, lesDb               ethdb.Database
 	chainReader                  chainReader
@@ -72,15 +70,17 @@ type NodeInfo struct {
 }
 
 // makeProtocols creates protocol descriptors for the given LES versions.
-func (c *lesCommons) makeProtocols(versions []uint, runPeer func(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) error, peerInfo func(id enode.ID) interface{}, dialCandidates enode.Iterator) []p2p.Protocol {
+func (c *lesCommons) makeProtocols(versions []uint, runPeer func(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) error, peerInfo func(id enode.ID) interface{}, genesis common.Hash, chainConfig *params.ChainConfig, dialCandidates enode.Iterator) []p2p.Protocol {
 	protos := make([]p2p.Protocol, len(versions))
 	for i, version := range versions {
 		version := version
 		protos[i] = p2p.Protocol{
-			Name:     "les",
-			Version:  version,
-			Length:   ProtocolLengths[version],
-			NodeInfo: c.nodeInfo,
+			Name:    "les",
+			Version: version,
+			Length:  ProtocolLengths[version],
+			NodeInfo: func() interface{} {
+				return c.nodeInfo(genesis, chainConfig)
+			},
 			Run: func(peer *p2p.Peer, rw p2p.MsgReadWriter) error {
 				return runPeer(version, peer, rw)
 			},
@@ -92,14 +92,14 @@ func (c *lesCommons) makeProtocols(versions []uint, runPeer func(version uint, p
 }
 
 // nodeInfo retrieves some protocol metadata about the running host node.
-func (c *lesCommons) nodeInfo() interface{} {
+func (c *lesCommons) nodeInfo(genesis common.Hash, chainConfig *params.ChainConfig) interface{} {
 	head := c.chainReader.CurrentHeader()
 	hash := head.Hash()
 	return &NodeInfo{
 		Network:    c.config.NetworkId,
 		Difficulty: rawdb.ReadTd(c.chainDb, hash, head.Number.Uint64()),
-		Genesis:    c.genesis,
-		Config:     c.chainConfig,
+		Genesis:    genesis,
+		Config:     chainConfig,
 		Head:       hash,
 		CHT:        c.latestLocalCheckpoint(),
 	}

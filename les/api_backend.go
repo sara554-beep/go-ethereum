@@ -48,7 +48,7 @@ type LesApiBackend struct {
 }
 
 func (b *LesApiBackend) ChainConfig() *params.ChainConfig {
-	return b.eth.chainConfig
+	return b.eth.blockchain.Config()
 }
 
 func (b *LesApiBackend) CurrentBlock() *types.Block {

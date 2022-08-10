@@ -38,8 +38,8 @@ var (
 )
 
 // makeHeaderChain creates a deterministic chain of headers rooted at parent.
-func makeHeaderChain(parent *types.Header, n int, db ethdb.Database, seed int) []*types.Header {
-	blocks, _ := core.GenerateChain(params.TestChainConfig, types.NewBlockWithHeader(parent), ethash.NewFaker(), db, n, func(i int, b *core.BlockGen) {
+func makeHeaderChain(chainConfig *params.ChainConfig, parent *types.Header, n int, db ethdb.Database, seed int) []*types.Header {
+	blocks, _ := core.GenerateChain(chainConfig, types.NewBlockWithHeader(parent), ethash.NewFaker(), db, n, func(i int, b *core.BlockGen) {
 		b.SetCoinbase(common.Address{0: byte(seed), 19: byte(i)})
 	})
 	headers := make([]*types.Header, len(blocks))
@@ -54,63 +54,61 @@ func makeHeaderChain(parent *types.Header, n int, db ethdb.Database, seed int) [
 // header only chain.
 func newCanonical(n int) (ethdb.Database, *LightChain, error) {
 	db := rawdb.NewMemoryDatabase()
-	gspec := core.Genesis{Config: params.TestChainConfig}
-	genesis := gspec.MustCommit(db)
-	blockchain, _ := NewLightChain(&dummyOdr{db: db, indexerConfig: TestClientIndexerConfig}, gspec.Config, ethash.NewFaker(), nil)
+	gspec := &core.Genesis{Config: params.TestChainConfig}
+	blockchain, _ := NewLightChain(db, gspec, nil, &dummyOdr{db: db, indexerConfig: TestClientIndexerConfig}, ethash.NewFaker(), nil)
 
 	// Create and inject the requested chain
 	if n == 0 {
 		return db, blockchain, nil
 	}
 	// Header-only chain requested
-	headers := makeHeaderChain(genesis.Header(), n, db, canonicalSeed)
+	headers := makeHeaderChain(gspec.Config, blockchain.genesisBlock.Header(), n, db, canonicalSeed)
 	_, err := blockchain.InsertHeaderChain(headers, 1)
 	return db, blockchain, err
 }
 
 // newTestLightChain creates a LightChain that doesn't validate anything.
-func newTestLightChain() *LightChain {
+func newTestLightChain() (*LightChain, *core.Genesis) {
 	db := rawdb.NewMemoryDatabase()
 	gspec := &core.Genesis{
 		Difficulty: big.NewInt(1),
 		Config:     params.TestChainConfig,
 	}
-	gspec.MustCommit(db)
-	lc, err := NewLightChain(&dummyOdr{db: db}, gspec.Config, ethash.NewFullFaker(), nil)
+	lc, err := NewLightChain(db, gspec, nil, &dummyOdr{db: db}, ethash.NewFullFaker(), nil)
 	if err != nil {
 		panic(err)
 	}
-	return lc
+	return lc, gspec
 }
 
 // Test fork of length N starting from block i
-func testFork(t *testing.T, LightChain *LightChain, i, n int, comparator func(td1, td2 *big.Int)) {
+func testFork(t *testing.T, lightChain *LightChain, i, n int, comparator func(td1, td2 *big.Int)) {
 	// Copy old chain up to #i into a new db
-	db, LightChain2, err := newCanonical(i)
+	db, lightChain2, err := newCanonical(i)
 	if err != nil {
 		t.Fatal("could not make new canonical in testFork", err)
 	}
 	// Assert the chains have the same header/block at #i
 	var hash1, hash2 common.Hash
-	hash1 = LightChain.GetHeaderByNumber(uint64(i)).Hash()
-	hash2 = LightChain2.GetHeaderByNumber(uint64(i)).Hash()
+	hash1 = lightChain.GetHeaderByNumber(uint64(i)).Hash()
+	hash2 = lightChain2.GetHeaderByNumber(uint64(i)).Hash()
 	if hash1 != hash2 {
 		t.Errorf("chain content mismatch at %d: have hash %v, want hash %v", i, hash2, hash1)
 	}
 	// Extend the newly created chain
-	headerChainB := makeHeaderChain(LightChain2.CurrentHeader(), n, db, forkSeed)
-	if _, err := LightChain2.InsertHeaderChain(headerChainB, 1); err != nil {
+	headerChainB := makeHeaderChain(lightChain2.Config(), lightChain2.CurrentHeader(), n, db, forkSeed)
+	if _, err := lightChain2.InsertHeaderChain(headerChainB, 1); err != nil {
 		t.Fatalf("failed to insert forking chain: %v", err)
 	}
 	// Sanity check that the forked chain can be imported into the original
 	var tdPre, tdPost *big.Int
-	cur := LightChain.CurrentHeader()
-	tdPre = LightChain.GetTd(cur.Hash(), cur.Number.Uint64())
-	if err := testHeaderChainImport(headerChainB, LightChain); err != nil {
+	cur := lightChain.CurrentHeader()
+	tdPre = lightChain.GetTd(cur.Hash(), cur.Number.Uint64())
+	if err := testHeaderChainImport(headerChainB, lightChain); err != nil {
 		t.Fatalf("failed to import forked header chain: %v", err)
 	}
 	last := headerChainB[len(headerChainB)-1]
-	tdPost = LightChain.GetTd(last.Hash(), last.Number.Uint64())
+	tdPost = lightChain.GetTd(last.Hash(), last.Number.Uint64())
 	// Compare the total difficulties of the chains
 	comparator(tdPre, tdPost)
 }
@@ -234,13 +232,13 @@ func TestEqualForkHeaders(t *testing.T) {
 // Tests that chains missing links do not get accepted by the processor.
 func TestBrokenHeaderChain(t *testing.T) {
 	// Make chain starting from genesis
-	db, LightChain, err := newCanonical(10)
+	db, lightChain, err := newCanonical(10)
 	if err != nil {
 		t.Fatalf("failed to make new canonical chain: %v", err)
 	}
 	// Create a forked chain, and try to insert with a missing link
-	chain := makeHeaderChain(LightChain.CurrentHeader(), 5, db, forkSeed)[1:]
-	if err := testHeaderChainImport(chain, LightChain); err == nil {
+	chain := makeHeaderChain(lightChain.Config(), lightChain.CurrentHeader(), 5, db, forkSeed)[1:]
+	if err := testHeaderChainImport(chain, lightChain); err == nil {
 		t.Errorf("broken header chain not reported")
 	}
 }
@@ -297,7 +295,7 @@ func TestReorgShortHeaders(t *testing.T) {
 }
 
 func testReorg(t *testing.T, first, second []int, td int64) {
-	bc := newTestLightChain()
+	bc, _ := newTestLightChain()
 
 	// Insert an easy and a difficult chain afterwards
 	bc.InsertHeaderChain(makeHeaderChainWithDiff(bc.genesisBlock, first, 11), 1)
@@ -318,7 +316,7 @@ func testReorg(t *testing.T, first, second []int, td int64) {
 
 // Tests that the insertion functions detect banned hashes.
 func TestBadHeaderHashes(t *testing.T) {
-	bc := newTestLightChain()
+	bc, _ := newTestLightChain()
 
 	// Create a chain, ban a hash and try to import
 	var err error
@@ -332,7 +330,7 @@ func TestBadHeaderHashes(t *testing.T) {
 // Tests that bad hashes are detected on boot, and the chan rolled back to a
 // good state prior to the bad hash.
 func TestReorgBadHeaderHashes(t *testing.T) {
-	bc := newTestLightChain()
+	bc, gspec := newTestLightChain()
 
 	// Create a chain, import and ban afterwards
 	headers := makeHeaderChainWithDiff(bc.genesisBlock, []int{1, 2, 3, 4}, 10)
@@ -347,7 +345,7 @@ func TestReorgBadHeaderHashes(t *testing.T) {
 	defer func() { delete(core.BadHashes, headers[3].Hash()) }()
 
 	// Create a new LightChain and check that it rolled back the state.
-	ncm, err := NewLightChain(&dummyOdr{db: bc.chainDb}, params.TestChainConfig, ethash.NewFaker(), nil)
+	ncm, err := NewLightChain(bc.chainDb, gspec, nil, &dummyOdr{db: bc.chainDb}, ethash.NewFaker(), nil)
 	if err != nil {
 		t.Fatalf("failed to create new chain manager: %v", err)
 	}
