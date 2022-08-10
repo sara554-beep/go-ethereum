@@ -403,7 +403,6 @@ func TestClique(t *testing.T) {
 		}
 		// Create a pristine blockchain with the genesis injected
 		db := rawdb.NewMemoryDatabase()
-		core.SetupChainConfig(db, genesis)
 
 		// Assemble a chain of headers from the cast votes
 		config := *params.TestChainConfig
@@ -411,10 +410,11 @@ func TestClique(t *testing.T) {
 			Period: 1,
 			Epoch:  tt.epoch,
 		}
+		genesis.Config = &config
 		engine := New(config.Clique, db)
 		engine.fakeDiff = true
 
-		core.SetupGenesisState(db, genesis)
+		core.SetupGenesisBlock(db, genesis)
 		blocks, _ := core.GenerateChain(&config, genesis.ToBlock(), engine, db, len(tt.votes), func(j int, gen *core.BlockGen) {
 			// Cast the vote contained in this block
 			gen.SetCoinbase(accounts.address(tt.votes[j].voted))
@@ -451,7 +451,7 @@ func TestClique(t *testing.T) {
 			batches[len(batches)-1] = append(batches[len(batches)-1], block)
 		}
 		// Pass all the headers through clique and ensure tallying succeeds
-		chain, err := core.NewBlockChain(db, genesis, nil, &config, engine, vm.Config{}, nil, nil)
+		chain, err := core.NewBlockChain(db, genesis, nil, engine, vm.Config{}, nil, nil)
 		if err != nil {
 			t.Errorf("test %d: failed to create test chain: %v", i, err)
 			continue

@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math/big"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -151,20 +150,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			rawdb.WriteDatabaseVersion(chainDb, core.BlockChainVersion)
 		}
 	}
-	// Setup the chain configuration either from the database or the provided
-	// genesis specification.
-	chainConfig, genesisErr := core.SetupChainConfigWithOverride(chainDb, config.Genesis, config.OverrideTerminalTotalDifficulty, config.OverrideTerminalTotalDifficultyPassed)
-	if _, ok := genesisErr.(*params.ConfigCompatError); genesisErr != nil && !ok {
-		return nil, genesisErr
-	}
-	log.Info("")
-	log.Info(strings.Repeat("-", 153))
-	for _, line := range strings.Split(chainConfig.String(), "\n") {
-		log.Info(line)
-	}
-	log.Info(strings.Repeat("-", 153))
-	log.Info("")
-
 	// Detect and resume previous aborted pruning operation before setting up anything.
 	if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb, stack.ResolvePath(config.TrieCleanCacheJournal)); err != nil {
 		log.Error("Failed to recover state", "error", err)
@@ -172,7 +157,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Setup consensus engine, transfer mining-related config to the ethash config
 	ethashConfig := config.Ethash
 	ethashConfig.NotifyFull = config.Miner.NotifyFull
-	engine := ethconfig.CreateConsensusEngine(stack, chainConfig, &ethashConfig, config.Miner.Notify, config.Miner.Noverify, chainDb)
+	cliqueConfig, err := core.LoadCliqueConfig(chainDb, config.Genesis)
+	if err != nil {
+		return nil, err
+	}
+	engine := ethconfig.CreateConsensusEngine(stack, &ethashConfig, cliqueConfig, config.Miner.Notify, config.Miner.Noverify, chainDb)
 
 	// Assemble ethereum object
 	eth := &Ethereum{
@@ -208,22 +197,23 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			Preimages:           config.Preimages,
 		}
 	)
-	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, cacheConfig, chainConfig, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
+	genesis := config.Genesis
+	if config.OverrideTerminalTotalDifficulty != nil {
+		genesis.Config.TerminalTotalDifficulty = config.OverrideTerminalTotalDifficulty
+	}
+	if config.OverrideTerminalTotalDifficultyPassed != nil {
+		genesis.Config.TerminalTotalDifficultyPassed = *config.OverrideTerminalTotalDifficultyPassed
+	}
+	eth.blockchain, err = core.NewBlockChain(chainDb, genesis, cacheConfig, eth.engine, vmConfig, eth.shouldPreserve, &config.TxLookupLimit)
 	if err != nil {
 		return nil, err
-	}
-	// Rewind the chain in case of an incompatible config upgrade.
-	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
-		log.Warn("Rewinding chain to upgrade configuration", "err", compat)
-		eth.blockchain.SetHead(compat.RewindTo)
-		rawdb.WriteChainConfig(chainDb, eth.blockchain.Genesis().Hash(), chainConfig)
 	}
 	eth.bloomIndexer.Start(eth.blockchain)
 
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
-	eth.txPool = core.NewTxPool(config.TxPool, chainConfig, eth.blockchain)
+	eth.txPool = core.NewTxPool(config.TxPool, eth.blockchain.ChainConfig(), eth.blockchain)
 
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := cacheConfig.TrieCleanLimit + cacheConfig.TrieDirtyLimit + cacheConfig.SnapshotLimit
@@ -246,7 +236,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	// Setup miner object for creating pending blocks
-	eth.miner = miner.New(eth, &config.Miner, chainConfig, eth.EventMux(), eth.engine, eth.isLocalBlock)
+	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.ChainConfig(), eth.EventMux(), eth.engine, eth.isLocalBlock)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}

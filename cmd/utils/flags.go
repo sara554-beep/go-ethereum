@@ -2136,17 +2136,16 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 		gspec = MakeGenesis(ctx)
 	)
 	chainDb = MakeChainDatabase(ctx, stack, false) // TODO(rjl493456442) support read-only database
-	config, _, err := core.SetupGenesisBlock(chainDb, gspec)
+	cliqueConfig, err := core.LoadCliqueConfig(chainDb, gspec)
 	if err != nil {
 		Fatalf("%v", err)
 	}
-
 	var engine consensus.Engine
 	ethashConf := ethconfig.Defaults.Ethash
 	if ctx.Bool(FakePoWFlag.Name) {
 		ethashConf.PowMode = ethash.ModeFake
 	}
-	engine = ethconfig.CreateConsensusEngine(stack, config, &ethashConf, nil, false, chainDb)
+	engine = ethconfig.CreateConsensusEngine(stack, &ethashConf, cliqueConfig, nil, false, chainDb)
 	if gcmode := ctx.String(GCModeFlag.Name); gcmode != "full" && gcmode != "archive" {
 		Fatalf("--%s must be either 'full' or 'archive'", GCModeFlag.Name)
 	}
@@ -2176,7 +2175,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node) (chain *core.BlockChain, chai
 
 	// TODO(rjl493456442) disable snapshot generation/wiping if the chain is read only.
 	// Disable transaction indexing/unindexing by default.
-	chain, err = core.NewBlockChain(chainDb, gspec, cache, config, engine, vmcfg, nil, nil)
+	chain, err = core.NewBlockChain(chainDb, gspec, cache, engine, vmcfg, nil, nil)
 	if err != nil {
 		Fatalf("Can't create BlockChain: %v", err)
 	}

@@ -31,6 +31,11 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
+// ChainConfig returns the chain configuration used by blockchain.
+func (bc *BlockChain) ChainConfig() *params.ChainConfig {
+	return bc.chainConfig
+}
+
 // CurrentHeader retrieves the current head header of the canonical chain. The
 // header is retrieved from the HeaderChain's internal cache.
 func (bc *BlockChain) CurrentHeader() *types.Header {

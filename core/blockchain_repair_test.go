@@ -21,6 +21,7 @@
 package core
 
 import (
+	"github.com/docker/docker/engine"
 	"math/big"
 	"testing"
 	"time"
@@ -1764,7 +1765,10 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 
 	// Initialize a fresh chain
 	var (
-		genesis = (&Genesis{BaseFee: big.NewInt(params.InitialBaseFee)}).MustCommit(db)
+		genesis = &Genesis{
+			Config:  params.TestChainConfig,
+			BaseFee: big.NewInt(params.InitialBaseFee),
+		}
 		engine  = ethash.NewFullFaker()
 		config  = &CacheConfig{
 			TrieCleanLimit: 256,
@@ -1778,7 +1782,7 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 		config.SnapshotLimit = 256
 		config.SnapshotWait = true
 	}
-	chain, err := NewBlockChain(db, config, params.AllEthashProtocolChanges, engine, vm.Config{}, nil, nil)
+	chain, err := NewBlockChain(db, genesis, config, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}

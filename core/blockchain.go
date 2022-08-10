@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -218,7 +219,7 @@ type BlockChain struct {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
-func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
+func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
@@ -229,9 +230,28 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 	txLookupCache, _ := lru.New(txLookupCacheLimit)
 	futureBlocks, _ := lru.New(maxFutureBlocks)
 
+	stateCache := state.NewDatabaseWithConfig(db, &trie.Config{
+		Cache:     cacheConfig.TrieCleanLimit,
+		Journal:   cacheConfig.TrieCleanJournal,
+		Preimages: cacheConfig.Preimages,
+	})
+	// Initialize genesis block and corresponding state if it's missing
+	chainConfig, genesisHash, genesisErr := SetupGenesisBlock(db, genesis)
+	if genesisErr != nil {
+		return nil, genesisErr
+	}
+	log.Info("")
+	log.Info(strings.Repeat("-", 153))
+	for _, line := range strings.Split(chainConfig.String(), "\n") {
+		log.Info(line)
+	}
+	log.Info(strings.Repeat("-", 153))
+	log.Info("")
+
 	bc := &BlockChain{
 		chainConfig:   chainConfig,
 		cacheConfig:   cacheConfig,
+		stateCache:    stateCache,
 		db:            db,
 		triegc:        prque.New(nil),
 		quit:          make(chan struct{}),
@@ -245,21 +265,11 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 		engine:        engine,
 		vmConfig:      vmConfig,
 	}
-	bc.stateCache = state.NewDatabaseWithConfig(db, &trie.Config{
-		Cache:     cacheConfig.TrieCleanLimit,
-		Journal:   cacheConfig.TrieCleanJournal,
-		Preimages: cacheConfig.Preimages,
-	})
 	bc.forker = NewForkChoice(bc, shouldPreserve)
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
-
-	// Initialize genesis block and corresponding state if it's missing
-	_, err := SetupGenesisState(db, genesis)
-	if err != nil {
-		return nil, err
-	}
+	var err error
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
 	if err != nil {
 		return nil, err
@@ -412,6 +422,12 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, cacheConfig *CacheConfig
 			defer bc.wg.Done()
 			triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
 		}()
+	}
+	// Rewind the chain in case of an incompatible config upgrade.
+	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
+		log.Warn("Rewinding chain to upgrade configuration", "err", compat)
+		bc.SetHead(compat.RewindTo)
+		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
 	}
 	return bc, nil
 }

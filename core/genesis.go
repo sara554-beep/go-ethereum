@@ -231,6 +231,47 @@ func (e *GenesisMismatchError) Error() string {
 	return fmt.Sprintf("database contains incompatible genesis (have %x, new %x)", e.Stored, e.New)
 }
 
+func LoadCliqueConfig(db ethdb.Database, genesis *Genesis) (*params.CliqueConfig, error) {
+	// Load the stored chain config from the database. It can be nil
+	// in case the database is empty. Note we only care about the
+	// chain config corresponds to the canonical chain.
+	var (
+		storedcfg *params.ChainConfig // stored chain config
+		newcfg    *params.ChainConfig // newly passed config
+	)
+	stored := rawdb.ReadCanonicalHash(db, 0)
+	if stored != (common.Hash{}) {
+		storedcfg = rawdb.ReadChainConfig(db, stored)
+	}
+	if genesis != nil {
+		// Reject invalid genesis spec without valid chain config
+		if genesis.Config == nil {
+			return nil, errGenesisNoConfig
+		}
+		newcfg = genesis.Config
+	}
+	switch {
+	case storedcfg == nil && newcfg == nil:
+		// There is no stored chain config and no new config provided,
+		// In this case the default chain config(mainnet) will be used,
+		// namely ethash is the specified consensus engine, return nil.
+		return nil, nil
+
+	case storedcfg != nil && newcfg == nil:
+		// No new chain config provided, use the stored one.
+		return storedcfg.Clique, nil
+
+	case storedcfg == nil && newcfg != nil:
+		// No chain config stored in database, use the provided one.
+		return newcfg.Clique, nil
+
+	default:
+		// There is a stored chain config in database and also a new
+		// config provided via genesis spec.
+		return newcfg.Clique, nil
+	}
+}
+
 // SetupChainConfig writes or updates the chain config in db.
 // The chain config that will be used is:
 //
@@ -274,6 +315,12 @@ func SetupChainConfigWithOverride(db ethdb.Database, genesis *Genesis, overrideT
 		if overrideTerminalTotalDifficultyPassed != nil {
 			config.TerminalTotalDifficultyPassed = *overrideTerminalTotalDifficultyPassed
 		}
+		//if err := config.CheckConfigForkOrder(); err != nil {
+		//	return nil, err
+		//}
+		//if config.Clique != nil && len(block.Extra()) < 32+crypto.SignatureLength {
+		//	return nil, errors.New("can't start clique chain without signers")
+		//}
 		return config.CheckConfigForkOrder()
 	}
 	// Perform a series of checks based on the obtained chain config
@@ -452,16 +499,6 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 	block := g.ToBlock()
 	if block.Number().Sign() != 0 {
 		return nil, errors.New("can't commit genesis block with number > 0")
-	}
-	config := g.Config
-	if config == nil {
-		config = params.AllEthashProtocolChanges
-	}
-	if err := config.CheckConfigForkOrder(); err != nil {
-		return nil, err
-	}
-	if config.Clique != nil && len(block.Extra()) < 32+crypto.SignatureLength {
-		return nil, errors.New("can't start clique chain without signers")
 	}
 	// All the checks has passed, flush the states derived from the genesis
 	// specification as well as the specification itself into the provided
