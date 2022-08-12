@@ -65,20 +65,14 @@ type testBackend struct {
 
 func newTestBackend(t *testing.T, n int, gspec *core.Genesis, generator func(i int, b *core.BlockGen)) *testBackend {
 	backend := &testBackend{
-		chainConfig: params.TestChainConfig,
+		chainConfig: gspec.Config,
 		engine:      ethash.NewFaker(),
 		chaindb:     rawdb.NewMemoryDatabase(),
 	}
 	// Generate blocks for testing
-	gspec.Config = backend.chainConfig
-	var (
-		gendb   = rawdb.NewMemoryDatabase()
-		genesis = gspec.MustCommit(gendb)
-	)
-	blocks, _ := core.GenerateChain(backend.chainConfig, genesis, backend.engine, gendb, n, generator)
+	_, blocks, _ := core.GenerateChainWithGenesis(gspec, backend.engine, n, generator)
 
 	// Import the canonical chain
-	gspec.MustCommit(backend.chaindb)
 	cacheConfig := &core.CacheConfig{
 		TrieCleanLimit:    256,
 		TrieDirtyLimit:    256,
@@ -86,7 +80,7 @@ func newTestBackend(t *testing.T, n int, gspec *core.Genesis, generator func(i i
 		SnapshotLimit:     0,
 		TrieDirtyDisabled: true, // Archive mode
 	}
-	chain, err := core.NewBlockChain(backend.chaindb, cacheConfig, backend.chainConfig, backend.engine, vm.Config{}, nil, nil)
+	chain, err := core.NewBlockChain(backend.chaindb, cacheConfig, gspec, nil, backend.engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -194,11 +188,14 @@ func TestTraceCall(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	genesis := &core.Genesis{Alloc: core.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[1].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[2].addr: {Balance: big.NewInt(params.Ether)},
-	}}
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: core.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[2].addr: {Balance: big.NewInt(params.Ether)},
+		},
+	}
 	genBlocks := 10
 	signer := types.HomesteadSigner{}
 	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
@@ -324,10 +321,13 @@ func TestTraceTransaction(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(2)
-	genesis := &core.Genesis{Alloc: core.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[1].addr: {Balance: big.NewInt(params.Ether)},
-	}}
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: core.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+		},
+	}
 	target := common.Hash{}
 	signer := types.HomesteadSigner{}
 	api := NewAPI(newTestBackend(t, 1, genesis, func(i int, b *core.BlockGen) {
@@ -361,11 +361,14 @@ func TestTraceBlock(t *testing.T) {
 
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	genesis := &core.Genesis{Alloc: core.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[1].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[2].addr: {Balance: big.NewInt(params.Ether)},
-	}}
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: core.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[2].addr: {Balance: big.NewInt(params.Ether)},
+		},
+	}
 	genBlocks := 10
 	signer := types.HomesteadSigner{}
 	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
@@ -436,11 +439,14 @@ func TestTracingWithOverrides(t *testing.T) {
 	t.Parallel()
 	// Initialize test accounts
 	accounts := newAccounts(3)
-	genesis := &core.Genesis{Alloc: core.GenesisAlloc{
-		accounts[0].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[1].addr: {Balance: big.NewInt(params.Ether)},
-		accounts[2].addr: {Balance: big.NewInt(params.Ether)},
-	}}
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc: core.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[1].addr: {Balance: big.NewInt(params.Ether)},
+			accounts[2].addr: {Balance: big.NewInt(params.Ether)},
+		},
+	}
 	genBlocks := 10
 	signer := types.HomesteadSigner{}
 	api := NewAPI(newTestBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
