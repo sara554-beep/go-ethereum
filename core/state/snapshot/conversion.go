@@ -361,7 +361,12 @@ func generateTrieRoot(db ethdb.KeyValueWriter, it Iterator, account common.Hash,
 }
 
 func stackTrieGenerate(db ethdb.KeyValueWriter, owner common.Hash, in chan trieKV, out chan common.Hash) {
-	t := trie.NewStackTrieWithOwner(db, owner)
+	t := trie.NewStackTrieWithOwner(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+		if db == nil {
+			return
+		}
+		rawdb.WriteTrieNode(db, hash, val)
+	}, owner)
 	for leaf := range in {
 		t.TryUpdate(leaf.key[:], leaf.value)
 	}

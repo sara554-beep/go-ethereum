@@ -18,12 +18,12 @@ package trie
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
 func TestStackTrieInsertAndHash(t *testing.T) {
