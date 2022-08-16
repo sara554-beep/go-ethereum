@@ -84,7 +84,6 @@ type hashDatabase struct {
 
 	dirtiesSize  common.StorageSize // Storage size of the dirty node cache (exc. metadata)
 	childrenSize common.StorageSize // Storage size of the external children tracking
-	preimages    *preimageStore     // The store for caching preimages
 
 	lock sync.RWMutex
 }
@@ -808,4 +807,29 @@ func (db *hashDatabase) Close() error { return nil }
 // Scheme returns the node scheme used in the database.
 func (db *hashDatabase) Scheme() NodeScheme {
 	return &hashScheme{}
+}
+
+// Reference adds a new reference from a parent node to a child node.
+// This function is used to add reference between internal trie node
+// and external node(e.g. storage trie root), all internal trie nodes
+// are referenced together by database itself. It's only supported by
+// hash-based database and will return an error for others.
+func (db *Database) Reference(root common.Hash, parent common.Hash) error {
+	hashDB, ok := db.backend.(*hashDatabase)
+	if !ok {
+		return errors.New("not supported")
+	}
+	hashDB.Reference(root, parent)
+	return nil
+}
+
+// Dereference removes an existing reference from a root node. It's only
+// supported by hash-based database and will return an error for others.
+func (db *Database) Dereference(root common.Hash) error {
+	hashDB, ok := db.backend.(*hashDatabase)
+	if !ok {
+		return errors.New("not supported")
+	}
+	hashDB.Dereference(root)
+	return nil
 }

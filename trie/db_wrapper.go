@@ -17,7 +17,6 @@
 package trie
 
 import (
-	"errors"
 	"runtime"
 	"time"
 
@@ -214,88 +213,10 @@ func (db *Database) Scheme() NodeScheme {
 
 // Close closes the trie database and releases all held resources.
 func (db *Database) Close() error {
+	if db.preimages != nil {
+		db.preimages.commit(true)
+	}
 	return db.backend.Close()
-}
-
-// Recover rollbacks the database to a specified historical point. The state is
-// supported as the rollback destination only if it's canonical state and the
-// corresponding reverse diffs are existent. It's only supported by snap database
-// and will return an error for others.
-func (db *Database) Recover(target common.Hash) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.Recover(target)
-}
-
-// Recoverable returns the indicator if the specified state is enabled to be
-// recovered. It's only supported by snap database and will return an error
-// for others.
-func (db *Database) Recoverable(root common.Hash) (bool, error) {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return false, errors.New("not supported")
-	}
-	return snapDB.Recoverable(root), nil
-}
-
-// Reset wipes all available journal from the persistent database and discard
-// all caches and diff layers. Using the given root to create a new disk layer.
-// It's only supported by path-based database and will return an error for others.
-func (db *Database) Reset(root common.Hash) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.Reset(root)
-}
-
-// Journal commits an entire diff hierarchy to disk into a single journal entry.
-// This is meant to be used during shutdown to persist the snapshot without
-// flattening everything down (bad for reorgs). It's only supported by path-based
-// database and will return an error for others.
-func (db *Database) Journal(root common.Hash) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.Journal(root)
-}
-
-// SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).
-// It's only supported by path-based database and will return an error for others.
-func (db *Database) SetCacheSize(size int) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.SetCacheSize(size)
-}
-
-// Reference adds a new reference from a parent node to a child node.
-// This function is used to add reference between internal trie node
-// and external node(e.g. storage trie root), all internal trie nodes
-// are referenced together by database itself. It's only supported by
-// hash-based database and will return an error for others.
-func (db *Database) Reference(root common.Hash, parent common.Hash) error {
-	hashDB, ok := db.backend.(*hashDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	hashDB.Reference(root, parent)
-	return nil
-}
-
-// Dereference removes an existing reference from a root node. It's only
-// supported by hash-based database and will return an error for others.
-func (db *Database) Dereference(root common.Hash) error {
-	hashDB, ok := db.backend.(*hashDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	hashDB.Dereference(root)
-	return nil
 }
 
 // DiskDB retrieves the persistent storage backing the trie database.
