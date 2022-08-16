@@ -59,7 +59,7 @@ func makeTestTrie() (*Database, *StateTrie, map[string][]byte) {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
 	// Re-create the trie based on the new state
-	trie, _ = NewSecure(common.Hash{}, root, triedb)
+	trie, _ = NewStateTrie(common.Hash{}, root, triedb)
 	return triedb, trie, content
 }
 
@@ -109,7 +109,7 @@ func TestEmptySync(t *testing.T) {
 	emptyB, _ := New(common.Hash{}, emptyRoot, dbB)
 
 	for i, trie := range []*Trie{emptyA, emptyB} {
-		sync := NewSync(trie.Hash(), memorydb.New(), nil)
+		sync := NewSync(trie.Hash(), memorydb.New(), nil, []*Database{dbA, dbB}[i].Scheme())
 		if paths, nodes, codes := sync.Missing(1); len(paths) != 0 || len(nodes) != 0 || len(codes) != 0 {
 			t.Errorf("test %d: content requested for empty trie: %v, %v, %v", i, paths, nodes, codes)
 		}
@@ -130,7 +130,7 @@ func testIterativeSync(t *testing.T, count int, bypath bool) {
 	// Create a destination trie and sync with the scheduler
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
@@ -196,7 +196,7 @@ func TestIterativeDelayedSync(t *testing.T) {
 	// Create a destination trie and sync with the scheduler
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
@@ -257,7 +257,7 @@ func testIterativeRandomSync(t *testing.T, count int) {
 	// Create a destination trie and sync with the scheduler
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
@@ -315,7 +315,7 @@ func TestIterativeRandomDelayedSync(t *testing.T) {
 	// Create a destination trie and sync with the scheduler
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
@@ -378,7 +378,7 @@ func TestDuplicateAvoidanceSync(t *testing.T) {
 	// Create a destination trie and sync with the scheduler
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
@@ -441,7 +441,7 @@ func TestIncompleteSync(t *testing.T) {
 	// Create a destination trie and sync with the scheduler
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.
@@ -521,7 +521,7 @@ func TestSyncOrdering(t *testing.T) {
 	// Create a destination trie and sync with the scheduler, tracking the requests
 	diskdb := memorydb.New()
 	triedb := NewDatabase(diskdb)
-	sched := NewSync(srcTrie.Hash(), diskdb, nil)
+	sched := NewSync(srcTrie.Hash(), diskdb, nil, srcDb.Scheme())
 
 	// The code requests are ignored here since there is no code
 	// at the testing trie.

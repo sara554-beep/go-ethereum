@@ -135,6 +135,16 @@ func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
 	}
 }
 
+// NewDatabaseWithNodeDB creates a state database with a live node database.
+func NewDatabaseWithNodeDB(db *trie.Database) Database {
+	csc, _ := lru.New(codeSizeCacheSize)
+	return &cachingDB{
+		db:            db,
+		codeSizeCache: csc,
+		codeCache:     fastcache.New(codeCacheSize),
+	}
+}
+
 type cachingDB struct {
 	db            *trie.Database
 	codeSizeCache *lru.Cache

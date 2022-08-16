@@ -886,3 +886,8 @@ func (db *Database) CommitPreimages() error {
 	}
 	return db.preimages.commit(true)
 }
+
+// Scheme returns the node scheme used in the database.
+func (db *Database) Scheme() NodeScheme {
+	return &hashScheme{}
+}

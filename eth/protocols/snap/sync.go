@@ -392,7 +392,8 @@ type SyncPeer interface {
 //   - The peer delivers a stale response after a previous timeout
 //   - The peer delivers a refusal to serve the requested state
 type Syncer struct {
-	db ethdb.KeyValueStore // Database to store the trie nodes into (and dedup)
+	db     ethdb.KeyValueStore // Database to store the trie nodes into (and dedup)
+	scheme trie.NodeScheme     // Node scheme used in node database
 
 	root    common.Hash    // Current state trie root being synced
 	tasks   []*accountTask // Current account task set being synced
@@ -455,9 +456,10 @@ type Syncer struct {
 
 // NewSyncer creates a new snapshot syncer to download the Ethereum state over the
 // snap protocol.
-func NewSyncer(db ethdb.KeyValueStore) *Syncer {
+func NewSyncer(db ethdb.KeyValueStore, scheme trie.NodeScheme) *Syncer {
 	return &Syncer{
-		db: db,
+		db:     db,
+		scheme: scheme,
 
 		peers:    make(map[string]SyncPeer),
 		peerJoin: new(event.Feed),
@@ -550,7 +552,7 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 	s.lock.Lock()
 	s.root = root
 	s.healer = &healTask{
-		scheduler: state.NewStateSync(root, s.db, s.onHealState),
+		scheduler: state.NewStateSync(root, s.db, s.onHealState, s.scheme),
 		trieTasks: make(map[string]common.Hash),
 		codeTasks: make(map[common.Hash]struct{}),
 	}
@@ -710,8 +712,9 @@ func (s *Syncer) loadSyncStatus() {
 						s.accountBytes += common.StorageSize(len(key) + len(value))
 					},
 				}
-				task.genTrie = trie.NewStackTrie(task.genBatch)
-
+				task.genTrie = trie.NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+					s.scheme.WriteTrieNode(task.genBatch, owner, path, hash, val)
+				})
 				for accountHash, subtasks := range task.SubTasks {
 					for _, subtask := range subtasks {
 						subtask.genBatch = ethdb.HookedBatch{
@@ -720,7 +723,9 @@ func (s *Syncer) loadSyncStatus() {
 								s.storageBytes += common.StorageSize(len(key) + len(value))
 							},
 						}
-						subtask.genTrie = trie.NewStackTrieWithOwner(subtask.genBatch, accountHash)
+						subtask.genTrie = trie.NewStackTrieWithOwner(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+							s.scheme.WriteTrieNode(subtask.genBatch, owner, path, hash, val)
+						}, accountHash)
 					}
 				}
 			}
@@ -777,7 +782,9 @@ func (s *Syncer) loadSyncStatus() {
 			Last:     last,
 			SubTasks: make(map[common.Hash][]*storageTask),
 			genBatch: batch,
-			genTrie:  trie.NewStackTrie(batch),
+			genTrie: trie.NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+				s.scheme.WriteTrieNode(batch, owner, path, hash, val)
+			}),
 		})
 		log.Debug("Created account sync task", "from", next, "last", last)
 		next = common.BigToHash(new(big.Int).Add(last.Big(), common.Big1))
@@ -1798,7 +1805,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 		}
 		// Check if the account is a contract with an unknown storage trie
 		if account.Root != emptyRoot {
-			if ok, err := s.db.Has(account.Root[:]); err != nil || !ok {
+			if !s.scheme.HasTrieNode(s.db, res.hashes[i], nil, account.Root) {
 				// If there was a previous large state retrieval in progress,
 				// don't restart it from scratch. This happens if a sync cycle
 				// is interrupted and resumed later. However, *do* update the
@@ -1970,7 +1977,9 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 						Last:     r.End(),
 						root:     acc.Root,
 						genBatch: batch,
-						genTrie:  trie.NewStackTrieWithOwner(batch, account),
+						genTrie: trie.NewStackTrieWithOwner(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+							s.scheme.WriteTrieNode(batch, owner, path, hash, val)
+						}, account),
 					})
 					for r.Next() {
 						batch := ethdb.HookedBatch{
@@ -1984,7 +1993,9 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 							Last:     r.End(),
 							root:     acc.Root,
 							genBatch: batch,
-							genTrie:  trie.NewStackTrieWithOwner(batch, account),
+							genTrie: trie.NewStackTrieWithOwner(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+								s.scheme.WriteTrieNode(batch, owner, path, hash, val)
+							}, account),
 						})
 					}
 					for _, task := range tasks {
@@ -2029,7 +2040,9 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 		slots += len(res.hashes[i])
 
 		if i < len(res.hashes)-1 || res.subTask == nil {
-			tr := trie.NewStackTrieWithOwner(batch, account)
+			tr := trie.NewStackTrieWithOwner(func(owner common.Hash, path []byte, hash common.Hash, val []byte) {
+				s.scheme.WriteTrieNode(batch, owner, path, hash, val)
+			}, account)
 			for j := 0; j < len(res.hashes[i]); j++ {
 				tr.Update(res.hashes[i][j][:], res.slots[i][j])
 			}

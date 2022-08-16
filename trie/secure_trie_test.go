@@ -66,7 +66,7 @@ func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
 	// Re-create the trie based on the new state
-	trie, _ = NewSecure(common.Hash{}, root, triedb)
+	trie, _ = NewStateTrie(common.Hash{}, root, triedb)
 	return triedb, trie, content
 }
 
