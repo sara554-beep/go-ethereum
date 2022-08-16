@@ -132,23 +132,34 @@ func NewDatabase(db ethdb.Database) Database {
 func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
 	csc, _ := lru.New(codeSizeCacheSize)
 	return &cachingDB{
-		db:            trie.NewDatabaseWithConfig(db, config),
-		disk:          db,
+		db:            db,
+		triedb:        trie.NewDatabaseWithConfig(db, config),
+		codeSizeCache: csc,
+		codeCache:     fastcache.New(codeCacheSize),
+	}
+}
+
+// NewDatabaseWithNodeDB creates a state database with a live node database.
+func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
+	csc, _ := lru.New(codeSizeCacheSize)
+	return &cachingDB{
+		db:            db,
+		triedb:        triedb,
 		codeSizeCache: csc,
 		codeCache:     fastcache.New(codeCacheSize),
 	}
 }
 
 type cachingDB struct {
-	db            *trie.Database
-	disk          ethdb.KeyValueStore
+	db            ethdb.KeyValueStore
+	triedb        *trie.Database
 	codeSizeCache *lru.Cache
 	codeCache     *fastcache.Cache
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
-	tr, err := trie.NewStateTrie(common.Hash{}, root, db.db)
+	tr, err := trie.NewStateTrie(common.Hash{}, root, db.triedb)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +168,7 @@ func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
 
 // OpenStorageTrie opens the storage trie of an account.
 func (db *cachingDB) OpenStorageTrie(addrHash, root common.Hash) (Trie, error) {
-	tr, err := trie.NewStateTrie(addrHash, root, db.db)
+	tr, err := trie.NewStateTrie(addrHash, root, db.triedb)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +190,7 @@ func (db *cachingDB) ContractCode(addrHash, codeHash common.Hash) ([]byte, error
 	if code := db.codeCache.Get(nil, codeHash.Bytes()); len(code) > 0 {
 		return code, nil
 	}
-	code := rawdb.ReadCode(db.disk, codeHash)
+	code := rawdb.ReadCode(db.db, codeHash)
 	if len(code) > 0 {
 		db.codeCache.Set(codeHash.Bytes(), code)
 		db.codeSizeCache.Add(codeHash, len(code))
@@ -195,7 +206,7 @@ func (db *cachingDB) ContractCodeWithPrefix(addrHash, codeHash common.Hash) ([]b
 	if code := db.codeCache.Get(nil, codeHash.Bytes()); len(code) > 0 {
 		return code, nil
 	}
-	code := rawdb.ReadCodeWithPrefix(db.disk, codeHash)
+	code := rawdb.ReadCodeWithPrefix(db.db, codeHash)
 	if len(code) > 0 {
 		db.codeCache.Set(codeHash.Bytes(), code)
 		db.codeSizeCache.Add(codeHash, len(code))
@@ -215,10 +226,10 @@ func (db *cachingDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, erro
 
 // DiskDB returns the underlying key-value disk database.
 func (db *cachingDB) DiskDB() ethdb.KeyValueStore {
-	return db.disk
+	return db.db
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.
 func (db *cachingDB) TrieDB() *trie.Database {
-	return db.db
+	return db.triedb
 }

@@ -24,19 +24,19 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 )
 
 func newEmptySecure() *StateTrie {
-	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, NewDatabase(memorydb.New()))
+	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, NewDatabase(rawdb.NewMemoryDatabase()))
 	return trie
 }
 
 // makeTestStateTrie creates a large enough secure trie for testing.
 func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
 	// Create an empty trie
-	triedb := NewDatabase(memorydb.New())
+	triedb := NewDatabase(rawdb.NewMemoryDatabase())
 	trie, _ := NewStateTrie(common.Hash{}, common.Hash{}, triedb)
 
 	// Fill it with some arbitrary data
@@ -66,7 +66,7 @@ func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
 	// Re-create the trie based on the new state
-	trie, _ = NewSecure(common.Hash{}, root, triedb)
+	trie, _ = NewStateTrie(common.Hash{}, root, triedb)
 	return triedb, trie, content
 }
 
