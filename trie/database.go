@@ -793,6 +793,7 @@ func (db *Database) Update(nodes *MergedNodeSet) error {
 		for _, n := range set.leaves {
 			var account types.StateAccount
 			if err := rlp.DecodeBytes(n.blob, &account); err != nil {
+				panic(fmt.Errorf("failed to decode account %v", err))
 				return err
 			}
 			if account.Root != emptyRoot {

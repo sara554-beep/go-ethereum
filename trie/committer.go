@@ -166,9 +166,16 @@ func (c *committer) store(path []byte, n node) node {
 	// full node since it's impossible to store value in fullNode. The key
 	// length of leaves should be exactly same.
 	if c.collectLeaf {
-		if sn, ok := n.(*shortNode); ok {
-			if val, ok := sn.Val.(valueNode); ok {
-				c.nodes.addLeaf(&leaf{blob: val, parent: nhash})
+		switch n := n.(type) {
+		case *shortNode:
+			if child, ok := n.Val.(valueNode); ok {
+				c.nodes.addLeaf(&leaf{blob: child, parent: nhash})
+			}
+		case *fullNode:
+			// For children in range [0, 15], it's impossible
+			// to contain valueNode. Only check the 17th child.
+			if n.Children[16] != nil {
+				panic("value in the fullnode")
 			}
 		}
 	}
