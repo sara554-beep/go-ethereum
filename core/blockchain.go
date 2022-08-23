@@ -140,7 +140,7 @@ type CacheConfig struct {
 var defaultCacheConfig = &CacheConfig{
 	TrieCleanLimit: 256,
 	TrieDirtyLimit: 256,
-	TrieTimeLimit:  5 * time.Minute,
+	TrieTimeLimit:  30 * time.Second,
 	SnapshotLimit:  256,
 	SnapshotWait:   true,
 }
