@@ -313,7 +313,7 @@ func (s *stateObject) finalise(prefetch bool) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 // It will return nil if the trie has not been loaded and no changes have been
 // made. An error will be returned if the trie can't be loaded/updated correctly.
-func (s *stateObject) updateTrie(db Database) (Trie, error) {
+func (s *stateObject) updateTrie() (Trie, error) {
 	// Make sure all dirty slots are finalized into the pending storage area
 	s.finalise(false) // Don't prefetch anymore, pull directly if need be
 	if len(s.pendingStorage) == 0 {
@@ -328,7 +328,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		storage map[common.Hash][]byte
 		hasher  = s.db.hasher
 	)
-	tr, err := s.getTrie(db)
+	tr, err := s.getTrie(s.db.db)
 	if err != nil {
 		s.setError(err)
 		return nil, err
@@ -382,8 +382,8 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 
 // UpdateRoot sets the trie root to the current root hash of. An error
 // will be returned if trie root hash is not computed correctly.
-func (s *stateObject) updateRoot(db Database) {
-	tr, err := s.updateTrie(db)
+func (s *stateObject) updateRoot() {
+	tr, err := s.updateTrie()
 	if err != nil {
 		s.setError(fmt.Errorf("updateRoot (%x) error: %w", s.address, err))
 		return
@@ -401,8 +401,8 @@ func (s *stateObject) updateRoot(db Database) {
 
 // commitTrie submits the storage changes into the storage trie and re-computes
 // the root. Besides, all trie changes will be collected in a nodeset and returned.
-func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
-	tr, err := s.updateTrie(db)
+func (s *stateObject) commitTrie() (*trie.NodeSet, error) {
+	tr, err := s.updateTrie()
 	if err != nil {
 		return nil, err
 	}
@@ -418,9 +418,10 @@ func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
 		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 	}
 	root, nodes, err := tr.Commit(false)
-	if err == nil {
-		s.data.Root = root
+	if err != nil {
+		return nil, err
 	}
+	s.data.Root = root
 	return nodes, err
 }
 

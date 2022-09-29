@@ -28,7 +28,6 @@ import (
 func TestTrieTracer(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
-	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
 	vals := []struct{ k, v string }{
@@ -57,8 +56,8 @@ func TestTrieTracer(t *testing.T) {
 	if len(inserted) != len(seen) {
 		t.Fatalf("Unexpected inserted node tracked want %d got %d", len(seen), len(inserted))
 	}
-	for _, k := range inserted {
-		_, ok := seen[string(k)]
+	for _, path := range inserted {
+		_, ok := seen[string(path)]
 		if !ok {
 			t.Fatalf("Unexpected inserted node")
 		}
@@ -70,11 +69,10 @@ func TestTrieTracer(t *testing.T) {
 
 	// Commit the changes and re-create with new root
 	root, nodes, _ := trie.Commit(false)
-	if err := db.Update(NewWithNodeSet(nodes)); err != nil {
+	if err := db.Update(root, common.Hash{}, NewWithNodeSet(nodes)); err != nil {
 		t.Fatal(err)
 	}
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
 
 	// Delete all the elements, check deletion set
 	for _, val := range vals {
@@ -90,8 +88,8 @@ func TestTrieTracer(t *testing.T) {
 	if len(deleted) != len(seen) {
 		t.Fatalf("Unexpected deleted node tracked want %d got %d", len(seen), len(deleted))
 	}
-	for _, k := range deleted {
-		_, ok := seen[string(k)]
+	for _, path := range deleted {
+		_, ok := seen[string(path)]
 		if !ok {
 			t.Fatalf("Unexpected inserted node")
 		}
@@ -100,7 +98,6 @@ func TestTrieTracer(t *testing.T) {
 
 func TestTrieTracerNoop(t *testing.T) {
 	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
-	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
 	vals := []struct{ k, v string }{
@@ -129,7 +126,6 @@ func TestTrieTracerNoop(t *testing.T) {
 func TestTrieTracePrevValue(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
-	trie.tracer = newTracer()
 
 	paths, blobs := trie.tracer.prevList()
 	if len(paths) != 0 || len(blobs) != 0 {
@@ -155,18 +151,15 @@ func TestTrieTracePrevValue(t *testing.T) {
 
 	// Commit the changes and re-create with new root
 	root, nodes, _ := trie.Commit(false)
-	if err := db.Update(NewWithNodeSet(nodes)); err != nil {
+	if err := db.Update(root, common.Hash{}, NewWithNodeSet(nodes)); err != nil {
 		t.Fatal(err)
 	}
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-	trie.resolveAndTrack(root.Bytes(), nil)
 
 	// Load all nodes in trie
 	for _, val := range vals {
 		trie.TryGet([]byte(val.k))
 	}
-
 	// Ensure all nodes are tracked by tracer with correct prev-values
 	iter := trie.NodeIterator(nil)
 	seen := make(map[string][]byte)
@@ -197,33 +190,28 @@ func TestTrieTracePrevValue(t *testing.T) {
 	// Re-open the trie and iterate the trie, ensure nothing will be tracked.
 	// Iterator will not link any loaded nodes to trie.
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
 
 	iter = trie.NodeIterator(nil)
 	for iter.Next(true) {
 	}
 	paths, blobs = trie.tracer.prevList()
-	if len(paths) != 0 || len(blobs) != 0 {
-		t.Fatalf("Nothing should be tracked")
+	if len(paths) != 1 || len(blobs) != 1 {
+		t.Fatalf("Nothing except root should be tracked")
 	}
 
 	// Re-open the trie and generate proof for entries, ensure nothing will
 	// be tracked. Prover will not link any loaded nodes to trie.
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
 	for _, val := range vals {
 		trie.Prove([]byte(val.k), 0, rawdb.NewMemoryDatabase())
 	}
 	paths, blobs = trie.tracer.prevList()
-	if len(paths) != 0 || len(blobs) != 0 {
-		t.Fatalf("Nothing should be tracked")
+	if len(paths) != 1 || len(blobs) != 1 {
+		t.Fatalf("Nothing except root should be tracked")
 	}
 
 	// Delete entries from trie, ensure all previous values are correct.
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-	trie.resolveAndTrack(root.Bytes(), nil)
-
 	for _, val := range vals {
 		trie.TryDelete([]byte(val.k))
 	}
@@ -246,7 +234,6 @@ func TestTrieTracePrevValue(t *testing.T) {
 func TestDeleteAll(t *testing.T) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
-	trie.tracer = newTracer()
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
 	vals := []struct{ k, v string }{
@@ -265,13 +252,11 @@ func TestDeleteAll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Update(NewWithNodeSet(set)); err != nil {
+	if err := db.Update(root, common.Hash{}, NewWithNodeSet(set)); err != nil {
 		t.Fatal(err)
 	}
 	// Delete entries from trie, ensure all values are detected
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-	trie.resolveAndTrack(root.Bytes(), nil)
 
 	// Iterate all existent nodes
 	var (
@@ -295,16 +280,16 @@ func TestDeleteAll(t *testing.T) {
 	if root != emptyRoot {
 		t.Fatalf("Invalid trie root %v", root)
 	}
-	for path, blob := range set.deletes {
+	for path, n := range set.nodes {
 		prev, ok := nodes[path]
 		if !ok {
 			t.Fatalf("Extra node deleted %v", []byte(path))
 		}
-		if !bytes.Equal(prev, blob) {
+		if !bytes.Equal(prev, n.prev) {
 			t.Fatalf("Unexpected previous value %v", []byte(path))
 		}
 	}
-	if len(set.deletes) != len(nodes) {
+	if len(set.nodes) != len(nodes) {
 		t.Fatalf("Unexpected deletion set")
 	}
 }

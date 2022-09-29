@@ -120,6 +120,7 @@ type StateDB struct {
 	StorageReads         time.Duration
 	StorageHashes        time.Duration
 	StorageUpdates       time.Duration
+	StorageDeletes       time.Duration
 	StorageCommits       time.Duration
 	SnapshotAccountReads time.Duration
 	SnapshotStorageReads time.Duration
@@ -377,7 +378,7 @@ func (s *StateDB) StorageTrie(addr common.Address) (Trie, error) {
 		return nil, nil
 	}
 	cpy := stateObject.deepCopy(s)
-	if _, err := cpy.updateTrie(s.db); err != nil {
+	if _, err := cpy.updateTrie(); err != nil {
 		return nil, err
 	}
 	return cpy.getTrie(s.db)
@@ -903,7 +904,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// to pull useful data from disk.
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; !obj.deleted {
-			obj.updateRoot(s.db)
+			obj.updateRoot()
 		}
 	}
 	// Now we're about to start to write changes to the trie. The trie is so far
@@ -964,13 +965,11 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 
 	// Commit objects to the trie, measuring the elapsed time
 	var (
-		accountTrieNodesUpdated int
-		accountTrieNodesDeleted int
-		storageTrieNodesUpdated int
-		storageTrieNodesDeleted int
-		nodes                   = trie.NewMergedNodeSet()
+		accountTrieNodes int
+		storageTrieNodes int
+		nodes            = trie.NewMergedNodeSet()
+		codeWriter       = s.db.DiskDB().NewBatch()
 	)
-	codeWriter := s.db.DiskDB().NewBatch()
 	for addr := range s.stateObjectsDirty {
 		if obj := s.stateObjects[addr]; !obj.deleted {
 			// Write any contract code associated with the state object
@@ -979,26 +978,24 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				obj.dirtyCode = false
 			}
 			// Write any storage changes in the state object to its storage trie
-			set, err := obj.commitTrie(s.db)
+			set, err := obj.commitTrie()
 			if err != nil {
 				return common.Hash{}, err
 			}
-			// Merge the dirty nodes of storage trie into global set
+			// Fix the nodeset in case the account was destructed and then resurrect
+			// in the same block. The recorded prev-values of newly resurrect storage
+			// trie are incorrect and needs to be replaced with values in database.
 			if set != nil {
-				if err := nodes.Merge(set); err != nil {
-					return common.Hash{}, err
+				if _, destructed := s.stateObjectsDestruct[obj.address]; destructed {
+					s.repairSet(obj.address, obj.addrHash, set)
 				}
-				updates, deleted := set.Size()
-				storageTrieNodesUpdated += updates
-				storageTrieNodesDeleted += deleted
+			}
+			// Merge the dirty nodes of storage trie into global set.
+			if set != nil {
+				nodes.Merge(set)
+				storageTrieNodes += set.Size()
 			}
 		}
-		// If the contract is destructed, the storage is still left in the
-		// database as dangling data. Theoretically it's should be wiped from
-		// database as well, but in hash-based-scheme it's extremely hard to
-		// determine that if the trie nodes are also referenced by other storage,
-		// and in path-based-scheme some technical challenges are still unsolved.
-		// Although it won't affect the correctness but please fix it TODO(rjl493456442).
 	}
 	if len(s.stateObjectsDirty) > 0 {
 		s.stateObjectsDirty = make(map[common.Address]struct{})
@@ -1019,10 +1016,8 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	// Merge the dirty nodes of account trie into global set
 	if set != nil {
-		if err := nodes.Merge(set); err != nil {
-			return common.Hash{}, err
-		}
-		accountTrieNodesUpdated, accountTrieNodesDeleted = set.Size()
+		nodes.Merge(set)
+		accountTrieNodes = set.Size()
 	}
 	if metrics.EnabledExpensive {
 		s.AccountCommits += time.Since(start)
@@ -1031,10 +1026,8 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 		storageUpdatedMeter.Mark(int64(s.StorageUpdated))
 		accountDeletedMeter.Mark(int64(s.AccountDeleted))
 		storageDeletedMeter.Mark(int64(s.StorageDeleted))
-		accountTrieUpdatedMeter.Mark(int64(accountTrieNodesUpdated))
-		accountTrieDeletedMeter.Mark(int64(accountTrieNodesDeleted))
-		storageTriesUpdatedMeter.Mark(int64(storageTrieNodesUpdated))
-		storageTriesDeletedMeter.Mark(int64(storageTrieNodesDeleted))
+		accountTrieNodesMeter.Mark(int64(accountTrieNodes))
+		storageTriesNodesMeter.Mark(int64(storageTrieNodes))
 		s.AccountUpdated, s.AccountDeleted = 0, 0
 		s.StorageUpdated, s.StorageDeleted = 0, 0
 	}
@@ -1071,7 +1064,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	if root != origin {
 		start := time.Now()
-		if err := s.db.TrieDB().Update(nodes); err != nil {
+		if err := s.db.TrieDB().Update(root, origin, nodes); err != nil {
 			return common.Hash{}, err
 		}
 		s.originalRoot = root
@@ -1170,4 +1163,24 @@ func (s *StateDB) convertAccountSet(set map[common.Address]struct{}) map[common.
 		}
 	}
 	return ret
+}
+
+// repairSet fixes the incorrect prev values recorded in the provided set.
+func (s *StateDB) repairSet(addr common.Address, addrHash common.Hash, set *trie.NodeSet) error {
+	acctTrie, err := s.db.OpenTrie(s.originalRoot)
+	if err != nil {
+		return err
+	}
+	account, err := acctTrie.TryGetAccount(addr)
+	if err != nil {
+		return err
+	}
+	if account == nil || account.Root == emptyRoot || account.Root == (common.Hash{}) {
+		return nil
+	}
+	storageTrie, err := s.db.OpenStorageTrie(s.originalRoot, addrHash, account.Root)
+	if err != nil {
+		return err
+	}
+	return set.Fix(storageTrie.(*trie.StateTrie))
 }

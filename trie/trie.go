@@ -88,7 +88,7 @@ func New(id *ID, db NodeReader) (*Trie, error) {
 	trie := &Trie{
 		owner:  id.Owner,
 		reader: reader,
-		//tracer: newTracer(),
+		tracer: newTracer(),
 	}
 	if id.Root != (common.Hash{}) && id.Root != emptyRoot {
 		rootnode, err := trie.resolveAndTrack(id.Root[:], nil)
@@ -418,7 +418,7 @@ func (t *Trie) delete(n node, prefix, key []byte) (bool, node, error) {
 		switch child := child.(type) {
 		case *shortNode:
 			// The child shortNode is merged into its parent, track
-			// is deleted as well.
+			// it deleted as well.
 			t.tracer.onDelete(append(prefix, n.Key...))
 
 			// Deleting from the subtrie reduced it to another
