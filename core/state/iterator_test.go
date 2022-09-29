@@ -17,17 +17,17 @@
 package state
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 )
 
 // Tests that the node iterator indeed walks over the entire database contents.
 func TestNodeIteratorCoverage(t *testing.T) {
 	// Create some arbitrary test state to iterate
 	db, sdb, root, _ := makeTestState()
-	sdb.TrieDB().Commit(root, false, nil)
+	sdb.TrieDB().Commit(root, false)
 
 	state, err := New(root, sdb, nil)
 	if err != nil {
@@ -40,29 +40,42 @@ func TestNodeIteratorCoverage(t *testing.T) {
 			hashes[it.Hash] = struct{}{}
 		}
 	}
+	// Check in-disk nodes
+	var (
+		seenNodes = make(map[common.Hash]struct{})
+		seenCodes = make(map[common.Hash]struct{})
+	)
+	it := db.NewIterator(nil, nil)
+	for it.Next() {
+		if ok, _ := sdb.TrieDB().Scheme().IsTrieNode(it.Key()); !ok {
+			continue
+		}
+		seenNodes[common.BytesToHash(it.Key())] = struct{}{}
+	}
+	it.Release()
+
+	// Check in-disk codes
+	it = db.NewIterator(nil, nil)
+	for it.Next() {
+		ok, hash := rawdb.IsCodeKey(it.Key())
+		if !ok {
+			continue
+		}
+		if _, ok := hashes[common.BytesToHash(hash)]; !ok {
+			t.Errorf("state entry not reported %x", it.Key())
+		}
+		seenCodes[common.BytesToHash(hash)] = struct{}{}
+	}
+	it.Release()
+
 	// Cross check the iterated hashes and the database/nodepool content
 	for hash := range hashes {
-		if _, err = sdb.TrieDB().Node(hash); err != nil {
-			_, err = sdb.ContractCode(common.Hash{}, hash)
+		_, ok := seenNodes[hash]
+		if !ok {
+			_, ok = seenCodes[hash]
 		}
-		if err != nil {
+		if !ok {
 			t.Errorf("failed to retrieve reported node %x", hash)
 		}
 	}
-	for _, hash := range sdb.TrieDB().Nodes() {
-		if _, ok := hashes[hash]; !ok {
-			t.Errorf("state entry not reported %x", hash)
-		}
-	}
-	it := db.NewIterator(nil, nil)
-	for it.Next() {
-		key := it.Key()
-		if bytes.HasPrefix(key, []byte("secure-key-")) {
-			continue
-		}
-		if _, ok := hashes[common.BytesToHash(key)]; !ok {
-			t.Errorf("state entry not reported %x", key)
-		}
-	}
-	it.Release()
 }

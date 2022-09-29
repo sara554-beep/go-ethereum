@@ -69,6 +69,9 @@ var (
 	// skeletonSyncStatusKey tracks the skeleton sync status across restarts.
 	skeletonSyncStatusKey = []byte("SkeletonSyncStatus")
 
+	// triesJournalKey tracks the in-memory trie node layers across restarts.
+	triesJournalKey = []byte("TriesJournal")
+
 	// txIndexTailKey tracks the oldest block whose transactions have been indexed.
 	txIndexTailKey = []byte("TransactionIndexTail")
 
@@ -99,12 +102,14 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	skeletonHeaderPrefix  = []byte("S") // skeletonHeaderPrefix + num (uint64 big endian) -> header
+	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
+
+	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
+	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
 	genesisPrefix  = []byte("ethereum-genesis-") // genesis state prefix for the db
-
-	// Chain index prefixes (use `i` + single byte to avoid mixing data types).
 
 	// BloomBitsIndexPrefix is the data table of a chain indexer to track its progress
 	BloomBitsIndexPrefix = []byte("iB")
@@ -225,6 +230,39 @@ func IsCodeKey(key []byte) (bool, []byte) {
 		return true, key[len(CodePrefix):]
 	}
 	return false, nil
+}
+
+// trieNodeKey = TrieNodePrefix + encoded node key
+func trieNodeKey(key []byte) []byte {
+	return append(TrieNodePrefix, key...)
+}
+
+// isTrieNodeKey reports whether the given byte slice is the key of trie node.
+func isTrieNodeKey(key []byte) bool {
+	if bytes.HasPrefix(key, TrieNodePrefix) {
+		storage := key[len(TrieNodePrefix):]
+		if len(storage) == common.HashLength+1 {
+			return true // account trie
+		}
+		if len(storage) == 2*common.HashLength+1 {
+			return true // storage trie
+		}
+	}
+	return false
+}
+
+// IsTrieNodeKey reports whether the given byte slice is the key of trie node.
+// if so return the raw encoded trie key as well.
+func IsTrieNodeKey(key []byte) (bool, []byte) {
+	if isTrieNodeKey(key) {
+		return true, key[len(TrieNodePrefix):]
+	}
+	return false, nil
+}
+
+// reverseDiffLookupKey = ReverseDiffLookupPrefix + root (32 bytes)
+func reverseDiffLookupKey(root common.Hash) []byte {
+	return append(ReverseDiffLookupPrefix, root.Bytes()...)
 }
 
 // configKey = configPrefix + hash

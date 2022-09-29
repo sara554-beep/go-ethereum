@@ -16,6 +16,8 @@
 
 package rawdb
 
+import "path/filepath"
+
 // The list of table names of chain freezer.
 const (
 	// chainFreezerHeaderTable indicates the name of the freezer header table.
@@ -44,10 +46,34 @@ var chainFreezerNoSnappy = map[string]bool{
 	chainFreezerDifficultyTable: true,
 }
 
+const (
+	// reverseDiffTableSize defines the maximum size of freezer data files.
+	reverseDiffTableSize = 2 * 1000 * 1000 * 1000
+
+	// freezerReverseDiffTable indicates the name of the freezer reverse diff table.
+	freezerReverseDiffTable = "rdiffs"
+
+	// freezerReverseDiffHashTable indicates the name of the freezer reverse diff hash table.
+	freezerReverseDiffHashTable = "rdiff.hashes"
+)
+
+// ReveseDiffFreezerNoSnappy configures whether compression is disabled for the ancient
+// reverse diffs.
+var reverseDiffFreezerNoSnappy = map[string]bool{
+	freezerReverseDiffTable:     false,
+	freezerReverseDiffHashTable: true,
+}
+
 // The list of identifiers of ancient stores.
 var (
 	chainFreezerName = "chain" // the folder name of chain segment ancient store.
+	rdiffFreezerName = "rdiff" // the folder name of reverse diff ancient store.
 )
 
 // freezers the collections of all builtin freezers.
-var freezers = []string{chainFreezerName}
+var freezers = []string{chainFreezerName, rdiffFreezerName}
+
+// NewReverseDiffFreezer initializes the freezer for reverse diffs.
+func NewReverseDiffFreezer(ancientDir string, readOnly bool) (*Freezer, error) {
+	return NewFreezer(filepath.Join(ancientDir, rdiffFreezerName), "eth/db/rdiff", readOnly, reverseDiffTableSize, reverseDiffFreezerNoSnappy)
+}
