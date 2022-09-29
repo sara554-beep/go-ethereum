@@ -152,7 +152,7 @@ func (f *fuzzer) fuzz() int {
 		spongeB = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
 		dbB     = trie.NewDatabase(rawdb.NewDatabase(spongeB))
 		trieB   = trie.NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
-			dbB.Scheme().WriteTrieNode(spongeB, owner, path, hash, blob)
+			rawdb.WriteTrieNode(spongeB, owner, path, hash, blob, dbB.Scheme())
 		})
 		vals        kvs
 		useful      bool
@@ -187,10 +187,10 @@ func (f *fuzzer) fuzz() int {
 		panic(err)
 	}
 	if nodes != nil {
-		dbA.Update(trie.NewWithNodeSet(nodes))
+		dbA.Update(rootA, common.Hash{}, trie.NewWithNodeSet(nodes))
 	}
 	// Flush memdb -> disk (sponge)
-	dbA.Commit(rootA, false, nil)
+	dbA.Commit(rootA, false)
 
 	// Stacktrie requires sorted insertion
 	sort.Sort(vals)
