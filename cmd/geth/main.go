@@ -149,7 +149,7 @@ var (
 		utils.GpoIgnoreGasPriceFlag,
 		utils.MinerNotifyFullFlag,
 		configFileFlag,
-	}, utils.NetworkFlags, utils.DatabasePathFlags)
+	}, utils.NetworkFlags, utils.DatabasePathFlags, utils.StateSchemeFlags)
 
 	rpcFlags = []cli.Flag{
 		utils.HTTPEnabledFlag,

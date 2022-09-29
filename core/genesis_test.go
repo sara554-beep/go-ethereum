@@ -36,12 +36,15 @@ func TestInvalidCliqueConfig(t *testing.T) {
 	block := DefaultGoerliGenesisBlock()
 	block.ExtraData = []byte{}
 	db := rawdb.NewMemoryDatabase()
-	if _, err := block.Commit(db, trie.NewDatabase(db)); err == nil {
+	if _, err := block.Commit(db, trie.NewHashDatabase(db)); err == nil {
 		t.Fatal("Expected error on invalid clique config")
 	}
 }
 
-func TestSetupGenesis(t *testing.T) {
+func TestSetupGenesisHashBased(t *testing.T) { testSetupGenesis(t, rawdb.HashScheme) }
+func TestSetupGenesisPathBased(t *testing.T) { testSetupGenesis(t, rawdb.PathScheme) }
+
+func testSetupGenesis(t *testing.T, scheme string) {
 	var (
 		customghash = common.HexToHash("0x89c99d90b79719238d2645c7642f2c9295246e80775b38cfd162b696817fbd50")
 		customg     = Genesis{
@@ -63,7 +66,7 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "genesis without ChainConfig",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				return SetupGenesisBlock(db, trie.NewDatabase(db), new(Genesis))
+				return SetupGenesisBlock(db, trie.NewDatabase(db, &trie.Config{Scheme: scheme}), new(Genesis))
 			},
 			wantErr:    errGenesisNoConfig,
 			wantConfig: params.AllEthashProtocolChanges,
@@ -71,7 +74,7 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "no block in DB, genesis == nil",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				return SetupGenesisBlock(db, trie.NewDatabase(db), nil)
+				return SetupGenesisBlock(db, trie.NewDatabase(db, &trie.Config{Scheme: scheme}), nil)
 			},
 			wantHash:   params.MainnetGenesisHash,
 			wantConfig: params.MainnetChainConfig,
@@ -80,7 +83,7 @@ func TestSetupGenesis(t *testing.T) {
 			name: "mainnet block in DB, genesis == nil",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				DefaultGenesisBlock().MustCommit(db)
-				return SetupGenesisBlock(db, trie.NewDatabase(db), nil)
+				return SetupGenesisBlock(db, trie.NewDatabase(db, &trie.Config{Scheme: scheme}), nil)
 			},
 			wantHash:   params.MainnetGenesisHash,
 			wantConfig: params.MainnetChainConfig,
@@ -88,8 +91,9 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "custom block in DB, genesis == nil",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				customg.MustCommit(db)
-				return SetupGenesisBlock(db, trie.NewDatabase(db), nil)
+				tdb := trie.NewDatabase(db, &trie.Config{Scheme: scheme})
+				customg.Commit(db, tdb)
+				return SetupGenesisBlock(db, tdb, nil)
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
@@ -97,8 +101,9 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "custom block in DB, genesis == ropsten",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				customg.MustCommit(db)
-				return SetupGenesisBlock(db, trie.NewDatabase(db), DefaultRopstenGenesisBlock())
+				tdb := trie.NewDatabase(db, &trie.Config{Scheme: scheme})
+				customg.Commit(db, tdb)
+				return SetupGenesisBlock(db, tdb, DefaultRopstenGenesisBlock())
 			},
 			wantErr:    &GenesisMismatchError{Stored: customghash, New: params.RopstenGenesisHash},
 			wantHash:   params.RopstenGenesisHash,
@@ -107,8 +112,9 @@ func TestSetupGenesis(t *testing.T) {
 		{
 			name: "compatible config in DB",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
-				oldcustomg.MustCommit(db)
-				return SetupGenesisBlock(db, trie.NewDatabase(db), &customg)
+				tdb := trie.NewDatabase(db, &trie.Config{Scheme: scheme})
+				oldcustomg.Commit(db, tdb)
+				return SetupGenesisBlock(db, tdb, &customg)
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
@@ -118,16 +124,17 @@ func TestSetupGenesis(t *testing.T) {
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, error) {
 				// Commit the 'old' genesis block with Homestead transition at #2.
 				// Advance to block #4, past the homestead transition block of customg.
-				genesis := oldcustomg.MustCommit(db)
+				tdb := trie.NewDatabase(db, &trie.Config{Scheme: scheme})
+				oldcustomg.Commit(db, tdb)
 
-				bc, _ := NewBlockChain(db, nil, &oldcustomg, nil, ethash.NewFullFaker(), vm.Config{}, nil, nil)
+				bc, _ := NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), &oldcustomg, nil, ethash.NewFullFaker(), vm.Config{}, nil, nil)
 				defer bc.Stop()
 
-				blocks, _ := GenerateChain(oldcustomg.Config, genesis, ethash.NewFaker(), db, 4, nil)
+				_, blocks, _ := GenerateChainWithGenesis(&oldcustomg, ethash.NewFaker(), 4, nil)
 				bc.InsertChain(blocks)
 
 				// This should return a compatibility error.
-				return SetupGenesisBlock(db, trie.NewDatabase(db), &customg)
+				return SetupGenesisBlock(db, tdb, &customg)
 			},
 			wantHash:   customghash,
 			wantConfig: customg.Config,
