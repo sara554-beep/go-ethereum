@@ -32,7 +32,7 @@ type Node struct {
 	Blob []byte      // Encoded node blob, nil for the deleted node
 }
 
-// Size returns the total memory size used by this node.
+// Size returns the total memory size used by this object.
 func (n *Node) Size() int {
 	return len(n.Blob) + common.HashLength
 }
@@ -45,7 +45,7 @@ func (n *Node) IsDeleted() bool {
 // WithPrev wraps the Node with the previous node value attached.
 type WithPrev struct {
 	*Node
-	Prev []byte // Encoded original value, nil means it's non-existent
+	Prev []byte // Encoded original value, nil means it was non-existent
 }
 
 // Unwrap returns the internal Node object.
@@ -53,7 +53,7 @@ func (n *WithPrev) Unwrap() *Node {
 	return n.Node
 }
 
-// Size returns the total memory size used by this node. It overloads
+// Size returns the total memory size used by this object. It overloads
 // the function in Node by counting the size of previous value as well.
 func (n *WithPrev) Size() int {
 	return n.Node.Size() + len(n.Prev)

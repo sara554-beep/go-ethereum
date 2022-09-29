@@ -76,9 +76,9 @@ func TestMissingRoot(t *testing.T) {
 
 func TestMissingNode(t *testing.T) {
 	testMissingNode(t, false, rawdb.HashScheme)
-	//testMissingNode(t, false, rawdb.PathScheme)
+	testMissingNode(t, false, rawdb.PathScheme)
 	testMissingNode(t, true, rawdb.HashScheme)
-	//testMissingNode(t, true, rawdb.PathScheme)
+	testMissingNode(t, true, rawdb.PathScheme)
 }
 
 func testMissingNode(t *testing.T, memonly bool, scheme string) {
@@ -457,9 +457,9 @@ func verifyAccessList(old *Trie, new *Trie, set *trienode.NodeSet) error {
 
 func runRandTest(rt randTest) bool {
 	var scheme = rawdb.HashScheme
-	//if rand.Intn(2) == 0 {
-	//	scheme = rawdb.PathScheme
-	//}
+	if rand.Intn(2) == 0 {
+		scheme = rawdb.PathScheme
+	}
 	var (
 		origin   = types.EmptyRootHash
 		triedb   = newTestDatabase(rawdb.NewMemoryDatabase(), scheme)
@@ -792,7 +792,7 @@ func (s *spongeDb) Put(key []byte, value []byte) error {
 	if len(valbrief) > 8 {
 		valbrief = valbrief[:8]
 	}
-	s.journal = append(s.journal, fmt.Sprintf("%v: PUT([%x...], [%d bytes] %x...)\n", s.id, key[:8], len(value), valbrief))
+	s.journal = append(s.journal, fmt.Sprintf("%v: PUT([%v], [%d bytes] %x...)\n", s.id, key, len(value), valbrief))
 	s.sponge.Write(key)
 	s.sponge.Write(value)
 	return nil
