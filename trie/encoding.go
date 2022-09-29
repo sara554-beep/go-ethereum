@@ -94,6 +94,7 @@ func compactToHex(compact []byte) []byte {
 	return base[chop:]
 }
 
+// keybytesToHex turns key bytes into hex nibbles.
 func keybytesToHex(str []byte) []byte {
 	l := len(str)*2 + 1
 	var nibbles = make([]byte, l)
