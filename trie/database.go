@@ -26,14 +26,16 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
+	"github.com/ethereum/go-ethereum/trie/triedb/snap"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
 // Config defines all necessary options for database.
 type Config struct {
-	Cache     int    // Memory allowance (MB) to use for caching trie nodes in memory
-	Journal   string // Journal of clean cache to survive node restarts
-	Preimages bool   // Flag whether the preimage of trie key is recorded
+	Cache     int          // Memory allowance (MB) to use for caching trie nodes in memory
+	Journal   string       // Journal of clean cache to survive node restarts
+	Preimages bool         // Flag whether the preimage of trie key is recorded
+	Snap      *snap.Config // Configs for experimental path-based scheme, not used yet.
 }
 
 // backend defines the methods needed to access/update trie nodes in different
@@ -115,11 +117,21 @@ func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
 // GetReader returns a reader for accessing all trie nodes with provided
 // state root. An error will be returned in case the state is not available.
 func (db *Database) GetReader(blockRoot common.Hash) (Reader, error) {
-	reader := db.backend.(*hashdb.Database).GetReader(blockRoot)
-	if reader == nil {
-		return nil, errors.New("state not available")
+	switch b := db.backend.(type) {
+	case *hashdb.Database:
+		reader := b.GetReader(blockRoot)
+		if reader == nil {
+			return nil, errors.New("state not available")
+		}
+		return reader, nil
+	case *snap.Database:
+		reader := b.GetReader(blockRoot)
+		if reader == nil {
+			return nil, errors.New("state not available")
+		}
+		return reader, nil
 	}
-	return reader, nil
+	return nil, errors.New("unknown backend")
 }
 
 // Update performs a state transition by committing dirty nodes contained
@@ -268,4 +280,60 @@ func (db *Database) Node(hash common.Hash) ([]byte, error) {
 		return nil, errors.New("not supported")
 	}
 	return hdb.Node(hash)
+}
+
+// Recover rollbacks the database to a specified historical point. The state is
+// supported as the rollback destination only if it's canonical state and the
+// corresponding trie histories are existent. It's only supported by snap database
+// and will return an error for others.
+func (db *Database) Recover(target common.Hash) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Recover(target)
+}
+
+// Recoverable returns the indicator if the specified state is enabled to be
+// recovered. It's only supported by snap database and will return an error
+// for others.
+func (db *Database) Recoverable(root common.Hash) (bool, error) {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return false, errors.New("not supported")
+	}
+	return snapDB.Recoverable(root), nil
+}
+
+// Reset wipes all available journal from the persistent database and discard
+// all caches and diff layers. Using the given root to create a new disk layer.
+// It's only supported by path-based database and will return an error for others.
+func (db *Database) Reset(root common.Hash) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Reset(root)
+}
+
+// Journal commits an entire diff hierarchy to disk into a single journal entry.
+// This is meant to be used during shutdown to persist the snapshot without
+// flattening everything down (bad for reorgs). It's only supported by path-based
+// database and will return an error for others.
+func (db *Database) Journal(root common.Hash) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Journal(root)
+}
+
+// SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).
+// It's only supported by path-based database and will return an error for others.
+func (db *Database) SetCacheSize(size int) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.SetCacheSize(size)
 }

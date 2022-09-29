@@ -121,6 +121,7 @@ type StateDB struct {
 	StorageReads         time.Duration
 	StorageHashes        time.Duration
 	StorageUpdates       time.Duration
+	StorageDeletes       time.Duration
 	StorageCommits       time.Duration
 	SnapshotAccountReads time.Duration
 	SnapshotStorageReads time.Duration
