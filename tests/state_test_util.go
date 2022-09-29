@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -287,7 +288,8 @@ func (t *StateTest) gasLimit(subtest StateSubtest) uint64 {
 }
 
 func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter bool) (*snapshot.Tree, *state.StateDB) {
-	sdb := state.NewDatabase(db)
+	triedb := trie.NewDatabase(db, &trie.Config{Scheme: rawdb.HashScheme})
+	sdb := state.NewDatabaseWithNodeDB(db, triedb)
 	statedb, _ := state.New(common.Hash{}, sdb, nil)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
@@ -308,7 +310,7 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter boo
 			NoBuild:    false,
 			AsyncBuild: false,
 		}
-		snaps, _ = snapshot.New(snapconfig, db, sdb.TrieDB(), root)
+		snaps, _ = snapshot.New(snapconfig, db, triedb, root)
 	}
 	statedb, _ = state.New(root, sdb, snaps)
 	return snaps, statedb

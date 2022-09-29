@@ -737,22 +737,10 @@ func (db *hashDatabase) Size() common.StorageSize {
 	return db.dirtiesSize + db.childrenSize + metadataSize - metarootRefs
 }
 
-// IsEmpty returns an indicator if the node database is empty.
-// Hash database is only regarded as empty if *non-empty* genesis
-// state is missing.
-func (db *hashDatabase) IsEmpty() bool {
-	hash := rawdb.ReadCanonicalHash(db.diskdb, 0)
-	if hash == (common.Hash{}) {
-		return true // genesis block is not existent
-	}
-	block := rawdb.ReadBlock(db.diskdb, hash, 0)
-	if block == nil {
-		return true // genesis block is not existent
-	}
-	if convertEmpty(block.Root()) == emptyRoot {
-		return false // genesis block is empty
-	}
-	return !rawdb.HasLegacyTrieNode(db.diskdb, block.Root())
+// Initialized returns an indicator if state data is already initialized
+// in hash-based scheme by checking the presence of genesis state.
+func (db *hashDatabase) Initialized(genesisRoot common.Hash) bool {
+	return rawdb.HasLegacyTrieNode(db.diskdb, genesisRoot)
 }
 
 // Update inserts the dirty nodes in provided nodeset into database and
