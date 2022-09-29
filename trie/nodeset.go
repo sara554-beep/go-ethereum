@@ -28,26 +28,25 @@ import (
 // NodeSet contains all dirty nodes collected during the commit operation.
 // Each node is keyed by path. It's not thread-safe to use.
 type NodeSet struct {
-	owner   common.Hash            // the identifier of the trie
-	nodes   map[string]*types.Node // the set of dirty nodes(inserted, updated, deleted)
-	leaves  []*leaf                // the list of dirty leaves
-	updates int                    // the count of updated and inserted nodes
-	deletes int                    // the count of deleted nodes
+	owner   common.Hash // the identifier of the trie
+	leaves  []*leaf     // the list of dirty leaves
+	updates int         // the count of updated and inserted nodes
+	deletes int         // the count of deleted nodes
 
-	// The list of accessed nodes, which records the original node value.
-	// The origin value is expected to be nil for newly inserted node
-	// and is expected to be non-nil for other types(updated, deleted).
-	accessList map[string][]byte
+	// The set of all dirty nodes. Dirty nodes include newly inserted nodes,
+	// deleted nodes and updated nodes. The original value of the newly
+	// inserted node must be nil, and the original value of the other two
+	// types must be non-nil.
+	nodes map[string]*types.NodeWithPrev
 }
 
 // NewNodeSet initializes an empty node set to be used for tracking dirty nodes
 // from a specific account or storage trie. The owner is zero for the account
 // trie and the owning account address hash for storage tries.
-func NewNodeSet(owner common.Hash, accessList map[string][]byte) *NodeSet {
+func NewNodeSet(owner common.Hash) *NodeSet {
 	return &NodeSet{
-		owner:      owner,
-		nodes:      make(map[string]*types.Node),
-		accessList: accessList,
+		owner: owner,
+		nodes: make(map[string]*types.NodeWithPrev),
 	}
 }
 
@@ -61,23 +60,21 @@ func (set *NodeSet) forEachWithOrder(callback func(path string, n *types.Node)) 
 	// Bottom-up, longest path first
 	sort.Sort(sort.Reverse(paths))
 	for _, path := range paths {
-		callback(path, set.nodes[path])
+		callback(path, set.nodes[path].Unwrap())
 	}
 }
 
-// markUpdated marks the node as dirty(newly-inserted or updated).
-func (set *NodeSet) markUpdated(path []byte, node *types.Node) {
-	set.nodes[string(path)] = node
-	set.updates += 1
+// addNode adds the provided dirty node into set.
+func (set *NodeSet) addNode(path []byte, n *types.NodeWithPrev) {
+	if n.IsDeleted() {
+		set.deletes += 1
+	} else {
+		set.updates += 1
+	}
+	set.nodes[string(path)] = n
 }
 
-// markDeleted marks the node as deleted.
-func (set *NodeSet) markDeleted(path []byte) {
-	set.nodes[string(path)] = types.NewDeletedNode()
-	set.deletes += 1
-}
-
-// addLeaf collects the provided leaf node into set.
+// addLeaf adds the provided leaf node into set.
 func (set *NodeSet) addLeaf(node *leaf) {
 	set.leaves = append(set.leaves, node)
 }
@@ -105,17 +102,16 @@ func (set *NodeSet) Summary() string {
 		for path, n := range set.nodes {
 			// Deletion
 			if n.IsDeleted() {
-				fmt.Fprintf(out, "  [-]: %x prev: %x\n", path, set.accessList[path])
+				fmt.Fprintf(out, "  [-]: %x prev: %x\n", path, n.Prev)
 				continue
 			}
 			// Insertion
-			origin, ok := set.accessList[path]
-			if !ok {
+			if len(n.Prev) == 0 {
 				fmt.Fprintf(out, "  [+]: %x -> %v\n", path, n.Hash)
 				continue
 			}
 			// Update
-			fmt.Fprintf(out, "  [*]: %x -> %v prev: %x\n", path, n.Hash, origin)
+			fmt.Fprintf(out, "  [*]: %x -> %v prev: %x\n", path, n.Hash, n.Prev)
 		}
 	}
 	for _, n := range set.leaves {

@@ -18,9 +18,9 @@ package trie
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/types"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/trie/types"
 )
 
 // leaf represents a trie leaf node
@@ -34,13 +34,15 @@ type leaf struct {
 // insertion order.
 type committer struct {
 	nodes       *NodeSet
+	tracer      *tracer
 	collectLeaf bool
 }
 
 // newCommitter creates a new committer or picks one from the pool.
-func newCommitter(nodeset *NodeSet, collectLeaf bool) *committer {
+func newCommitter(nodeset *NodeSet, tracer *tracer, collectLeaf bool) *committer {
 	return &committer{
 		nodes:       nodeset,
+		tracer:      tracer,
 		collectLeaf: collectLeaf,
 	}
 }
@@ -135,14 +137,18 @@ func (c *committer) store(path []byte, n node) node {
 		// The node is embedded in its parent, in other words, this node
 		// will not be stored in the database independently, mark it as
 		// deleted only if the node was existent in database before.
-		if _, ok := c.nodes.accessList[string(path)]; ok {
-			c.nodes.markDeleted(path)
+		prev, ok := c.tracer.accessList[string(path)]
+		if ok {
+			c.nodes.addNode(path, types.NewDeletedNodeWithPrev(prev))
 		}
 		return n
 	}
 	// Collect the dirty node to nodeset for return.
-	nhash := common.BytesToHash(hash)
-	c.nodes.markUpdated(path, types.NewNode(nhash, nodeToBytes(n)))
+	var (
+		nhash = common.BytesToHash(hash)
+		node  = types.NewNodeWithPrev(nhash, nodeToBytes(n), c.tracer.accessList[string(path)])
+	)
+	c.nodes.addNode(path, node)
 
 	// Collect the corresponding leaf node if it's required. We don't check
 	// full node since it's impossible to store value in fullNode. The key
