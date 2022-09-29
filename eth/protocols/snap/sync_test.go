@@ -623,7 +623,7 @@ func TestSyncBloatedProof(t *testing.T) {
 	}
 }
 
-func setupSyncer(scheme trie.NodeScheme, peers ...*testPeer) *Syncer {
+func setupSyncer(scheme string, peers ...*testPeer) *Syncer {
 	stateDb := rawdb.NewMemoryDatabase()
 	syncer := NewSyncer(stateDb, scheme)
 	for _, peer := range peers {
@@ -1366,7 +1366,7 @@ func getCodeByHash(hash common.Hash) []byte {
 }
 
 // makeAccountTrieNoStorage spits out a trie, along with the leafs
-func makeAccountTrieNoStorage(n int) (trie.NodeScheme, *trie.Trie, entrySlice) {
+func makeAccountTrieNoStorage(n int) (string, *trie.Trie, entrySlice) {
 	var (
 		db      = trie.NewDatabase(rawdb.NewMemoryDatabase())
 		accTrie = trie.NewEmpty(db)
@@ -1389,7 +1389,7 @@ func makeAccountTrieNoStorage(n int) (trie.NodeScheme, *trie.Trie, entrySlice) {
 	// Commit the state changes into db and re-create the trie
 	// for accessing later.
 	root, nodes, _ := accTrie.Commit(false)
-	db.Update(trie.NewWithNodeSet(nodes))
+	db.Update(root, common.Hash{}, trie.NewWithNodeSet(nodes))
 
 	accTrie, _ = trie.New(trie.StateTrieID(root), db)
 	return db.Scheme(), accTrie, entries
@@ -1398,7 +1398,7 @@ func makeAccountTrieNoStorage(n int) (trie.NodeScheme, *trie.Trie, entrySlice) {
 // makeBoundaryAccountTrie constructs an account trie. Instead of filling
 // accounts normally, this function will fill a few accounts which have
 // boundary hash.
-func makeBoundaryAccountTrie(n int) (trie.NodeScheme, *trie.Trie, entrySlice) {
+func makeBoundaryAccountTrie(n int) (string, *trie.Trie, entrySlice) {
 	var (
 		entries    entrySlice
 		boundaries []common.Hash
@@ -1451,7 +1451,7 @@ func makeBoundaryAccountTrie(n int) (trie.NodeScheme, *trie.Trie, entrySlice) {
 	// Commit the state changes into db and re-create the trie
 	// for accessing later.
 	root, nodes, _ := accTrie.Commit(false)
-	db.Update(trie.NewWithNodeSet(nodes))
+	db.Update(root, common.Hash{}, trie.NewWithNodeSet(nodes))
 
 	accTrie, _ = trie.New(trie.StateTrieID(root), db)
 	return db.Scheme(), accTrie, entries
@@ -1459,7 +1459,7 @@ func makeBoundaryAccountTrie(n int) (trie.NodeScheme, *trie.Trie, entrySlice) {
 
 // makeAccountTrieWithStorageWithUniqueStorage creates an account trie where each accounts
 // has a unique storage set.
-func makeAccountTrieWithStorageWithUniqueStorage(accounts, slots int, code bool) (trie.NodeScheme, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
+func makeAccountTrieWithStorageWithUniqueStorage(accounts, slots int, code bool) (string, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
 	var (
 		db             = trie.NewDatabase(rawdb.NewMemoryDatabase())
 		accTrie        = trie.NewEmpty(db)
@@ -1500,7 +1500,7 @@ func makeAccountTrieWithStorageWithUniqueStorage(accounts, slots int, code bool)
 	nodes.Merge(set)
 
 	// Commit gathered dirty nodes into database
-	db.Update(nodes)
+	db.Update(root, common.Hash{}, nodes)
 
 	// Re-create tries with new root
 	accTrie, _ = trie.New(trie.StateTrieID(root), db)
@@ -1514,7 +1514,7 @@ func makeAccountTrieWithStorageWithUniqueStorage(accounts, slots int, code bool)
 }
 
 // makeAccountTrieWithStorage spits out a trie, along with the leafs
-func makeAccountTrieWithStorage(accounts, slots int, code, boundary bool) (trie.NodeScheme, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
+func makeAccountTrieWithStorage(accounts, slots int, code, boundary bool) (string, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
 	var (
 		db             = trie.NewDatabase(rawdb.NewMemoryDatabase())
 		accTrie        = trie.NewEmpty(db)
@@ -1565,7 +1565,7 @@ func makeAccountTrieWithStorage(accounts, slots int, code, boundary bool) (trie.
 	nodes.Merge(set)
 
 	// Commit gathered dirty nodes into database
-	db.Update(nodes)
+	db.Update(root, common.Hash{}, nodes)
 
 	// Re-create tries with new root
 	accTrie, err := trie.New(trie.StateTrieID(root), db)
