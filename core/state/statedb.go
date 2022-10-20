@@ -800,8 +800,14 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 				delete(s.snapAccounts, obj.addrHash)       // Clear out any previously updated account data (may be recreated via a ressurrect)
 				delete(s.snapStorage, obj.addrHash)        // Clear out any previously updated storage data (may be recreated via a ressurrect)
 			}
+			if obj.addrHash == common.HexToHash("0x88593f406750a4f40bdf82a1efbacbec6a5297e62830ee1a8942f083de97ad14") {
+				log.Info("Try to suiside account", obj.data.Root.Hex())
+			}
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
+			if obj.addrHash == common.HexToHash("0x88593f406750a4f40bdf82a1efbacbec6a5297e62830ee1a8942f083de97ad14") {
+				log.Info("Try to finalize account", obj.data.Root.Hex())
+			}
 		}
 		s.stateObjectsPending[addr] = struct{}{}
 		s.stateObjectsDirty[addr] = struct{}{}
@@ -847,6 +853,9 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; !obj.deleted {
 			obj.updateRoot(s.db)
+			if obj.addrHash == common.HexToHash("0x88593f406750a4f40bdf82a1efbacbec6a5297e62830ee1a8942f083de97ad14") {
+				log.Info("Try to update account", obj.data.Root.Hex())
+			}
 		}
 	}
 	// Now we're about to start to write changes to the trie. The trie is so far
@@ -862,6 +871,9 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 		if obj := s.stateObjects[addr]; obj.deleted {
 			s.deleteStateObject(obj)
 			s.AccountDeleted += 1
+			if obj.addrHash == common.HexToHash("0x88593f406750a4f40bdf82a1efbacbec6a5297e62830ee1a8942f083de97ad14") {
+				log.Info("Try to delete account from trie", obj.data.Root.Hex())
+			}
 		} else {
 			s.updateStateObject(obj)
 			s.AccountUpdated += 1

@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"time"
@@ -400,6 +401,9 @@ func (s *stateObject) DeleteTrie(db Database) (*trie.NodeSet, error) {
 	// Track the amount of time wasted on iterating and deleting the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageDeletes += time.Since(start) }(time.Now())
+	}
+	if s.addrHash == common.HexToHash("0x88593f406750a4f40bdf82a1efbacbec6a5297e62830ee1a8942f083de97ad14") {
+		log.Info("Try to delete target account", s.data.Root.Hex())
 	}
 	stTrie, err := db.OpenStorageTrie(s.db.originalRoot, s.addrHash, s.data.Root)
 	if err != nil {
