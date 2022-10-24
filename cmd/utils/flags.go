@@ -22,6 +22,9 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/rlp"
 	"math"
 	"math/big"
 	"net/http"
@@ -225,6 +228,11 @@ var (
 		Name:     "syncmode",
 		Usage:    `Blockchain sync mode ("snap", "full" or "light")`,
 		Value:    &defaultSyncMode,
+		Category: flags.EthCategory,
+	}
+	SyncTargetFlag = &cli.StringFlag{
+		Name:     "synctarget",
+		Usage:    `RLP-encoded block as the sync target`,
 		Category: flags.EthCategory,
 	}
 	GCModeFlag = &cli.StringFlag{
@@ -1873,6 +1881,17 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.EthDiscoveryURLs = SplitAndTrim(urls)
 		}
 	}
+	if ctx.IsSet(SyncTargetFlag.Name) {
+		blob, err := hexutil.Decode(ctx.String(SyncTargetFlag.Name))
+		if err != nil {
+			log.Crit("Failed to decode sync target", "err", err)
+		}
+		var block types.Block
+		if err := rlp.DecodeBytes(blob, &block); err != nil {
+			log.Crit("Failed to decode sync target", "err", err)
+		}
+		cfg.SyncTarget = &block
+	}
 	// Override any default configs for hard coded networks.
 	switch {
 	case ctx.Bool(MainnetFlag.Name):
@@ -2026,6 +2045,10 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config) (ethapi.Backend
 		Fatalf("Failed to register the Engine API service: %v", err)
 	}
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
+
+	if cfg.SyncTarget != nil {
+		ethcatalyst.RegisterMockConsensusLayer(stack, backend, cfg.SyncTarget, nil)
+	}
 	return backend.APIBackend, backend
 }
 

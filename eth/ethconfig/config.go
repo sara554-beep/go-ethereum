@@ -18,6 +18,7 @@
 package ethconfig
 
 import (
+	"github.com/ethereum/go-ethereum/core/types"
 	"math/big"
 	"os"
 	"os/user"
@@ -210,6 +211,8 @@ type Config struct {
 
 	// OverrideTerminalTotalDifficultyPassed (TODO: remove after the fork)
 	OverrideTerminalTotalDifficultyPassed *bool `toml:",omitempty"`
+
+	SyncTarget *types.Block
 }
 
 // CreateConsensusEngine creates a consensus engine for the given chain configuration.
