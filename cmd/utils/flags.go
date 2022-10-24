@@ -22,7 +22,6 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 	"math"
@@ -230,10 +229,11 @@ var (
 		Value:    &defaultSyncMode,
 		Category: flags.EthCategory,
 	}
-	SyncTargetFlag = &cli.StringFlag{
-		Name:     "synctarget",
-		Usage:    `RLP-encoded block as the sync target`,
-		Category: flags.EthCategory,
+	SyncTargetFlag = &cli.PathFlag{
+		Name:      "synctarget",
+		Usage:     `RLP-encoded block as the sync target`,
+		TakesFile: true,
+		Category:  flags.EthCategory,
 	}
 	GCModeFlag = &cli.StringFlag{
 		Name:     "gcmode",
@@ -1882,9 +1882,13 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 	}
 	if ctx.IsSet(SyncTargetFlag.Name) {
-		blob, err := hexutil.Decode(ctx.String(SyncTargetFlag.Name))
+		path := ctx.Path(SyncTargetFlag.Name)
+		if path == "" {
+			log.Crit("Failed to resolve sync target")
+		}
+		blob, err := os.ReadFile(path)
 		if err != nil {
-			log.Crit("Failed to decode sync target", "err", err)
+			Fatalf("Failed to read rlp-encoded block: %v", err)
 		}
 		var block types.Block
 		if err := rlp.DecodeBytes(blob, &block); err != nil {
