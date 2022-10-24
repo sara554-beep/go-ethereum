@@ -22,6 +22,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
 	"math"
@@ -1890,8 +1891,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		if err != nil {
 			Fatalf("Failed to read rlp-encoded block: %v", err)
 		}
+		rlpBlob, err := hexutil.Decode(string(blob))
+		if err != nil {
+			Fatalf("Failed to read hex-encoded block: %v", err)
+		}
 		var block types.Block
-		if err := rlp.DecodeBytes(blob, &block); err != nil {
+		if err := rlp.DecodeBytes(rlpBlob, &block); err != nil {
 			log.Crit("Failed to decode sync target", "err", err)
 		}
 		cfg.SyncTarget = &block
