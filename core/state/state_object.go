@@ -411,7 +411,7 @@ func (s *stateObject) DeleteTrie(db Database) (*trie.NodeSet, error) {
 	var (
 		paths [][]byte
 		blobs [][]byte
-		size  common.StorageSize
+		size  int64
 		iter  = stTrie.NodeIterator(nil)
 	)
 	for iter.Next(true) {
@@ -421,12 +421,11 @@ func (s *stateObject) DeleteTrie(db Database) (*trie.NodeSet, error) {
 		path, blob := common.CopyBytes(iter.Path()), common.CopyBytes(iter.NodeBlob())
 		paths = append(paths, path)
 		blobs = append(blobs, blob)
-
-		// Pretty arbitrary number, approximately 1GB as the threshold
-		size += common.StorageSize(len(path) + len(blob))
-		if size > 1073741824 {
-			return nil, nil
-		}
+		size += int64(len(path) + len(blob))
+	}
+	if size > maxStorageDeletionSizeMarker.Value() {
+		maxStorageDeletionSizeMarker.Update(size)
+		maxStorageDeletionCountMarker.Update(int64(len(paths)))
 	}
 	return trie.NewNodeSetWithDeletion(s.addrHash, paths, blobs), nil
 }
