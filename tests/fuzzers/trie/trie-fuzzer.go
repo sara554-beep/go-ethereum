@@ -127,6 +127,7 @@ func Generate(input []byte) (string, randTest) {
 	return scheme, steps
 }
 
+// Fuzz is the fuzzing entry-point.
 // The function must return
 //
 //   - 1 if the fuzzer should increase priority of the

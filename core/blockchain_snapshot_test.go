@@ -396,6 +396,7 @@ func (snaptest *wipeCrashSnapshotTest) test(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
+
 	// Simulate the blockchain crash.
 	newchain2.triedb.Close()
 	//db.DiskDB().Close()

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -50,7 +51,7 @@ var (
 type testBackend struct {
 	db     ethdb.Database
 	chain  *core.BlockChain
-	txpool *core.TxPool
+	txpool *txpool.TxPool
 }
 
 // newTestBackend creates an empty chain and wraps it into a mock backend.
@@ -76,13 +77,13 @@ func newTestBackendWithGenerator(blocks int, generator func(int, *core.BlockGen)
 	for _, block := range bs {
 		chain.TrieDB().Commit(block.Root())
 	}
-	txconfig := core.DefaultTxPoolConfig
+	txconfig := txpool.DefaultConfig
 	txconfig.Journal = "" // Don't litter the disk with test journals
 
 	return &testBackend{
 		db:     db,
 		chain:  chain,
-		txpool: core.NewTxPool(txconfig, params.TestChainConfig, chain),
+		txpool: txpool.NewTxPool(txconfig, params.TestChainConfig, chain),
 	}
 }
 
@@ -335,7 +336,7 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 	}
 	// Run each of the tests and verify the results against the chain
 	for i, tt := range tests {
-		// Collect the hashes to request, and the response to expectva
+		// Collect the hashes to request, and the response to expect
 		var (
 			hashes []common.Hash
 			bodies []*BlockBody
