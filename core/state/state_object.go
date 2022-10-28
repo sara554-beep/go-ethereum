@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"time"
@@ -420,10 +421,12 @@ func (s *stateObject) DeleteTrie(db Database) (*trie.NodeSet, error) {
 	// in case the accumulated nodes reach the threshold. It's fine to not clean
 	// up the dangling trie nodes since they are non-accessible anyway.
 	var (
-		paths [][]byte
-		blobs [][]byte
-		size  int64
-		iter  = stTrie.NodeIterator(nil)
+		paths   [][]byte
+		blobs   [][]byte
+		size    int64
+		keysize int64
+		valsize int64
+		iter    = stTrie.NodeIterator(nil)
 	)
 	for iter.Next(true) {
 		if iter.Hash() == (common.Hash{}) {
@@ -433,10 +436,15 @@ func (s *stateObject) DeleteTrie(db Database) (*trie.NodeSet, error) {
 		paths = append(paths, path)
 		blobs = append(blobs, blob)
 		size += int64(len(path) + len(blob))
+		keysize += int64(len(path))
+		valsize += int64(len(blob))
 	}
 	if size > maxStorageDeletionSizeMarker.Value() {
 		maxStorageDeletionSizeMarker.Update(size)
 		maxStorageDeletionCountMarker.Update(int64(len(paths)))
+		log.Info("Updated storage deletion", "count", len(paths),
+			"size", common.PrettyDuration(size), "keysize", common.PrettyDuration(keysize),
+			"valsize", common.PrettyDuration(valsize))
 	}
 	return trie.NewNodeSetWithDeletion(s.addrHash, paths, blobs), nil
 }
