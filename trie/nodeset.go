@@ -101,7 +101,6 @@ func NewNodeSet(owner common.Hash) *NodeSet {
 	}
 }
 
-/*
 // NewNodeSetWithDeletion initializes the nodeset with provided deletion set.
 func NewNodeSetWithDeletion(owner common.Hash, paths [][]byte, prev [][]byte) *NodeSet {
 	set := NewNodeSet(owner)
@@ -110,7 +109,6 @@ func NewNodeSetWithDeletion(owner common.Hash, paths [][]byte, prev [][]byte) *N
 	}
 	return set
 }
-*/
 
 // forEachWithOrder iterates the dirty nodes with the specified order.
 // If topToBottom is true:
