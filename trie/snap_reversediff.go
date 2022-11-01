@@ -1,4 +1,4 @@
-// Copyright 2021 The go-ethereum Authors
+// Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -17,7 +17,7 @@
 package trie
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
 	"time"
 
@@ -76,23 +76,70 @@ import (
 // The state should be rewound to destination state S after applying the reverse diff n.
 
 // reverseDiffVersion is the initial version of reverse diff structure.
-const reverseDiffVersion = uint64(0)
+const reverseDiffVersion = uint8(0)
 
-// stateDiff represents a reverse change of a state data. The value refers to the
+// stateDiff represents a reverse change of a state data. The prev refers to the
 // content before the change is applied.
 type stateDiff struct {
-	Key []byte // Storage format node key
-	Val []byte // RLP-encoded node blob, nil means the node is previously non-existent
+	Path []byte // Path of node inside of the trie
+	Prev []byte // RLP-encoded node blob, nil means the node is previously non-existent
+}
+
+// stateDiffs represents a list of state diffs belong to a single contract
+// or the main account trie.
+type stateDiffs struct {
+	Owner  common.Hash // Identifier of contract or empty for main account trie
+	States []stateDiff // The list of state diffs
 }
 
 // reverseDiff represents a set of state diffs belong to the same block. All the
 // reverse-diffs in disk are linked with each other by a unique id(8byte integer),
-// the tail(oldest) reverse-diff will be pruned in order to control the storage size.
+// the tail(oldest) reverse-diff will be pruned in order to control the storage
+// size.
 type reverseDiff struct {
-	Version uint64      // The version tag of stored reverse diff
-	Parent  common.Hash // The corresponding state root of parent block
-	Root    common.Hash // The corresponding state root which these diffs belong to
-	States  []stateDiff // The list of state changes
+	Version uint64       // The version tag of stored reverse diff
+	Parent  common.Hash  // The corresponding state root of parent block
+	Root    common.Hash  // The corresponding state root which these diffs belong to
+	States  []stateDiffs // The list of state changes
+}
+
+func (diff *reverseDiff) encode() ([]byte, error) {
+	var buf = new(bytes.Buffer)
+	buf.WriteByte(reverseDiffVersion)
+	if err := rlp.Encode(buf, diff); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (diff *reverseDiff) decode(blob []byte) error {
+	if len(blob) < 1 {
+		return fmt.Errorf("no version tag")
+	}
+	switch blob[0] {
+	case reverseDiffVersion:
+		var dec reverseDiff
+		if err := rlp.DecodeBytes(blob[1:], &dec); err != nil {
+			return err
+		}
+		diff.Parent, diff.Root, diff.States = dec.Parent, dec.Root, dec.States
+		return nil
+	default:
+		return fmt.Errorf("unknown reverse diff version %d", blob[0])
+	}
+}
+
+// apply writes the reverse diff into the provided database batch.
+func (diff *reverseDiff) apply(batch ethdb.Batch) {
+	for _, entry := range diff.States {
+		for _, state := range entry.States {
+			if len(state.Prev) > 0 {
+				rawdb.WriteTrieNode(batch, encodeStorageKey(entry.Owner, state.Path), state.Prev)
+			} else {
+				rawdb.DeleteTrieNode(batch, encodeStorageKey(entry.Owner, state.Path))
+			}
+		}
+	}
 }
 
 // loadReverseDiff reads and decodes the reverse diff by the given id.
@@ -101,14 +148,11 @@ func loadReverseDiff(freezer *rawdb.Freezer, id uint64) (*reverseDiff, error) {
 	if len(blob) == 0 {
 		return nil, fmt.Errorf("reverse diff not found %d", id)
 	}
-	var diff reverseDiff
-	if err := rlp.DecodeBytes(blob, &diff); err != nil {
+	var dec reverseDiff
+	if err := dec.decode(blob); err != nil {
 		return nil, err
 	}
-	if diff.Version != reverseDiffVersion {
-		return nil, fmt.Errorf("%w want %d got %d", errors.New("unexpected reverse diff version"), reverseDiffVersion, diff.Version)
-	}
-	return &diff, nil
+	return &dec, nil
 }
 
 // storeReverseDiff constructs the reverse state diff for the passed bottom-most
@@ -117,23 +161,21 @@ func loadReverseDiff(freezer *rawdb.Freezer, id uint64) (*reverseDiff, error) {
 // This function will panic if it's called for non-bottom-most diff layer.
 func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error {
 	var (
-		startTime = time.Now()
-		base      = dl.Parent().(*diskLayer)
-		states    []stateDiff
+		start = time.Now()
+		base  = dl.Parent().(*diskLayer)
+		enc   = &reverseDiff{Parent: base.root, Root: dl.Root()}
 	)
-	for key, node := range dl.nodes {
-		states = append(states, stateDiff{
-			Key: []byte(key),
-			Val: node.prev,
-		})
+	for owner, subset := range dl.nodes {
+		entry := stateDiffs{Owner: owner}
+		for path, n := range subset {
+			entry.States = append(entry.States, stateDiff{
+				Path: []byte(path),
+				Prev: n.prev,
+			})
+		}
+		enc.States = append(enc.States, entry)
 	}
-	diff := &reverseDiff{
-		Version: reverseDiffVersion,
-		Parent:  base.root,
-		Root:    dl.root,
-		States:  states,
-	}
-	blob, err := rlp.EncodeToBytes(diff)
+	blob, err := enc.encode()
 	if err != nil {
 		return err
 	}
@@ -150,7 +192,7 @@ func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error
 	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.diffid)
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
-	logCtx := []interface{}{
+	logs := []interface{}{
 		"id", dl.diffid,
 		"nodes", len(dl.nodes),
 		"size", common.StorageSize(len(blob)),
@@ -161,13 +203,13 @@ func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error
 		if err != nil {
 			return err
 		}
-		logCtx = append(logCtx, "pruned", pruned, "limit", limit)
+		logs = append(logs, "pruned", pruned, "limit", limit)
 	}
-	duration := time.Since(startTime)
+	duration := time.Since(start)
 	triedbReverseDiffTimeTimer.Update(duration)
-	logCtx = append(logCtx, "elapsed", common.PrettyDuration(duration))
+	logs = append(logs, "elapsed", common.PrettyDuration(duration))
 
-	log.Debug("Stored the reverse diff", logCtx...)
+	log.Debug("Stored the reverse diff", logs...)
 	return nil
 }
 
@@ -226,7 +268,8 @@ func truncateFromTail(freezer *rawdb.Freezer, disk ethdb.Database, ntail uint64)
 }
 
 // truncateDiffs is called when database is constructed. It ensures reverse diff
-// history is aligned with disk layer, and truncates the extra diffs from the freezer.
+// history is aligned with disk layer, and truncates the extra diffs from the
+// freezer. The given target indicates the id of last item wants to be reserved.
 func truncateDiffs(freezer *rawdb.Freezer, disk ethdb.Database, target uint64) {
 	pruned, err := truncateFromHead(freezer, disk, target)
 	if err != nil {

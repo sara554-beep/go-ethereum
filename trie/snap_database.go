@@ -69,7 +69,7 @@ type snapshot interface {
 	// which callers can obtain the RLP-format or canonical node representation
 	// easily.
 	// No error will be returned if the node is not found.
-	node(storage []byte, hash common.Hash, depth int) (*memoryNode, error)
+	node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error)
 
 	// Root returns the root hash for which this snapshot was made.
 	Root() common.Hash
@@ -87,7 +87,7 @@ type snapshot interface {
 	// node object.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, id uint64, nodes map[string]*nodeWithPrev) *diffLayer
+	Update(blockRoot common.Hash, id uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer
 
 	// Journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the snapshot without
@@ -189,17 +189,7 @@ func (db *snapDatabase) Update(root common.Hash, parentRoot common.Hash, nodes *
 	if db.readOnly {
 		return errSnapshotReadOnly
 	}
-	// Merge all nodes(include the deleted one) together into a single map.
-	merged := make(map[string]*nodeWithPrev)
-	for _, subset := range nodes.sets {
-		for path, node := range subset.updates.nodes {
-			merged[string(encodeStorageKey(subset.owner, []byte(path)))] = node
-		}
-		for path, prev := range subset.deletes {
-			merged[string(encodeStorageKey(subset.owner, []byte(path)))] = &nodeWithPrev{memoryNode: &memoryNode{}, prev: prev}
-		}
-	}
-	if err := db.tree.add(root, parentRoot, merged); err != nil {
+	if err := db.tree.add(root, parentRoot, nodes.simplify()); err != nil {
 		return err
 	}
 	var limit uint64

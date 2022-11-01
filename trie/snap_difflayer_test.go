@@ -83,15 +83,15 @@ func benchmarkSearch(b *testing.B, depth int, total int) {
 	)
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot, index int) *diffLayer {
-		var nodes = make(map[string]*nodeWithPrev)
+		nodes := make(map[common.Hash]map[string]*nodeWithPrev)
+		nodes[common.Hash{}] = make(map[string]*nodeWithPrev)
 		for i := 0; i < 3000; i++ {
 			var (
-				path    = randomHash().Bytes()
-				node    = randomNode()
-				blob    = node.rlp()
-				storage = encodeStorageKey(common.Hash{}, path)
+				path = randomHash().Bytes()
+				node = randomNode()
+				blob = node.rlp()
 			)
-			nodes[string(storage)] = &nodeWithPrev{
+			nodes[common.Hash{}][string(path)] = &nodeWithPrev{
 				memoryNode: node,
 				prev:       nil,
 			}
@@ -156,7 +156,7 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 		hash  common.Hash
 		layer = db.GetReader(root)
 	)
-	for p, node := range nodes.updates.nodes {
+	for p, node := range nodes.nodes {
 		path = []byte(p)
 		hash = node.hash
 		break
@@ -179,14 +179,14 @@ func benchmarkGetNode(b *testing.B, getBlob bool) {
 func BenchmarkPersist(b *testing.B) {
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot) *diffLayer {
-		var nodes = make(map[string]*nodeWithPrev)
+		nodes := make(map[common.Hash]map[string]*nodeWithPrev)
+		nodes[common.Hash{}] = make(map[string]*nodeWithPrev)
 		for i := 0; i < 3000; i++ {
 			var (
-				path    = randomHash().Bytes()
-				node    = randomNode()
-				storage = encodeStorageKey(common.Hash{}, path)
+				path = randomHash().Bytes()
+				node = randomNode()
 			)
-			nodes[string(storage)] = &nodeWithPrev{
+			nodes[common.Hash{}][string(path)] = &nodeWithPrev{
 				memoryNode: node,
 				prev:       nil,
 			}
@@ -217,14 +217,14 @@ func BenchmarkPersist(b *testing.B) {
 func BenchmarkJournal(b *testing.B) {
 	// First, we set up 128 diff layers, with 3K items each
 	fill := func(parent snapshot) *diffLayer {
-		var nodes = make(map[string]*nodeWithPrev)
+		nodes := make(map[common.Hash]map[string]*nodeWithPrev)
+		nodes[common.Hash{}] = make(map[string]*nodeWithPrev)
 		for i := 0; i < 3000; i++ {
 			var (
-				path    = randomHash().Bytes()
-				node    = randomNode()
-				storage = encodeStorageKey(common.Hash{}, path)
+				path = randomHash().Bytes()
+				node = randomNode()
 			)
-			nodes[string(storage)] = &nodeWithPrev{
+			nodes[common.Hash{}][string(path)] = &nodeWithPrev{
 				memoryNode: node,
 				prev:       nil,
 			}

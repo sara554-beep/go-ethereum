@@ -41,9 +41,16 @@ const journalVersion uint64 = 0
 
 // journalNode represents a trie node persisted in the journal.
 type journalNode struct {
-	Key string // Storage format trie node key
-	Val []byte // RLP-encoded trie node blob, nil means the node is deleted
-	Pre []byte // The previous value of trie node, rlp encoded. Nil means the node is non-existent
+	Path []byte // Node path inside of the trie
+	Blob []byte // RLP-encoded trie node blob, nil means the node is deleted
+	Prev []byte // The previous value of trie node, rlp encoded. Nil means the node is non-existent
+}
+
+// journalNodes represents a list trie nodes belong to a single
+// contract or the main account trie.
+type journalNodes struct {
+	Owner common.Hash
+	Nodes []journalNode
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
@@ -119,25 +126,25 @@ func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 		return nil, fmt.Errorf("load disk root: %v", err)
 	}
 	// Resolve disk layer cached nodes
-	var encoded []journalNode
+	var encoded []journalNodes
 	if err := r.Decode(&encoded); err != nil {
 		return nil, fmt.Errorf("load disk accounts: %v", err)
 	}
-	var nodes = make(map[string]*memoryNode)
+	var nodes = make(map[common.Hash]map[string]*memoryNode)
 	for _, entry := range encoded {
-		if len(entry.Val) > 0 {
-			nodes[entry.Key] = &memoryNode{
-				hash: crypto.Keccak256Hash(entry.Val),
-				node: rawNode(entry.Val),
-				size: uint16(len(entry.Val)),
-			}
-		} else {
-			nodes[entry.Key] = &memoryNode{
-				hash: common.Hash{},
-				node: nil,
-				size: 0,
+		subset := make(map[string]*memoryNode)
+		for _, n := range entry.Nodes {
+			if len(n.Blob) > 0 {
+				subset[string(n.Path)] = &memoryNode{
+					hash: crypto.Keccak256Hash(n.Blob),
+					node: rawNode(n.Blob),
+					size: uint16(len(n.Blob)),
+				}
+			} else {
+				subset[string(n.Path)] = &memoryNode{}
 			}
 		}
+		nodes[entry.Owner] = subset
 	}
 	// Resolve corresponding reverse diff id
 	var diffid uint64
@@ -165,31 +172,31 @@ func (db *snapDatabase) loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot,
 		}
 		return nil, fmt.Errorf("load diff root: %v", err)
 	}
-	var encoded []journalNode
+	var encoded []journalNodes
 	if err := r.Decode(&encoded); err != nil {
 		return nil, fmt.Errorf("load diff accounts: %v", err)
 	}
-	nodes := make(map[string]*nodeWithPrev)
+	nodes := make(map[common.Hash]map[string]*nodeWithPrev)
 	for _, entry := range encoded {
-		if len(entry.Val) > 0 {
-			nodes[entry.Key] = &nodeWithPrev{
-				memoryNode: &memoryNode{
-					hash: crypto.Keccak256Hash(entry.Val),
-					node: rawNode(entry.Val),
-					size: uint16(len(entry.Val)),
-				},
-				prev: entry.Pre,
-			}
-		} else {
-			nodes[entry.Key] = &nodeWithPrev{
-				memoryNode: &memoryNode{
-					hash: common.Hash{},
-					node: nil,
-					size: 0,
-				},
-				prev: entry.Pre,
+		subset := make(map[string]*nodeWithPrev)
+		for _, n := range entry.Nodes {
+			if len(n.Blob) > 0 {
+				subset[string(n.Path)] = &nodeWithPrev{
+					memoryNode: &memoryNode{
+						hash: crypto.Keccak256Hash(n.Blob),
+						node: rawNode(n.Blob),
+						size: uint16(len(n.Blob)),
+					},
+					prev: n.Prev,
+				}
+			} else {
+				subset[string(n.Path)] = &nodeWithPrev{
+					memoryNode: &memoryNode{},
+					prev:       n.Prev,
+				}
 			}
 		}
+		nodes[entry.Owner] = subset
 	}
 	return db.loadDiffLayer(newDiffLayer(parent, root, parent.ID()+1, nodes), r)
 }
@@ -210,13 +217,17 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 		return err
 	}
 	// Step two, write all accumulated dirty nodes into the journal
-	nodes := make([]journalNode, 0, len(dl.dirty.nodes))
-	for key, node := range dl.dirty.nodes {
-		jnode := journalNode{Key: key}
-		if node.node != nil {
-			jnode.Val = node.rlp()
+	nodes := make([]journalNodes, 0, len(dl.dirty.nodes))
+	for owner, subset := range dl.dirty.nodes {
+		journal := journalNodes{Owner: owner}
+		for path, node := range subset {
+			jnode := journalNode{Path: []byte(path)}
+			if node.node != nil {
+				jnode.Blob = node.rlp()
+			}
+			journal.Nodes = append(journal.Nodes, jnode)
 		}
-		nodes = append(nodes, jnode)
+		nodes = append(nodes, journal)
 	}
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err
@@ -246,13 +257,17 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, dl.root); err != nil {
 		return err
 	}
-	nodes := make([]journalNode, 0, len(dl.nodes))
-	for key, node := range dl.nodes {
-		jnode := journalNode{Key: key, Pre: node.prev}
-		if node.node != nil {
-			jnode.Val = node.rlp()
+	nodes := make([]journalNodes, 0, len(dl.nodes))
+	for owner, subset := range dl.nodes {
+		journal := journalNodes{Owner: owner}
+		for path, node := range subset {
+			jnode := journalNode{Path: []byte(path), Prev: node.prev}
+			if node.node != nil {
+				jnode.Blob = node.rlp()
+			}
+			journal.Nodes = append(journal.Nodes, jnode)
 		}
-		nodes = append(nodes, jnode)
+		nodes = append(nodes, journal)
 	}
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err

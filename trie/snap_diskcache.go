@@ -42,33 +42,38 @@ var (
 // diskcache is not thread-safe, callers must manage concurrency issues
 // by themselves.
 type diskcache struct {
-	layers uint64                 // The number of diff layers merged inside
-	size   uint64                 // The approximate size of cached nodes
-	limit  uint64                 // The maximum memory allowance in bytes for cache
-	nodes  map[string]*memoryNode // The dirty node set, mapped by storage key
+	layers uint64                                 // The number of diff layers merged inside
+	size   uint64                                 // The approximate size of cached nodes
+	limit  uint64                                 // The maximum memory allowance in bytes for cache
+	nodes  map[common.Hash]map[string]*memoryNode // The dirty node set, mapped by owner and path
 }
 
 // newDiskcache initializes the dirty node cache with the given information.
-func newDiskcache(limit int, nodes map[string]*memoryNode, layers uint64) *diskcache {
+func newDiskcache(limit int, nodes map[common.Hash]map[string]*memoryNode, layers uint64) *diskcache {
 	// Don't panic for lazy callers.
 	if nodes == nil {
-		nodes = make(map[string]*memoryNode)
+		nodes = make(map[common.Hash]map[string]*memoryNode)
 	}
 	var size uint64
-	for key, node := range nodes {
-		size += uint64(node.memorySize(len(key)))
+	for _, subset := range nodes {
+		for path, n := range subset {
+			size += uint64(n.memorySize(len(path)))
+		}
 	}
 	return &diskcache{layers: layers, nodes: nodes, size: size, limit: uint64(limit)}
 }
 
 // node retrieves the node with given storage key and hash.
-func (cache *diskcache) node(storage []byte, hash common.Hash) (*memoryNode, error) {
-	n, ok := cache.nodes[string(storage)]
+func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (*memoryNode, error) {
+	subset, ok := cache.nodes[owner]
+	if !ok {
+		return nil, nil
+	}
+	n, ok := subset[string(path)]
 	if !ok {
 		return nil, nil
 	}
 	if n.hash != hash {
-		owner, path := decodeStorageKey(storage)
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
 	}
 	return n, nil
@@ -76,21 +81,31 @@ func (cache *diskcache) node(storage []byte, hash common.Hash) (*memoryNode, err
 
 // commit merges the dirty node belonging to the bottom-most diff layer
 // into the disk cache.
-func (cache *diskcache) commit(nodes map[string]*memoryNode) *diskcache {
+func (cache *diskcache) commit(nodes map[common.Hash]map[string]*memoryNode) *diskcache {
 	var (
 		delta          int64
 		overwrites     int64
 		overwriteSizes int64
 	)
-	for storage, node := range nodes {
-		if orig, exist := cache.nodes[storage]; !exist {
-			delta += int64(node.memorySize(len(storage)))
+	for owner, subset := range nodes {
+		current, exist := cache.nodes[owner]
+		if !exist {
+			cache.nodes[owner] = subset
+			for path, n := range subset {
+				delta += int64(n.memorySize(len(path)))
+			}
 		} else {
-			delta += int64(node.size) - int64(orig.size)
-			overwrites += 1
-			overwriteSizes += int64(orig.size)
+			for path, n := range subset {
+				if orig, exist := current[path]; !exist {
+					delta += int64(n.memorySize(len(path)))
+				} else {
+					delta += int64(n.size) - int64(orig.size)
+					overwrites += 1
+					overwriteSizes += int64(orig.size)
+				}
+				cache.nodes[owner][path] = n
+			}
 		}
-		cache.nodes[storage] = node
 	}
 	cache.updateSize(delta)
 	cache.layers += 1
@@ -110,26 +125,31 @@ func (cache *diskcache) revert(diff *reverseDiff) error {
 		return nil
 	}
 	var delta int64
-	for _, state := range diff.States {
-		cur, ok := cache.nodes[string(state.Key)]
+	for _, states := range diff.States {
+		subset, ok := cache.nodes[states.Owner]
 		if !ok {
-			owner, path := decodeStorageKey(state.Key)
-			panic(fmt.Sprintf("non-existent node (%x %v)", owner, path))
+			panic(fmt.Sprintf("non-existent node (%x)", states.Owner))
 		}
-		if len(state.Val) == 0 {
-			cache.nodes[string(state.Key)] = &memoryNode{
-				node: nil,
-				size: 0,
-				hash: common.Hash{},
+		for _, state := range states.States {
+			cur, ok := subset[string(state.Path)]
+			if !ok {
+				panic(fmt.Sprintf("non-existent node (%x %v)", states.Owner, state.Path))
 			}
-			delta -= int64(cur.size)
-		} else {
-			cache.nodes[string(state.Key)] = &memoryNode{
-				node: rawNode(state.Val),
-				size: uint16(len(state.Val)),
-				hash: crypto.Keccak256Hash(state.Val),
+			if len(state.Prev) == 0 {
+				subset[string(state.Path)] = &memoryNode{
+					node: nil,
+					size: 0,
+					hash: common.Hash{},
+				}
+				delta -= int64(cur.size)
+			} else {
+				subset[string(state.Path)] = &memoryNode{
+					node: rawNode(state.Prev),
+					size: uint16(len(state.Prev)),
+					hash: crypto.Keccak256Hash(state.Prev),
+				}
+				delta += int64(uint16(len(state.Prev)) - cur.size)
 			}
-			delta += int64(uint16(len(state.Val)) - cur.size)
 		}
 	}
 	cache.updateSize(delta)
@@ -151,7 +171,7 @@ func (cache *diskcache) updateSize(delta int64) {
 func (cache *diskcache) reset() {
 	cache.layers = 0
 	cache.size = 0
-	cache.nodes = make(map[string]*memoryNode)
+	cache.nodes = make(map[common.Hash]map[string]*memoryNode)
 }
 
 // empty returns an indicator if diskcache contains any state transition inside.
@@ -160,9 +180,11 @@ func (cache *diskcache) empty() bool {
 }
 
 // forEach iterates all the cached nodes and applies the given callback on them
-func (cache *diskcache) forEach(callback func(key string, node *memoryNode)) {
-	for storage, n := range cache.nodes {
-		callback(storage, n)
+func (cache *diskcache) forEach(callback func(owner common.Hash, path []byte, node *memoryNode)) {
+	for owner, subset := range cache.nodes {
+		for path, node := range subset {
+			callback(owner, []byte(path), node)
+		}
 	}
 }
 
@@ -189,15 +211,18 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 		start = time.Now()
 		batch = db.NewBatchWithSize(int(cache.limit))
 	)
-	for storage, n := range cache.nodes {
-		if n.node == nil {
-			rawdb.DeleteTrieNode(batch, []byte(storage))
-			continue
-		}
-		blob := n.rlp()
-		rawdb.WriteTrieNode(batch, []byte(storage), blob)
-		if clean != nil {
-			clean.Set(n.hash.Bytes(), blob)
+	for owner, subset := range cache.nodes {
+		for path, n := range subset {
+			storage := encodeStorageKey(owner, []byte(path))
+			if n.node == nil {
+				rawdb.DeleteTrieNode(batch, storage)
+				continue
+			}
+			blob := n.rlp()
+			rawdb.WriteTrieNode(batch, storage, blob)
+			if clean != nil {
+				clean.Set(n.hash.Bytes(), blob)
+			}
 		}
 	}
 	rawdb.WriteReverseDiffHead(batch, diffid)

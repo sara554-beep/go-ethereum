@@ -774,13 +774,12 @@ func (db *hashDatabase) Update(_ common.Hash, _ common.Hash, nodes *MergedNodeSe
 	}
 	for _, owner := range order {
 		subset := nodes.sets[owner]
-		for _, path := range subset.updates.order {
-			n, ok := subset.updates.nodes[path]
-			if !ok {
-				return fmt.Errorf("missing node %x %v", owner, path)
+		subset.forEachWithOrder(false, func(path string, n *nodeWithPrev) {
+			if n.isDeleted() {
+				return // ignore deletion
 			}
 			db.insert(n.hash, int(n.size), n.node)
-		}
+		})
 	}
 	// Link up the account trie and storage trie if the node points
 	// to an account trie leaf.

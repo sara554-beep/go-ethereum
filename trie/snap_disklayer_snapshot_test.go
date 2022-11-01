@@ -46,8 +46,6 @@ func TestGetSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to retrieve snapshot %v", err)
 		}
-		defer layer.Release()
-
 		paths, blobs := env.paths[i], env.blobs[i]
 		for j, path := range paths {
 			if len(blobs[j]) == 0 {
@@ -67,5 +65,6 @@ func TestGetSnapshot(t *testing.T) {
 				}
 			}
 		}
+		layer.Release()
 	}
 }

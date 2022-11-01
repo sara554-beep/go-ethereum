@@ -37,30 +37,50 @@ func makeDiffs(n int) []reverseDiff {
 	for i := 0; i < n; i++ {
 		var (
 			root   = randomHash()
-			states []stateDiff
+			states []stateDiffs
 		)
 		for j := 0; j < 10; j++ {
-			if rand.Intn(2) == 0 {
-				states = append(states, stateDiff{
-					Key: randBytes(30),
-					Val: randBytes(30),
-				})
-			} else {
-				states = append(states, stateDiff{
-					Key: randBytes(30),
-					Val: []byte{},
-				})
+			entry := stateDiffs{Owner: randomHash()}
+			for z := 0; z < 10; z++ {
+				if rand.Intn(2) == 0 {
+					entry.States = append(entry.States, stateDiff{
+						Path: randBytes(30),
+						Prev: randBytes(30),
+					})
+				} else {
+					entry.States = append(entry.States, stateDiff{
+						Path: randBytes(30),
+						Prev: []byte{},
+					})
+				}
 			}
+			states = append(states, entry)
 		}
 		ret = append(ret, reverseDiff{
-			Version: reverseDiffVersion,
-			Parent:  parent,
-			Root:    root,
-			States:  states,
+			Parent: parent,
+			Root:   root,
+			States: states,
 		})
 		parent = root
 	}
 	return ret
+}
+
+func TestEncodeDecodeReverseDiff(t *testing.T) {
+	var diffs = makeDiffs(10)
+	for i := 0; i < len(diffs); i++ {
+		blob, err := diffs[i].encode()
+		if err != nil {
+			t.Fatalf("Failed to encode reverse diff %v", err)
+		}
+		var dec reverseDiff
+		if err := dec.decode(blob); err != nil {
+			t.Fatalf("Failed to decode reverse diff %v", err)
+		}
+		if !reflect.DeepEqual(dec, diffs[i]) {
+			t.Fatalf("Unexpected value")
+		}
+	}
 }
 
 func TestLoadStoreReverseDiff(t *testing.T) {
@@ -74,7 +94,7 @@ func TestLoadStoreReverseDiff(t *testing.T) {
 
 	var diffs = makeDiffs(10)
 	for i := 0; i < len(diffs); i++ {
-		blob, err := rlp.EncodeToBytes(diffs[i])
+		blob, err := diffs[i].encode()
 		if err != nil {
 			t.Fatalf("Failed to encode reverse diff %v", err)
 		}
@@ -85,9 +105,6 @@ func TestLoadStoreReverseDiff(t *testing.T) {
 		diff, err := loadReverseDiff(freezer, uint64(i+1))
 		if err != nil {
 			t.Fatalf("Failed to load reverse diff %v", err)
-		}
-		if diff.Version != reverseDiffVersion {
-			t.Fatalf("Unexpected version want %d got %d", reverseDiffVersion, diff.Version)
 		}
 		if diff.Root != diffs[i].Root {
 			t.Fatalf("Unexpected root want %x got %x", diffs[i].Root, diff.Root)

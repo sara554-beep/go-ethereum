@@ -32,10 +32,10 @@ import (
 // made to the state, that have not yet graduated into a semi-immutable state.
 type diffLayer struct {
 	// Immutables
-	root   common.Hash              // Root hash to which this snapshot diff belongs to
-	diffid uint64                   // Corresponding reverse diff id
-	nodes  map[string]*nodeWithPrev // Keyed trie nodes for retrieval
-	memory uint64                   // Approximate guess as to how much memory we use
+	root   common.Hash                              // Root hash to which this snapshot diff belongs to
+	diffid uint64                                   // Corresponding reverse diff id
+	nodes  map[common.Hash]map[string]*nodeWithPrev // Cached trie nodes indexed by owner and path
+	memory uint64                                   // Approximate guess as to how much memory we use
 
 	parent snapshot     // Parent snapshot modified by this one, never nil, **can be changed**
 	stale  bool         // Signals that the layer became stale (state progressed)
@@ -44,7 +44,7 @@ type diffLayer struct {
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[string]*nodeWithPrev) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
 	dl := &diffLayer{
 		root:   root,
 		diffid: diffid,
@@ -52,9 +52,11 @@ func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[st
 		parent: parent,
 	}
 	var total int64
-	for key, node := range nodes {
-		dl.memory += uint64(node.memorySize(len(key)))
-		total += int64(node.size)
+	for _, subset := range nodes {
+		for path, n := range subset {
+			dl.memory += uint64(n.memorySize(len(path)))
+			total += int64(uint16(len(path)) + n.size)
+		}
 	}
 	triedbDirtyWriteMeter.Mark(total)
 	triedbDiffLayerSizeMeter.Mark(int64(dl.memory))
@@ -104,7 +106,7 @@ func (dl *diffLayer) MarkStale() {
 // node retrieves the node with provided storage key and node hash. The returned
 // node is in a wrapper through which callers can obtain the RLP-format or canonical
 // node representation easily. No error will be returned if node is not found.
-func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (*memoryNode, error) {
+func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
@@ -116,28 +118,30 @@ func (dl *diffLayer) node(storage []byte, hash common.Hash, depth int) (*memoryN
 		return nil, errSnapshotStale
 	}
 	// If the trie node is known locally, return it
-	n, ok := dl.nodes[string(storage)]
+	subset, ok := dl.nodes[owner]
 	if ok {
-		// If the trie node is not hash matched, or marked as removed,
-		// bubble up an error here. It shouldn't happen at all.
-		if n.hash != hash {
-			owner, path := decodeStorageKey(storage)
-			return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
+		n, ok := subset[string(path)]
+		if ok {
+			// If the trie node is not hash matched, or marked as removed,
+			// bubble up an error here. It shouldn't happen at all.
+			if n.hash != hash {
+				return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
+			}
+			triedbDirtyHitMeter.Mark(1)
+			triedbDirtyNodeHitDepthHist.Update(int64(depth))
+			triedbDirtyReadMeter.Mark(int64(n.size))
+			return n.unwrap(), nil
 		}
-		triedbDirtyHitMeter.Mark(1)
-		triedbDirtyNodeHitDepthHist.Update(int64(depth))
-		triedbDirtyReadMeter.Mark(int64(n.size))
-		return n.unwrap(), nil
 	}
-	// Trie node unknown to this diff, resolve from parent
-	return dl.parent.node(storage, hash, depth+1)
+	// Trie node unknown to this layer, resolve from parent
+	return dl.parent.node(owner, path, hash, depth+1)
 }
 
 // Node retrieves the trie node with the provided trie identifier, node path
 // and the corresponding node hash. No error will be returned if the node is
 // not found.
 func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
-	n, err := dl.node(encodeStorageKey(owner, path), hash, 0)
+	n, err := dl.node(owner, path, hash, 0)
 	if err != nil || n == nil {
 		return nil, err
 	}
@@ -148,7 +152,7 @@ func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) (nod
 // identifier, node path and the corresponding node hash. No error will be
 // returned if the node is not found.
 func (dl *diffLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	n, err := dl.node(encodeStorageKey(owner, path), hash, 0)
+	n, err := dl.node(owner, path, hash, 0)
 	if err != nil || n == nil {
 		return nil, err
 	}
@@ -157,7 +161,7 @@ func (dl *diffLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) 
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[string]*nodeWithPrev) *diffLayer {
+func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
 	return newDiffLayer(dl, blockRoot, id, nodes)
 }
 
