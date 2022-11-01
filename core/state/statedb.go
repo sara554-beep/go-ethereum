@@ -930,18 +930,6 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 				}
 				storageTrieNodes += set.Size()
 			}
-		} else {
-			// Account is deleted, nuke out the storage data as well.
-			set, err := obj.DeleteTrie(s.db)
-			if err != nil {
-				return common.Hash{}, err
-			}
-			if set != nil {
-				if err := nodes.Merge(set); err != nil {
-					return common.Hash{}, err
-				}
-				storageTrieNodes += set.Size()
-			}
 		}
 		// If the contract is destructed, the storage is still left in the
 		// database as dangling data. Theoretically it's should be wiped from
