@@ -1,4 +1,4 @@
-// Copyright 2021 The go-ethereum Authors
+// Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -78,20 +78,29 @@ import (
 // reverseDiffVersion is the initial version of reverse diff structure.
 const reverseDiffVersion = uint8(0)
 
-// stateDiff represents a reverse change of a state data. The value refers to the
+// stateDiff represents a reverse change of a state data. The prev refers to the
 // content before the change is applied.
 type stateDiff struct {
-	Key []byte // Storage format node key
-	Val []byte // RLP-encoded node blob, nil means the node is previously non-existent
+	Path []byte // Path of node inside of the trie
+	Prev []byte // RLP-encoded node blob, nil means the node is previously non-existent
+}
+
+// stateDiffs represents a list of state diffs belong to a single contract
+// or the main account trie.
+type stateDiffs struct {
+	Owner  common.Hash // Identifier of contract or empty for main account trie
+	States []stateDiff // The list of state diffs
 }
 
 // reverseDiff represents a set of state diffs belong to the same block. All the
 // reverse-diffs in disk are linked with each other by a unique id(8byte integer),
-// the tail(oldest) reverse-diff will be pruned in order to control the storage size.
+// the tail(oldest) reverse-diff will be pruned in order to control the storage
+// size.
 type reverseDiff struct {
-	Parent common.Hash // The corresponding state root of parent block
-	Root   common.Hash // The corresponding state root which these diffs belong to
-	States []stateDiff // The list of state changes
+	Version uint64       // The version tag of stored reverse diff
+	Parent  common.Hash  // The corresponding state root of parent block
+	Root    common.Hash  // The corresponding state root which these diffs belong to
+	States  []stateDiffs // The list of state changes
 }
 
 func (diff *reverseDiff) encode() ([]byte, error) {
@@ -120,6 +129,20 @@ func (diff *reverseDiff) decode(blob []byte) error {
 	}
 }
 
+// apply writes the reverse diff into the provided database batch.
+func (diff *reverseDiff) apply(batch ethdb.Batch) {
+	for _, entry := range diff.States {
+		for _, state := range entry.States {
+			storage := encodeStorageKey(entry.Owner, state.Path)
+			if len(state.Prev) > 0 {
+				rawdb.WriteTrieNode(batch, storage, state.Prev)
+			} else {
+				rawdb.DeleteTrieNode(batch, storage)
+			}
+		}
+	}
+}
+
 // loadReverseDiff reads and decodes the reverse diff by the given id.
 func loadReverseDiff(freezer *rawdb.Freezer, id uint64) (*reverseDiff, error) {
 	blob := rawdb.ReadReverseDiff(freezer, id)
@@ -143,11 +166,15 @@ func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error
 		base  = dl.Parent().(*diskLayer)
 		enc   = &reverseDiff{Parent: base.root, Root: dl.Root()}
 	)
-	for key, node := range dl.nodes {
-		enc.States = append(enc.States, stateDiff{
-			Key: []byte(key),
-			Val: node.prev,
-		})
+	for owner, subset := range dl.nodes {
+		entry := stateDiffs{Owner: owner}
+		for path, n := range subset {
+			entry.States = append(entry.States, stateDiff{
+				Path: []byte(path),
+				Prev: n.prev,
+			})
+		}
+		enc.States = append(enc.States, entry)
 	}
 	blob, err := enc.encode()
 	if err != nil {

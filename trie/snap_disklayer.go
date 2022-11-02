@@ -88,7 +88,7 @@ func (dl *diskLayer) MarkStale() {
 // node retrieves the node with provided storage key and node hash. The returned
 // node is in a wrapper through which callers can obtain the RLP-format or canonical
 // node representation easily. No error will be returned if node is not found.
-func (dl *diskLayer) node(storage []byte, hash common.Hash, depth int) (*memoryNode, error) {
+func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -98,13 +98,12 @@ func (dl *diskLayer) node(storage []byte, hash common.Hash, depth int) (*memoryN
 	// Try to retrieve the trie node from the dirty memory cache.
 	// The map is lock free since it's impossible to mutate the
 	// disk layer before tagging it as stale.
-	n, err := dl.dirty.node(storage, hash)
+	n, err := dl.dirty.node(owner, path, hash)
 	if err != nil {
 		return nil, err
 	}
 	if n != nil {
-		// Hit node in disk cache which resides in disk layer, mark
-		// the hit depth as maxDiffLayerDepth.
+		// Hit node in disk cache which resides in disk layer
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
 		triedbDirtyReadMeter.Mark(int64(n.size))
@@ -123,9 +122,8 @@ func (dl *diskLayer) node(storage []byte, hash common.Hash, depth int) (*memoryN
 		triedbCleanMissMeter.Mark(1)
 	}
 	// Try to retrieve the trie node from the disk.
-	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, storage)
+	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, encodeStorageKey(owner, path))
 	if nodeHash != hash {
-		owner, path := decodeStorageKey(storage)
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nodeHash, hash, owner, path)
 	}
 	if dl.clean != nil && len(blob) > 0 {
@@ -142,7 +140,7 @@ func (dl *diskLayer) node(storage []byte, hash common.Hash, depth int) (*memoryN
 // and the corresponding node hash. No error will be returned if the node is
 // not found.
 func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
-	n, err := dl.node(encodeStorageKey(owner, path), hash, 0)
+	n, err := dl.node(owner, path, hash, 0)
 	if err != nil || n == nil {
 		return nil, err
 	}
@@ -153,7 +151,7 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) (nod
 // identifier, node path and the corresponding node hash. No error will be
 // returned if the node is not found.
 func (dl *diskLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	n, err := dl.node(encodeStorageKey(owner, path), hash, 0)
+	n, err := dl.node(owner, path, hash, 0)
 	if err != nil || n == nil {
 		return nil, err
 	}
@@ -161,7 +159,7 @@ func (dl *diskLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) 
 }
 
 // Update returns a new diff layer on top with the given dirty node set.
-func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[string]*nodeWithPrev) *diffLayer {
+func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
 	return newDiffLayer(dl, blockHash, id, nodes)
 }
 
@@ -186,9 +184,13 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, statelimit uint64, bottom *d
 		}
 	}
 	// Drop the previous value to reduce memory usage.
-	slim := make(map[string]*memoryNode)
-	for key, n := range bottom.nodes {
-		slim[key] = n.unwrap()
+	slim := make(map[common.Hash]map[string]*memoryNode)
+	for owner, nodes := range bottom.nodes {
+		subset := make(map[string]*memoryNode)
+		for path, n := range nodes {
+			subset[path] = n.unwrap()
+		}
+		slim[owner] = subset
 	}
 	ndl := newDiskLayer(bottom.root, bottom.diffid, dl.clean, dl.dirty.commit(slim), dl.diskdb)
 
@@ -202,10 +204,7 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, statelimit uint64, bottom *d
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
 func (dl *diskLayer) revert(diff *reverseDiff, diffid uint64) (*diskLayer, error) {
-	var (
-		root  = dl.Root()
-		batch = dl.diskdb.NewBatch()
-	)
+	root := dl.Root()
 	if diff.Root != root {
 		return nil, errUnmatchedReverseDiff
 	}
@@ -225,13 +224,8 @@ func (dl *diskLayer) revert(diff *reverseDiff, diffid uint64) (*diskLayer, error
 	case dl.dirty.empty():
 		// The disk cache is empty, applies the state reverting
 		// on disk directly.
-		for _, state := range diff.States {
-			if len(state.Val) > 0 {
-				rawdb.WriteTrieNode(batch, state.Key, state.Val)
-			} else {
-				rawdb.DeleteTrieNode(batch, state.Key)
-			}
-		}
+		batch := dl.diskdb.NewBatch()
+		diff.apply(batch)
 		rawdb.WriteReverseDiffHead(batch, diffid-1)
 
 		if err := batch.Write(); err != nil {

@@ -65,7 +65,8 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 		return nil, err
 	}
 	// Create a fresh new database for write purposes. It's also isolated with
-	// the live database.
+	// the live database. TODO(rjl493456442) it can take ~100ms to create a
+	// database.
 	datadir, err := os.MkdirTemp("", "")
 	if err != nil {
 		sdb.Release()
@@ -79,11 +80,12 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 	// Flush all cached nodes in disk cache into ephemeral database,
 	// since the requested state may point to a GCed version embedded
 	// in disk cache. Note it can take a few seconds.
-	dl.dirty.forEach(func(key string, node *memoryNode) {
+	dl.dirty.forEach(func(owner common.Hash, path []byte, node *memoryNode) {
+		storage := encodeStorageKey(owner, path)
 		if node.node == nil {
-			rawdb.DeleteTrieNode(ndb, []byte(key))
+			rawdb.DeleteTrieNode(ndb, storage)
 		} else {
-			rawdb.WriteTrieNode(ndb, []byte(key), node.rlp())
+			rawdb.WriteTrieNode(ndb, storage, node.rlp())
 		}
 	})
 	snap := &diskLayerSnapshot{
@@ -150,7 +152,7 @@ func (snap *diskLayerSnapshot) MarkStale() {
 // node retrieves the node with provided storage key and node hash. The returned
 // node is in a wrapper through which callers can obtain the RLP-format or canonical
 // node representation easily. No error will be returned if node is not found.
-func (snap *diskLayerSnapshot) node(storage []byte, hash common.Hash, depth int) (*memoryNode, error) {
+func (snap *diskLayerSnapshot) node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error) {
 	snap.lock.RLock()
 	defer snap.lock.RUnlock()
 
@@ -164,12 +166,12 @@ func (snap *diskLayerSnapshot) node(storage []byte, hash common.Hash, depth int)
 	// Firstly try to retrieve the trie node from the ephemeral
 	// disk area or fallback to the live disk state if it's not
 	// existent.
+	storage := encodeStorageKey(owner, path)
 	blob, nodeHash := rawdb.ReadTrieNode(snap.diskdb, storage)
 	if len(blob) == 0 {
 		blob, nodeHash = rawdb.ReadTrieNode(snap.snap, storage)
 	}
 	if nodeHash != hash {
-		owner, path := decodeStorageKey(storage)
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nodeHash, hash, owner, path)
 	}
 	if len(blob) > 0 {
@@ -182,7 +184,7 @@ func (snap *diskLayerSnapshot) node(storage []byte, hash common.Hash, depth int)
 // and the corresponding node hash. No error will be returned if the node is
 // not found.
 func (snap *diskLayerSnapshot) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
-	n, err := snap.node(encodeStorageKey(owner, path), hash, 0)
+	n, err := snap.node(owner, path, hash, 0)
 	if err != nil || n == nil {
 		return nil, err
 	}
@@ -193,7 +195,7 @@ func (snap *diskLayerSnapshot) Node(owner common.Hash, path []byte, hash common.
 // identifier, node path and the corresponding node hash. No error will be
 // returned if the node is not found.
 func (snap *diskLayerSnapshot) NodeBlob(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	n, err := snap.node(encodeStorageKey(owner, path), hash, 0)
+	n, err := snap.node(owner, path, hash, 0)
 	if err != nil || n == nil {
 		return nil, err
 	}
@@ -201,7 +203,7 @@ func (snap *diskLayerSnapshot) NodeBlob(owner common.Hash, path []byte, hash com
 }
 
 // Update returns a new diff layer on top with the given dirty node set.
-func (snap *diskLayerSnapshot) Update(blockHash common.Hash, id uint64, nodes map[string]*nodeWithPrev) *diffLayer {
+func (snap *diskLayerSnapshot) Update(blockHash common.Hash, id uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
 	return newDiffLayer(snap, blockHash, id, nodes)
 }
 
@@ -222,13 +224,16 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 
 	// Commit the dirty nodes in the diff layer.
 	batch := snap.diskdb.NewBatch()
-	for key, n := range bottom.nodes {
-		if n.node == nil {
-			rawdb.DeleteTrieNode(batch, []byte(key))
-		} else {
-			blob := n.rlp()
-			rawdb.WriteTrieNode(batch, []byte(key), blob)
-			snap.clean.Set(n.hash.Bytes(), blob)
+	for owner, subset := range bottom.nodes {
+		for path, n := range subset {
+			storage := encodeStorageKey(owner, []byte(path))
+			if n.isDeleted() {
+				rawdb.DeleteTrieNode(batch, storage)
+			} else {
+				blob := n.rlp()
+				rawdb.WriteTrieNode(batch, storage, blob)
+				snap.clean.Set(n.hash.Bytes(), blob)
+			}
 		}
 	}
 	if err := batch.Write(); err != nil {
@@ -266,13 +271,7 @@ func (snap *diskLayerSnapshot) revert(diff *reverseDiff, diffid uint64) (*diskLa
 
 	snap.stale = true
 
-	for _, state := range diff.States {
-		if len(state.Val) > 0 {
-			rawdb.WriteTrieNode(batch, state.Key, state.Val)
-		} else {
-			rawdb.DeleteTrieNode(batch, state.Key)
-		}
-	}
+	diff.apply(batch)
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write reverse diff", "err", err)
 	}

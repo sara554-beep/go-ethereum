@@ -44,10 +44,7 @@ func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte, rootBlob []byte) (c
 			if len(path) == 0 {
 				return true
 			}
-			if _, ok := nodes.updates.nodes[string(path)]; ok {
-				return true
-			}
-			if _, ok := nodes.deletes[string(path)]; ok {
+			if _, ok := nodes.nodes[string(path)]; ok {
 				return true
 			}
 			return false
@@ -123,14 +120,14 @@ func fillDB(t *testing.T) *testEnv {
 		roots = append(roots, root)
 		rootBlob = blob
 
-		for _, path := range set.updates.order {
+		set.forEachWithOrder(false, func(path string, n *nodeWithPrev) {
 			pathlist = append(pathlist, []byte(path))
-			bloblist = append(bloblist, set.updates.nodes[path].rlp())
-		}
-		for path := range set.deletes {
-			pathlist = append(pathlist, []byte(path))
-			bloblist = append(bloblist, nil)
-		}
+			if n.isDeleted() {
+				bloblist = append(bloblist, nil)
+			} else {
+				bloblist = append(bloblist, set.nodes[path].rlp())
+			}
+		})
 		paths = append(paths, pathlist)
 		blobs = append(blobs, bloblist)
 

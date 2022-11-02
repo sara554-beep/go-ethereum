@@ -80,17 +80,7 @@ func (snap *DatabaseSnapshot) Update(root common.Hash, parent common.Hash, nodes
 	if snap.released {
 		return errSnapshotReleased
 	}
-	// Merge all nodes(include the deleted one) together into a single map.
-	merged := make(map[string]*nodeWithPrev)
-	for _, subset := range nodes.sets {
-		for path, node := range subset.updates.nodes {
-			merged[string(encodeStorageKey(subset.owner, []byte(path)))] = node
-		}
-		for path, prev := range subset.deletes {
-			merged[string(encodeStorageKey(subset.owner, []byte(path)))] = &nodeWithPrev{memoryNode: &memoryNode{}, prev: prev}
-		}
-	}
-	if err := snap.tree.add(root, parent, merged); err != nil {
+	if err := snap.tree.add(root, parent, nodes.simplify()); err != nil {
 		return err
 	}
 	// Keep 128 diff layers in the memory, persistent layer is 129th.

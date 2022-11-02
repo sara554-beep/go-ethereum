@@ -122,7 +122,7 @@ func testMissingNode(t *testing.T, memonly bool, scheme string) {
 		path []byte
 		hash = common.HexToHash("0xe1d943cc8f061a0c0b98162830b970395ac9315654824bf21b73b891365262f9")
 	)
-	for p, n := range nodes.updates.nodes {
+	for p, n := range nodes.nodes {
 		if n.hash == hash {
 			path = common.CopyBytes([]byte(p))
 			break
@@ -471,19 +471,20 @@ func runRandTest(rt randTest) bool {
 			}
 			// Validity the returned nodeset
 			if nodes != nil {
-				for path, node := range nodes.updates.nodes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
-					got := node.prev
-					if !bytes.Equal(blob, got) {
-						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, got, blob)
-						panic(rt[i].err)
-					}
-				}
-				for path, prev := range nodes.deletes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
-					if !bytes.Equal(blob, prev) {
-						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, prev, blob)
-						return false
+				for path, n := range nodes.nodes {
+					if n.isDeleted() {
+						blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
+						if !bytes.Equal(blob, n.prev) {
+							rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, n.prev, blob)
+							return false
+						}
+					} else {
+						blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
+						got := n.prev
+						if !bytes.Equal(blob, got) {
+							rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, got, blob)
+							panic(rt[i].err)
+						}
 					}
 				}
 			}

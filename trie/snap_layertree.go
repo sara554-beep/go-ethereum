@@ -79,7 +79,7 @@ func (tree *layerTree) len() int {
 
 // add inserts a new snapshot into the tree if it can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
-func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[string]*nodeWithPrev) error {
+func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[common.Hash]map[string]*nodeWithPrev) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// only happen for Clique networks where empty blocks don't modify the state
 	// (0 block subsidy).

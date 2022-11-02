@@ -26,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 func makeDiffs(n int) []reverseDiff {
@@ -37,20 +36,24 @@ func makeDiffs(n int) []reverseDiff {
 	for i := 0; i < n; i++ {
 		var (
 			root   = randomHash()
-			states []stateDiff
+			states []stateDiffs
 		)
 		for j := 0; j < 10; j++ {
-			if rand.Intn(2) == 0 {
-				states = append(states, stateDiff{
-					Key: randBytes(30),
-					Val: randBytes(30),
-				})
-			} else {
-				states = append(states, stateDiff{
-					Key: randBytes(30),
-					Val: []byte{},
-				})
+			entry := stateDiffs{Owner: randomHash()}
+			for z := 0; z < 10; z++ {
+				if rand.Intn(2) == 0 {
+					entry.States = append(entry.States, stateDiff{
+						Path: randBytes(30),
+						Prev: randBytes(30),
+					})
+				} else {
+					entry.States = append(entry.States, stateDiff{
+						Path: randBytes(30),
+						Prev: []byte{},
+					})
+				}
 			}
+			states = append(states, entry)
 		}
 		ret = append(ret, reverseDiff{
 			Parent: parent,
@@ -155,7 +158,7 @@ func TestTruncateHeadReverseDiff(t *testing.T) {
 
 	var diffs = makeDiffs(10)
 	for i := 0; i < len(diffs); i++ {
-		blob, err := rlp.EncodeToBytes(diffs[i])
+		blob, err := diffs[i].encode()
 		if err != nil {
 			t.Fatalf("Failed to encode reverse diff %v", err)
 		}
@@ -186,7 +189,7 @@ func TestTruncateTailReverseDiff(t *testing.T) {
 
 	var diffs = makeDiffs(10)
 	for i := 0; i < len(diffs); i++ {
-		blob, err := rlp.EncodeToBytes(diffs[i])
+		blob, err := diffs[i].encode()
 		if err != nil {
 			t.Fatalf("Failed to encode reverse diff %v", err)
 		}
@@ -231,7 +234,7 @@ func TestTruncateTailReverseDiffs(t *testing.T) {
 
 		var diffs = makeDiffs(10)
 		for i := 0; i < len(diffs); i++ {
-			blob, err := rlp.EncodeToBytes(diffs[i])
+			blob, err := diffs[i].encode()
 			if err != nil {
 				t.Fatalf("Failed to encode reverse diff %v", err)
 			}
@@ -266,7 +269,7 @@ func TestRepairReverseDiff(t *testing.T) {
 
 		var diffs = makeDiffs(10)
 		for i := 0; i < len(diffs); i++ {
-			blob, err := rlp.EncodeToBytes(diffs[i])
+			blob, err := diffs[i].encode()
 			if err != nil {
 				t.Fatalf("Failed to encode reverse diff %v", err)
 			}

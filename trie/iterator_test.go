@@ -377,7 +377,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 		hashes []common.Hash
 	)
 	if memonly {
-		for path, n := range nodes.updates.nodes {
+		for path, n := range nodes.nodes {
 			paths = append(paths, []byte(path))
 			hashes = append(hashes, n.hash)
 		}
@@ -412,11 +412,11 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 		for {
 			if memonly {
 				rpath = paths[rand.Intn(len(paths))]
-				node := nodes.updates.nodes[string(rpath)]
-				if node == nil {
+				n := nodes.nodes[string(rpath)]
+				if n == nil {
 					continue
 				}
-				rhash = node.hash
+				rhash = n.hash
 			} else {
 				index := rand.Intn(len(paths))
 				rpath = paths[index]
@@ -487,8 +487,8 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme strin
 	}
 	root, nodes, _ := ctr.Commit(false)
 
-	for path, node := range nodes.updates.nodes {
-		if node.hash == barNodeHash {
+	for path, n := range nodes.nodes {
+		if n.hash == barNodeHash {
 			barNodePath = []byte(path)
 			break
 		}
