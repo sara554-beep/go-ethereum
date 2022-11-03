@@ -82,26 +82,34 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 			info.tail = tail
 			infos = append(infos, info)
 		case rdiffFreezerName:
+			ancient, err := db.AncientDatadir()
+			if err != nil {
+				return nil, err
+			}
+			f, err := NewReverseDiffFreezer(ancient, "", true)
+			if err != nil {
+				return nil, err
+			}
 			// Chain ancient store is a bit special. It's always opened along
 			// with the key-value store, inspect the chain store directly.
 			info := freezerInfo{name: freezer}
 			// Retrieve storage size of every contained table.
 			for table := range reverseDiffFreezerNoSnappy {
-				size, err := db.AncientSize(table)
+				size, err := f.AncientSize(table)
 				if err != nil {
 					return nil, err
 				}
 				info.sizes = append(info.sizes, tableSize{name: table, size: common.StorageSize(size)})
 			}
 			// Retrieve the number of last stored item
-			ancients, err := db.Ancients()
+			ancients, err := f.Ancients()
 			if err != nil {
 				return nil, err
 			}
 			info.head = ancients - 1
 
 			// Retrieve the number of first stored item
-			tail, err := db.Tail()
+			tail, err := f.Tail()
 			if err != nil {
 				return nil, err
 			}
