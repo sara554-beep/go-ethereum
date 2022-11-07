@@ -57,6 +57,25 @@ func newPayloadQueue() *payloadQueue {
 	}
 }
 
+// has returns an indicator if the payload with provided id is already existent.
+func (q *payloadQueue) has(id beacon.PayloadID) bool {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	// It's sub-optimal to iterate the list directly, however, based on
+	// the fact that the elements in the list are very limited(at most
+	// 10), it's acceptable for code simplification.
+	for _, item := range q.payloads {
+		if item == nil {
+			return false // no more items
+		}
+		if item.id == id {
+			return true
+		}
+	}
+	return false
+}
+
 // put inserts a new payload into the queue at the given id.
 func (q *payloadQueue) put(id beacon.PayloadID, payload *miner.Payload) {
 	q.lock.Lock()

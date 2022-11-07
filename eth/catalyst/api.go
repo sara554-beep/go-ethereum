@@ -288,12 +288,15 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV1(update beacon.ForkchoiceStateV1, pa
 			FeeRecipient: payloadAttributes.SuggestedFeeRecipient,
 			Random:       payloadAttributes.Random,
 		}
+		id := computePayloadId(update.HeadBlockHash, payloadAttributes)
+		if api.localBlocks.has(id) {
+			return valid(&id), nil
+		}
 		payload, err := api.eth.Miner().BuildPayload(args)
 		if err != nil {
 			log.Error("Failed to build payload", "err", err)
 			return valid(nil), beacon.InvalidPayloadAttributes.With(err)
 		}
-		id := computePayloadId(update.HeadBlockHash, payloadAttributes)
 		api.localBlocks.put(id, payload)
 		return valid(&id), nil
 	}
