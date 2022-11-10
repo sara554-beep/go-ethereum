@@ -21,13 +21,18 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Tests that the node iterator indeed walks over the entire database contents.
-func TestNodeIteratorCoverage(t *testing.T) {
+func TestNodeIteratorCoverageHashBased(t *testing.T) { testNodeIteratorCoverage(t, trie.HashScheme) }
+func TestNodeIteratorCoveragePathBased(t *testing.T) { testNodeIteratorCoverage(t, trie.PathScheme) }
+
+func testNodeIteratorCoverage(t *testing.T, scheme string) {
 	// Create some arbitrary test state to iterate
-	db, sdb, root, _ := makeTestState()
-	sdb.TrieDB().Commit(root, false)
+	db, sdb, ndb, root, _ := makeTestState(scheme)
+	ndb.Commit(root, false)
 
 	state, err := New(root, sdb, nil)
 	if err != nil {
@@ -47,10 +52,18 @@ func TestNodeIteratorCoverage(t *testing.T) {
 	)
 	it := db.NewIterator(nil, nil)
 	for it.Next() {
-		if ok, _ := sdb.TrieDB().Scheme().IsTrieNode(it.Key()); !ok {
+		if ok, _ := ndb.Scheme().IsTrieNode(it.Key()); !ok {
 			continue
 		}
-		seenNodes[common.BytesToHash(it.Key())] = struct{}{}
+		if scheme == trie.HashScheme {
+			seenNodes[common.BytesToHash(it.Key())] = struct{}{}
+		} else {
+			hash := crypto.Keccak256Hash(it.Value())
+			if _, ok := hashes[hash]; !ok {
+				t.Errorf("state entry not reported %x", it.Key())
+			}
+			seenNodes[hash] = struct{}{}
+		}
 	}
 	it.Release()
 

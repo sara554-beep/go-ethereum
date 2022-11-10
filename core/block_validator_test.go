@@ -33,10 +33,14 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 // Tests that simple header verification works, for both good and bad blocks.
-func TestHeaderVerification(t *testing.T) {
+func TestHeaderVerificationHashBased(t *testing.T) { testHeaderVerification(t, trie.HashScheme) }
+func TestHeaderVerificationPathBased(t *testing.T) { testHeaderVerification(t, trie.PathScheme) }
+
+func testHeaderVerification(t *testing.T, scheme string) {
 	// Create a simple chain to verify
 	var (
 		gspec        = &Genesis{Config: params.TestChainConfig}
@@ -47,7 +51,7 @@ func TestHeaderVerification(t *testing.T) {
 		headers[i] = block.Header()
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+	chain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
 	defer chain.Stop()
 
 	for i := 0; i < len(blocks); i++ {

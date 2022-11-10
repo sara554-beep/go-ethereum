@@ -19,6 +19,7 @@ package rawdb
 import (
 	"encoding/binary"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -161,22 +162,36 @@ func DeleteTrieNodes(db ethdb.KeyValueStore) {
 	iter := db.NewIterator(TrieNodePrefix, nil)
 	defer iter.Release()
 
-	batch := db.NewBatch()
+	var (
+		count  int
+		size   common.StorageSize
+		logged = time.Now()
+		start  = time.Now()
+		batch  = db.NewBatch()
+	)
 	for iter.Next() {
 		if !isTrieNodeKey(iter.Key()) {
 			continue
 		}
 		batch.Delete(iter.Key())
+		count += 1
+		size += common.StorageSize(len(iter.Key()) + len(iter.Value()))
+
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				log.Crit("Failed to delete trie nodes", "err", err)
 			}
 			batch.Reset()
 		}
+		if time.Since(logged) > 8*time.Second {
+			logged = time.Now()
+			log.Info("Deleting trie nodes", "count", count, "size", size, "elapsed", common.PrettyDuration(time.Since(start)))
+		}
 	}
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to delete trie nodes", "err", err)
 	}
+	log.Info("Deleted trie nodes", "count", count, "size", size, "elapsed", common.PrettyDuration(time.Since(start)))
 }
 
 // ReadLegacyTrieNode retrieves the legacy trie node with the given
