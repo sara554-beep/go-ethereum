@@ -22,6 +22,7 @@ import (
 
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 )
@@ -55,10 +56,10 @@ type Config struct {
 	Preimages bool   // Flag whether the preimage of trie key is recorded
 
 	// Configs for experimental path-based scheme, not used yet.
-	Scheme     string // Disk scheme for reading/writing trie nodes, hash-based as default
-	StateLimit uint64 // Number of recent blocks to maintain state history for
-	DirtySize  int    // Maximum memory allowance (MB) for caching dirty nodes
-	ReadOnly   bool   // Flag whether the database is opened in read only mode.
+	Scheme       string // Disk scheme for reading/writing trie nodes, hash-based as default
+	StateHistory uint64 // Number of recent blocks to maintain state history for
+	DirtySize    int    // Maximum memory allowance (MB) for caching dirty nodes
+	ReadOnly     bool   // Flag whether the database is opened in read only mode.
 }
 
 // nodeBackend defines the methods needed to access/update trie nodes in
@@ -76,8 +77,9 @@ type nodeBackend interface {
 	// Report specifies whether logs will be displayed in info level.
 	Commit(root common.Hash, report bool) error
 
-	// IsEmpty returns an indicator if the node database is empty.
-	IsEmpty() bool
+	// Initialized returns an indicator if the state data is already initialized
+	// according to the state scheme.
+	Initialized(genesisRoot common.Hash) bool
 
 	// Size returns the current storage size of the memory cache in front of the
 	// persistent database layer.
@@ -124,18 +126,19 @@ func prepare(diskdb ethdb.Database, config *Config) *Database {
 	}
 }
 
-// NewDatabase initializes the trie database with default settings, namely
-// the legacy hash-based scheme is used by default.
-func NewDatabase(diskdb ethdb.Database) *Database {
-	return NewDatabaseWithConfig(diskdb, nil)
+// NewHashDatabase initializes the trie database with legacy hash-based scheme.
+func NewHashDatabase(diskdb ethdb.Database) *Database {
+	return NewDatabase(diskdb, &Config{Scheme: rawdb.HashScheme})
 }
 
-// NewDatabaseWithConfig initializes the trie database with provided configs.
-// The path-based scheme is not activated yet, always initialized with legacy
-// hash-based scheme.
-func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
+// NewDatabase initializes the trie database with provided configs.
+func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	db := prepare(diskdb, config)
-	db.backend = openHashDatabase(diskdb, db.cleans)
+	if config != nil && config.Scheme == rawdb.PathScheme {
+		db.backend = openSnapDatabase(diskdb, db.cleans, config)
+	} else {
+		db.backend = openHashDatabase(diskdb, db.cleans)
+	}
 	return db
 }
 
@@ -180,9 +183,10 @@ func (db *Database) Size() (common.StorageSize, common.StorageSize) {
 	return storages, preimages
 }
 
-// IsEmpty returns an indicator if the node database is empty.
-func (db *Database) IsEmpty() bool {
-	return db.backend.IsEmpty()
+// Initialized returns an indicator if the state data is already initialized
+// according to the state scheme.
+func (db *Database) Initialized(genesisRoot common.Hash) bool {
+	return db.backend.Initialized(genesisRoot)
 }
 
 // Scheme returns the node scheme used in the database.
