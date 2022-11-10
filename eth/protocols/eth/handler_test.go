@@ -75,7 +75,7 @@ func newTestBackendWithGenerator(blocks int, generator func(int, *core.BlockGen)
 		panic(err)
 	}
 	for _, block := range bs {
-		chain.StateCache().TrieDB().Commit(block.Root(), false)
+		chain.TrieDB().Commit(block.Root(), false)
 	}
 	txconfig := txpool.DefaultConfig
 	txconfig.Journal = "" // Don't litter the disk with test journals

@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 const (
@@ -389,8 +390,10 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// if the relevant state is available in disk.
 			var preferDisk bool
 			if statedb != nil {
-				s1, s2 := statedb.Database().TrieDB().Size()
-				preferDisk = s1+s2 > defaultTracechainMemLimit
+				if tdb, ok := statedb.Database().TrieDB().(*trie.Database); ok {
+					s1, s2 := tdb.Size()
+					preferDisk = s1+s2 > defaultTracechainMemLimit
+				}
 			}
 			statedb, release, err = api.backend.StateAtBlock(ctx, block, reexec, statedb, false, preferDisk)
 			if err != nil {

@@ -61,7 +61,7 @@ type StateTrie struct {
 // If root is the zero hash or the sha3 hash of an empty string, the
 // trie is initially empty. Otherwise, New will panic if db is nil
 // and returns MissingNodeError if the root node cannot be found.
-func NewStateTrie(id *ID, db *Database) (*StateTrie, error) {
+func NewStateTrie(id *ID, db NodeDatabase) (*StateTrie, error) {
 	if db == nil {
 		panic("trie.NewStateTrie called without a database")
 	}
@@ -69,7 +69,11 @@ func NewStateTrie(id *ID, db *Database) (*StateTrie, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &StateTrie{trie: *trie, preimages: db.preimages}, nil
+	var preimages *preimageStore
+	if db, ok := db.(*Database); ok {
+		preimages = db.preimages
+	}
+	return &StateTrie{trie: *trie, preimages: preimages}, nil
 }
 
 // Get returns the value for key stored in the trie.

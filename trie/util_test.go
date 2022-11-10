@@ -26,7 +26,7 @@ import (
 
 // Tests if the trie diffs are tracked correctly.
 func TestTrieTracer(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
+	db := NewHashDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
@@ -97,7 +97,7 @@ func TestTrieTracer(t *testing.T) {
 }
 
 func TestTrieTracerNoop(t *testing.T) {
-	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
+	trie := NewEmpty(NewHashDatabase(rawdb.NewMemoryDatabase()))
 
 	// Insert a batch of entries, all the nodes should be marked as inserted
 	vals := []struct{ k, v string }{
@@ -124,7 +124,7 @@ func TestTrieTracerNoop(t *testing.T) {
 }
 
 func TestTrieTracePrevValue(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
+	db := NewHashDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
 
 	paths, blobs := trie.tracer.prevList()

@@ -22,6 +22,7 @@ package core
 
 import (
 	"math/big"
+	"path"
 	"testing"
 	"time"
 
@@ -1749,14 +1750,21 @@ func testLongReorgedSnapSyncingDeepRepair(t *testing.T, snapshots bool) {
 }
 
 func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
+	for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
+		testRepairWithScheme(t, tt, snapshots, scheme)
+	}
+}
+
+func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme string) {
 	// It's hard to follow the test case, visualize the input
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 	// fmt.Println(tt.dump(true))
 
 	// Create a temporary persistent database
 	datadir := t.TempDir()
+	ancient := path.Join(datadir, "ancient")
 
-	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, ancient, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
 	}
@@ -1774,6 +1782,7 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 			TrieDirtyLimit: 256,
 			TrieTimeLimit:  5 * time.Minute,
 			SnapshotLimit:  0, // Disable snapshot by default
+			NodeScheme:     scheme,
 		}
 	)
 	defer engine.Close()
@@ -1803,7 +1812,9 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 		t.Fatalf("Failed to import canonical chain start: %v", err)
 	}
 	if tt.commitBlock > 0 {
-		chain.stateCache.TrieDB().Commit(canonblocks[tt.commitBlock-1].Root(), false)
+		if err := chain.triedb.Commit(canonblocks[tt.commitBlock-1].Root(), false); err != nil {
+			t.Fatalf("Failed to flush trie state: %v", err)
+		}
 		if snapshots {
 			if err := chain.snaps.Cap(canonblocks[tt.commitBlock-1].Root(), 0); err != nil {
 				t.Fatalf("Failed to flatten snapshots: %v", err)
@@ -1825,17 +1836,18 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 		rawdb.WriteLastPivotNumber(db, *tt.pivotBlock)
 	}
 	// Pull the plug on the database, simulating a hard crash
+	chain.triedb.Close()
 	db.Close()
 	chain.stopWithoutSaving()
 
 	// Start a new blockchain back up and see where the repair leads us
-	db, err = rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	db, err = rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, ancient, "", false)
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
 	}
 	defer db.Close()
 
-	newChain, err := NewBlockChain(db, nil, gspec, nil, engine, vm.Config{}, nil, nil)
+	newChain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
@@ -1877,14 +1889,18 @@ func testRepair(t *testing.T, tt *rewindTest, snapshots bool) {
 // chain rewinds itself to the B1 (skip B3 in order to recover snapshot)
 // In this case the snapshot layer of B3 is not created because of existent
 // state.
-func TestIssue23496(t *testing.T) {
+func TestIssue23496HashBased(t *testing.T) { testIssue23496(t, rawdb.HashScheme) }
+func TestIssue23496PathBased(t *testing.T) { testIssue23496(t, rawdb.PathScheme) }
+
+func testIssue23496(t *testing.T, scheme string) {
 	// It's hard to follow the test case, visualize the input
 	//log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
 	// Create a temporary persistent database
 	datadir := t.TempDir()
+	ancient := path.Join(datadir, "ancient")
 
-	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, ancient, "", false)
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
 	}
@@ -1897,15 +1913,8 @@ func TestIssue23496(t *testing.T) {
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 		engine = ethash.NewFullFaker()
-		config = &CacheConfig{
-			TrieCleanLimit: 256,
-			TrieDirtyLimit: 256,
-			TrieTimeLimit:  5 * time.Minute,
-			SnapshotLimit:  256,
-			SnapshotWait:   true,
-		}
 	)
-	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
+	chain, err := NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -1918,7 +1927,7 @@ func TestIssue23496(t *testing.T) {
 	if _, err := chain.InsertChain(blocks[:1]); err != nil {
 		t.Fatalf("Failed to import canonical chain start: %v", err)
 	}
-	chain.stateCache.TrieDB().Commit(blocks[0].Root(), false)
+	chain.triedb.Commit(blocks[0].Root(), false)
 
 	// Insert block B2 and commit the snapshot into disk
 	if _, err := chain.InsertChain(blocks[1:2]); err != nil {
@@ -1932,7 +1941,7 @@ func TestIssue23496(t *testing.T) {
 	if _, err := chain.InsertChain(blocks[2:3]); err != nil {
 		t.Fatalf("Failed to import canonical chain start: %v", err)
 	}
-	chain.stateCache.TrieDB().Commit(blocks[2].Root(), false)
+	chain.triedb.Commit(blocks[2].Root(), false)
 
 	// Insert the remaining blocks
 	if _, err := chain.InsertChain(blocks[3:]); err != nil {
@@ -1940,17 +1949,18 @@ func TestIssue23496(t *testing.T) {
 	}
 
 	// Pull the plug on the database, simulating a hard crash
+	chain.triedb.Close()
 	db.Close()
 	chain.stopWithoutSaving()
 
 	// Start a new blockchain back up and see where the repair leads us
-	db, err = rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, datadir, "", false)
+	db, err = rawdb.NewLevelDBDatabaseWithFreezer(datadir, 0, 0, ancient, "", false)
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, nil, gspec, nil, engine, vm.Config{}, nil, nil)
+	chain, err = NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
@@ -1962,8 +1972,12 @@ func TestIssue23496(t *testing.T) {
 	if head := chain.CurrentFastBlock(); head.NumberU64() != uint64(4) {
 		t.Errorf("Head fast block mismatch: have %d, want %d", head.NumberU64(), uint64(4))
 	}
-	if head := chain.CurrentBlock(); head.NumberU64() != uint64(1) {
-		t.Errorf("Head block mismatch: have %d, want %d", head.NumberU64(), uint64(1))
+	expHead := uint64(1)
+	if scheme == rawdb.PathScheme {
+		expHead = uint64(2)
+	}
+	if head := chain.CurrentBlock(); head.NumberU64() != expHead {
+		t.Errorf("Head block mismatch: have %d, want %d", head.NumberU64(), expHead)
 	}
 
 	// Reinsert B2-B4

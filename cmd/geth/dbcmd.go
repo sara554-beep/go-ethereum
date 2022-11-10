@@ -153,7 +153,7 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 		ArgsUsage: "<hex-encoded state root> <hex-encoded account hash> <hex-encoded storage trie root> <hex-encoded start (optional)> <int max elements (optional)>",
 		Flags: flags.Merge([]cli.Flag{
 			utils.SyncModeFlag,
-		}, utils.NetworkFlags, utils.DatabasePathFlags),
+		}, utils.NetworkFlags, utils.DatabasePathFlags, utils.TrieSchemeFlags),
 		Description: "This command looks up the specified database key from the database.",
 	}
 	dbDumpFreezerIndex = &cli.Command{
@@ -495,6 +495,13 @@ func dbDumpTrie(ctx *cli.Context) error {
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	defer db.Close()
 
+	config := &trie.Config{
+		ReadOnly: true,
+		Scheme:   utils.ParseTrieScheme(ctx),
+	}
+	triedb := trie.NewDatabase(db, config)
+	defer triedb.Close()
+
 	var (
 		state   []byte
 		storage []byte
@@ -528,7 +535,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 		}
 	}
 	id := trie.StorageTrieID(common.BytesToHash(state), common.BytesToHash(account), common.BytesToHash(storage))
-	theTrie, err := trie.New(id, trie.NewDatabase(db))
+	theTrie, err := trie.New(id, triedb)
 	if err != nil {
 		return err
 	}

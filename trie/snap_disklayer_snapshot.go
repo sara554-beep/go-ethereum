@@ -78,23 +78,25 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 		return nil, err
 	}
 	// Flush all cached nodes in disk cache into ephemeral database,
-	// since the requested state may point to a GCed version embedded
-	// in disk cache. Note it can take a few seconds.
+	// since the requested state may point to a garbage-collected
+	// version embedded in disk cache. Note it can take a few seconds.
+	batch := ndb.NewBatchWithSize(int(dl.dirty.limit))
 	dl.dirty.forEach(func(owner common.Hash, path []byte, node *memoryNode) {
-		if node.node == nil {
-			if owner == (common.Hash{}) {
-				rawdb.DeleteAccountTrieNode(ndb, path)
-			} else {
-				rawdb.DeleteStorageTrieNode(ndb, owner, path)
-			}
+		// Deletions are ignored, it doesn't make any sense to
+		// apply deletions against a fresh-new database.
+		if node.isDeleted() {
+			return
+		}
+		if owner == (common.Hash{}) {
+			rawdb.WriteAccountTrieNode(batch, path, node.rlp())
 		} else {
-			if owner == (common.Hash{}) {
-				rawdb.WriteAccountTrieNode(ndb, path, node.rlp())
-			} else {
-				rawdb.WriteStorageTrieNode(ndb, owner, path, node.rlp())
-			}
+			rawdb.WriteStorageTrieNode(batch, owner, path, node.rlp())
 		}
 	})
+	if err := batch.Write(); err != nil {
+		return nil, err
+	}
+	// Construct the disk layer snapshot
 	snap := &diskLayerSnapshot{
 		root:    dl.root,
 		diffid:  dl.diffid,
@@ -312,9 +314,7 @@ func (snap *diskLayerSnapshot) revert(diff *reverseDiff, diffid uint64) (*diskLa
 }
 
 func (snap *diskLayerSnapshot) Release() {
-	// Release the read-only disk database snapshot.
-	snap.snap.Release()
-
-	// Wipe out the ephemeral key-value database.
-	os.RemoveAll(snap.datadir)
+	snap.snap.Release()        // release the disk database snapshot.
+	snap.clean.Reset()         // release the held cache
+	os.RemoveAll(snap.datadir) // nuke out the ephemeral database.
 }
