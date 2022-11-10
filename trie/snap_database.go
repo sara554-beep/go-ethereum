@@ -440,18 +440,17 @@ func (db *snapDatabase) Size() (size common.StorageSize) {
 	return size
 }
 
-// IsEmpty returns an indicator if the node database is empty.
-// Snap database is only regarded as empty if none of the layers
-// points to a non-empty state.
-func (db *snapDatabase) IsEmpty() bool {
-	var nonempty bool
+// Initialized returns an indicator if the state data is already
+// initialized in path-based scheme.
+func (db *snapDatabase) Initialized(genesisRoot common.Hash) bool {
+	var inited bool
 	db.tree.forEach(func(_ common.Hash, layer snapshot) bool {
 		if layer.Root() != emptyRoot {
-			nonempty = true
+			inited = true
 		}
 		return true
 	})
-	return !nonempty
+	return inited
 }
 
 // SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).

@@ -17,8 +17,6 @@
 package trie
 
 import (
-	"fmt"
-
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -47,7 +45,7 @@ type trieReader struct {
 func newTrieReader(stateRoot, owner common.Hash, db NodeReader) (*trieReader, error) {
 	reader := db.GetReader(stateRoot)
 	if reader == nil {
-		return nil, fmt.Errorf("state not found #%x", stateRoot)
+		return nil, &MissingNodeError{Owner: owner, NodeHash: stateRoot, Path: nil}
 	}
 	return &trieReader{owner: owner, reader: reader}, nil
 }

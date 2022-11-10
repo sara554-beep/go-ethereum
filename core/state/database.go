@@ -56,8 +56,8 @@ type Database interface {
 	// DiskDB returns the underlying key-value disk database.
 	DiskDB() ethdb.KeyValueStore
 
-	// TrieDB retrieves the low level trie database used for data storage.
-	TrieDB() *trie.Database
+	// TrieDB returns the underlying trie database for managing trie nodes.
+	TrieDB() trie.NodeDatabase
 }
 
 // Trie is a Ethereum Merkle Patricia trie.
@@ -133,7 +133,7 @@ func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
 		disk:          db,
 		codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
 		codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
-		triedb:        trie.NewDatabaseWithConfig(db, config),
+		triedb:        trie.NewDatabase(db, config),
 	}
 }
 
@@ -147,11 +147,22 @@ func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
 	}
 }
 
+// NewDatabaseWithSnapshot creates a state database from the live snapshot.
+// It has data isolation and is safe to apply the mutation on the top.
+func NewDatabaseWithSnapshot(db ethdb.Database, snap *trie.DatabaseSnapshot) Database {
+	return &cachingDB{
+		disk:          db,
+		triedb:        snap,
+		codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+		codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+	}
+}
+
 type cachingDB struct {
 	disk          ethdb.KeyValueStore
 	codeSizeCache *lru.Cache[common.Hash, int]
 	codeCache     *lru.SizeConstrainedCache[common.Hash, []byte]
-	triedb        *trie.Database
+	triedb        trie.NodeDatabase
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
@@ -229,6 +240,6 @@ func (db *cachingDB) DiskDB() ethdb.KeyValueStore {
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.
-func (db *cachingDB) TrieDB() *trie.Database {
+func (db *cachingDB) TrieDB() trie.NodeDatabase {
 	return db.triedb
 }

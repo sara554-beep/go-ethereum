@@ -183,7 +183,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	if dl.db.freezer != nil {
 		var limit uint64
 		if dl.db.config != nil {
-			limit = dl.db.config.StateLimit
+			limit = dl.db.config.StateHistory
 		}
 		err := storeTrieHistory(dl.db.freezer, bottom, limit)
 		if err != nil {

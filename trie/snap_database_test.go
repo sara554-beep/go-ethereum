@@ -18,13 +18,13 @@ package trie
 
 import (
 	"bytes"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"math/rand"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
 )
 
 // testEnv is the environment for all test fields.
