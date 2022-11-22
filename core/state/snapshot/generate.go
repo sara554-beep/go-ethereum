@@ -373,7 +373,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 			tdb.Commit(root, false)
 		}
 		resolver = func(owner common.Hash, path []byte, hash common.Hash) []byte {
-			return tdb.Scheme().ReadTrieNode(mdb, owner, path, hash)
+			return rawdb.ReadTrieNode(mdb, owner, path, hash, tdb.Scheme())
 		}
 	}
 	// Construct the trie for state iteration, reuse the trie

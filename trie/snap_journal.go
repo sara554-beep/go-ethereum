@@ -98,7 +98,7 @@ func (db *snapDatabase) loadJournal(diskRoot common.Hash) (snapshot, error) {
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
 func (db *snapDatabase) loadSnapshot() snapshot {
 	// Retrieve the root node of in-disk state.
-	_, root := rawdb.ReadTrieNode(db.diskdb, encodeStorageKey(common.Hash{}, nil))
+	_, root := rawdb.ReadAccountTrieNode(db.diskdb, nil)
 	if root == (common.Hash{}) {
 		root = emptyRoot
 	}

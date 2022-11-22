@@ -103,7 +103,7 @@ func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte, rootBlob []byte) (c
 func fillDB(t *testing.T) *testEnv {
 	var (
 		diskdb, _ = rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), t.TempDir(), "", false)
-		nodeDb    = newTestDatabase(diskdb, PathScheme)
+		nodeDb    = newTestDatabase(diskdb, rawdb.PathScheme)
 		roots     []common.Hash
 		paths     [][][]byte
 		blobs     [][][]byte
@@ -315,7 +315,7 @@ func TestJournal(t *testing.T) {
 	}
 	env.nodeDb.Close()
 
-	newdb := newTestDatabase(env.nodeDb.diskdb, PathScheme)
+	newdb := newTestDatabase(env.nodeDb.diskdb, rawdb.PathScheme)
 	for index = 0; index < len(env.roots); index++ {
 		if env.roots[index] == dl.root {
 			break
@@ -361,7 +361,7 @@ func TestReset(t *testing.T) {
 		t.Fatal("Failed to reject invalid reset")
 	}
 	// Reset database to state persisted in the disk
-	_, hash := rawdb.ReadTrieNode(env.db, encodeStorageKey(common.Hash{}, nil))
+	_, hash := rawdb.ReadAccountTrieNode(env.db, nil)
 	if err := env.nodeDb.Reset(hash); err != nil {
 		t.Fatalf("Failed to reset database %v", err)
 	}
@@ -406,7 +406,7 @@ func TestCommit(t *testing.T) {
 	if db.tree.bottom().Root() != env.roots[len(env.roots)-1] {
 		t.Fatalf("Root hash is not matched exp %x got %x", env.roots[len(env.roots)-1], db.tree.bottom().Root())
 	}
-	_, hash := rawdb.ReadTrieNode(env.db, encodeStorageKey(common.Hash{}, nil))
+	_, hash := rawdb.ReadAccountTrieNode(env.db, nil)
 	if hash != env.roots[len(env.roots)-1] {
 		t.Fatalf("Root hash is not matched exp %x got %x", env.roots[len(env.roots)-1], hash)
 	}

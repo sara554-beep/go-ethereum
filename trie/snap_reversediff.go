@@ -132,12 +132,20 @@ func (diff *reverseDiff) decode(blob []byte) error {
 // apply writes the reverse diff into the provided database batch.
 func (diff *reverseDiff) apply(batch ethdb.Batch) {
 	for _, entry := range diff.States {
+		accTrie := entry.Owner == (common.Hash{})
 		for _, state := range entry.States {
-			storage := encodeStorageKey(entry.Owner, state.Path)
 			if len(state.Prev) > 0 {
-				rawdb.WriteTrieNode(batch, storage, state.Prev)
+				if accTrie {
+					rawdb.WriteAccountTrieNode(batch, state.Path, state.Prev)
+				} else {
+					rawdb.WriteStorageTrieNode(batch, entry.Owner, state.Path, state.Prev)
+				}
 			} else {
-				rawdb.DeleteTrieNode(batch, storage)
+				if accTrie {
+					rawdb.DeleteAccountTrieNode(batch, state.Path)
+				} else {
+					rawdb.DeleteStorageTrieNode(batch, entry.Owner, state.Path)
+				}
 			}
 		}
 	}

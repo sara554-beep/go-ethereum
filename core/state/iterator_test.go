@@ -21,6 +21,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Tests that the node iterator indeed walks over the entire database contents.
@@ -47,10 +48,11 @@ func TestNodeIteratorCoverage(t *testing.T) {
 	)
 	it := db.NewIterator(nil, nil)
 	for it.Next() {
-		if ok, _ := sdb.TrieDB().Scheme().IsTrieNode(it.Key()); !ok {
+		ok, hash := isTrieNode(sdb.TrieDB().Scheme(), it.Key(), it.Value())
+		if !ok {
 			continue
 		}
-		seenNodes[common.BytesToHash(it.Key())] = struct{}{}
+		seenNodes[hash] = struct{}{}
 	}
 	it.Release()
 
@@ -78,4 +80,25 @@ func TestNodeIteratorCoverage(t *testing.T) {
 			t.Errorf("failed to retrieve reported node %x", hash)
 		}
 	}
+}
+
+// isTrieNode is a helper function which reports if the provided
+// database entry belongs to a trie node or not.
+func isTrieNode(scheme string, key, val []byte) (bool, common.Hash) {
+	if scheme == rawdb.HashScheme {
+		ok := rawdb.IsLegacyTrieNode(key, val)
+		if ok {
+			return true, common.BytesToHash(key)
+		}
+	} else {
+		ok, _ := rawdb.IsAccountTrieNode(key)
+		if ok {
+			return true, crypto.Keccak256Hash(val)
+		}
+		ok, _, _ = rawdb.IsStorageTrieNode(key)
+		if ok {
+			return true, crypto.Keccak256Hash(val)
+		}
+	}
+	return false, common.Hash{}
 }
