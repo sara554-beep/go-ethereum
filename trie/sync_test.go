@@ -71,9 +71,9 @@ func makeTestTrie(scheme string) (ethdb.Database, *Database, *StateTrie, map[str
 
 // checkTrieContents cross references a reconstructed trie with an expected data
 // content map.
-func checkTrieContents(t *testing.T, db ethdb.Database, scheme NodeScheme, root []byte, content map[string][]byte) {
+func checkTrieContents(t *testing.T, db ethdb.Database, scheme string, root []byte, content map[string][]byte) {
 	// Check root availability and trie contents
-	ndb := newTestDatabase(db, scheme.Name())
+	ndb := newTestDatabase(db, scheme)
 	trie, err := NewStateTrie(TrieID(common.BytesToHash(root)), ndb)
 	if err != nil {
 		t.Fatalf("failed to create trie at %x: %v", root, err)
@@ -89,8 +89,8 @@ func checkTrieContents(t *testing.T, db ethdb.Database, scheme NodeScheme, root 
 }
 
 // checkTrieConsistency checks that all nodes in a trie are indeed present.
-func checkTrieConsistency(db ethdb.Database, scheme NodeScheme, root common.Hash) error {
-	ndb := newTestDatabase(db, scheme.Name())
+func checkTrieConsistency(db ethdb.Database, scheme string, root common.Hash) error {
+	ndb := newTestDatabase(db, scheme)
 	trie, err := NewStateTrie(TrieID(root), ndb)
 	if err != nil {
 		return nil // Consider a non existent state consistent
@@ -112,8 +112,8 @@ type trieElement struct {
 func TestEmptySync(t *testing.T) {
 	dbA := NewDatabase(rawdb.NewMemoryDatabase())
 	dbB := NewDatabase(rawdb.NewMemoryDatabase())
-	dbC := newTestDatabase(rawdb.NewMemoryDatabase(), PathScheme)
-	dbD := newTestDatabase(rawdb.NewMemoryDatabase(), PathScheme)
+	dbC := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
+	dbD := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
 
 	emptyA := NewEmpty(dbA)
 	emptyB, _ := New(TrieID(emptyRoot), dbB)
@@ -131,28 +131,28 @@ func TestEmptySync(t *testing.T) {
 // Tests that given a root hash, a trie can sync iteratively on a single thread,
 // requesting retrieval tasks and returning all of them in one go.
 func TestIterativeSyncIndividualHashBased(t *testing.T) {
-	testIterativeSync(t, 1, false, HashScheme)
+	testIterativeSync(t, 1, false, rawdb.HashScheme)
 }
 func TestIterativeSyncBatchedHashBased(t *testing.T) {
-	testIterativeSync(t, 100, false, HashScheme)
+	testIterativeSync(t, 100, false, rawdb.HashScheme)
 }
 func TestIterativeSyncIndividualByPathHashBased(t *testing.T) {
-	testIterativeSync(t, 1, true, HashScheme)
+	testIterativeSync(t, 1, true, rawdb.HashScheme)
 }
 func TestIterativeSyncBatchedByPathHashBased(t *testing.T) {
-	testIterativeSync(t, 100, true, HashScheme)
+	testIterativeSync(t, 100, true, rawdb.HashScheme)
 }
 func TestIterativeSyncIndividualPathBased(t *testing.T) {
-	testIterativeSync(t, 1, false, PathScheme)
+	testIterativeSync(t, 1, false, rawdb.PathScheme)
 }
 func TestIterativeSyncBatchedPathBased(t *testing.T) {
-	testIterativeSync(t, 100, false, PathScheme)
+	testIterativeSync(t, 100, false, rawdb.PathScheme)
 }
 func TestIterativeSyncIndividualByPathPathBased(t *testing.T) {
-	testIterativeSync(t, 1, true, PathScheme)
+	testIterativeSync(t, 1, true, rawdb.PathScheme)
 }
 func TestIterativeSyncBatchedByPathPathBased(t *testing.T) {
-	testIterativeSync(t, 100, true, PathScheme)
+	testIterativeSync(t, 100, true, rawdb.PathScheme)
 }
 
 func testIterativeSync(t *testing.T, count int, bypath bool, scheme string) {
@@ -221,8 +221,8 @@ func testIterativeSync(t *testing.T, count int, bypath bool, scheme string) {
 
 // Tests that the trie scheduler can correctly reconstruct the state even if only
 // partial results are returned, and the others sent only later.
-func TestIterativeDelayedSyncHashBased(t *testing.T) { testIterativeDelayedSync(t, HashScheme) }
-func TestIterativeDelayedSyncPathBased(t *testing.T) { testIterativeDelayedSync(t, PathScheme) }
+func TestIterativeDelayedSyncHashBased(t *testing.T) { testIterativeDelayedSync(t, rawdb.HashScheme) }
+func TestIterativeDelayedSyncPathBased(t *testing.T) { testIterativeDelayedSync(t, rawdb.PathScheme) }
 
 func testIterativeDelayedSync(t *testing.T, scheme string) {
 	// Create a random trie to copy
@@ -283,16 +283,16 @@ func testIterativeDelayedSync(t *testing.T, scheme string) {
 // requesting retrieval tasks and returning all of them in one go, however in a
 // random order.
 func TestIterativeRandomSyncIndividualHashBased(t *testing.T) {
-	testIterativeRandomSync(t, 1, HashScheme)
+	testIterativeRandomSync(t, 1, rawdb.HashScheme)
 }
 func TestIterativeRandomSyncBatchedHashBased(t *testing.T) {
-	testIterativeRandomSync(t, 100, HashScheme)
+	testIterativeRandomSync(t, 100, rawdb.HashScheme)
 }
 func TestIterativeRandomSyncIndividualPathBased(t *testing.T) {
-	testIterativeRandomSync(t, 1, PathScheme)
+	testIterativeRandomSync(t, 1, rawdb.PathScheme)
 }
 func TestIterativeRandomSyncBatchedPathBased(t *testing.T) {
-	testIterativeRandomSync(t, 100, PathScheme)
+	testIterativeRandomSync(t, 100, rawdb.PathScheme)
 }
 
 func testIterativeRandomSync(t *testing.T, count int, scheme string) {
@@ -354,10 +354,10 @@ func testIterativeRandomSync(t *testing.T, count int, scheme string) {
 // Tests that the trie scheduler can correctly reconstruct the state even if only
 // partial results are returned (Even those randomly), others sent only later.
 func TestIterativeRandomDelayedSyncHashBased(t *testing.T) {
-	testIterativeRandomDelayedSync(t, HashScheme)
+	testIterativeRandomDelayedSync(t, rawdb.HashScheme)
 }
 func TestIterativeRandomDelayedSyncPathBased(t *testing.T) {
-	testIterativeRandomDelayedSync(t, PathScheme)
+	testIterativeRandomDelayedSync(t, rawdb.PathScheme)
 }
 
 func testIterativeRandomDelayedSync(t *testing.T, scheme string) {
@@ -423,8 +423,12 @@ func testIterativeRandomDelayedSync(t *testing.T, scheme string) {
 
 // Tests that a trie sync will not request nodes multiple times, even if they
 // have such references.
-func TestDuplicateAvoidanceSyncHashBased(t *testing.T) { testDuplicateAvoidanceSync(t, HashScheme) }
-func TestDuplicateAvoidanceSyncPathBased(t *testing.T) { testDuplicateAvoidanceSync(t, PathScheme) }
+func TestDuplicateAvoidanceSyncHashBased(t *testing.T) {
+	testDuplicateAvoidanceSync(t, rawdb.HashScheme)
+}
+func TestDuplicateAvoidanceSyncPathBased(t *testing.T) {
+	testDuplicateAvoidanceSync(t, rawdb.PathScheme)
+}
 
 func testDuplicateAvoidanceSync(t *testing.T, scheme string) {
 	// Create a random trie to copy
@@ -489,8 +493,8 @@ func testDuplicateAvoidanceSync(t *testing.T, scheme string) {
 
 // Tests that at any point in time during a sync, only complete sub-tries are in
 // the database.
-func TestIncompleteSyncHashBased(t *testing.T) { testIncompleteSync(t, HashScheme) }
-func TestIncompleteSyncPathBased(t *testing.T) { testIncompleteSync(t, PathScheme) }
+func TestIncompleteSyncHashBased(t *testing.T) { testIncompleteSync(t, rawdb.HashScheme) }
+func TestIncompleteSyncPathBased(t *testing.T) { testIncompleteSync(t, rawdb.PathScheme) }
 
 func testIncompleteSync(t *testing.T, scheme string) {
 	// Create a random trie to copy
@@ -561,19 +565,19 @@ func testIncompleteSync(t *testing.T, scheme string) {
 	for i, path := range addedKeys {
 		owner, inner := ResolvePath([]byte(path))
 		nodeHash := addedHashes[i]
-		value := srcDb.Scheme().ReadTrieNode(diskdb, owner, inner, nodeHash)
-		srcDb.Scheme().DeleteTrieNode(diskdb, owner, inner, nodeHash)
+		value := rawdb.ReadTrieNode(diskdb, owner, inner, nodeHash, scheme)
+		rawdb.DeleteTrieNode(diskdb, owner, inner, nodeHash, scheme)
 		if err := checkTrieConsistency(diskdb, srcDb.Scheme(), root); err == nil {
 			t.Fatalf("trie inconsistency not caught, missing: %x", path)
 		}
-		srcDb.Scheme().WriteTrieNode(diskdb, owner, inner, nodeHash, value)
+		rawdb.WriteTrieNode(diskdb, owner, inner, nodeHash, value, scheme)
 	}
 }
 
 // Tests that trie nodes get scheduled lexicographically when having the same
 // depth.
-func TestSyncOrderingHashBased(t *testing.T) { testSyncOrdering(t, HashScheme) }
-func TestSyncOrderingPathBased(t *testing.T) { testSyncOrdering(t, PathScheme) }
+func TestSyncOrderingHashBased(t *testing.T) { testSyncOrdering(t, rawdb.HashScheme) }
+func TestSyncOrderingPathBased(t *testing.T) { testSyncOrdering(t, rawdb.PathScheme) }
 
 func testSyncOrdering(t *testing.T, scheme string) {
 	// Create a random trie to copy
@@ -697,8 +701,8 @@ func syncWith(t *testing.T, root common.Hash, db ethdb.Database, srcDb *Database
 
 // Tests that the syncing target is keeping moving which may overwrite the stale
 // states synced in the last cycle.
-func TestSyncWithDynamicTargetHashBased(t *testing.T) { testSyncWithDynamicTarget(t, HashScheme) }
-func TestSyncWithDynamicTargetPathBased(t *testing.T) { testSyncWithDynamicTarget(t, PathScheme) }
+func TestSyncWithDynamicTargetHashBased(t *testing.T) { testSyncWithDynamicTarget(t, rawdb.HashScheme) }
+func TestSyncWithDynamicTargetPathBased(t *testing.T) { testSyncWithDynamicTarget(t, rawdb.PathScheme) }
 
 func testSyncWithDynamicTarget(t *testing.T, scheme string) {
 	// Create a random trie to copy

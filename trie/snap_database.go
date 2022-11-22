@@ -246,7 +246,7 @@ func (db *snapDatabase) Journal(root common.Hash) error {
 	if err := rlp.Encode(journal, journalVersion); err != nil {
 		return err
 	}
-	_, diskroot := rawdb.ReadTrieNode(db.diskdb, encodeStorageKey(common.Hash{}, nil))
+	_, diskroot := rawdb.ReadAccountTrieNode(db.diskdb, nil)
 	if diskroot == (common.Hash{}) {
 		diskroot = emptyRoot
 	}
@@ -270,7 +270,7 @@ func (db *snapDatabase) Journal(root common.Hash) error {
 
 // Reset wipes all available journal from the persistent database and discard
 // all caches and diff layers on top, rebuilds the database with the specified
-// disk layer.
+// state root.
 func (db *snapDatabase) Reset(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -281,16 +281,16 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 	}
 	root = convertEmpty(root)
 
-	// Wipe all nodes in disk if empty state is required.
-	if root == emptyRoot {
-		rawdb.DeleteTrieNodes(db.diskdb)
-	} else {
-		// Otherwise, trie database is reset to a specific state,
-		// ensure the state is already present in disk.
-		_, hash := rawdb.ReadTrieNode(db.diskdb, encodeStorageKey(common.Hash{}, nil))
-		if hash != root {
-			return errors.New("state is non-existent")
+	// Ensure the requested state is existent before any
+	// action is applied.
+	_, hash := rawdb.ReadAccountTrieNode(db.diskdb, nil)
+	if hash != root {
+		if root != emptyRoot {
+			return fmt.Errorf("state is non-existent local %x target %x", hash, root)
 		}
+		// Empty state is requested as the target, nuke out
+		// the root node and leave all others as dangling.
+		rawdb.DeleteAccountTrieNode(db.diskdb, nil)
 	}
 	// Drop the stale state journal in persistent database.
 	rawdb.DeleteTrieJournal(db.diskdb)
@@ -315,7 +315,7 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 		truncateDiffs(db.freezer, db.diskdb, diffid)
 	}
 	db.tree = newLayerTree(newDiskLayer(root, diffid, db.cleans, newDiskcache(db.dirtySize, nil, 0), db.diskdb))
-	log.Info("Rebuild trie database", "root", root, "id", diffid)
+	log.Info("Rebuilt trie database", "root", root, "id", diffid)
 	return nil
 }
 
@@ -449,8 +449,8 @@ func (db *snapDatabase) SetCacheSize(size int) error {
 }
 
 // Scheme returns the node scheme used in the database.
-func (db *snapDatabase) Scheme() NodeScheme {
-	return &pathScheme{}
+func (db *snapDatabase) Scheme() string {
+	return rawdb.PathScheme
 }
 
 // Recover rollbacks the database to a specified historical point. The state is

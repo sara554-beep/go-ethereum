@@ -125,8 +125,8 @@ type iterationElement struct {
 }
 
 // Tests that the node iterator indeed walks over the entire database contents.
-func TestNodeIteratorCoverageHashBased(t *testing.T) { testNodeIteratorCoverage(t, HashScheme) }
-func TestNodeIteratorCoveragePathBased(t *testing.T) { testNodeIteratorCoverage(t, PathScheme) }
+func TestNodeIteratorCoverageHashBased(t *testing.T) { testNodeIteratorCoverage(t, rawdb.HashScheme) }
+func TestNodeIteratorCoveragePathBased(t *testing.T) { testNodeIteratorCoverage(t, rawdb.PathScheme) }
 
 func testNodeIteratorCoverage(t *testing.T, scheme string) {
 	// Create some arbitrary test trie to iterate
@@ -156,7 +156,7 @@ func testNodeIteratorCoverage(t *testing.T, scheme string) {
 		it    = db.NewIterator(nil, nil)
 	)
 	for it.Next() {
-		res, _ := nodeDb.Scheme().IsTrieNode(it.Key())
+		res, _, _ := isTrieNode(nodeDb.Scheme(), it.Key(), it.Value())
 		if !res {
 			continue
 		}
@@ -344,16 +344,16 @@ func TestIteratorNoDups(t *testing.T) {
 
 // This test checks that nodeIterator.Next can be retried after inserting missing trie nodes.
 func TestIteratorContinueAfterErrorDiskHashBased(t *testing.T) {
-	testIteratorContinueAfterError(t, false, HashScheme)
+	testIteratorContinueAfterError(t, false, rawdb.HashScheme)
 }
 func TestIteratorContinueAfterErrorMemonlyHashBased(t *testing.T) {
-	testIteratorContinueAfterError(t, true, HashScheme)
+	testIteratorContinueAfterError(t, true, rawdb.HashScheme)
 }
 func TestIteratorContinueAfterErrorDiskPathBased(t *testing.T) {
-	testIteratorContinueAfterError(t, false, PathScheme)
+	testIteratorContinueAfterError(t, false, rawdb.PathScheme)
 }
 func TestIteratorContinueAfterErrorMemonlyPathBased(t *testing.T) {
-	testIteratorContinueAfterError(t, true, PathScheme)
+	testIteratorContinueAfterError(t, true, rawdb.PathScheme)
 }
 
 func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
@@ -384,17 +384,12 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 	} else {
 		it := diskdb.NewIterator(nil, nil)
 		for it.Next() {
-			ok, nodeKey := tdb.Scheme().IsTrieNode(it.Key())
+			ok, path, hash := isTrieNode(tdb.Scheme(), it.Key(), it.Value())
 			if !ok {
 				continue
 			}
-			if tdb.Scheme().Name() == PathScheme {
-				_, path := decodeStorageKey(nodeKey)
-				paths = append(paths, path)
-			} else {
-				paths = append(paths, nil) // useless for hash-scheme
-			}
-			hashes = append(hashes, crypto.Keccak256Hash(it.Value()))
+			paths = append(paths, path)
+			hashes = append(hashes, hash)
 		}
 		it.Release()
 	}
@@ -429,8 +424,8 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 		if memonly {
 			tr.reader.banned = map[string]struct{}{string(rpath): {}}
 		} else {
-			rval = tdb.Scheme().ReadTrieNode(diskdb, common.Hash{}, rpath, rhash)
-			tdb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, rpath, rhash)
+			rval = rawdb.ReadTrieNode(diskdb, common.Hash{}, rpath, rhash, tdb.Scheme())
+			rawdb.DeleteTrieNode(diskdb, common.Hash{}, rpath, rhash, tdb.Scheme())
 		}
 		// Iterate until the error is hit.
 		seen := make(map[string]bool)
@@ -445,7 +440,7 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 		if memonly {
 			delete(tr.reader.banned, string(rpath))
 		} else {
-			tdb.Scheme().WriteTrieNode(diskdb, common.Hash{}, rpath, rhash, rval)
+			rawdb.WriteTrieNode(diskdb, common.Hash{}, rpath, rhash, rval, tdb.Scheme())
 		}
 		checkIteratorNoDups(t, it, seen)
 		if it.Error() != nil {
@@ -461,16 +456,16 @@ func testIteratorContinueAfterError(t *testing.T, memonly bool, scheme string) {
 // certain key prefix behaves correctly when Next is called. The expectation is that Next
 // should retry seeking before returning true for the first time.
 func TestIteratorContinueAfterSeekErrorDiskHashBased(t *testing.T) {
-	testIteratorContinueAfterSeekError(t, false, HashScheme)
+	testIteratorContinueAfterSeekError(t, false, rawdb.HashScheme)
 }
 func TestIteratorContinueAfterSeekErrorMemonlyHashBased(t *testing.T) {
-	testIteratorContinueAfterSeekError(t, true, HashScheme)
+	testIteratorContinueAfterSeekError(t, true, rawdb.HashScheme)
 }
 func TestIteratorContinueAfterSeekErrorDiskPathBased(t *testing.T) {
-	testIteratorContinueAfterSeekError(t, false, PathScheme)
+	testIteratorContinueAfterSeekError(t, false, rawdb.PathScheme)
 }
 func TestIteratorContinueAfterSeekErrorMemonlyPathBased(t *testing.T) {
-	testIteratorContinueAfterSeekError(t, true, PathScheme)
+	testIteratorContinueAfterSeekError(t, true, rawdb.PathScheme)
 }
 
 func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme string) {
@@ -504,8 +499,8 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme strin
 	if memonly {
 		tr.reader.banned = map[string]struct{}{string(barNodePath): {}}
 	} else {
-		barNodeBlob = triedb.Scheme().ReadTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash)
-		triedb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash)
+		barNodeBlob = rawdb.ReadTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash, triedb.Scheme())
+		rawdb.DeleteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash, triedb.Scheme())
 	}
 	// Create a new iterator that seeks to "bars". Seeking can't proceed because
 	// the node is missing.
@@ -520,7 +515,7 @@ func testIteratorContinueAfterSeekError(t *testing.T, memonly bool, scheme strin
 	if memonly {
 		delete(tr.reader.banned, string(barNodePath))
 	} else {
-		triedb.Scheme().WriteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash, barNodeBlob)
+		rawdb.WriteTrieNode(diskdb, common.Hash{}, barNodePath, barNodeHash, barNodeBlob, triedb.Scheme())
 	}
 	// Check that iteration produces the right set of values.
 	if err := checkIteratorOrder(testdata1[2:], NewIterator(it)); err != nil {
@@ -541,8 +536,8 @@ func checkIteratorNoDups(t *testing.T, it NodeIterator, seen map[string]bool) in
 	return len(seen)
 }
 
-func TestIteratorNodeBlobHashBased(t *testing.T) { testIteratorNodeBlob(t, HashScheme) }
-func TestIteratorNodeBlobPathBased(t *testing.T) { testIteratorNodeBlob(t, PathScheme) }
+func TestIteratorNodeBlobHashBased(t *testing.T) { testIteratorNodeBlob(t, rawdb.HashScheme) }
+func TestIteratorNodeBlobPathBased(t *testing.T) { testIteratorNodeBlob(t, rawdb.PathScheme) }
 
 type loggingDb struct {
 	getCount uint64
@@ -670,7 +665,7 @@ func testIteratorNodeBlob(t *testing.T, scheme string) {
 
 	var count int
 	for dbIter.Next() {
-		ok, _ := triedb.Scheme().IsTrieNode(dbIter.Key())
+		ok, _, _ := isTrieNode(triedb.Scheme(), dbIter.Key(), dbIter.Value())
 		if !ok {
 			continue
 		}
@@ -686,4 +681,30 @@ func testIteratorNodeBlob(t *testing.T, scheme string) {
 	if count != len(found) {
 		t.Fatal("Find extra trie node via iterator")
 	}
+}
+
+// isTrieNode is a helper function which reports if the provided
+// database entry belongs to a trie node or not. Note in tests
+// only single layer trie is used, namely storage trie is not
+// considered at all.
+func isTrieNode(scheme string, key, val []byte) (bool, []byte, common.Hash) {
+	var (
+		path []byte
+		hash common.Hash
+	)
+	if scheme == rawdb.HashScheme {
+		ok := rawdb.IsLegacyTrieNode(key, val)
+		if !ok {
+			return false, nil, common.Hash{}
+		}
+		hash = common.BytesToHash(key)
+	} else {
+		ok, remain := rawdb.IsAccountTrieNode(key)
+		if !ok {
+			return false, nil, common.Hash{}
+		}
+		path = common.CopyBytes(remain)
+		hash = crypto.Keccak256Hash(val)
+	}
+	return true, path, hash
 }

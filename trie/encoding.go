@@ -94,41 +94,6 @@ func compactToHex(compact []byte) []byte {
 	return base[chop:]
 }
 
-// RIGHT-PADDING encoding is used for encoding trie node path in the trie node
-// storage key. All trie paths will be encoded into slices with a length of 33
-// bytes(1 byte for length flag).
-//
-// e.g.
-// - the key [] is encoded as [0x0, ..., 0x0] (32bytes) + [0x0] (length flag)
-// - the key [0x1, 0x2, 0x3] is encoded as [0x12, 0x30] + [0x0] * 30 + [0x3] (length flag)
-// - the key [0x1, 0x2, 0x3, 0x0] is encoded as [0x12, 0x30] + [0x0] * 30 + [0x4] (length flag)
-//
-// The main benefit of this format is the consequent paths can retain the shared
-// path prefix after encoding and the path ordering is kept. The drawback is it's
-// not space efficient but the key should be compressible when persist to db.
-
-func hexToRightPadding(hex []byte) []byte {
-	buf := make([]byte, 32+1)        // allocate one more space for length flag
-	buf[len(buf)-1] = byte(len(hex)) // encode length in last byte, in range [0, 64)
-	if len(hex)&1 == 1 {
-		buf[len(hex)/2] |= hex[len(hex)-1] << 4
-		hex = hex[:len(hex)-1]
-	}
-	decodeNibbles(hex, buf[:len(hex)/2])
-	return buf
-}
-
-func rightPaddingToHex(padded []byte) []byte {
-	length := int(padded[len(padded)-1])
-	if length&1 == 1 {
-		key := keybytesToHex(padded[:length/2])
-		key[len(key)-1] = padded[length/2] >> 4
-		return key
-	}
-	key := keybytesToHex(padded[:length/2])
-	return key[:len(key)-1] // cut the terminator flag
-}
-
 // keybytesToHex turns key bytes into hex nibbles.
 func keybytesToHex(str []byte) []byte {
 	l := len(str)*2 + 1

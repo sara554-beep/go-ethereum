@@ -140,7 +140,7 @@ func BenchmarkGetNode(b *testing.B) { benchmarkGetNode(b, false) }
 func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
 
 func benchmarkGetNode(b *testing.B, getBlob bool) {
-	db := newTestDatabase(rawdb.NewDatabase(rawdb.NewMemoryDatabase()), PathScheme)
+	db := newTestDatabase(rawdb.NewDatabase(rawdb.NewMemoryDatabase()), rawdb.PathScheme)
 	trie, _ := New(TrieID(common.Hash{}), db)
 
 	k := make([]byte, 32)

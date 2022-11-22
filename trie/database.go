@@ -806,8 +806,8 @@ func (db *hashDatabase) Update(_ common.Hash, _ common.Hash, nodes *MergedNodeSe
 func (db *hashDatabase) Close() error { return nil }
 
 // Scheme returns the node scheme used in the database.
-func (db *hashDatabase) Scheme() NodeScheme {
-	return &hashScheme{}
+func (db *hashDatabase) Scheme() string {
+	return rawdb.HashScheme
 }
 
 // GetReader retrieves a node reader belonging to the given state root.

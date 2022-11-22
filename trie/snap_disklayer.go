@@ -122,18 +122,26 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 		triedbCleanMissMeter.Mark(1)
 	}
 	// Try to retrieve the trie node from the disk.
-	blob, nodeHash := rawdb.ReadTrieNode(dl.diskdb, encodeStorageKey(owner, path))
-	if nodeHash != hash {
-		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nodeHash, hash, owner, path)
+	var (
+		nBlob []byte
+		nHash common.Hash
+	)
+	if owner == (common.Hash{}) {
+		nBlob, nHash = rawdb.ReadAccountTrieNode(dl.diskdb, path)
+	} else {
+		nBlob, nHash = rawdb.ReadStorageTrieNode(dl.diskdb, owner, path)
 	}
-	if dl.clean != nil && len(blob) > 0 {
-		dl.clean.Set(hash.Bytes(), blob)
-		triedbCleanWriteMeter.Mark(int64(len(blob)))
+	if nHash != hash {
+		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nHash, hash, owner, path)
 	}
-	if len(blob) == 0 {
+	if dl.clean != nil && len(nBlob) > 0 {
+		dl.clean.Set(hash.Bytes(), nBlob)
+		triedbCleanWriteMeter.Mark(int64(len(nBlob)))
+	}
+	if len(nBlob) == 0 {
 		return nil, nil
 	}
-	return &memoryNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
+	return &memoryNode{node: rawNode(nBlob), hash: hash, size: uint16(len(nBlob))}, nil
 }
 
 // Node retrieves the trie node with the provided trie identifier, node path

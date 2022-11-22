@@ -73,10 +73,10 @@ func TestMissingRoot(t *testing.T) {
 	}
 }
 
-func TestMissingNodeDiskHashBased(t *testing.T)    { testMissingNode(t, false, HashScheme) }
-func TestMissingNodeMemonlyHashBased(t *testing.T) { testMissingNode(t, true, HashScheme) }
-func TestMissingNodeDiskPathBased(t *testing.T)    { testMissingNode(t, false, PathScheme) }
-func TestMissingNodeMemonlyPathBased(t *testing.T) { testMissingNode(t, true, PathScheme) }
+func TestMissingNodeDiskHashBased(t *testing.T)    { testMissingNode(t, false, rawdb.HashScheme) }
+func TestMissingNodeMemonlyHashBased(t *testing.T) { testMissingNode(t, true, rawdb.HashScheme) }
+func TestMissingNodeDiskPathBased(t *testing.T)    { testMissingNode(t, false, rawdb.PathScheme) }
+func TestMissingNodeMemonlyPathBased(t *testing.T) { testMissingNode(t, true, rawdb.PathScheme) }
 
 func testMissingNode(t *testing.T, memonly bool, scheme string) {
 	diskdb := rawdb.NewMemoryDatabase()
@@ -132,7 +132,7 @@ func testMissingNode(t *testing.T, memonly bool, scheme string) {
 	if memonly {
 		trie.reader.banned = map[string]struct{}{string(path): {}}
 	} else {
-		triedb.Scheme().DeleteTrieNode(diskdb, common.Hash{}, path, hash)
+		rawdb.DeleteTrieNode(diskdb, common.Hash{}, path, hash, scheme)
 	}
 	_, err = trie.TryGet([]byte("120000"))
 	if _, ok := err.(*MissingNodeError); !ok {
@@ -419,9 +419,9 @@ func (randTest) Generate(r *rand.Rand, size int) reflect.Value {
 }
 
 func runRandTest(rt randTest) bool {
-	var scheme = HashScheme
+	var scheme = rawdb.HashScheme
 	if rand.Intn(2) == 0 {
-		scheme = PathScheme
+		scheme = rawdb.PathScheme
 	}
 	var (
 		origin   = emptyRoot
@@ -880,7 +880,7 @@ func TestCommitSequenceStackTrie(t *testing.T) {
 		// Another sponge is used for the stacktrie commits
 		stackTrieSponge := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "b"}
 		stTrie := NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
-			db.Scheme().WriteTrieNode(stackTrieSponge, owner, path, hash, blob)
+			rawdb.WriteTrieNode(stackTrieSponge, owner, path, hash, blob, db.Scheme())
 		})
 		// Fill the trie with elements
 		for i := 0; i < count; i++ {
@@ -939,7 +939,7 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	// Another sponge is used for the stacktrie commits
 	stackTrieSponge := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "b"}
 	stTrie := NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
-		db.Scheme().WriteTrieNode(stackTrieSponge, owner, path, hash, blob)
+		rawdb.WriteTrieNode(stackTrieSponge, owner, path, hash, blob, db.Scheme())
 	})
 	// Add a single small-element to the trie(s)
 	key := make([]byte, 5)

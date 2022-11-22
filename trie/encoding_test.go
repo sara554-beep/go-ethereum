@@ -111,53 +111,6 @@ func TestHexToCompactInPlaceRandom(t *testing.T) {
 	}
 }
 
-func TestRightPadding(t *testing.T) {
-	tests := []struct{ hex, padded []byte }{
-		// empty keys
-		{hex: []byte{}, padded: append(bytes.Repeat([]byte{0x0}, 32), []byte{0x0}...)},
-		// odd length
-		{
-			hex: bytes.Repeat([]byte{1}, 15),
-			padded: append(
-				append(bytes.Repeat([]byte{0x11}, 7), []byte{0x10}...),
-				append(bytes.Repeat([]byte{0x0}, 24), []byte{0x0f}...)...,
-			),
-		},
-		// even length
-		{
-			hex: bytes.Repeat([]byte{1}, 16),
-			padded: append(
-				bytes.Repeat([]byte{0x11}, 8),
-				append(bytes.Repeat([]byte{0x0}, 24), []byte{0x10}...)...,
-			),
-		},
-		// odd length
-		{
-			hex: bytes.Repeat([]byte{1}, 63),
-			padded: append(
-				bytes.Repeat([]byte{0x11}, 31),
-				[]byte{0x10, 0x3f}...,
-			),
-		},
-		// even length
-		{
-			hex: bytes.Repeat([]byte{1}, 62),
-			padded: append(
-				bytes.Repeat([]byte{0x11}, 31),
-				[]byte{0x00, 0x3e}...,
-			),
-		},
-	}
-	for _, test := range tests {
-		if c := hexToRightPadding(test.hex); !bytes.Equal(c, test.padded) {
-			t.Errorf("hexToRightPadding(%x) -> %x, want %x", test.hex, c, test.padded)
-		}
-		if h := rightPaddingToHex(test.padded); !bytes.Equal(h, test.hex) {
-			t.Errorf("rightPaddingToHex(%x) -> %x, want %x", test.padded, h, test.hex)
-		}
-	}
-}
-
 func BenchmarkHexToCompact(b *testing.B) {
 	testBytes := []byte{0, 15, 1, 12, 11, 8, 16 /*term*/}
 	for i := 0; i < b.N; i++ {

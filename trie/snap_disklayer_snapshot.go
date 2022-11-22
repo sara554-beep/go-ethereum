@@ -81,11 +81,18 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 	// since the requested state may point to a GCed version embedded
 	// in disk cache. Note it can take a few seconds.
 	dl.dirty.forEach(func(owner common.Hash, path []byte, node *memoryNode) {
-		storage := encodeStorageKey(owner, path)
 		if node.node == nil {
-			rawdb.DeleteTrieNode(ndb, storage)
+			if owner == (common.Hash{}) {
+				rawdb.DeleteAccountTrieNode(ndb, path)
+			} else {
+				rawdb.DeleteStorageTrieNode(ndb, owner, path)
+			}
 		} else {
-			rawdb.WriteTrieNode(ndb, storage, node.rlp())
+			if owner == (common.Hash{}) {
+				rawdb.WriteAccountTrieNode(ndb, path, node.rlp())
+			} else {
+				rawdb.WriteStorageTrieNode(ndb, owner, path, node.rlp())
+			}
 		}
 	})
 	snap := &diskLayerSnapshot{
@@ -166,18 +173,29 @@ func (snap *diskLayerSnapshot) node(owner common.Hash, path []byte, hash common.
 	// Firstly try to retrieve the trie node from the ephemeral
 	// disk area or fallback to the live disk state if it's not
 	// existent.
-	storage := encodeStorageKey(owner, path)
-	blob, nodeHash := rawdb.ReadTrieNode(snap.diskdb, storage)
-	if len(blob) == 0 {
-		blob, nodeHash = rawdb.ReadTrieNode(snap.snap, storage)
+	var (
+		nBlob   []byte
+		nHash   common.Hash
+		accTrie = owner == (common.Hash{})
+	)
+	if accTrie {
+		nBlob, nHash = rawdb.ReadAccountTrieNode(snap.diskdb, path)
+		if len(nBlob) == 0 {
+			nBlob, nHash = rawdb.ReadAccountTrieNode(snap.snap, path)
+		}
+	} else {
+		nBlob, nHash = rawdb.ReadStorageTrieNode(snap.diskdb, owner, path)
+		if len(nBlob) == 0 {
+			nBlob, nHash = rawdb.ReadStorageTrieNode(snap.snap, owner, path)
+		}
 	}
-	if nodeHash != hash {
-		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nodeHash, hash, owner, path)
+	if nHash != hash {
+		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nHash, hash, owner, path)
 	}
-	if len(blob) > 0 {
-		snap.clean.Set(hash.Bytes(), blob)
+	if len(nBlob) > 0 {
+		snap.clean.Set(hash.Bytes(), nBlob)
 	}
-	return &memoryNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
+	return &memoryNode{node: rawNode(nBlob), hash: hash, size: uint16(len(nBlob))}, nil
 }
 
 // Node retrieves the trie node with the provided trie identifier, node path
@@ -225,13 +243,21 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 	// Commit the dirty nodes in the diff layer.
 	batch := snap.diskdb.NewBatch()
 	for owner, subset := range bottom.nodes {
+		accTrie := owner == (common.Hash{})
 		for path, n := range subset {
-			storage := encodeStorageKey(owner, []byte(path))
 			if n.isDeleted() {
-				rawdb.DeleteTrieNode(batch, storage)
+				if accTrie {
+					rawdb.DeleteAccountTrieNode(batch, []byte(path))
+				} else {
+					rawdb.DeleteStorageTrieNode(batch, owner, []byte(path))
+				}
 			} else {
 				blob := n.rlp()
-				rawdb.WriteTrieNode(batch, storage, blob)
+				if accTrie {
+					rawdb.WriteAccountTrieNode(batch, []byte(path), blob)
+				} else {
+					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), blob)
+				}
 				snap.clean.Set(n.hash.Bytes(), blob)
 			}
 		}

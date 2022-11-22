@@ -20,6 +20,7 @@ package rawdb
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -102,7 +103,9 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	skeletonHeaderPrefix  = []byte("S") // skeletonHeaderPrefix + num (uint64 big endian) -> header
-	TrieNodePrefix        = []byte("w") // TrieNodePrefix + node path -> trie node
+
+	TrieNodeAccountPrefix = []byte("A") // TrieNodeAccountPrefix + hexPath -> trie node
+	TrieNodeStoragePrefix = []byte("O") // TrieNodeStoragePrefix + accountHash + hexPath -> trie node
 
 	ReverseDiffLookupPrefix = []byte("RL")    // ReverseDiffLookupPrefix + state root -> reverse diff id
 	ReverseDiffHeadKey      = []byte("RHead") // ReverseDiffHeadKey tracks the latest reverse-diff id
@@ -232,32 +235,63 @@ func IsCodeKey(key []byte) (bool, []byte) {
 	return false, nil
 }
 
-// trieNodeKey = TrieNodePrefix + encoded node key
-func trieNodeKey(key []byte) []byte {
-	return append(TrieNodePrefix, key...)
+// accountTrieNodeKey = TrieNodeAccountPrefix + nodePath.
+func accountTrieNodeKey(path []byte) []byte {
+	return append(TrieNodeAccountPrefix, path...)
 }
 
-// isTrieNodeKey reports whether the given byte slice is the key of trie node.
-func isTrieNodeKey(key []byte) bool {
-	if bytes.HasPrefix(key, TrieNodePrefix) {
-		storage := key[len(TrieNodePrefix):]
-		if len(storage) == common.HashLength+1 {
-			return true // account trie
-		}
-		if len(storage) == 2*common.HashLength+1 {
-			return true // storage trie
-		}
-	}
-	return false
+// storageTrieNodeKey = TrieNodeStoragePrefix + accountHash + nodePath.
+func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
+	return append(append(TrieNodeStoragePrefix, accountHash.Bytes()...), path...)
 }
 
-// IsTrieNodeKey reports whether the given byte slice is the key of trie node.
-// if so return the raw encoded trie key as well.
-func IsTrieNodeKey(key []byte) (bool, []byte) {
-	if isTrieNodeKey(key) {
-		return true, key[len(TrieNodePrefix):]
+// IsLegacyTrieNode reports whether a provided database entry is a legacy trie
+// node. The characteristics of legacy trie node are:
+// - the key length is 32 bytes
+// - the key is the hash of val
+func IsLegacyTrieNode(key []byte, val []byte) bool {
+	if len(key) != common.HashLength {
+		return false
 	}
-	return false, nil
+	return bytes.Equal(key, crypto.Keccak256(val))
+}
+
+// IsAccountTrieNode reports whether a provided database entry is an account
+// trie node in path-based state scheme.
+func IsAccountTrieNode(key []byte) (bool, []byte) {
+	if !bytes.HasPrefix(key, TrieNodeAccountPrefix) {
+		return false, nil
+	}
+	// The remaining key should only consist a hex node path
+	// whose length is in the range 0 to 64 (64 is excluded
+	// since leaves are always embedded in parent).
+	remain := key[len(TrieNodeAccountPrefix):]
+	if len(remain) >= common.HashLength*2 {
+		return false, nil
+	}
+	return true, remain
+}
+
+// IsStorageTrieNode reports whether a provided database entry is a storage
+// trie node in path-based state scheme.
+func IsStorageTrieNode(key []byte) (bool, common.Hash, []byte) {
+	if !bytes.HasPrefix(key, TrieNodeStoragePrefix) {
+		return false, common.Hash{}, nil
+	}
+	// The remaining key consists of 2 parts:
+	// - 32 bytes account hash
+	// - hex node path whose length is in the range 0 to 64
+	remain := key[len(TrieNodeStoragePrefix):]
+	if len(remain) < common.HashLength {
+		return false, common.Hash{}, nil
+	}
+	accountHash := common.BytesToHash(remain[:common.HashLength])
+	remain = remain[common.HashLength:]
+
+	if len(remain) >= common.HashLength*2 {
+		return false, common.Hash{}, nil
+	}
+	return true, accountHash, remain
 }
 
 // reverseDiffLookupKey = ReverseDiffLookupPrefix + root (32 bytes)

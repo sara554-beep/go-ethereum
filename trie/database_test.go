@@ -16,12 +16,15 @@
 
 package trie
 
-import "github.com/ethereum/go-ethereum/ethdb"
+import (
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/ethdb"
+)
 
 // newTestDatabase initializes the trie database with specified scheme.
 func newTestDatabase(diskdb ethdb.Database, scheme string) *Database {
 	db := prepare(diskdb, nil)
-	if scheme == HashScheme {
+	if scheme == rawdb.HashScheme {
 		db.backend = openHashDatabase(diskdb, db.cleans)
 	} else {
 		db.backend = openSnapDatabase(diskdb, db.cleans, nil)

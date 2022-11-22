@@ -84,7 +84,7 @@ type nodeBackend interface {
 	Size() common.StorageSize
 
 	// Scheme returns the node scheme used in the database.
-	Scheme() NodeScheme
+	Scheme() string
 
 	// Close closes the trie database backend and releases all held resources.
 	Close() error
@@ -186,7 +186,7 @@ func (db *Database) IsEmpty() bool {
 }
 
 // Scheme returns the node scheme used in the database.
-func (db *Database) Scheme() NodeScheme {
+func (db *Database) Scheme() string {
 	return db.backend.Scheme()
 }
 

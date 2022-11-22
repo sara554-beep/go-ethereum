@@ -208,16 +208,24 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 		batch = db.NewBatchWithSize(int(cache.limit))
 	)
 	for owner, subset := range cache.nodes {
+		accTrie := owner == (common.Hash{})
 		for path, n := range subset {
-			storage := encodeStorageKey(owner, []byte(path))
 			if n.node == nil {
-				rawdb.DeleteTrieNode(batch, storage)
-				continue
-			}
-			blob := n.rlp()
-			rawdb.WriteTrieNode(batch, storage, blob)
-			if clean != nil {
-				clean.Set(n.hash.Bytes(), blob)
+				if accTrie {
+					rawdb.DeleteAccountTrieNode(batch, []byte(path))
+				} else {
+					rawdb.DeleteStorageTrieNode(batch, owner, []byte(path))
+				}
+			} else {
+				blob := n.rlp()
+				if accTrie {
+					rawdb.WriteAccountTrieNode(batch, []byte(path), blob)
+				} else {
+					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), blob)
+				}
+				if clean != nil {
+					clean.Set(n.hash.Bytes(), blob)
+				}
 			}
 		}
 	}
