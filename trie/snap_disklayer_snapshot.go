@@ -142,6 +142,7 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 		size    int
 		reverts int
 		reads   time.Duration
+		flush   time.Duration
 		start   = time.Now()
 		logged  = time.Now()
 		batch   = layer.diskdb.NewBatch()
@@ -164,19 +165,25 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 
 		if time.Since(logged) > 8*time.Second {
 			logged = time.Now()
-			log.Info("Preparing database snapshot", "reverts", reverts, "read", common.PrettyDuration(reads),
+			log.Info("Preparing database snapshot", "reverts", reverts,
+				"read", common.PrettyDuration(reads), "flush", common.PrettyDuration(flush),
 				"elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
 		}
 		if batch.ValueSize() > ethdb.IdealBatchSize || current == target {
 			size += batch.ValueSize()
+
+			fstart := time.Now()
 			if err := batch.Write(); err != nil {
 				layer.Release()
 				return nil, err
 			}
+			flush += time.Since(fstart)
+
 			batch.Reset()
 		}
 	}
-	log.Info("Prepared database snapshot", "reverts", reverts, "read", common.PrettyDuration(reads),
+	log.Info("Prepared database snapshot", "reverts", reverts,
+		"read", common.PrettyDuration(reads), "flush", common.PrettyDuration(flush),
 		"elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
 	return layer, nil
 }
