@@ -20,14 +20,15 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"os"
-	"sync"
-	"time"
 )
 
 // diskLayerSnapshot is the snapshot of diskLayer.
@@ -140,16 +141,20 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 	var (
 		size    int
 		reverts int
+		reads   time.Duration
 		start   = time.Now()
 		logged  = time.Now()
 		batch   = layer.diskdb.NewBatch()
 	)
 	for current := layer.diffid; current >= target; current -= 1 {
+		rstart := time.Now()
 		diff, err := loadReverseDiff(freezer, current)
 		if err != nil {
 			layer.Release()
 			return nil, err
 		}
+		reads += time.Since(rstart)
+
 		layer, err = layer.revert(batch, diff, current)
 		if err != nil {
 			layer.Release()
@@ -159,7 +164,8 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 
 		if time.Since(logged) > 8*time.Second {
 			logged = time.Now()
-			log.Info("Preparing database snapshot", "reverts", reverts, "elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
+			log.Info("Preparing database snapshot", "reverts", reverts, "read", common.PrettyDuration(reads),
+				"elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
 		}
 		if batch.ValueSize() > ethdb.IdealBatchSize || current == target {
 			size += batch.ValueSize()
@@ -170,7 +176,8 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 			batch.Reset()
 		}
 	}
-	log.Info("Prepared database snapshot", "reverts", reverts, "elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
+	log.Info("Prepared database snapshot", "reverts", reverts, "read", common.PrettyDuration(reads),
+		"elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
 	return layer, nil
 }
 
