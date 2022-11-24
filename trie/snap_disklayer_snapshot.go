@@ -20,14 +20,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
-	"sync"
-
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"os"
+	"sync"
+	"time"
 )
 
 // diskLayerSnapshot is the snapshot of diskLayer.
@@ -42,45 +42,43 @@ type diskLayerSnapshot struct {
 	lock    sync.RWMutex     // Lock used to protect stale flag
 }
 
-// GetSnapshot creates a disk layer snapshot and rewinds the snapshot
-// to the specified state. In order to store the temporary mutations,
-// the unique database namespace will be allocated for the snapshot,
-// and it's expected to be released after the usage.
-func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*diskLayerSnapshot, error) {
-	// Ensure the requested state is recoverable in the first place.
-	id := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
-	if id == nil {
-		return nil, errStateUnrecoverable
-	}
+func (dl *diskLayer) getSnapshot(nocache bool) (ethdb.Snapshot, ethdb.Database, string, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
-		return nil, errSnapshotStale
+		return nil, nil, "", errSnapshotStale
 	}
 	// Create a disk snapshot for read purposes. It's inherited from the live
-	// database but has the isolation since now.
-	sdb, err := dl.diskdb.NewSnapshot()
+	// database but has the isolation property since now. The snapshot must be
+	// released afterwards otherwise it will block compaction.
+	snap, err := dl.diskdb.NewSnapshot()
 	if err != nil {
-		return nil, err
+		return nil, nil, "", err
 	}
-	// Create a fresh new database for write purposes. It's also isolated with
-	// the live database. TODO(rjl493456442) it can take ~100ms to create a
-	// database.
+	// Create a fresh new database for write purposes. TODO(rjl493456442) it can
+	// take ~100ms to create a database, investigate it.
 	datadir, err := os.MkdirTemp("", "")
 	if err != nil {
-		sdb.Release()
-		return nil, err
+		snap.Release()
+		return nil, nil, "", err
 	}
-	ndb, err := rawdb.NewLevelDBDatabase(datadir, 16, 16, "", false)
+	db, err := rawdb.NewLevelDBDatabase(datadir, 16, 16, "", false)
 	if err != nil {
-		sdb.Release()
-		return nil, err
+		snap.Release()
+		os.RemoveAll(datadir)
+		return nil, nil, "", err
+	}
+	// Return the disk snapshot and the ephemeral if nodes in cache are not requested.
+	if nocache {
+		return snap, db, datadir, nil
 	}
 	// Flush all cached nodes in disk cache into ephemeral database,
 	// since the requested state may point to a garbage-collected
 	// version embedded in disk cache. Note it can take a few seconds.
-	batch := ndb.NewBatchWithSize(int(dl.dirty.limit))
+	var (
+		batch = db.NewBatchWithSize(int(dl.dirty.limit))
+	)
 	dl.dirty.forEach(func(owner common.Hash, path []byte, node *memoryNode) {
 		// Deletions are ignored, it doesn't make any sense to
 		// apply deletions against a fresh-new database.
@@ -94,33 +92,86 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 		}
 	})
 	if err := batch.Write(); err != nil {
+		snap.Release()
+		os.RemoveAll(datadir)
+		return nil, nil, "", err
+	}
+	return snap, db, datadir, nil
+}
+
+// GetSnapshot creates a disk layer snapshot and rewinds the snapshot
+// to the specified state. In order to store the temporary mutations,
+// the unique database namespace will be allocated for the snapshot,
+// and it's expected to be released after the usage.
+func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*diskLayerSnapshot, error) {
+	// Ensure the requested state is recoverable in the first place.
+	lookup := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
+	if lookup == nil {
+		return nil, errStateUnrecoverable
+	}
+	target := *lookup
+
+	// The dirty nodes in cache are not needed if the requested state
+	// is not embedded in cache. TODO if the requested state is exactly
+	// the disk state, specialize the case to avoid unnecessary cost.
+	noCache := target <= rawdb.ReadReverseDiffHead(dl.diskdb)
+
+	// Obtain the live database snapshot and construct an ephemeral
+	// database for both read/write purposes. The nodes in cache will
+	// be flushed into newly created db if requested.
+	snap, db, datadir, err := dl.getSnapshot(noCache)
+	if err != nil {
 		return nil, err
 	}
-	// Construct the disk layer snapshot
-	snap := &diskLayerSnapshot{
-		root:    dl.root,
-		diffid:  dl.diffid,
+	layer := &diskLayerSnapshot{
 		datadir: datadir,
-		diskdb:  ndb,
-		snap:    sdb,
+		diskdb:  db,
+		snap:    snap,
 		clean:   fastcache.New(16 * 1024 * 1024), // tiny cache
 	}
+	if noCache {
+		_, layer.root = rawdb.ReadAccountTrieNode(snap, nil)
+		layer.diffid = rawdb.ReadReverseDiffHead(snap)
+	} else {
+		layer.root = dl.root
+		layer.diffid = dl.diffid
+	}
 	// Apply the reverse diffs with the given order.
-	for snap.diffid >= *id {
-		diff, err := loadReverseDiff(freezer, snap.diffid)
+	var (
+		size    int
+		reverts int
+		start   = time.Now()
+		logged  = time.Now()
+		batch   = layer.diskdb.NewBatch()
+	)
+	for current := layer.diffid; current >= target; current -= 1 {
+		diff, err := loadReverseDiff(freezer, current)
 		if err != nil {
-			snap.Release()
-			os.RemoveAll(datadir)
+			layer.Release()
 			return nil, err
 		}
-		snap, err = snap.revert(diff, snap.diffid)
+		layer, err = layer.revert(batch, diff, current)
 		if err != nil {
-			snap.Release()
-			os.RemoveAll(datadir)
+			layer.Release()
 			return nil, err
+		}
+		reverts += 1
+
+		if time.Since(logged) > 8*time.Second {
+			logged = time.Now()
+			log.Info("Preparing database snapshot", "reverts", reverts, "elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
+		}
+		if batch.ValueSize() > ethdb.IdealBatchSize || current == target {
+			size += batch.ValueSize()
+			if err := batch.Write(); err != nil {
+				layer.Release()
+				return nil, err
+			}
+			batch.Reset()
 		}
 	}
-	return snap, nil
+	log.Info("Prepared database snapshot", "reverts", reverts, "elapsed", common.PrettyDuration(time.Since(start)), "written", common.StorageSize(size))
+	return layer, nil
 }
 
 // Root returns root hash of corresponding state.
@@ -279,12 +330,8 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (snap *diskLayerSnapshot) revert(diff *reverseDiff, diffid uint64) (*diskLayerSnapshot, error) {
-	var (
-		root  = snap.Root()
-		batch = snap.diskdb.NewBatch()
-	)
-	if diff.Root != root {
+func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *reverseDiff, diffid uint64) (*diskLayerSnapshot, error) {
+	if diff.Root != snap.Root() {
 		return nil, errUnmatchedReverseDiff
 	}
 	if diffid != snap.diffid {
@@ -298,11 +345,8 @@ func (snap *diskLayerSnapshot) revert(diff *reverseDiff, diffid uint64) (*diskLa
 	defer snap.lock.Unlock()
 
 	snap.stale = true
-
 	diff.apply(batch)
-	if err := batch.Write(); err != nil {
-		log.Crit("Failed to write reverse diff", "err", err)
-	}
+
 	return &diskLayerSnapshot{
 		root:    diff.Parent,
 		diffid:  snap.diffid - 1,
