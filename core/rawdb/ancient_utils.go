@@ -98,7 +98,7 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 			}
 			defer f.Close()
 
-			info, err := inspect(rdiffFreezerName, chainFreezerNoSnappy, f)
+			info, err := inspect(rdiffFreezerName, reverseDiffFreezerNoSnappy, f)
 			if err != nil {
 				return nil, err
 			}
