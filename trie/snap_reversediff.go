@@ -226,10 +226,12 @@ func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error
 // given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
 func truncateFromHead(freezer *rawdb.Freezer, disk ethdb.Database, nhead uint64) (int, error) {
-	ohead, _ := freezer.Ancients()
-	batch := disk.NewBatch()
+	var (
+		batch    = disk.NewBatch()
+		ohead, _ = freezer.Ancients()
+	)
 	for id := ohead; id > nhead; id-- {
-		hash := rawdb.ReadReverseDiffHash(disk, id)
+		hash := rawdb.ReadReverseDiffHash(freezer, id)
 		if hash != (common.Hash{}) {
 			rawdb.DeleteReverseDiffLookup(batch, hash)
 		}
@@ -253,10 +255,12 @@ func truncateFromHead(freezer *rawdb.Freezer, disk ethdb.Database, nhead uint64)
 // given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
 func truncateFromTail(freezer *rawdb.Freezer, disk ethdb.Database, ntail uint64) (int, error) {
-	otail, _ := freezer.Tail()
-	batch := disk.NewBatch()
+	var (
+		batch    = disk.NewBatch()
+		otail, _ = freezer.Tail()
+	)
 	for id := otail + 1; id <= ntail; id++ {
-		hash := rawdb.ReadReverseDiffHash(disk, id)
+		hash := rawdb.ReadReverseDiffHash(freezer, id)
 		if hash != (common.Hash{}) {
 			rawdb.DeleteReverseDiffLookup(batch, hash)
 		}
