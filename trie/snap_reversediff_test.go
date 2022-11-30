@@ -117,7 +117,7 @@ func TestLoadStoreReverseDiff(t *testing.T) {
 	}
 }
 
-func assertReverseDiff(t *testing.T, freezer *rawdb.Freezer, db ethdb.Database, id uint64, exist bool) {
+func assertReverseDiff(t *testing.T, freezer *rawdb.Freezer, db ethdb.Database, id uint64, lookup common.Hash, exist bool) {
 	blob := rawdb.ReadReverseDiff(freezer, id)
 	if exist && len(blob) == 0 {
 		t.Errorf("Failed to load reverse diff, %d", id)
@@ -132,18 +132,21 @@ func assertReverseDiff(t *testing.T, freezer *rawdb.Freezer, db ethdb.Database, 
 	if !exist && hash != (common.Hash{}) {
 		t.Errorf("Unexpected reverse diff hash, %d", id)
 	}
-	diffid := rawdb.ReadReverseDiffLookup(db, hash)
-	if exist && diffid == nil {
+	stored := rawdb.ReadReverseDiffLookup(db, lookup)
+	if exist && stored == nil {
 		t.Fatalf("Failed to load reverse diff lookup, %d", id)
 	}
-	if !exist && diffid != nil {
+	if !exist && stored != nil {
 		t.Fatalf("Unexpected reverse diff lookup, %d", id)
+	}
+	if exist && stored != nil && *stored != id {
+		t.Fatalf("Unexpected reverse diff lookup, %d", *stored)
 	}
 }
 
-func assertReverseDiffInRange(t *testing.T, freezer *rawdb.Freezer, db ethdb.Database, from, to uint64, exist bool) {
-	for i := from; i <= to; i++ {
-		assertReverseDiff(t, freezer, db, i, exist)
+func assertReverseDiffInRange(t *testing.T, freezer *rawdb.Freezer, db ethdb.Database, from, to uint64, lookups []common.Hash, exist bool) {
+	for i, j := from, 0; i <= to; i, j = i+1, j+1 {
+		assertReverseDiff(t, freezer, db, i, lookups[j], exist)
 	}
 }
 
@@ -156,7 +159,10 @@ func TestTruncateHeadReverseDiff(t *testing.T) {
 	}
 	freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
 
-	var diffs = makeDiffs(10)
+	var (
+		diffs   = makeDiffs(10)
+		lookups []common.Hash
+	)
 	for i := 0; i < len(diffs); i++ {
 		blob, err := diffs[i].encode()
 		if err != nil {
@@ -164,17 +170,18 @@ func TestTruncateHeadReverseDiff(t *testing.T) {
 		}
 		rawdb.WriteReverseDiff(freezer, uint64(i+1), blob, diffs[i].Parent)
 		rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
+		lookups = append(lookups, diffs[i].Parent)
 	}
-	for i := len(diffs); i > 0; i-- {
-		pruned, err := truncateFromHead(freezer, db, uint64(i-1))
+	for size := len(diffs); size > 0; size-- {
+		pruned, err := truncateFromHead(freezer, db, uint64(size-1))
 		if err != nil {
 			t.Fatalf("Failed to truncate from head %v", err)
 		}
-		if i != 0 && pruned != 1 {
+		if pruned != 1 {
 			t.Error("Unexpected pruned items", "want", 1, "got", pruned)
 		}
-		assertReverseDiffInRange(t, freezer, db, uint64(i), uint64(10), false)
-		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(i-1), true)
+		assertReverseDiffInRange(t, freezer, db, uint64(size), uint64(10), lookups[size-1:], false)
+		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(size-1), lookups[:size-1], true)
 	}
 }
 
@@ -187,7 +194,10 @@ func TestTruncateTailReverseDiff(t *testing.T) {
 	}
 	freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
 
-	var diffs = makeDiffs(10)
+	var (
+		diffs   = makeDiffs(10)
+		lookups []common.Hash
+	)
 	for i := 0; i < len(diffs); i++ {
 		blob, err := diffs[i].encode()
 		if err != nil {
@@ -195,13 +205,15 @@ func TestTruncateTailReverseDiff(t *testing.T) {
 		}
 		rawdb.WriteReverseDiff(freezer, uint64(i+1), blob, diffs[i].Parent)
 		rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
-
-		pruned, _ := truncateFromTail(freezer, db, uint64(i))
-		if i != 0 && pruned != 1 {
+		lookups = append(lookups, diffs[i].Parent)
+	}
+	for newTail := 1; newTail < len(diffs); newTail++ {
+		pruned, _ := truncateFromTail(freezer, db, uint64(newTail))
+		if pruned != 1 {
 			t.Error("Unexpected pruned items", "want", 1, "got", pruned)
 		}
-		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(i), false)
-		assertReverseDiff(t, freezer, db, uint64(i+1), true)
+		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(newTail), lookups[:newTail], false)
+		assertReverseDiffInRange(t, freezer, db, uint64(newTail+1), uint64(10), lookups[newTail:], true)
 	}
 }
 
@@ -232,7 +244,10 @@ func TestTruncateTailReverseDiffs(t *testing.T) {
 		}
 		freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
 
-		var diffs = makeDiffs(10)
+		var (
+			diffs   = makeDiffs(10)
+			lookups []common.Hash
+		)
 		for i := 0; i < len(diffs); i++ {
 			blob, err := diffs[i].encode()
 			if err != nil {
@@ -240,17 +255,17 @@ func TestTruncateTailReverseDiffs(t *testing.T) {
 			}
 			rawdb.WriteReverseDiff(freezer, uint64(i+1), blob, diffs[i].Parent)
 			rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
+			lookups = append(lookups, diffs[i].Parent)
 		}
-
 		pruned, _ := truncateFromTail(freezer, db, uint64(10)-c.limit)
 		if pruned != c.expPruned {
 			t.Error("Unexpected pruned items", "want", c.expPruned, "got", pruned)
 		}
 		if c.empty {
-			assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(10), false)
+			assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(10), lookups, false)
 		} else {
-			assertReverseDiffInRange(t, freezer, db, uint64(1), c.maxPruned, false)
-			assertReverseDiff(t, freezer, db, c.minUnpruned, true)
+			assertReverseDiffInRange(t, freezer, db, uint64(1), c.maxPruned, lookups[:c.maxPruned], false)
+			assertReverseDiff(t, freezer, db, c.minUnpruned, lookups[c.minUnpruned-1], true)
 		}
 	}
 }
@@ -258,7 +273,7 @@ func TestTruncateTailReverseDiffs(t *testing.T) {
 // TestRepairReverseDiff tests the reverse diff history truncateDiffs. It simulates
 // a few corner cases and checks if the database has the expected truncateDiffs behaviour.
 func TestRepairReverseDiff(t *testing.T) {
-	setup := func() (ethdb.Database, *rawdb.Freezer, []reverseDiff, func()) {
+	setup := func() (ethdb.Database, *rawdb.Freezer, []reverseDiff, []common.Hash, func()) {
 		datadir := t.TempDir()
 		ancient := path.Join(datadir, "ancient")
 		db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 16, 16, ancient, "", false)
@@ -267,7 +282,10 @@ func TestRepairReverseDiff(t *testing.T) {
 		}
 		freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
 
-		var diffs = makeDiffs(10)
+		var (
+			diffs   = makeDiffs(10)
+			lookups []common.Hash
+		)
 		for i := 0; i < len(diffs); i++ {
 			blob, err := diffs[i].encode()
 			if err != nil {
@@ -275,8 +293,9 @@ func TestRepairReverseDiff(t *testing.T) {
 			}
 			rawdb.WriteReverseDiff(freezer, uint64(i+1), blob, diffs[i].Parent)
 			rawdb.WriteReverseDiffLookup(db, diffs[i].Parent, uint64(i+1))
+			lookups = append(lookups, diffs[i].Parent)
 		}
-		return db, freezer, diffs, func() { os.RemoveAll(ancient) }
+		return db, freezer, diffs, lookups, func() { os.RemoveAll(ancient) }
 	}
 
 	// Scenario 1:
@@ -286,13 +305,13 @@ func TestRepairReverseDiff(t *testing.T) {
 	t.Run("Truncate-extra-rdiffs-match-root", func(t *testing.T) {
 		t.Parallel()
 
-		db, freezer, _, teardown := setup()
+		db, freezer, _, lookups, teardown := setup()
 		defer teardown()
 
 		// Block9's root.
 		truncateDiffs(freezer, db, 9)
-		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(9), true)
-		assertReverseDiff(t, freezer, db, uint64(10), false)
+		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(9), lookups[:len(lookups)-1], true)
+		assertReverseDiff(t, freezer, db, uint64(10), lookups[len(lookups)-1], false)
 	})
 
 	// Scenario 2:
@@ -300,11 +319,11 @@ func TestRepairReverseDiff(t *testing.T) {
 	t.Run("Aligned-reverse-diff-same-root", func(t *testing.T) {
 		t.Parallel()
 
-		db, freezer, _, teardown := setup()
+		db, freezer, _, lookups, teardown := setup()
 		defer teardown()
 
 		truncateDiffs(freezer, db, 10)
-		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(10), true)
+		assertReverseDiffInRange(t, freezer, db, uint64(1), uint64(10), lookups, true)
 	})
 }
 
