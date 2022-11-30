@@ -24,6 +24,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+// NodeResolver is used for looking up trie nodes before reaching into the real
+// persistent layer. This is not mandatory, rather is an optimization for cases
+// where trie nodes can be recovered from some external mechanism without reading
+// from disk. In those cases, this resolver allows short circuiting accesses and
+// returning them from memory.
+type NodeResolver func(owner common.Hash, path []byte, hash common.Hash) []byte
+
 // Iterator is a key-value trie iterator that traverses a Trie.
 type Iterator struct {
 	nodeIt NodeIterator
@@ -106,8 +113,8 @@ type NodeIterator interface {
 	// to the value after calling Next.
 	LeafProof() [][]byte
 
-	// AddResolver sets an intermediate database to use for looking up trie nodes
-	// before reaching into the real persistent layer.
+	// AddResolver sets a node resolver to use for looking up trie nodes before
+	// reaching into the real persistent layer.
 	//
 	// This is not required for normal operation, rather is an optimization for
 	// cases where trie nodes can be recovered from some external mechanism without
@@ -117,7 +124,7 @@ type NodeIterator interface {
 	// Before adding a similar mechanism to any other place in Geth, consider
 	// making trie.Database an interface and wrapping at that level. It's a huge
 	// refactor, but it could be worth it if another occurrence arises.
-	AddResolver(func(common.Hash, []byte, common.Hash) []byte)
+	AddResolver(NodeResolver)
 }
 
 // nodeIteratorState represents the iteration state at one particular node of the
@@ -136,7 +143,7 @@ type nodeIterator struct {
 	path  []byte               // Path to the current node
 	err   error                // Failure set in case of an internal error in the iterator
 
-	resolver func(common.Hash, []byte, common.Hash) []byte
+	resolver NodeResolver // optional node resolver for avoiding disk hits
 }
 
 // errIteratorEnd is stored in nodeIterator.err when iteration is done.
@@ -164,7 +171,7 @@ func newNodeIterator(trie *Trie, start []byte) NodeIterator {
 	return it
 }
 
-func (it *nodeIterator) AddResolver(resolver func(common.Hash, []byte, common.Hash) []byte) {
+func (it *nodeIterator) AddResolver(resolver NodeResolver) {
 	it.resolver = resolver
 }
 
@@ -588,7 +595,7 @@ func (it *differenceIterator) NodeBlob() []byte {
 	return it.b.NodeBlob()
 }
 
-func (it *differenceIterator) AddResolver(resolver func(common.Hash, []byte, common.Hash) []byte) {
+func (it *differenceIterator) AddResolver(resolver NodeResolver) {
 	panic("not implemented")
 }
 
@@ -703,7 +710,7 @@ func (it *unionIterator) NodeBlob() []byte {
 	return (*it.items)[0].NodeBlob()
 }
 
-func (it *unionIterator) AddResolver(resolver func(common.Hash, []byte, common.Hash) []byte) {
+func (it *unionIterator) AddResolver(resolver NodeResolver) {
 	panic("not implemented")
 }
 
