@@ -1,4 +1,4 @@
-// Copyright 2021 The go-ethereum Authors
+// Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -97,7 +97,7 @@ func (dl *diffLayer) MarkStale() {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
-	if dl.stale == true {
+	if dl.stale {
 		panic("triedb diff layer is stale")
 	}
 	dl.stale = true

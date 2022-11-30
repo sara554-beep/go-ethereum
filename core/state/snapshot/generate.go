@@ -359,7 +359,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 	}
 	// We use the snap data to build up a cache which can be used by the
 	// main account trie as a primary lookup when resolving hashes
-	var resolver func(common.Hash, []byte, common.Hash) []byte
+	var resolver trie.NodeResolver
 	if len(result.keys) > 0 {
 		mdb := rawdb.NewMemoryDatabase()
 		tdb := trie.NewDatabase(mdb)

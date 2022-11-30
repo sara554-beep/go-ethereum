@@ -183,7 +183,7 @@ func (snap *diskLayerSnapshot) MarkStale() {
 	snap.lock.Lock()
 	defer snap.lock.Unlock()
 
-	if snap.stale == true {
+	if snap.stale {
 		panic("triedb disk layer is stale") // we've committed into the same base from two children, boom
 	}
 	snap.stale = true
