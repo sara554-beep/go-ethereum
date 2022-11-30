@@ -247,9 +247,8 @@ func (db *snapDatabase) Journal(root common.Hash) error {
 		return err
 	}
 	_, diskroot := rawdb.ReadAccountTrieNode(db.diskdb, nil)
-	if diskroot == (common.Hash{}) {
-		diskroot = emptyRoot
-	}
+	diskroot = convertEmpty(diskroot) // might be empty
+
 	// Secondly write out the disk layer root, ensure the
 	// diff journal is continuous with disk.
 	if err := rlp.Encode(journal, diskroot); err != nil {
@@ -286,7 +285,7 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 	_, hash := rawdb.ReadAccountTrieNode(db.diskdb, nil)
 	if hash != root {
 		if root != emptyRoot {
-			return fmt.Errorf("state is non-existent local %x target %x", hash, root)
+			return fmt.Errorf("state is mismatched, local %x target %x", hash, root)
 		}
 		// Empty state is requested as the target, nuke out
 		// the root node and leave all others as dangling.

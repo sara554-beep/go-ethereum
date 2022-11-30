@@ -762,7 +762,6 @@ func testSyncWithDynamicTarget(t *testing.T, scheme string) {
 	if err := srcDb.Commit(root, false); err != nil {
 		panic(err)
 	}
-	preRoot = root
 	srcTrie, _ = NewStateTrie(TrieID(root), srcDb)
 
 	syncWith(t, srcTrie.Hash(), diskdb, srcDb)

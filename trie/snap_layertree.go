@@ -66,7 +66,6 @@ func (tree *layerTree) forEach(onLayer func(common.Hash, snapshot) bool) {
 			return
 		}
 	}
-	return
 }
 
 // len returns the number of layers cached.
