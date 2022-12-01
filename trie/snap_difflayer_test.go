@@ -204,7 +204,11 @@ func BenchmarkPersist(b *testing.B) {
 		if !ok {
 			break
 		}
+<<<<<<< HEAD
 		dl.persist(false)
+=======
+		dl.persist(nil, nil, 0, false)
+>>>>>>> bc045a78f7 (all: implement archive node in pbss)
 	}
 }
 

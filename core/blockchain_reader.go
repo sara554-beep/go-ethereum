@@ -326,7 +326,7 @@ func (bc *BlockChain) State() (*state.StateDB, error) {
 
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
-	return state.New(root, bc.stateCache, bc.snaps)
+	return state.New(root, bc.stateCache, bc.StateSnapshot(root))
 }
 
 // Config retrieves the chain's fork configuration.
@@ -353,6 +353,14 @@ func (bc *BlockChain) Processor() Processor {
 // StateCache returns the caching database underpinning the blockchain instance.
 func (bc *BlockChain) StateCache() state.Database {
 	return bc.stateCache
+}
+
+// StateSnapshot returns the state snapshot requested with the given root.
+func (bc *BlockChain) StateSnapshot(root common.Hash) snapshot.Snapshot {
+	if bc.snaps == nil {
+		return nil
+	}
+	return bc.snaps.Snapshot(root)
 }
 
 // GasLimit returns the gas limit of the current HEAD block.

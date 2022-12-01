@@ -117,14 +117,15 @@ type snapDatabase struct {
 	// readOnly is the flag whether the mutation is allowed to be applied.
 	// It will be set automatically when the database is journaled during
 	// the shutdown to reject all following unexpected mutations.
-	readOnly  bool                     // Indicator if database is opened in read only mode
-	dirtySize int                      // Memory allowance (in bytes) for caching dirty nodes
-	config    *Config                  // Configuration for database
-	diskdb    ethdb.Database           // Persistent storage for matured trie nodes
-	cleans    *fastcache.Cache         // GC friendly memory cache of clean node RLPs
-	tree      *layerTree               // The group for all known layers
-	freezer   *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
-	lock      sync.RWMutex             // Lock to prevent mutations from happening at the same time
+	readOnly     bool                     // Indicator if database is opened in read only mode
+	dirtySize    int                      // Memory allowance (in bytes) for caching dirty nodes
+	config       *Config                  // Configuration for database
+	diskdb       ethdb.Database           // Persistent storage for matured trie nodes
+	cleans       *fastcache.Cache         // GC friendly memory cache of clean node RLPs
+	tree         *layerTree               // The group for all known layers
+	trieHistory  *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
+	stateHistory *rawdb.ResettableFreezer // Freezer for storing state history, nil possible in tests
+	lock         sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 
 // openSnapDatabase attempts to load an already existing snapshot from a
@@ -161,16 +162,24 @@ func openSnapDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *Co
 		if err != nil {
 			log.Crit("Failed to open trie history freezer", "err", err)
 		}
-		db.freezer = freezer
+		db.trieHistory = freezer
+
+		freezer, err = rawdb.NewStateHistoryFreezer(ancient, false)
+		if err != nil {
+			log.Crit("Failed to open reverse diff trieHistory", "err", err)
+		}
+		db.stateHistory = freezer
 
 		// Truncate the extra trie histories above in freezer in case
 		// it's not aligned with the disk layer.
-		pruned, err := truncateFromHead(freezer, db.tree.bottom().ID())
-		if err != nil {
-			log.Crit("Failed to truncate extra trie histories", "err", err)
-		}
-		if pruned != 0 {
-			log.Info("Truncated extra trie histories", "number", pruned)
+		for _, f := range []*rawdb.ResettableFreezer{db.trieHistory, db.stateHistory} {
+			pruned, err := truncateFromHead(f, db.tree.bottom().ID())
+			if err != nil {
+				log.Crit("Failed to truncate extra histories", "err", err)
+			}
+			if pruned != 0 {
+				log.Info("Truncated extra histories", "number", pruned)
+			}
 		}
 	}
 	log.Warn("Path-based trie scheme is an experimental feature")
@@ -313,8 +322,13 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 		return err
 	}
 	// Clean up all trie histories in freezer.
-	if db.freezer != nil {
-		if err := db.freezer.Reset(); err != nil {
+	if db.trieHistory != nil {
+		if err := db.trieHistory.Reset(); err != nil {
+			return err
+		}
+	}
+	if db.stateHistory != nil {
+		if err := db.stateHistory.Reset(); err != nil {
 			return err
 		}
 	}
@@ -335,7 +349,7 @@ func (db *snapDatabase) Recover(root common.Hash) error {
 	defer db.lock.Unlock()
 
 	// Short circuit if rollback operation is not supported.
-	if db.readOnly || db.freezer == nil {
+	if db.readOnly || db.trieHistory == nil {
 		return errors.New("state revert is non-supported")
 	}
 	// Iterate over all diff layers and mark them as stale.
@@ -355,7 +369,7 @@ func (db *snapDatabase) Recover(root common.Hash) error {
 	// Apply the trie histories upon the current disk layer
 	// in order.
 	for {
-		h, err := loadTrieHistory(db.freezer, dl.id)
+		h, err := loadTrieHistory(db.trieHistory, dl.id)
 		if err != nil {
 			return err
 		}
@@ -373,7 +387,11 @@ func (db *snapDatabase) Recover(root common.Hash) error {
 	if err := batch.Write(); err != nil {
 		return err
 	}
-	_, err := truncateFromHead(db.freezer, dl.id)
+	_, err := truncateFromHead(db.trieHistory, dl.id)
+	if err != nil {
+		return err
+	}
+	_, err = truncateFromHead(db.stateHistory, dl.id)
 	if err != nil {
 		return err
 	}
@@ -393,7 +411,7 @@ func (db *snapDatabase) Recoverable(root common.Hash) bool {
 		return false
 	}
 	// Ensure the requested state is a canonical state.
-	h, err := loadTrieHistory(db.freezer, id+1)
+	h, err := loadTrieHistory(db.trieHistory, id+1)
 	if err != nil {
 		return false
 	}
@@ -419,10 +437,13 @@ func (db *snapDatabase) Close() error {
 	defer db.lock.Unlock()
 
 	db.readOnly = true
-	if db.freezer == nil {
-		return nil
+	if db.trieHistory != nil {
+		db.trieHistory.Close()
 	}
-	return db.freezer.Close()
+	if db.stateHistory != nil {
+		db.stateHistory.Close()
+	}
+	return nil
 }
 
 // Size returns the current storage size of the memory cache in front of the
@@ -521,4 +542,12 @@ func (db *Database) SetCacheSize(size int) error {
 		return errors.New("not supported")
 	}
 	return snapDB.SetCacheSize(size)
+}
+
+func (db *Database) StateHistory() *rawdb.ResettableFreezer {
+	snapDB, ok := db.backend.(*snapDatabase)
+	if !ok {
+		return nil
+	}
+	return snapDB.stateHistory
 }

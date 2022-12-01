@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // memoryNode is all the information we know about a single cached trie node
@@ -193,6 +194,78 @@ func (set *NodeSet) Summary() string {
 		fmt.Fprintf(out, "[leaf]: %v\n", n)
 	}
 	return out.String()
+}
+
+// forEachTipNode iterates the outermost nodes with the order from left to right.
+func forEachTipNode(nodes map[string]*nodeWithPrev, callback func(path string, n *nodeWithPrev) error) error {
+	// Sort node paths according to lexicographical order,
+	// from top to bottom, from left to right.
+	var paths sort.StringSlice
+	for path := range nodes {
+		paths = append(paths, path)
+	}
+	paths.Sort()
+
+	// Find out the tips nodes according to the path.
+	var (
+		stack []string
+		tips  []string
+	)
+	for _, path := range paths {
+		stack = append(stack, path)
+		if len(stack) == 1 {
+			continue
+		}
+		prev, cur := stack[0], stack[1]
+		if !strings.HasPrefix(cur, prev) {
+			tips = append(tips, prev)
+		}
+		stack = stack[1:]
+	}
+	if len(stack) == 1 {
+		tips = append(tips, stack[0])
+	}
+	for _, path := range tips {
+		err := callback(path, nodes[path])
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func resolve(prefix []byte, n node, callback func(path []byte, blob []byte)) error {
+	switch nn := n.(type) {
+	case *shortNode:
+		if !hasTerm(nn.Key) {
+			return fmt.Errorf("invalid tipnode %v", nn.Key)
+		}
+		path := append(prefix, nn.Key...)
+		callback(hexToKeybytes(path), nn.Val.(valueNode))
+	case *fullNode:
+		for i, cn := range nn.Children[:16] {
+			if cn == nil {
+				continue
+			}
+			resolve(append(prefix, byte(i)), cn, callback)
+		}
+	default:
+		// hashNode might be possible to occur in the tip node.
+		// The scenario is: fullnode has hashnode children and
+		// a few embedded children, only the embedded children
+		// is our target.
+	}
+	return nil
+}
+
+func resolvePrevLeaves(nodes map[string]*nodeWithPrev, callback func(path []byte, blob []byte)) error {
+	return forEachTipNode(nodes, func(prefix string, tip *nodeWithPrev) error {
+		if len(tip.prev) == 0 {
+			return nil
+		}
+		n := mustDecodeNode(crypto.Keccak256(tip.prev), tip.prev)
+		return resolve([]byte(prefix), n, callback)
+	})
 }
 
 // MergedNodeSet represents a merged dirty node set for a group of tries.

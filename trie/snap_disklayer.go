@@ -180,12 +180,18 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// after storing the trie history but without flushing the
 	// corresponding states(journal), the stored trie history will be
 	// truncated in the next restart.
-	if dl.db.freezer != nil {
+	if dl.db.trieHistory != nil {
 		var limit uint64
 		if dl.db.config != nil {
 			limit = dl.db.config.StateHistory
 		}
-		err := storeTrieHistory(dl.db.freezer, bottom, limit)
+		err := storeTrieHistory(dl.db.trieHistory, bottom, limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if dl.db.stateHistory != nil {
+		err := storeStateHistory(dl.db.diskdb, dl.db.stateHistory, bottom)
 		if err != nil {
 			return nil, err
 		}

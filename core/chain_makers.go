@@ -280,7 +280,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			block, _ := b.engine.FinalizeAndAssemble(chainreader, b.header, statedb, b.txs, b.uncles, b.receipts)
 
 			// Write state changes to db
-			root, err := statedb.Commit(config.IsEIP158(b.header.Number))
+			root, err := statedb.Commit(config.IsEIP158(b.header.Number), nil)
 			if err != nil {
 				panic(fmt.Sprintf("state write error: %v", err))
 			}

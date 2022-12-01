@@ -472,7 +472,7 @@ func runRandTest(rt randTest) bool {
 				rt[i].err = err
 				return false
 			}
-			// Validity the returned nodeset
+			// Validate the returned nodeset
 			if nodes != nil {
 				for path, n := range nodes.nodes {
 					if n.isDeleted() {
@@ -488,6 +488,24 @@ func runRandTest(rt randTest) bool {
 							rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, got, blob)
 							panic(rt[i].err)
 						}
+					}
+				}
+			}
+			// Validate the leave set
+			if nodes != nil {
+				var (
+					paths [][]byte
+					blobs [][]byte
+				)
+				resolvePrevLeaves(nodes.nodes, func(path []byte, blob []byte) {
+					paths = append(paths, path)
+					blobs = append(blobs, blob)
+				})
+				for i, path := range paths {
+					blob, _ := origTrie.TryGet(path)
+					if !bytes.Equal(blob, blobs[i]) {
+						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, blobs[i], blob)
+						return false
 					}
 				}
 			}

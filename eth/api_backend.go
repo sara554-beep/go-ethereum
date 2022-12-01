@@ -19,6 +19,8 @@ package eth
 import (
 	"context"
 	"errors"
+	"github.com/ethereum/go-ethereum/core/state/snapshot"
+	"github.com/ethereum/go-ethereum/trie"
 	"math/big"
 	"time"
 
@@ -194,6 +196,13 @@ func (b *EthAPIBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockN
 			return nil, nil, errors.New("hash is not currently canonical")
 		}
 		stateDb, err := b.eth.BlockChain().StateAt(header.Root)
+		if err != nil {
+			reader, rerr := trie.NewHistoricStateReader(b.eth.blockchain.TrieDB())
+			if rerr != nil {
+				return nil, nil, rerr
+			}
+			stateDb, err = state.New(header.Root, state.NewNoTrieDB(b.ChainDb()), snapshot.NewArchiveSnapshot(header.Root, reader))
+		}
 		return stateDb, header, err
 	}
 	return nil, nil, errors.New("invalid arguments; neither block nor hash specified")

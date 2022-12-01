@@ -103,7 +103,7 @@ func (dl *diskLayer) GetSnapshot(root common.Hash) (*diskLayerSnapshot, error) {
 	if !dl.db.Recoverable(root) {
 		return nil, errStateUnrecoverable
 	}
-	if dl.db.freezer == nil {
+	if dl.db.trieHistory == nil {
 		return nil, errStateUnrecoverable
 	}
 	// Obtain the live database snapshot and construct an ephemeral
@@ -128,7 +128,7 @@ func (dl *diskLayer) GetSnapshot(root common.Hash) (*diskLayerSnapshot, error) {
 		batch  = layer.diskdb.NewBatch()
 	)
 	for {
-		h, err := loadTrieHistory(dl.db.freezer, layer.id)
+		h, err := loadTrieHistory(dl.db.trieHistory, layer.id)
 		if err != nil {
 			layer.Release()
 			return nil, err

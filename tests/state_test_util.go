@@ -271,7 +271,7 @@ func (t *StateTest) RunNoVerify(subtest StateSubtest, vmconfig vm.Config, snapsh
 	//   the coinbase gets no txfee, so isn't created, and thus needs to be touched
 	statedb.AddBalance(block.Coinbase(), new(big.Int))
 	// Commit block
-	statedb.Commit(config.IsEIP158(block.Number()))
+	statedb.Commit(config.IsEIP158(block.Number()), nil)
 	// And _now_ get the state root
 	root := statedb.IntermediateRoot(config.IsEIP158(block.Number()))
 	return snaps, statedb, root, err
@@ -294,9 +294,12 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter boo
 		}
 	}
 	// Commit and re-open to start with a clean state.
-	root, _ := statedb.Commit(false)
+	root, _ := statedb.Commit(false, nil)
 
-	var snaps *snapshot.Tree
+	var (
+		snaps *snapshot.Tree
+		snap  snapshot.Snapshot
+	)
 	if snapshotter {
 		snapconfig := snapshot.Config{
 			CacheSize:  1,
@@ -304,9 +307,16 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc, snapshotter boo
 			NoBuild:    false,
 			AsyncBuild: false,
 		}
+<<<<<<< HEAD
 		snaps, _ = snapshot.New(snapconfig, db, triedb, root)
+=======
+		snaps, _ = snapshot.New(snapconfig, db, sdb.TrieDB(), root)
+		if snaps != nil {
+			snap = snaps.Snapshot(root)
+		}
+>>>>>>> 1e0084d84 (core/state: refactor statedb)
 	}
-	statedb, _ = state.New(root, sdb, snaps)
+	statedb, _ = state.New(root, sdb, snap)
 	return snaps, statedb
 }
 

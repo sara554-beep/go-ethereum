@@ -255,7 +255,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		statedb.AddBalance(pre.Env.Coinbase, minerReward)
 	}
 	// Commit block
-	root, err := statedb.Commit(chainConfig.IsEIP158(vmContext.BlockNumber))
+	root, err := statedb.Commit(chainConfig.IsEIP158(vmContext.BlockNumber), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Could not commit state: %v", err)
 		return nil, nil, NewError(ErrorEVM, fmt.Errorf("could not commit state: %v", err))
@@ -287,7 +287,7 @@ func MakePreState(db ethdb.Database, accounts core.GenesisAlloc) *state.StateDB 
 		}
 	}
 	// Commit and re-open to start with a clean state.
-	root, _ := statedb.Commit(false)
+	root, _ := statedb.Commit(false, nil)
 	statedb, _ = state.New(root, sdb, nil)
 	return statedb
 }

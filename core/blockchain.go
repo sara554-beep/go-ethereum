@@ -1344,7 +1344,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		log.Crit("Failed to write block into disk", "err", err)
 	}
 	// Commit all cached state changes into underlying memory database.
-	root, err := state.Commit(bc.chainConfig.IsEIP158(block.Number()))
+	root, err := state.Commit(bc.chainConfig.IsEIP158(block.Number()), bc.snaps)
 	if err != nil {
 		return err
 	}
@@ -1714,7 +1714,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		if parent == nil {
 			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 		}
-		statedb, err := state.New(parent.Root, bc.stateCache, bc.snaps)
+		statedb, err := state.New(parent.Root, bc.stateCache, bc.StateSnapshot(parent.Root))
 		if err != nil {
 			return it.index, err
 		}
@@ -1728,7 +1728,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		var followupInterrupt uint32
 		if !bc.cacheConfig.TrieCleanNoPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
-				throwaway, _ := state.New(parent.Root, bc.stateCache, bc.snaps)
+				throwaway, _ := state.New(parent.Root, bc.stateCache, bc.StateSnapshot(parent.Root))
 
 				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *uint32) {
 					bc.prefetcher.Prefetch(followup, throwaway, bc.vmConfig, &followupInterrupt)

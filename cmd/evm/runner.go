@@ -274,7 +274,7 @@ func runCmd(ctx *cli.Context) error {
 	output, leftOverGas, stats, err := timedExec(bench, execFunc)
 
 	if ctx.Bool(DumpFlag.Name) {
-		statedb.Commit(true)
+		statedb.Commit(true, nil)
 		statedb.IntermediateRoot(true)
 		fmt.Println(string(statedb.Dump(nil)))
 	}

@@ -243,3 +243,83 @@ func (db *cachingDB) DiskDB() ethdb.KeyValueStore {
 func (db *cachingDB) TrieDB() trie.NodeDatabase {
 	return db.triedb
 }
+
+type noTrieDB struct {
+	disk          ethdb.KeyValueStore
+	codeSizeCache *lru.Cache[common.Hash, int]
+	codeCache     *lru.SizeConstrainedCache[common.Hash, []byte]
+}
+
+func NewNoTrieDB(disk ethdb.Database) Database {
+	return &noTrieDB{
+		disk:          disk,
+		codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+		codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+	}
+}
+
+// OpenTrie opens the main account trie at a specific root hash.
+func (db *noTrieDB) OpenTrie(root common.Hash) (Trie, error) {
+	return nil, errors.New("not supported")
+}
+
+// OpenStorageTrie opens the storage trie of an account.
+func (db *noTrieDB) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error) {
+	return nil, errors.New("not supported")
+}
+
+// CopyTrie returns an independent copy of the given trie.
+func (db *noTrieDB) CopyTrie(t Trie) Trie {
+	panic(fmt.Errorf("unknown trie type %T", t))
+}
+
+// ContractCode retrieves a particular contract's code.
+func (db *noTrieDB) ContractCode(addrHash, codeHash common.Hash) ([]byte, error) {
+	code, _ := db.codeCache.Get(codeHash)
+	if len(code) > 0 {
+		return code, nil
+	}
+	code = rawdb.ReadCode(db.disk, codeHash)
+	if len(code) > 0 {
+		db.codeCache.Add(codeHash, code)
+		db.codeSizeCache.Add(codeHash, len(code))
+		return code, nil
+	}
+	return nil, errors.New("not found")
+}
+
+// ContractCodeWithPrefix retrieves a particular contract's code. If the
+// code can't be found in the cache, then check the existence with **new**
+// db scheme.
+func (db *noTrieDB) ContractCodeWithPrefix(addrHash, codeHash common.Hash) ([]byte, error) {
+	code, _ := db.codeCache.Get(codeHash)
+	if len(code) > 0 {
+		return code, nil
+	}
+	code = rawdb.ReadCodeWithPrefix(db.disk, codeHash)
+	if len(code) > 0 {
+		db.codeCache.Add(codeHash, code)
+		db.codeSizeCache.Add(codeHash, len(code))
+		return code, nil
+	}
+	return nil, errors.New("not found")
+}
+
+// ContractCodeSize retrieves a particular contracts code's size.
+func (db *noTrieDB) ContractCodeSize(addrHash, codeHash common.Hash) (int, error) {
+	if cached, ok := db.codeSizeCache.Get(codeHash); ok {
+		return cached, nil
+	}
+	code, err := db.ContractCode(addrHash, codeHash)
+	return len(code), err
+}
+
+// DiskDB returns the underlying key-value disk database.
+func (db *noTrieDB) DiskDB() ethdb.KeyValueStore {
+	return db.disk
+}
+
+// TrieDB retrieves any intermediate trie-node caching layer.
+func (db *noTrieDB) TrieDB() trie.NodeDatabase {
+	return nil
+}

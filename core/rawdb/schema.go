@@ -108,8 +108,10 @@ var (
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
 
-	stateLookupPrefix = []byte("L")         // stateLookupPrefix + state root -> state id
-	headStateKey      = []byte("DiskState") // headStateKey tracks the id of stored state in disk
+	stateLookupPrefix  = []byte("L")         // stateLookupPrefix + state root -> state id
+	headStateKey       = []byte("DiskState") // headStateKey tracks the id of stored state in disk
+	AccountIndexPrefix = []byte("P")         // AccountIndexPrefix + accountHash -> numbers
+	StorageIndexPrefix = []byte("Q")         // StorageIndexPrefix + accountHash + storageHash -> numbers
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -244,6 +246,16 @@ func accountTrieNodeKey(path []byte) []byte {
 // storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
 func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
 	return append(append(trieNodeStoragePrefix, accountHash.Bytes()...), path...)
+}
+
+// accountTrieNodeKey = trieNodeAccountPrefix + nodePath.
+func accountIndexNodeKey(accountHash common.Hash) []byte {
+	return append(AccountIndexPrefix, accountHash.Bytes()...)
+}
+
+// storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
+func storageIndexNodeKey(accountHash common.Hash, slotHash common.Hash) []byte {
+	return append(append(StorageIndexPrefix, accountHash.Bytes()...), slotHash.Bytes()...)
 }
 
 // IsLegacyTrieNode reports whether a provided database entry is a legacy trie

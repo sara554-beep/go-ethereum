@@ -113,7 +113,7 @@ func mustDecodeNode(hash, buf []byte) node {
 func mustDecodeNodeUnsafe(hash, buf []byte) node {
 	n, err := decodeNodeUnsafe(hash, buf)
 	if err != nil {
-		panic(fmt.Sprintf("node %x: %v", hash, err))
+		panic(fmt.Sprintf("node %x: %v %v", hash, err, buf))
 	}
 	return n
 }
