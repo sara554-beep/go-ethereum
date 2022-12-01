@@ -22,7 +22,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 )
 
 // layerTree is a group of state layers identified by the state root.
@@ -106,7 +105,7 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[c
 // An optional reserve set can be provided to prevent the specified diff layers
 // from being flattened. Note that this may prevent the diff layers from being
 // written to disk and eventually leads to out-of-memory.
-func (tree *layerTree) cap(root common.Hash, layers int, freezer *rawdb.Freezer, statelimit uint64) error {
+func (tree *layerTree) cap(root common.Hash, layers int) error {
 	// Retrieve the head snapshot to cap from
 	root = convertEmpty(root)
 	snap := tree.get(root)
@@ -122,7 +121,7 @@ func (tree *layerTree) cap(root common.Hash, layers int, freezer *rawdb.Freezer,
 
 	// If full commit was requested, flatten the diffs and merge onto disk
 	if layers == 0 {
-		base, err := diff.persist(freezer, statelimit, true)
+		base, err := diff.persist(true)
 		if err != nil {
 			return err
 		}
@@ -151,7 +150,7 @@ func (tree *layerTree) cap(root common.Hash, layers int, freezer *rawdb.Freezer,
 		// parent is linked correctly.
 		diff.lock.Lock()
 
-		base, err := parent.persist(freezer, statelimit, false)
+		base, err := parent.persist(false)
 		if err != nil {
 			diff.lock.Unlock()
 			return err

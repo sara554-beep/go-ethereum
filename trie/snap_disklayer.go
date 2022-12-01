@@ -20,33 +20,28 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 )
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
 type diskLayer struct {
-	root   common.Hash // Immutable, root hash of the base snapshot
-	diffid uint64      // Immutable, corresponding reverse diff id
-
-	diskdb ethdb.Database   // Key-value store containing the base snapshot
-	clean  *fastcache.Cache // Clean node cache to avoid hitting the disk for direct access
-	dirty  *diskcache       // Dirty node cache to aggregate writes and temporary cache.
-	stale  bool             // Signals that the layer became stale (state progressed)
-	lock   sync.RWMutex     // Lock used to protect stale flag
+	root  common.Hash   // Immutable, root hash of the base snapshot
+	id    uint64        // Immutable, corresponding state id
+	db    *snapDatabase // Path-based trie database
+	dirty *diskcache    // Dirty node cache to aggregate writes and temporary cache.
+	stale bool          // Signals that the layer became stale (state progressed)
+	lock  sync.RWMutex  // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, diffid uint64, clean *fastcache.Cache, dirty *diskcache, diskdb ethdb.Database) *diskLayer {
+func newDiskLayer(root common.Hash, id uint64, db *snapDatabase, dirty *diskcache) *diskLayer {
 	return &diskLayer{
-		diskdb: diskdb,
-		clean:  clean,
-		dirty:  dirty,
-		root:   root,
-		diffid: diffid,
+		root:  root,
+		id:    id,
+		db:    db,
+		dirty: dirty,
 	}
 }
 
@@ -60,9 +55,9 @@ func (dl *diskLayer) Parent() snapshot {
 	return nil
 }
 
-// ID returns the id of associated reverse diff.
+// ID returns the state id of disk layer.
 func (dl *diskLayer) ID() uint64 {
-	return dl.diffid
+	return dl.id
 }
 
 // Stale return whether this layer has become stale (was flattened across) or if
@@ -113,8 +108,8 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	triedbDirtyMissMeter.Mark(1)
 
 	// Try to retrieve the trie node from the clean memory cache
-	if dl.clean != nil {
-		if blob := dl.clean.Get(nil, hash.Bytes()); len(blob) > 0 {
+	if dl.db.cleans != nil {
+		if blob := dl.db.cleans.Get(nil, hash.Bytes()); len(blob) > 0 {
 			triedbCleanHitMeter.Mark(1)
 			triedbCleanReadMeter.Mark(int64(len(blob)))
 			return &memoryNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
@@ -127,15 +122,15 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 		nHash common.Hash
 	)
 	if owner == (common.Hash{}) {
-		nBlob, nHash = rawdb.ReadAccountTrieNode(dl.diskdb, path)
+		nBlob, nHash = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
 	} else {
-		nBlob, nHash = rawdb.ReadStorageTrieNode(dl.diskdb, owner, path)
+		nBlob, nHash = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
 	}
 	if nHash != hash {
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nHash, hash, owner, path)
 	}
-	if dl.clean != nil && len(nBlob) > 0 {
-		dl.clean.Set(hash.Bytes(), nBlob)
+	if dl.db.cleans != nil && len(nBlob) > 0 {
+		dl.db.cleans.Set(hash.Bytes(), nBlob)
 		triedbCleanWriteMeter.Mark(int64(len(nBlob)))
 	}
 	if len(nBlob) == 0 {
@@ -174,7 +169,7 @@ func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[common.H
 // commit merges the given bottom-most diff layer into the local cache
 // and returns a newly constructed disk layer. Note the current disk
 // layer must be tagged as stale first to prevent re-access.
-func (dl *diskLayer) commit(freezer *rawdb.Freezer, statelimit uint64, bottom *diffLayer, force bool) (*diskLayer, error) {
+func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
@@ -185,8 +180,12 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, statelimit uint64, bottom *d
 	// after storing the reverse diff but without flushing the corresponding
 	// states(journal), the stored reverse diff will be truncated in
 	// the next restart.
-	if freezer != nil {
-		err := storeReverseDiff(freezer, bottom, statelimit)
+	if dl.db.freezer != nil {
+		var limit uint64
+		if dl.db.config != nil {
+			limit = dl.db.config.StateLimit
+		}
+		err := storeReverseDiff(dl.db.freezer, bottom, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -200,10 +199,10 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, statelimit uint64, bottom *d
 		}
 		slim[owner] = subset
 	}
-	ndl := newDiskLayer(bottom.root, bottom.diffid, dl.clean, dl.dirty.commit(slim), dl.diskdb)
+	ndl := newDiskLayer(bottom.root, bottom.id, dl.db, dl.dirty.commit(slim))
 
 	// Persist the content in disk layer if there are too many nodes cached.
-	if err := ndl.dirty.mayFlush(ndl.diskdb, ndl.clean, ndl.diffid, force); err != nil {
+	if err := ndl.dirty.mayFlush(ndl.db.diskdb, ndl.db.cleans, ndl.id, force); err != nil {
 		return nil, err
 	}
 	return ndl, nil
@@ -211,15 +210,15 @@ func (dl *diskLayer) commit(freezer *rawdb.Freezer, statelimit uint64, bottom *d
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (dl *diskLayer) revert(diff *reverseDiff, diffid uint64) (*diskLayer, error) {
+func (dl *diskLayer) revert(diff *reverseDiff, id uint64) (*diskLayer, error) {
 	root := dl.Root()
 	if diff.Root != root {
 		return nil, errUnmatchedReverseDiff
 	}
-	if diffid != dl.diffid {
+	if id != dl.id {
 		return nil, errUnmatchedReverseDiff
 	}
-	if dl.diffid == 0 {
+	if dl.id == 0 {
 		return nil, fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
 	}
 	// Mark the diskLayer as stale before applying any mutations on top.
@@ -228,26 +227,26 @@ func (dl *diskLayer) revert(diff *reverseDiff, diffid uint64) (*diskLayer, error
 
 	dl.stale = true
 
-	switch {
-	case dl.dirty.empty():
+	// Revert embedded states in the disk set first in case
+	// cache is not empty.
+	if !dl.dirty.empty() {
+		err := dl.dirty.revert(diff)
+		if err != nil {
+			return nil, err
+		}
+	} else {
 		// The disk cache is empty, applies the state reverting
 		// on disk directly.
-		batch := dl.diskdb.NewBatch()
+		batch := dl.db.diskdb.NewBatch()
 		diff.apply(batch)
-		rawdb.WriteReverseDiffHead(batch, diffid-1)
+		rawdb.WriteReverseDiffHead(batch, id-1)
 
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write reverse diff", "err", err)
 		}
 		batch.Reset()
-
-	default:
-		// Revert embedded state in the disk set.
-		if err := dl.dirty.revert(diff); err != nil {
-			return nil, err
-		}
 	}
-	return newDiskLayer(diff.Parent, dl.diffid-1, dl.clean, dl.dirty, dl.diskdb), nil
+	return newDiskLayer(diff.Parent, dl.id-1, dl.db, dl.dirty), nil
 }
 
 // setCacheSize sets the dirty cache size to the provided value.
@@ -258,7 +257,7 @@ func (dl *diskLayer) setCacheSize(size int) error {
 	if dl.stale {
 		return errSnapshotStale
 	}
-	return dl.dirty.setSize(size, dl.diskdb, dl.clean, dl.diffid)
+	return dl.dirty.setSize(size, dl.db.diskdb, dl.db.cleans, dl.id)
 }
 
 // size returns the approximate size of cached nodes in the disk layer.

@@ -1,4 +1,4 @@
-// Copyright 2021 The go-ethereum Authors
+// Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ import (
 // diskLayerSnapshot is the snapshot of diskLayer.
 type diskLayerSnapshot struct {
 	root    common.Hash      // Immutable, root hash of the base snapshot
-	diffid  uint64           // Immutable, corresponding reverse diff id
+	id      uint64           // Immutable, corresponding state id
 	datadir string           // The directory path of the ephemeral database
 	diskdb  ethdb.Database   // Key-value store for storing temporary state changes, needs to be erased later
 	snap    ethdb.Snapshot   // Key-value store snapshot created since the diskLayer snapshot is built
@@ -53,7 +53,7 @@ func (dl *diskLayer) getSnapshot() (ethdb.Snapshot, ethdb.Database, string, erro
 	// Create a disk snapshot for read purposes. It's inherited from the live
 	// database but has the isolation property since now. The snapshot must be
 	// released afterwards otherwise it will block compaction.
-	snap, err := dl.diskdb.NewSnapshot()
+	snap, err := dl.db.diskdb.NewSnapshot()
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -100,7 +100,7 @@ func (dl *diskLayer) getSnapshot() (ethdb.Snapshot, ethdb.Database, string, erro
 // and it's expected to be released after the usage.
 func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*diskLayerSnapshot, error) {
 	// Ensure the requested state is recoverable in the first place.
-	lookup := rawdb.ReadReverseDiffLookup(dl.diskdb, convertEmpty(root))
+	lookup := rawdb.ReadReverseDiffLookup(dl.db.diskdb, convertEmpty(root))
 	if lookup == nil {
 		return nil, errStateUnrecoverable
 	}
@@ -115,7 +115,7 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 	}
 	layer := &diskLayerSnapshot{
 		root:    dl.root,
-		diffid:  dl.diffid,
+		id:      dl.id,
 		datadir: datadir,
 		diskdb:  db,
 		snap:    snap,
@@ -127,7 +127,7 @@ func (dl *diskLayer) GetSnapshot(root common.Hash, freezer *rawdb.Freezer) (*dis
 		start  = time.Now()
 		batch  = layer.diskdb.NewBatch()
 	)
-	for current := layer.diffid; current >= target; current -= 1 {
+	for current := layer.id; current >= target; current -= 1 {
 		diff, err := loadReverseDiff(freezer, current)
 		if err != nil {
 			layer.Release()
@@ -175,7 +175,7 @@ func (snap *diskLayerSnapshot) Stale() bool {
 
 // ID returns the id of associated reverse diff.
 func (snap *diskLayerSnapshot) ID() uint64 {
-	return snap.diffid
+	return snap.id
 }
 
 // MarkStale sets the stale flag as true.
@@ -300,7 +300,7 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 	}
 	return &diskLayerSnapshot{
 		root:    bottom.root,
-		diffid:  bottom.diffid,
+		id:      bottom.id,
 		datadir: snap.datadir,
 		diskdb:  snap.diskdb,
 		snap:    snap.snap,
@@ -310,14 +310,14 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *reverseDiff, diffid uint64) (*diskLayerSnapshot, error) {
+func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *reverseDiff, id uint64) (*diskLayerSnapshot, error) {
 	if diff.Root != snap.Root() {
 		return nil, errUnmatchedReverseDiff
 	}
-	if diffid != snap.diffid {
+	if id != snap.id {
 		return nil, errUnmatchedReverseDiff
 	}
-	if snap.diffid == 0 {
+	if snap.id == 0 {
 		return nil, fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
 	}
 	// Mark the snapshot as stale before applying any mutations on top.
@@ -329,7 +329,7 @@ func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *reverseDiff, diff
 
 	return &diskLayerSnapshot{
 		root:    diff.Parent,
-		diffid:  snap.diffid - 1,
+		id:      snap.id - 1,
 		datadir: snap.datadir,
 		diskdb:  snap.diskdb,
 		snap:    snap.snap,

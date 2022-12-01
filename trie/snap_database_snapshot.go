@@ -88,7 +88,7 @@ func (snap *DatabaseSnapshot) Update(root common.Hash, parent common.Hash, nodes
 	// - head-1 layer is paired with HEAD-1 state
 	// - head-127 layer(bottom-most diff layer) is paired with HEAD-127 state
 	// - head-128 layer(disk layer) is paired with HEAD-128 state
-	return snap.tree.cap(root, maxDiffLayerDepth, nil, 0)
+	return snap.tree.cap(root, maxDiffLayerDepth)
 }
 
 // Hold increases the snapshot references to prevent accidental releasing.

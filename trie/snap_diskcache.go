@@ -186,22 +186,21 @@ func (cache *diskcache) forEach(callback func(owner common.Hash, path []byte, no
 
 // setSize sets the cache size to the provided limit. Schedule flush operation
 // if the current memory usage exceeds the new limit.
-func (cache *diskcache) setSize(size int, db ethdb.KeyValueStore, clean *fastcache.Cache, diffid uint64) error {
+func (cache *diskcache) setSize(size int, db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64) error {
 	cache.limit = uint64(size)
-	return cache.mayFlush(db, clean, diffid, false)
+	return cache.mayFlush(db, clean, id, false)
 }
 
 // mayFlush persists the in-memory dirty trie node into the disk if the predefined
 // memory threshold is reached. Note, all data must be written to disk atomically.
-func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache, diffid uint64, force bool) error {
+func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64, force bool) error {
 	if cache.size <= cache.limit && !force {
 		return nil
 	}
-	// Ensure the given reverse diff identifier is aligned
-	// with the internal counter.
+	// Ensure the given target state id is aligned with the internal counter.
 	head := rawdb.ReadReverseDiffHead(db)
-	if head+cache.layers != diffid {
-		return errors.New("invalid reverse diff id")
+	if head+cache.layers != id {
+		return errors.New("invalid state id")
 	}
 	var (
 		start = time.Now()
@@ -229,7 +228,7 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 			}
 		}
 	}
-	rawdb.WriteReverseDiffHead(batch, diffid)
+	rawdb.WriteReverseDiffHead(batch, id)
 	if err := batch.Write(); err != nil {
 		return err
 	}

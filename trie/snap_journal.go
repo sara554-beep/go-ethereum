@@ -1,4 +1,4 @@
-// Copyright 2021 The go-ethereum Authors
+// Copyright 2022 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -114,7 +114,7 @@ func (db *snapDatabase) loadSnapshot() snapshot {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Construct the entire layer tree with the single in-disk state.
-	return newDiskLayer(root, rawdb.ReadReverseDiffHead(db.diskdb), db.cleans, newDiskcache(db.dirtySize, nil, 0), db.diskdb)
+	return newDiskLayer(root, rawdb.ReadReverseDiffHead(db.diskdb), db, newDiskcache(db.dirtySize, nil, 0))
 }
 
 // loadDiskLayer reads the binary blob from the snapshot journal, reconstructing a new
@@ -146,17 +146,17 @@ func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 		}
 		nodes[entry.Owner] = subset
 	}
-	// Resolve corresponding reverse diff id
-	var diffid uint64
-	if err := r.Decode(&diffid); err != nil {
-		return nil, fmt.Errorf("load reverse diff id: %v", err)
+	// Resolve the state id of disk layer
+	var id uint64
+	if err := r.Decode(&id); err != nil {
+		return nil, fmt.Errorf("load state id: %v", err)
 	}
-	diskid := rawdb.ReadReverseDiffHead(db.diskdb)
-	if diskid > diffid {
-		return nil, fmt.Errorf("invalid reverse diff id, disk %d resolved %d", diskid, diffid)
+	stored := rawdb.ReadReverseDiffHead(db.diskdb)
+	if stored > id {
+		return nil, fmt.Errorf("invalid state id, stored %d resolved %d", stored, id)
 	}
 	// Calculate the internal state transitions by id difference.
-	base := newDiskLayer(root, diffid, db.cleans, newDiskcache(db.dirtySize, nodes, diffid-diskid), db.diskdb)
+	base := newDiskLayer(root, id, db, newDiskcache(db.dirtySize, nodes, id-stored))
 	return base, nil
 }
 
@@ -233,7 +233,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 		return err
 	}
 	// Step three, write the corresponding reverse diff id into the journal
-	if err := rlp.Encode(buffer, dl.diffid); err != nil {
+	if err := rlp.Encode(buffer, dl.id); err != nil {
 		return err
 	}
 	log.Debug("Journaled disk layer", "root", dl.root, "nodes", len(dl.dirty.nodes))
