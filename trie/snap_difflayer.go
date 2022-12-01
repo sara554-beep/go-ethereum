@@ -21,7 +21,6 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -33,7 +32,7 @@ import (
 type diffLayer struct {
 	// Immutables
 	root   common.Hash                              // Root hash to which this snapshot diff belongs to
-	diffid uint64                                   // Corresponding reverse diff id
+	id     uint64                                   // Corresponding state id
 	nodes  map[common.Hash]map[string]*nodeWithPrev // Cached trie nodes indexed by owner and path
 	memory uint64                                   // Approximate guess as to how much memory we use
 
@@ -44,10 +43,10 @@ type diffLayer struct {
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, id uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
 	dl := &diffLayer{
 		root:   root,
-		diffid: diffid,
+		id:     id,
 		nodes:  nodes,
 		parent: parent,
 	}
@@ -61,7 +60,7 @@ func newDiffLayer(parent snapshot, root common.Hash, diffid uint64, nodes map[co
 	triedbDirtyWriteMeter.Mark(total)
 	triedbDiffLayerSizeMeter.Mark(int64(dl.memory))
 	triedbDiffLayerNodesMeter.Mark(int64(len(nodes)))
-	log.Debug("Created new diff layer", "diffid", diffid, "nodes", len(nodes), "size", common.StorageSize(dl.memory))
+	log.Debug("Created new diff layer", "id", id, "nodes", len(nodes), "size", common.StorageSize(dl.memory))
 	return dl
 }
 
@@ -72,7 +71,7 @@ func (dl *diffLayer) Root() common.Hash {
 
 // ID returns the id of associated reverse diff.
 func (dl *diffLayer) ID() uint64 {
-	return dl.diffid
+	return dl.id
 }
 
 // Parent returns the subsequent layer of a diff layer.
@@ -171,13 +170,13 @@ func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[common.H
 // Note this function can destruct the ancestor layers(mark them as stale)
 // of the given diff layer, please ensure prevent state access operation
 // to this layer through any **descendant layer**.
-func (dl *diffLayer) persist(freezer *rawdb.Freezer, statelimit uint64, force bool) (snapshot, error) {
+func (dl *diffLayer) persist(force bool) (snapshot, error) {
 	parent, ok := dl.Parent().(*diffLayer)
 	if ok {
 		// Hold the lock to prevent any read operation until the new
 		// parent is linked correctly.
 		dl.lock.Lock()
-		result, err := parent.persist(freezer, statelimit, force)
+		result, err := parent.persist(force)
 		if err != nil {
 			dl.lock.Unlock()
 			return nil, err
@@ -185,15 +184,15 @@ func (dl *diffLayer) persist(freezer *rawdb.Freezer, statelimit uint64, force bo
 		dl.parent = result
 		dl.lock.Unlock()
 	}
-	return diffToDisk(freezer, statelimit, dl, force)
+	return diffToDisk(dl, force)
 }
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
 // it. The method will panic if called onto a non-bottom-most diff layer.
-func diffToDisk(freezer *rawdb.Freezer, statelimit uint64, bottom *diffLayer, force bool) (snapshot, error) {
+func diffToDisk(bottom *diffLayer, force bool) (snapshot, error) {
 	switch layer := bottom.Parent().(type) {
 	case *diskLayer:
-		return layer.commit(freezer, statelimit, bottom, force)
+		return layer.commit(bottom, force)
 	case *diskLayerSnapshot:
 		return layer.commit(bottom)
 	default:

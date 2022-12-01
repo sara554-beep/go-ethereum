@@ -192,23 +192,23 @@ func storeReverseDiff(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error
 	// places, so there is no atomicity guarantee. It's possible that reverse
 	// diff object is written but lookup is not, vice versa. So double-check
 	// the presence when using the reverse diff.
-	rawdb.WriteReverseDiff(freezer, dl.diffid, blob, base.root)
+	rawdb.WriteReverseDiff(freezer, dl.id, blob, base.root)
 
 	// All stored lookups are identified by the **unique** state root. It's
 	// impossible that in the same chain blocks at different height have the
 	// same root. And only reverse diffs of canonical chain will be persisted,
 	// so we can get the conclusion the state root here is unique.
-	rawdb.WriteReverseDiffLookup(base.diskdb, base.root, dl.diffid)
+	rawdb.WriteReverseDiffLookup(base.db.diskdb, base.root, dl.id)
 	triedbReverseDiffSizeMeter.Mark(int64(len(blob)))
 
 	logs := []interface{}{
-		"id", dl.diffid,
+		"id", dl.id,
 		"nodes", len(dl.nodes),
 		"size", common.StorageSize(len(blob)),
 	}
 	// Prune stale reverse diffs if necessary
-	if limit != 0 && dl.diffid > limit {
-		pruned, err := truncateFromTail(freezer, base.diskdb, dl.diffid-limit)
+	if limit != 0 && dl.id > limit {
+		pruned, err := truncateFromTail(freezer, base.db.diskdb, dl.id-limit)
 		if err != nil {
 			return err
 		}

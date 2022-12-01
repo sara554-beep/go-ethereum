@@ -22,7 +22,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -48,9 +47,8 @@ func randomNode() *memoryNode {
 
 func emptyLayer() *diskLayer {
 	return &diskLayer{
-		diskdb: rawdb.NewDatabase(rawdb.NewMemoryDatabase()),
-		clean:  fastcache.New(500 * 1024),
-		dirty:  newDiskcache(defaultCacheSize, nil, 0),
+		db:    openSnapDatabase(rawdb.NewMemoryDatabase(), nil, nil),
+		dirty: newDiskcache(defaultCacheSize, nil, 0),
 	}
 }
 
@@ -206,7 +204,7 @@ func BenchmarkPersist(b *testing.B) {
 		if !ok {
 			break
 		}
-		dl.persist(nil, 0, false)
+		dl.persist(false)
 	}
 }
 

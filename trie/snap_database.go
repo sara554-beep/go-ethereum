@@ -192,16 +192,12 @@ func (db *snapDatabase) Update(root common.Hash, parentRoot common.Hash, nodes *
 	if err := db.tree.add(root, parentRoot, nodes.simplify()); err != nil {
 		return err
 	}
-	var limit uint64
-	if db.config != nil {
-		limit = db.config.StateLimit
-	}
 	// Keep 128 diff layers in the memory, persistent layer is 129th.
 	// - head layer is paired with HEAD state
 	// - head-1 layer is paired with HEAD-1 state
 	// - head-127 layer(bottom-most diff layer) is paired with HEAD-127 state
 	// - head-128 layer(disk layer) is paired with HEAD-128 state
-	return db.tree.cap(root, maxDiffLayerDepth, db.freezer, limit)
+	return db.tree.cap(root, maxDiffLayerDepth)
 }
 
 // Commit traverses downwards the snapshot tree from a specified layer with the
@@ -216,11 +212,7 @@ func (db *snapDatabase) Commit(root common.Hash, report bool) error {
 	if db.readOnly {
 		return errSnapshotReadOnly
 	}
-	var limit uint64
-	if db.config != nil {
-		limit = db.config.StateLimit
-	}
-	return db.tree.cap(root, 0, db.freezer, limit)
+	return db.tree.cap(root, 0)
 }
 
 // Journal commits an entire diff hierarchy to disk into a single journal entry.
@@ -307,14 +299,14 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 		return true
 	})
 	// Clean up all reverse diffs in freezer.
-	var diffid uint64
+	var id uint64
 	if db.freezer != nil {
-		diffid, _ = db.freezer.Tail()
-		rawdb.WriteReverseDiffHead(db.diskdb, diffid)
-		truncateDiffs(db.freezer, db.diskdb, diffid)
+		id, _ = db.freezer.Tail()
+		rawdb.WriteReverseDiffHead(db.diskdb, id)
+		truncateDiffs(db.freezer, db.diskdb, id)
 	}
-	db.tree = newLayerTree(newDiskLayer(root, diffid, db.cleans, newDiskcache(db.dirtySize, nil, 0), db.diskdb))
-	log.Info("Rebuilt trie database", "root", root, "id", diffid)
+	db.tree = newLayerTree(newDiskLayer(root, id, db, newDiskcache(db.dirtySize, nil, 0)))
+	log.Info("Rebuilt trie database", "root", root, "id", id)
 	return nil
 }
 
