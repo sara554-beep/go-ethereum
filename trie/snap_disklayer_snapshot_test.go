@@ -42,7 +42,7 @@ func TestGetSnapshot(t *testing.T) {
 		}
 	}
 	for i := 0; i < index; i++ {
-		layer, err := dl.GetSnapshot(env.roots[i], db.freezer)
+		layer, err := dl.GetSnapshot(env.roots[i])
 		if err != nil {
 			t.Fatalf("Failed to retrieve snapshot %v", err)
 		}

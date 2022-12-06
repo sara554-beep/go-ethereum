@@ -160,23 +160,23 @@ func TestDatabaseRollback(t *testing.T) {
 			break
 		}
 	}
-	// Ensure all the reverse diffs are stored properly
+	// Ensure all the trie histories are stored properly
 	var parent = emptyRoot
-	for i := 0; i <= index; i++ {
-		diff, err := loadReverseDiff(db.freezer, uint64(i+1))
+	for i := uint64(1); i <= dl.id; i++ {
+		h, err := loadTrieHistory(db.freezer, i)
 		if err != nil {
-			t.Errorf("Failed to load reverse diff, index %d, err %v", i+1, err)
+			t.Errorf("Failed to load trie history, index %d, err %v", i, err)
 		}
-		if diff.Parent != parent {
-			t.Error("Reverse diff is not continuous")
+		if h.Parent != parent {
+			t.Error("Trie history is not continuous")
 		}
-		parent = diff.Root
+		parent = h.Root
 	}
-	// Ensure immature reverse diffs are not persisted
-	for i := index + 1; i < len(env.roots); i++ {
-		blob := rawdb.ReadReverseDiff(env.nodeDb.diskdb, uint64(i+1))
+	// Ensure immature trie histories are not persisted
+	for i := dl.id + 1; i <= uint64(len(env.roots)); i++ {
+		blob := rawdb.ReadTrieHistory(env.nodeDb.diskdb, i)
 		if len(blob) != 0 {
-			t.Error("Unexpected reverse diff", "index", i)
+			t.Error("Unexpected trie history", "id", i)
 		}
 	}
 	// Revert the db to historical point with reverse state available
@@ -184,8 +184,7 @@ func TestDatabaseRollback(t *testing.T) {
 		if err := env.nodeDb.Recover(env.roots[i-1]); err != nil {
 			t.Error("Failed to revert db status", "err", err)
 		}
-		dl := db.tree.bottom().(*diskLayer)
-		if dl.Root() != env.roots[i-1] {
+		if db.tree.bottom().Root() != env.roots[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
 		// Compare the reverted state with the constructed one, they should be same.
@@ -222,19 +221,12 @@ func TestDatabaseBatchRollback(t *testing.T) {
 	defaultCacheSize = 1024 * 256 // Lower the dirty cache size
 
 	var (
-		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
-		dl    = db.tree.bottom().(*diskLayer)
-		index int
+		env = fillDB(t)
+		db  = env.nodeDb.backend.(*snapDatabase)
 	)
-	for index = 0; index < len(env.roots); index++ {
-		if env.roots[index] == dl.root {
-			break
-		}
-	}
-	// Revert the db to historical point with reverse state available
+	// Revert the db to historical point with all trie histories available
 	if err := env.nodeDb.Recover(common.Hash{}); err != nil {
-		t.Error("Failed to revert db status", "err", err)
+		t.Error("Failed to revert db", "err", err)
 	}
 	ndl := db.tree.bottom().(*diskLayer)
 	if ndl.Root() != emptyRoot {
@@ -257,6 +249,20 @@ func TestDatabaseBatchRollback(t *testing.T) {
 			}
 		}
 	}
+	// Ensure all lookups and trie histories are cleaned up
+	number, err := db.freezer.Ancients()
+	if err != nil {
+		t.Fatalf("Failed to retrieve ancient items")
+	}
+	if number != 0 {
+		t.Fatalf("Unexpected trie histories")
+	}
+	for i := 0; i < len(env.roots); i++ {
+		lookup := rawdb.ReadStateLookup(db.diskdb, env.roots[i])
+		if lookup != nil {
+			t.Fatalf("Unexpected lookup")
+		}
+	}
 }
 
 func TestDatabaseRecoverable(t *testing.T) {
@@ -268,15 +274,15 @@ func TestDatabaseRecoverable(t *testing.T) {
 	var (
 		env   = fillDB(t)
 		db    = env.nodeDb.backend.(*snapDatabase)
-		dl    = db.tree.bottom().(*diskLayer)
+		dl    = db.tree.bottom()
 		index int
 	)
 	for index = 0; index < len(env.roots); index++ {
-		if env.roots[index] == dl.root {
+		if env.roots[index] == dl.Root() {
 			break
 		}
 	}
-	// Empty state should be recoverable
+	// Initial state should be recoverable
 	result, _ := env.nodeDb.Recoverable(common.Hash{})
 	if !result {
 		t.Error("Layer unrecoverable")
@@ -307,7 +313,7 @@ func TestJournal(t *testing.T) {
 	var (
 		env   = fillDB(t)
 		db    = env.nodeDb.backend.(*snapDatabase)
-		dl    = db.tree.bottom().(*diskLayer)
+		dl    = db.tree.bottom()
 		index int
 	)
 	if err := env.nodeDb.Journal(env.roots[len(env.roots)-1]); err != nil {
@@ -317,7 +323,7 @@ func TestJournal(t *testing.T) {
 
 	newdb := newTestDatabase(env.nodeDb.diskdb, rawdb.PathScheme)
 	for index = 0; index < len(env.roots); index++ {
-		if env.roots[index] == dl.root {
+		if env.roots[index] == dl.Root() {
 			break
 		}
 	}
@@ -371,7 +377,7 @@ func TestReset(t *testing.T) {
 	}
 	// Ensure all reverse diffs are nuked
 	for i := 0; i <= index; i++ {
-		_, err := loadReverseDiff(db.freezer, uint64(i+1))
+		_, err := loadTrieHistory(db.freezer, uint64(i+1))
 		if err == nil {
 			t.Fatalf("Failed to clean reverse diff, index %d", i+1)
 		}

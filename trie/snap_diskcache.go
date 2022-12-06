@@ -115,7 +115,7 @@ func (cache *diskcache) commit(nodes map[common.Hash]map[string]*memoryNode) *di
 }
 
 // revert applies the reverse diff to the disk cache.
-func (cache *diskcache) revert(diff *reverseDiff) error {
+func (cache *diskcache) revert(diff *trieHistory) error {
 	if cache.layers == 0 {
 		return errStateUnrecoverable
 	}
@@ -125,12 +125,12 @@ func (cache *diskcache) revert(diff *reverseDiff) error {
 		return nil
 	}
 	var delta int64
-	for _, entry := range diff.States {
+	for _, entry := range diff.Tries {
 		subset, ok := cache.nodes[entry.Owner]
 		if !ok {
 			panic(fmt.Sprintf("non-existent node (%x)", entry.Owner))
 		}
-		for _, state := range entry.States {
+		for _, state := range entry.Nodes {
 			cur, ok := subset[string(state.Path)]
 			if !ok {
 				panic(fmt.Sprintf("non-existent node (%x %v)", entry.Owner, state.Path))
@@ -198,7 +198,7 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 		return nil
 	}
 	// Ensure the given target state id is aligned with the internal counter.
-	head := rawdb.ReadReverseDiffHead(db)
+	head := rawdb.ReadHeadState(db)
 	if head+cache.layers != id {
 		return errors.New("invalid state id")
 	}
@@ -228,7 +228,7 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 			}
 		}
 	}
-	rawdb.WriteReverseDiffHead(batch, id)
+	rawdb.WriteHeadState(batch, id)
 	if err := batch.Write(); err != nil {
 		return err
 	}

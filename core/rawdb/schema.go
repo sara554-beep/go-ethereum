@@ -108,8 +108,8 @@ var (
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
 
-	reverseDiffLookupPrefix = []byte("RL")    // reverseDiffLookupPrefix + state root -> reverse diff id
-	reverseDiffHeadKey      = []byte("RHead") // reverseDiffHeadKey tracks the latest reverse-diff id
+	stateLookupPrefix = []byte("L")         // stateLookupPrefix + state root -> state id
+	headStateKey      = []byte("DiskState") // headStateKey tracks the id of stored state in disk
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -295,9 +295,9 @@ func IsStorageTrieNode(key []byte) (bool, common.Hash, []byte) {
 	return true, accountHash, remain
 }
 
-// reverseDiffLookupKey = reverseDiffLookupPrefix + root (32 bytes)
-func reverseDiffLookupKey(root common.Hash) []byte {
-	return append(reverseDiffLookupPrefix, root.Bytes()...)
+// stateLookupKey = stateLookupPrefix + root (32 bytes)
+func stateLookupKey(root common.Hash) []byte {
+	return append(stateLookupPrefix, root.Bytes()...)
 }
 
 // configKey = configPrefix + hash
