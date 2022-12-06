@@ -47,10 +47,7 @@ func (db *Database) GetSnapshot(root common.Hash) (*DatabaseSnapshot, error) {
 	if !ok {
 		return nil, errors.New("not supported")
 	}
-	if backend.freezer == nil {
-		return nil, errors.New("unrecoverable trie database")
-	}
-	snap, err := backend.tree.bottom().(*diskLayer).GetSnapshot(root, backend.freezer)
+	snap, err := backend.tree.bottom().(*diskLayer).GetSnapshot(root)
 	if err != nil {
 		return nil, err
 	}

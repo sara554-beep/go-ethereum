@@ -47,33 +47,29 @@ var chainFreezerNoSnappy = map[string]bool{
 }
 
 const (
-	// reverseDiffTableSize defines the maximum size of freezer data files.
-	reverseDiffTableSize = 2 * 1000 * 1000 * 1000
+	// trieHistoryTableSize defines the maximum size of freezer data files.
+	trieHistoryTableSize = 2 * 1000 * 1000 * 1000
 
-	// freezerReverseDiffTable indicates the name of the freezer reverse diff table.
-	freezerReverseDiffTable = "rdiffs"
-
-	// freezerReverseDiffHashTable indicates the name of the freezer reverse diff hash table.
-	freezerReverseDiffHashTable = "rdiff.hashes"
+	// trieHistoryTable indicates the name of the freezer reverse diff table.
+	trieHistoryTable = "history"
 )
 
-// ReveseDiffFreezerNoSnappy configures whether compression is disabled for the ancient
+// TrieHistoryFreezerNoSnappy configures whether compression is disabled for the ancient
 // reverse diffs.
-var reverseDiffFreezerNoSnappy = map[string]bool{
-	freezerReverseDiffTable:     false,
-	freezerReverseDiffHashTable: true,
+var TrieHistoryFreezerNoSnappy = map[string]bool{
+	trieHistoryTable: false,
 }
 
 // The list of identifiers of ancient stores.
 var (
-	chainFreezerName = "chain" // the folder name of chain segment ancient store.
-	rdiffFreezerName = "rdiff" // the folder name of reverse diff ancient store.
+	chainFreezerName       = "chain"       // the folder name of chain segment ancient store.
+	trieHistoryFreezerName = "triehistory" // the folder name of reverse diff ancient store.
 )
 
 // freezers the collections of all builtin freezers.
-var freezers = []string{chainFreezerName, rdiffFreezerName}
+var freezers = []string{chainFreezerName, trieHistoryFreezerName}
 
-// NewReverseDiffFreezer initializes the freezer for reverse diffs.
-func NewReverseDiffFreezer(ancientDir string, readOnly bool) (*Freezer, error) {
-	return NewFreezer(filepath.Join(ancientDir, rdiffFreezerName), "eth/db/rdiff", readOnly, reverseDiffTableSize, reverseDiffFreezerNoSnappy)
+// NewTrieHistoryFreezer initializes the freezer for reverse diffs.
+func NewTrieHistoryFreezer(ancientDir string, readOnly bool) (*Freezer, error) {
+	return NewFreezer(filepath.Join(ancientDir, trieHistoryFreezerName), "eth/db/triehistory", readOnly, trieHistoryTableSize, TrieHistoryFreezerNoSnappy)
 }

@@ -95,43 +95,38 @@ func DeleteCode(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
-// ReadReverseDiff retrieves the state reverse diff with the given associated
-// identifier. Calculate the real position of reverse diff in freezer by minus
-// one since the first reverse diff is started from one(zero for empty state).
-func ReadReverseDiff(db ethdb.AncientReaderOp, id uint64) []byte {
-	blob, err := db.Ancient(freezerReverseDiffTable, id-1)
+// ReadTrieHistory retrieves the trie history with the given id. Calculate
+// the real position of reverse diff in freezer by minus one since the first
+// reverse diff is started from one(zero for empty state).
+func ReadTrieHistory(db ethdb.AncientReaderOp, id uint64) []byte {
+	blob, err := db.Ancient(trieHistoryTable, id-1)
 	if err != nil {
 		return nil
 	}
 	return blob
 }
 
-// ReadReverseDiffHash retrieves the state root corresponding to the specified
-// reverse diff. Calculate the real position of reverse diff in freezer by minus
-// one since the first reverse diff is started from one(zero for empty state).
-func ReadReverseDiffHash(db ethdb.AncientReaderOp, id uint64) common.Hash {
-	blob, err := db.Ancient(freezerReverseDiffHashTable, id-1)
-	if err != nil {
-		return common.Hash{}
-	}
-	return common.BytesToHash(blob)
+// HasTrieHistory returns an indicator if the trie history with the provided id
+// is present in freezer.
+func HasTrieHistory(db ethdb.AncientReader, id uint64) bool {
+	has, _ := db.HasAncient(trieHistoryTable, id-1)
+	return has
 }
 
-// WriteReverseDiff writes the provided reverse diff to database. Calculate the
-// real position of reverse diff in freezer by minus one since the first reverse
-// diff is started from one(zero for empty state).
-func WriteReverseDiff(db ethdb.AncientWriter, id uint64, blob []byte, state common.Hash) {
+// WriteTrieHistory writes the provided trie history to database. Calculate the
+// real position of trie history in freezer by minus one since the first history
+// object is started from one(zero is not existent corresponds to empty state).
+func WriteTrieHistory(db ethdb.AncientWriter, id uint64, blob []byte) {
 	db.ModifyAncients(func(op ethdb.AncientWriteOp) error {
-		op.AppendRaw(freezerReverseDiffTable, id-1, blob)
-		op.AppendRaw(freezerReverseDiffHashTable, id-1, state.Bytes())
+		op.AppendRaw(trieHistoryTable, id-1, blob)
 		return nil
 	})
 }
 
-// ReadReverseDiffLookup retrieves the reverse diff id with the given associated
+// ReadStateLookup retrieves the reverse diff id with the given associated
 // state root. Return nil if it's not existent.
-func ReadReverseDiffLookup(db ethdb.KeyValueReader, root common.Hash) *uint64 {
-	data, err := db.Get(reverseDiffLookupKey(root))
+func ReadStateLookup(db ethdb.KeyValueReader, root common.Hash) *uint64 {
+	data, err := db.Get(stateLookupKey(root))
 	if err != nil || len(data) == 0 {
 		return nil
 	}
@@ -139,37 +134,35 @@ func ReadReverseDiffLookup(db ethdb.KeyValueReader, root common.Hash) *uint64 {
 	return &id
 }
 
-// WriteReverseDiffLookup writes the provided reverse diff lookup to database.
-func WriteReverseDiffLookup(db ethdb.KeyValueWriter, root common.Hash, id uint64) {
+// WriteStateLookup writes the provided state lookup to database.
+func WriteStateLookup(db ethdb.KeyValueWriter, root common.Hash, id uint64) {
 	var buff [8]byte
 	binary.BigEndian.PutUint64(buff[:], id)
-	if err := db.Put(reverseDiffLookupKey(root), buff[:]); err != nil {
-		log.Crit("Failed to store reverse diff lookup", "err", err)
+	if err := db.Put(stateLookupKey(root), buff[:]); err != nil {
+		log.Crit("Failed to store state lookup", "err", err)
 	}
 }
 
-// DeleteReverseDiffLookup deletes the specified reverse diff lookup from the database.
-func DeleteReverseDiffLookup(db ethdb.KeyValueWriter, root common.Hash) {
-	if err := db.Delete(reverseDiffLookupKey(root)); err != nil {
-		log.Crit("Failed to delete reverse diff lookup", "err", err)
+// DeleteStateLookup deletes the specified state lookup from the database.
+func DeleteStateLookup(db ethdb.KeyValueWriter, root common.Hash) {
+	if err := db.Delete(stateLookupKey(root)); err != nil {
+		log.Crit("Failed to delete state lookup", "err", err)
 	}
 }
 
-// ReadReverseDiffHead retrieves the number of the latest reverse diff from
-// the database.
-func ReadReverseDiffHead(db ethdb.KeyValueReader) uint64 {
-	data, _ := db.Get(reverseDiffHeadKey)
+// ReadHeadState retrieves the id of the disk state from the database.
+func ReadHeadState(db ethdb.KeyValueReader) uint64 {
+	data, _ := db.Get(headStateKey)
 	if len(data) != 8 {
 		return 0
 	}
 	return binary.BigEndian.Uint64(data)
 }
 
-// WriteReverseDiffHead stores the number of the latest reverse diff id
-// into database.
-func WriteReverseDiffHead(db ethdb.KeyValueWriter, number uint64) {
-	if err := db.Put(reverseDiffHeadKey, encodeBlockNumber(number)); err != nil {
-		log.Crit("Failed to store the head reverse diff id", "err", err)
+// WriteHeadState stores the id of the disk state into database.
+func WriteHeadState(db ethdb.KeyValueWriter, number uint64) {
+	if err := db.Put(headStateKey, encodeBlockNumber(number)); err != nil {
+		log.Crit("Failed to store the head state id", "err", err)
 	}
 }
 

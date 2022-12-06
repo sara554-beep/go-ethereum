@@ -98,7 +98,7 @@ type snapshot interface {
 	// if it's still live.
 	Stale() bool
 
-	// ID returns the id of associated reverse diff.
+	// ID returns the associated state id.
 	ID() uint64
 }
 
@@ -108,7 +108,7 @@ type snapshot interface {
 // diffs can form a tree with branching, but the disk layer is singleton and
 // common to all. If a reorg goes deeper than the disk layer, a batch of reverse
 // diffs can be applied to rollback. The deepest reorg can be handled depends on
-// the amount of reverse diffs tracked in the disk.
+// the amount of trie histories tracked in the disk.
 //
 // At most one readable and writable snap database can be opened at the same time
 // in the whole system which ensures that only one database writer can operate
@@ -123,7 +123,7 @@ type snapDatabase struct {
 	diskdb    ethdb.Database   // Persistent storage for matured trie nodes
 	cleans    *fastcache.Cache // GC friendly memory cache of clean node RLPs
 	tree      *layerTree       // The group for all known layers
-	freezer   *rawdb.Freezer   // Freezer for storing reverse diffs, nil possible in tests
+	freezer   *rawdb.Freezer   // Freezer for storing trie histories, nil possible in tests
 	lock      sync.RWMutex     // Lock to prevent mutations from happening at the same time
 }
 
@@ -150,22 +150,28 @@ func openSnapDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *Co
 	// and in-memory layer journal.
 	db.tree = newLayerTree(db.loadSnapshot())
 
-	// Open the freezer for reverse diffs if the passed database contains an
+	// Open the freezer for trie history if the passed database contains an
 	// ancient store. Otherwise, all the relevant functionalities are disabled.
 	//
 	// Because the freezer can only be opened once at the same time, this
 	// mechanism also ensures that at most one **non-readOnly** snap database
 	// is opened at the same time to prevent accidental mutation.
 	if ancient, err := diskdb.AncientDatadir(); err == nil && ancient != "" && !readOnly {
-		freezer, err := rawdb.NewReverseDiffFreezer(ancient, false)
+		freezer, err := rawdb.NewTrieHistoryFreezer(ancient, false)
 		if err != nil {
-			log.Crit("Failed to open reverse diff freezer", "err", err)
+			log.Crit("Failed to open trie history freezer", "err", err)
 		}
 		db.freezer = freezer
 
-		// Truncate the extra reverse diffs above in freezer in case it's not
-		// aligned with the disk layer.
-		truncateDiffs(db.freezer, diskdb, db.tree.bottom().ID())
+		// Truncate the extra trie histories above in freezer in case
+		// it's not aligned with the disk layer.
+		pruned, err := truncateFromHead(freezer, db.tree.bottom().ID())
+		if err != nil {
+			log.Crit("Failed to truncate extra trie histories", "err", err)
+		}
+		if pruned != 0 {
+			log.Info("Truncated extra trie histories", "number", pruned)
+		}
 	}
 	log.Warn("Path-based trie scheme is an experimental feature")
 	return db
@@ -238,8 +244,10 @@ func (db *snapDatabase) Journal(root common.Hash) error {
 	if err := rlp.Encode(journal, journalVersion); err != nil {
 		return err
 	}
+	// The stored state in disk might be empty, convert the
+	// root to emptyRoot in this case.
 	_, diskroot := rawdb.ReadAccountTrieNode(db.diskdb, nil)
-	diskroot = convertEmpty(diskroot) // might be empty
+	diskroot = convertEmpty(diskroot)
 
 	// Secondly write out the disk layer root, ensure the
 	// diff journal is continuous with disk.
@@ -302,8 +310,8 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 	var id uint64
 	if db.freezer != nil {
 		id, _ = db.freezer.Tail()
-		rawdb.WriteReverseDiffHead(db.diskdb, id)
-		truncateDiffs(db.freezer, db.diskdb, id)
+		rawdb.WriteHeadState(db.diskdb, id)
+		truncateDiffs(db.freezer, id)
 	}
 	db.tree = newLayerTree(newDiskLayer(root, id, db, newDiskcache(db.dirtySize, nil, 0)))
 	log.Info("Rebuilt trie database", "root", root, "id", id)
@@ -312,35 +320,21 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 
 // Recover rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
-// canonical state and the corresponding reverse diffs are existent.
-func (db *snapDatabase) Recover(target common.Hash) error {
+// canonical state and the corresponding trie histories are existent.
+func (db *snapDatabase) Recover(root common.Hash) error {
+	root = convertEmpty(root)
+	if !db.Recoverable(root) {
+		return errStateUnrecoverable
+	}
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	// Short circuit if the database is in read only mode.
-	if db.readOnly {
-		return errSnapshotReadOnly
+	// Short circuit if rollback operation is not supported.
+	if db.readOnly || db.freezer == nil {
+		return errors.New("state revert is non-supported")
 	}
-	// Short circuit if the whole state rollback functionality is disabled.
-	if db.freezer == nil {
-		return errors.New("state revert is disabled")
-	}
-	// Ensure the destination is recoverable
-	target = convertEmpty(target)
-	id := rawdb.ReadReverseDiffLookup(db.diskdb, target)
-	if id == nil {
-		return errStateUnrecoverable
-	}
-	current := db.tree.bottom().(*diskLayer).ID()
-	if *id > current {
-		return fmt.Errorf("%w dest: %d head: %d", errors.New("immature state"), *id, current)
-	}
-	// Clean up the database, wipe all existent diff layers and journal as well.
-	start := time.Now()
-	rawdb.DeleteTrieJournal(db.diskdb)
-
-	// Iterate over all diff layers and mark them as stale. Disk layer will be
-	// handled later.
+	// Iterate over all diff layers and mark them as stale. Disk layer
+	// will be handled later.
 	db.tree.forEach(func(hash common.Hash, layer snapshot) bool {
 		dl, ok := layer.(*diffLayer)
 		if ok {
@@ -348,45 +342,77 @@ func (db *snapDatabase) Recover(target common.Hash) error {
 		}
 		return true
 	})
-	// Apply the reverse diffs with the given order.
-	dl := db.tree.bottom().(*diskLayer)
-	for current >= *id {
-		diff, err := loadReverseDiff(db.freezer, current)
+	// Apply the trie histories upon the current disk layer in order.
+	var (
+		dl      = db.tree.bottom().(*diskLayer)
+		cur     = dl.id
+		lookups []common.Hash
+		batch   = db.diskdb.NewBatch()
+		start   = time.Now()
+	)
+	for {
+		h, err := loadTrieHistory(db.freezer, cur)
 		if err != nil {
 			return err
 		}
-		dl, err = dl.revert(diff, current)
+		dl, err = dl.revert(h, cur)
 		if err != nil {
 			return err
 		}
-		// Delete the lookup first to mark this reverse diff invisible.
-		rawdb.DeleteReverseDiffLookup(db.diskdb, diff.Parent)
-
-		// Truncate the reverse diff from the freezer in the last step
-		_, err = truncateFromHead(db.freezer, db.diskdb, current-1)
-		if err != nil {
-			return err
+		cur -= 1
+		lookups = append(lookups, h.Root)
+		if dl.Root() == root {
+			break
 		}
-		current -= 1
+	}
+	// Truncate the lookups and histories above
+	for _, lookup := range lookups {
+		rawdb.DeleteStateLookup(batch, lookup)
+	}
+	rawdb.DeleteTrieJournal(batch)
+	if err := batch.Write(); err != nil {
+		return err
+	}
+	_, err := truncateFromHead(db.freezer, cur)
+	if err != nil {
+		return err
 	}
 	// Recreate the layer tree with newly created disk layer
 	db.tree = newLayerTree(dl)
-	log.Info("Recovered state", "root", target, "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Debug("Recovered state", "root", root, "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil
 }
 
-// Recoverable returns the indicator if the specified state is enabled to be recovered.
+// Recoverable returns the indicator if the specified state
+// is recoverable.
 func (db *snapDatabase) Recoverable(root common.Hash) bool {
-	// In theory all the reverse diffs starts from the given id until
-	// the disk layer should be checked for presence. In practice, the
-	// check is too expensive. So optimistically believe that all the
-	// reverse diffs are present.
+	// Ensure the requested state is a known state.
 	root = convertEmpty(root)
-	id := rawdb.ReadReverseDiffLookup(db.diskdb, root)
-	if id == nil {
+	lookup := rawdb.ReadStateLookup(db.diskdb, root)
+	if lookup == nil {
 		return false
 	}
-	return db.tree.bottom().(*diskLayer).ID() >= *id
+	id := *lookup
+
+	// Ensure the requested state is a canonical state.
+	h, err := loadTrieHistory(db.freezer, id+1)
+	if err != nil {
+		return false
+	}
+	if h.Parent != root {
+		return false
+	}
+	// Recoverable state must below the disk layer. The recoverable
+	// state only refers the state that is currently not available,
+	// but can be restored by applying trie history.
+	if id >= db.tree.bottom().ID() {
+		return false
+	}
+	// In theory all the trie histories starts from the id+1 until
+	// the disk layer should be checked for presence. In practice,
+	// the check is non-trivial. So optimistically believe that all
+	// the trie histories above are present.
+	return true
 }
 
 // Close closes the trie database and closes the held reverse diff freezer.
@@ -446,7 +472,7 @@ func (db *snapDatabase) Scheme() string {
 
 // Recover rollbacks the database to a specified historical point. The state is
 // supported as the rollback destination only if it's canonical state and the
-// corresponding reverse diffs are existent. It's only supported by snap database
+// corresponding trie histories are existent. It's only supported by snap database
 // and will return an error for others.
 func (db *Database) Recover(target common.Hash) error {
 	snapDB, ok := db.backend.(*snapDatabase)

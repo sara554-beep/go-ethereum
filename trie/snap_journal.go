@@ -114,7 +114,7 @@ func (db *snapDatabase) loadSnapshot() snapshot {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Construct the entire layer tree with the single in-disk state.
-	return newDiskLayer(root, rawdb.ReadReverseDiffHead(db.diskdb), db, newDiskcache(db.dirtySize, nil, 0))
+	return newDiskLayer(root, rawdb.ReadHeadState(db.diskdb), db, newDiskcache(db.dirtySize, nil, 0))
 }
 
 // loadDiskLayer reads the binary blob from the snapshot journal, reconstructing a new
@@ -151,7 +151,7 @@ func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 	if err := r.Decode(&id); err != nil {
 		return nil, fmt.Errorf("load state id: %v", err)
 	}
-	stored := rawdb.ReadReverseDiffHead(db.diskdb)
+	stored := rawdb.ReadHeadState(db.diskdb)
 	if stored > id {
 		return nil, fmt.Errorf("invalid state id, stored %d resolved %d", stored, id)
 	}

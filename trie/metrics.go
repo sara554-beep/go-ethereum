@@ -41,6 +41,6 @@ var (
 	triedbDiffLayerSizeMeter  = metrics.NewRegisteredMeter("trie/triedb/diff/size", nil)
 	triedbDiffLayerNodesMeter = metrics.NewRegisteredMeter("trie/triedb/diff/nodes", nil)
 
-	triedbReverseDiffTimeTimer = metrics.NewRegisteredTimer("trie/triedb/reversediff/time", nil)
-	triedbReverseDiffSizeMeter = metrics.NewRegisteredMeter("trie/triedb/reversediff/size", nil)
+	triedbTrieHistoryTimeMeter = metrics.NewRegisteredTimer("trie/triedb/triehistory/time", nil)
+	triedbTrieHistorySizeMeter = metrics.NewRegisteredMeter("trie/triedb/triehistory/size", nil)
 )
