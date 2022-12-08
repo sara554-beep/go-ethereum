@@ -63,7 +63,7 @@ func newDiskcache(limit int, nodes map[common.Hash]map[string]*memoryNode, layer
 	return &diskcache{layers: layers, nodes: nodes, size: size, limit: uint64(limit)}
 }
 
-// node retrieves the node with given storage key and hash.
+// node retrieves the node with given node info.
 func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (*memoryNode, error) {
 	subset, ok := cache.nodes[owner]
 	if !ok {
@@ -144,7 +144,7 @@ func (cache *diskcache) revert(diff *trieHistory) error {
 					size: uint16(len(state.Prev)),
 					hash: crypto.Keccak256Hash(state.Prev),
 				}
-				delta += int64(uint16(len(state.Prev)) - cur.size)
+				delta += int64(len(state.Prev)) - int64(cur.size)
 			}
 		}
 	}
@@ -159,7 +159,7 @@ func (cache *diskcache) updateSize(delta int64) {
 		cache.size = uint64(size)
 		return
 	}
-	log.Error("Negative disk cache size", "previous", common.StorageSize(cache.size), "diff", common.StorageSize(delta))
+	log.Error("Negative disk cache size", "previous", common.StorageSize(cache.size), "delta", common.StorageSize(delta))
 	cache.size = 0
 }
 
@@ -209,7 +209,7 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 	for owner, subset := range cache.nodes {
 		accTrie := owner == (common.Hash{})
 		for path, n := range subset {
-			if n.node == nil {
+			if n.isDeleted() {
 				if accTrie {
 					rawdb.DeleteAccountTrieNode(batch, []byte(path))
 				} else {

@@ -70,6 +70,6 @@ var (
 var freezers = []string{chainFreezerName, trieHistoryFreezerName}
 
 // NewTrieHistoryFreezer initializes the freezer for reverse diffs.
-func NewTrieHistoryFreezer(ancientDir string, readOnly bool) (*Freezer, error) {
-	return NewFreezer(filepath.Join(ancientDir, trieHistoryFreezerName), "eth/db/triehistory", readOnly, trieHistoryTableSize, TrieHistoryFreezerNoSnappy)
+func NewTrieHistoryFreezer(ancientDir string, readOnly bool) (*ResettableFreezer, error) {
+	return NewResettableFreezer(filepath.Join(ancientDir, trieHistoryFreezerName), "eth/db/triehistory", readOnly, trieHistoryTableSize, TrieHistoryFreezerNoSnappy)
 }

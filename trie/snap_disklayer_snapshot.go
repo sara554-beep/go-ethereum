@@ -127,13 +127,13 @@ func (dl *diskLayer) GetSnapshot(root common.Hash) (*diskLayerSnapshot, error) {
 		start  = time.Now()
 		batch  = layer.diskdb.NewBatch()
 	)
-	for cur := layer.id; ; cur -= 1 {
-		h, err := loadTrieHistory(dl.db.freezer, cur)
+	for {
+		h, err := loadTrieHistory(dl.db.freezer, layer.id)
 		if err != nil {
 			layer.Release()
 			return nil, err
 		}
-		layer, err = layer.revert(batch, h, cur)
+		layer, err = layer.revert(batch, h)
 		if err != nil {
 			layer.Release()
 			return nil, err
@@ -313,12 +313,9 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *trieHistory, id uint64) (*diskLayerSnapshot, error) {
+func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *trieHistory) (*diskLayerSnapshot, error) {
 	if diff.Root != snap.Root() {
-		return nil, errUnmatchedReverseDiff
-	}
-	if id != snap.id {
-		return nil, errUnmatchedReverseDiff
+		return nil, errUnexpectedTrieHistory
 	}
 	if snap.id == 0 {
 		return nil, fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)

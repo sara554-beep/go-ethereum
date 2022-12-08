@@ -133,7 +133,7 @@ func (h *trieHistory) apply(batch ethdb.Batch) {
 }
 
 // loadTrieHistory reads and decodes the trie history by the given id.
-func loadTrieHistory(freezer *rawdb.Freezer, id uint64) (*trieHistory, error) {
+func loadTrieHistory(freezer *rawdb.ResettableFreezer, id uint64) (*trieHistory, error) {
 	blob := rawdb.ReadTrieHistory(freezer, id)
 	if len(blob) == 0 {
 		return nil, fmt.Errorf("trie history not found %d", id)
@@ -149,11 +149,13 @@ func loadTrieHistory(freezer *rawdb.Freezer, id uint64) (*trieHistory, error) {
 // diff layer. After storing the corresponding trie history, it will also
 // prune the stale histories from the disk with the given threshold.
 // This function will panic if it's called for non-bottom-most diff layer.
-func storeTrieHistory(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error {
+func storeTrieHistory(freezer *rawdb.ResettableFreezer, dl *diffLayer, limit uint64) error {
 	var (
 		start = time.Now()
-		base  = dl.Parent().(*diskLayer)
-		enc   = &trieHistory{Parent: base.root, Root: dl.Root()}
+		enc   = &trieHistory{
+			Parent: dl.Parent().Root(),
+			Root:   dl.Root(),
+		}
 	)
 	for owner, subset := range dl.nodes {
 		entry := trieDiff{Owner: owner}
@@ -195,7 +197,7 @@ func storeTrieHistory(freezer *rawdb.Freezer, dl *diffLayer, limit uint64) error
 // truncateFromHead removes the extra trie histories from the head with
 // the given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
-func truncateFromHead(freezer *rawdb.Freezer, nhead uint64) (int, error) {
+func truncateFromHead(freezer *rawdb.ResettableFreezer, nhead uint64) (int, error) {
 	ohead, err := freezer.Ancients()
 	if err != nil {
 		return 0, err
@@ -209,7 +211,7 @@ func truncateFromHead(freezer *rawdb.Freezer, nhead uint64) (int, error) {
 // truncateFromTail removes the extra trie histories from the tail with
 // the given parameters. If the passed database is a non-freezer database,
 // nothing to do here.
-func truncateFromTail(freezer *rawdb.Freezer, ntail uint64) (int, error) {
+func truncateFromTail(freezer *rawdb.ResettableFreezer, ntail uint64) (int, error) {
 	otail, err := freezer.Tail()
 	if err != nil {
 		return 0, err
@@ -218,17 +220,4 @@ func truncateFromTail(freezer *rawdb.Freezer, ntail uint64) (int, error) {
 		return 0, err
 	}
 	return int(ntail - otail), nil
-}
-
-// truncateDiffs is called when database is constructed. It ensures trie history
-// is aligned with disk layer, and truncates the extra trie histories from the
-// freezer. The given target indicates the id of last item wants to be reserved.
-func truncateDiffs(freezer *rawdb.Freezer, target uint64) {
-	pruned, err := truncateFromHead(freezer, target)
-	if err != nil {
-		log.Crit("Failed to truncate extra trie histories", "err", err)
-	}
-	if pruned != 0 {
-		log.Info("Truncated extra trie histories", "number", pruned, "head", target)
-	}
 }

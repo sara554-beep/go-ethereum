@@ -18,7 +18,6 @@ package trie
 
 import (
 	"math/rand"
-	"path"
 	"reflect"
 	"testing"
 
@@ -80,22 +79,16 @@ func TestEncodeDecodeTrieHistory(t *testing.T) {
 }
 
 func TestLoadStoreTrieHistory(t *testing.T) {
-	datadir := t.TempDir()
-	ancient := path.Join(datadir, "ancient")
-	db, err := rawdb.NewLevelDBDatabaseWithFreezer(datadir, 16, 16, ancient, "", false)
-	if err != nil {
-		panic("Failed to create database")
-	}
-	freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
-
-	var hs = makeTrieHistories(10)
+	var (
+		hs         = makeTrieHistories(10)
+		freezer, _ = openFreezer(t.TempDir(), false)
+	)
 	for i := 0; i < len(hs); i++ {
 		blob, err := hs[i].encode()
 		if err != nil {
 			t.Fatalf("Failed to encode trie history %v", err)
 		}
 		rawdb.WriteTrieHistory(freezer, uint64(i+1), blob)
-		rawdb.WriteStateLookup(db, hs[i].Parent, uint64(i+1))
 	}
 	for i := 0; i < len(hs); i++ {
 		h, err := loadTrieHistory(freezer, uint64(i+1))
@@ -114,7 +107,7 @@ func TestLoadStoreTrieHistory(t *testing.T) {
 	}
 }
 
-func assertTrieHistory(t *testing.T, freezer *rawdb.Freezer, id uint64, exist bool) {
+func assertTrieHistory(t *testing.T, freezer *rawdb.ResettableFreezer, id uint64, exist bool) {
 	blob := rawdb.ReadTrieHistory(freezer, id)
 	if exist && len(blob) == 0 {
 		t.Errorf("Failed to load trie history, %d", id)
@@ -124,18 +117,17 @@ func assertTrieHistory(t *testing.T, freezer *rawdb.Freezer, id uint64, exist bo
 	}
 }
 
-func assertReverseDiffInRange(t *testing.T, freezer *rawdb.Freezer, from, to uint64, exist bool) {
+func assertReverseDiffInRange(t *testing.T, freezer *rawdb.ResettableFreezer, from, to uint64, exist bool) {
 	for i, j := from, 0; i <= to; i, j = i+1, j+1 {
 		assertTrieHistory(t, freezer, i, exist)
 	}
 }
 
 func TestTruncateHeadTrieHistory(t *testing.T) {
-	datadir := t.TempDir()
-	ancient := path.Join(datadir, "ancient")
-	freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
-
-	hs := makeTrieHistories(10)
+	var (
+		hs         = makeTrieHistories(10)
+		freezer, _ = openFreezer(t.TempDir(), false)
+	)
 	for i := 0; i < len(hs); i++ {
 		blob, err := hs[i].encode()
 		if err != nil {
@@ -157,11 +149,10 @@ func TestTruncateHeadTrieHistory(t *testing.T) {
 }
 
 func TestTruncateTailHistory(t *testing.T) {
-	datadir := t.TempDir()
-	ancient := path.Join(datadir, "ancient")
-	freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
-
-	hs := makeTrieHistories(10)
+	var (
+		hs         = makeTrieHistories(10)
+		freezer, _ = openFreezer(t.TempDir(), false)
+	)
 	for i := 0; i < len(hs); i++ {
 		blob, err := hs[i].encode()
 		if err != nil {
@@ -198,11 +189,10 @@ func TestTruncateTailTrieHistories(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		datadir := t.TempDir()
-		ancient := path.Join(datadir, "ancient")
-		freezer, _ := openFreezer(path.Join(ancient, "freezer"), false)
-
-		hs := makeTrieHistories(10)
+		var (
+			hs         = makeTrieHistories(10)
+			freezer, _ = openFreezer(t.TempDir(), false)
+		)
 		for i := 0; i < len(hs); i++ {
 			blob, err := hs[i].encode()
 			if err != nil {
@@ -224,6 +214,6 @@ func TestTruncateTailTrieHistories(t *testing.T) {
 }
 
 // openFreezer initializes the freezer instance for storing reverse diffs.
-func openFreezer(datadir string, readOnly bool) (*rawdb.Freezer, error) {
+func openFreezer(datadir string, readOnly bool) (*rawdb.ResettableFreezer, error) {
 	return rawdb.NewTrieHistoryFreezer(datadir, readOnly)
 }

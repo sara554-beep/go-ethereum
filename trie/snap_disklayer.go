@@ -176,10 +176,10 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Mark the diskLayer as stale before applying any mutations on top.
 	dl.stale = true
 
-	// Construct and store the trie history firstly. If crash happens after
-	// storing the trie history but without flushing the corresponding
-	// states(journal), the stored trie history will be truncated in
-	// the next restart.
+	// Construct and store the trie history firstly. If crash happens
+	// after storing the trie history but without flushing the
+	// corresponding states(journal), the stored trie history will be
+	// truncated in the next restart.
 	if dl.db.freezer != nil {
 		var limit uint64
 		if dl.db.config != nil {
@@ -190,9 +190,10 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 			return nil, err
 		}
 	}
-	// Store the root->id lookup afterwards. All stored lookups are identified
-	// by the **unique** state root. It's impossible that in the same chain
-	// blocks which are not adjacent have the same root.
+	// Store the root->id lookup afterwards. All stored lookups are
+	// identified by the **unique** state root. It's impossible that
+	// in the same chain blocks which are not adjacent have the same
+	// root.
 	if dl.id == 0 {
 		rawdb.WriteStateLookup(dl.db.diskdb, dl.root, 0)
 	}
@@ -210,7 +211,8 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	ndl := newDiskLayer(bottom.root, bottom.id, dl.db, dl.dirty.commit(slim))
 
 	// Persist the content in disk layer if there are too many nodes cached.
-	if err := ndl.dirty.mayFlush(ndl.db.diskdb, ndl.db.cleans, ndl.id, force); err != nil {
+	err := ndl.dirty.mayFlush(ndl.db.diskdb, ndl.db.cleans, ndl.id, force)
+	if err != nil {
 		return nil, err
 	}
 	return ndl, nil
@@ -218,15 +220,12 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (dl *diskLayer) revert(h *trieHistory, id uint64) (*diskLayer, error) {
+func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
 	if h.Root != dl.Root() {
-		return nil, errUnmatchedReverseDiff
-	}
-	if id != dl.id {
-		return nil, errUnmatchedReverseDiff
+		return nil, errUnexpectedTrieHistory
 	}
 	if dl.id == 0 {
-		return nil, fmt.Errorf("%w: zero reverse h id", errStateUnrecoverable)
+		return nil, fmt.Errorf("%w: zero state id", errStateUnrecoverable)
 	}
 	// Mark the diskLayer as stale before applying any mutations on top.
 	dl.lock.Lock()
@@ -234,9 +233,9 @@ func (dl *diskLayer) revert(h *trieHistory, id uint64) (*diskLayer, error) {
 
 	dl.stale = true
 
-	// Revert embedded states in the disk set first in case
-	// cache is not empty.
 	if !dl.dirty.empty() {
+		// Revert embedded states in the disk set first in case
+		// cache is not empty.
 		err := dl.dirty.revert(h)
 		if err != nil {
 			return nil, err
@@ -246,7 +245,7 @@ func (dl *diskLayer) revert(h *trieHistory, id uint64) (*diskLayer, error) {
 		// on disk directly.
 		batch := dl.db.diskdb.NewBatch()
 		h.apply(batch)
-		rawdb.WriteHeadState(batch, id-1)
+		rawdb.WriteHeadState(batch, dl.id-1)
 
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write reverse h", "err", err)
