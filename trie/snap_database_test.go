@@ -110,7 +110,7 @@ func fillDB(t *testing.T) *testEnv {
 		parent    common.Hash
 		rootBlob  []byte
 	)
-	// Construct a database with enough reverse diffs stored
+	// Construct a database with enough trie histories stored
 	for i := 0; i < 2*128; i++ {
 		var (
 			pathlist [][]byte
@@ -258,8 +258,8 @@ func TestDatabaseBatchRollback(t *testing.T) {
 		t.Fatalf("Unexpected trie histories")
 	}
 	for i := 0; i < len(env.roots); i++ {
-		lookup := rawdb.ReadStateLookup(db.diskdb, env.roots[i])
-		if lookup != nil {
+		_, exist := rawdb.ReadStateLookup(db.diskdb, env.roots[i])
+		if exist {
 			t.Fatalf("Unexpected lookup")
 		}
 	}
@@ -375,11 +375,11 @@ func TestReset(t *testing.T) {
 	if blob := rawdb.ReadTrieJournal(env.db); len(blob) != 0 {
 		t.Fatal("Failed to clean journal")
 	}
-	// Ensure all reverse diffs are nuked
+	// Ensure all trie histories are nuked
 	for i := 0; i <= index; i++ {
 		_, err := loadTrieHistory(db.freezer, uint64(i+1))
 		if err == nil {
-			t.Fatalf("Failed to clean reverse diff, index %d", i+1)
+			t.Fatalf("Failed to clean trie history, index %d", i+1)
 		}
 	}
 	// Ensure there is only a single disk layer kept, hash should

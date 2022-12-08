@@ -142,7 +142,7 @@ func TestTrackerWait(t *testing.T) {
 			}
 		}
 	)
-	// Nodes [0, 5) should all be available
+	// States [0, 5) should all be available
 	doCall(0)
 	checkNoWait()
 
@@ -153,19 +153,19 @@ func TestTrackerWait(t *testing.T) {
 	doCall(5)
 	checkWait()
 
-	// Nodes [1, 6) are available
+	// States [1, 6) are available
 	tracker.releaseState(0, nil)
 	checkNoWait()
 
-	// Nodes [1, 6) are available
+	// States [1, 6) are available
 	doCall(7)
 	checkWait()
 
-	// Nodes [2, 7) are available
+	// States [2, 7) are available
 	tracker.releaseState(1, nil)
 	checkWait()
 
-	// Nodes [3, 8) are available
+	// States [3, 8) are available
 	tracker.releaseState(2, nil)
 	checkNoWait()
 }

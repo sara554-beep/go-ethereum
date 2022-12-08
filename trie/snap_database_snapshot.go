@@ -97,8 +97,7 @@ func (snap *DatabaseSnapshot) Hold() {
 }
 
 // Release releases the snapshot and all relevant resources held
-// if the snapshot is not referenced anymore. It's safe to call
-// Release multiple times.
+// if the snapshot is not referenced anymore.
 func (snap *DatabaseSnapshot) Release() {
 	snap.lock.Lock()
 	defer snap.lock.Unlock()

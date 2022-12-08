@@ -54,17 +54,26 @@ func (tree *layerTree) get(blockRoot common.Hash) Reader {
 }
 
 // forEach iterates the stored snapshot layers inside and applies the
-// given callback on them. Interrupt the iteration if it's required.
-func (tree *layerTree) forEach(onLayer func(common.Hash, snapshot) bool) {
+// given callback on them.
+func (tree *layerTree) forEach(onLayer func(snapshot)) {
 	tree.lock.RLock()
 	defer tree.lock.RUnlock()
 
-	for root, layer := range tree.layers {
-		cont := onLayer(root, layer)
-		if !cont {
-			return
-		}
+	for _, layer := range tree.layers {
+		onLayer(layer)
 	}
+}
+
+// forEachAndReset is mostly identical with forEach but reset the tree after
+// iteration.
+func (tree *layerTree) forEachAndReset(onLayer func(snapshot)) {
+	tree.lock.Lock()
+	defer tree.lock.Unlock()
+
+	for _, layer := range tree.layers {
+		onLayer(layer)
+	}
+	tree.layers = make(map[common.Hash]snapshot)
 }
 
 // len returns the number of layers cached.
@@ -165,9 +174,9 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 	}
 	// Remove any layer that is stale or links into a stale layer
 	children := make(map[common.Hash][]common.Hash)
-	for root, snap := range tree.layers {
-		if diff, ok := snap.(*diffLayer); ok {
-			parent := diff.Parent().Root()
+	for root, layer := range tree.layers {
+		if dl, ok := layer.(*diffLayer); ok {
+			parent := dl.Parent().Root()
 			children[parent] = append(children[parent], root)
 		}
 	}

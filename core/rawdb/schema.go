@@ -43,6 +43,9 @@ var (
 	// headFinalizedBlockKey tracks the latest known finalized block hash.
 	headFinalizedBlockKey = []byte("LastFinalized")
 
+	// headStateKey tracks the id of latest stored state(for path-based only).
+	headStateKey = []byte("LastState")
+
 	// lastPivotKey tracks the last pivot block used by fast sync (to reenable on sethead).
 	lastPivotKey = []byte("LastPivot")
 
@@ -107,9 +110,7 @@ var (
 	// Path-based trie node scheme.
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
-
-	stateLookupPrefix = []byte("L")         // stateLookupPrefix + state root -> state id
-	headStateKey      = []byte("DiskState") // headStateKey tracks the id of stored state in disk
+	stateLookupPrefix     = []byte("L") // stateLookupPrefix + state root -> state id
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db

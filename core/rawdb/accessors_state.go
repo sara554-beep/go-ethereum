@@ -96,21 +96,14 @@ func DeleteCode(db ethdb.KeyValueWriter, hash common.Hash) {
 }
 
 // ReadTrieHistory retrieves the trie history with the given id. Calculate
-// the real position of reverse diff in freezer by minus one since the first
-// reverse diff is started from one(zero for empty state).
+// the real position of trie history in freezer by minus one since the first
+// history object is started from one(zero for empty state).
 func ReadTrieHistory(db ethdb.AncientReaderOp, id uint64) []byte {
 	blob, err := db.Ancient(trieHistoryTable, id-1)
 	if err != nil {
 		return nil
 	}
 	return blob
-}
-
-// HasTrieHistory returns an indicator if the trie history with the provided id
-// is present in freezer.
-func HasTrieHistory(db ethdb.AncientReader, id uint64) bool {
-	has, _ := db.HasAncient(trieHistoryTable, id-1)
-	return has
 }
 
 // WriteTrieHistory writes the provided trie history to database. Calculate the
@@ -123,15 +116,13 @@ func WriteTrieHistory(db ethdb.AncientWriter, id uint64, blob []byte) {
 	})
 }
 
-// ReadStateLookup retrieves the reverse diff id with the given associated
-// state root. Return nil if it's not existent.
-func ReadStateLookup(db ethdb.KeyValueReader, root common.Hash) *uint64 {
+// ReadStateLookup retrieves the state id with the provided state root.
+func ReadStateLookup(db ethdb.KeyValueReader, root common.Hash) (uint64, bool) {
 	data, err := db.Get(stateLookupKey(root))
 	if err != nil || len(data) == 0 {
-		return nil
+		return 0, false
 	}
-	id := binary.BigEndian.Uint64(data)
-	return &id
+	return binary.BigEndian.Uint64(data), true
 }
 
 // WriteStateLookup writes the provided state lookup to database.

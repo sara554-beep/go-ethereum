@@ -127,13 +127,13 @@ func (dl *diskLayer) GetSnapshot(root common.Hash) (*diskLayerSnapshot, error) {
 		start  = time.Now()
 		batch  = layer.diskdb.NewBatch()
 	)
-	for cur := layer.id; ; cur -= 1 {
-		h, err := loadTrieHistory(dl.db.freezer, cur)
+	for {
+		h, err := loadTrieHistory(dl.db.freezer, layer.id)
 		if err != nil {
 			layer.Release()
 			return nil, err
 		}
-		layer, err = layer.revert(batch, h, cur)
+		layer, err = layer.revert(batch, h)
 		if err != nil {
 			layer.Release()
 			return nil, err
@@ -176,7 +176,7 @@ func (snap *diskLayerSnapshot) Stale() bool {
 	return snap.stale
 }
 
-// ID returns the id of associated reverse diff.
+// ID returns the state id represented by layer.
 func (snap *diskLayerSnapshot) ID() uint64 {
 	return snap.id
 }
@@ -226,7 +226,7 @@ func (snap *diskLayerSnapshot) node(owner common.Hash, path []byte, hash common.
 		}
 	}
 	if nHash != hash {
-		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, nHash, hash, owner, path)
+		return nil, fmt.Errorf("snapshot %w %x!=%x(%x %v)", errUnexpectedNode, nHash, hash, owner, path)
 	}
 	if len(nBlob) > 0 {
 		snap.clean.Set(hash.Bytes(), nBlob)
@@ -313,25 +313,23 @@ func (snap *diskLayerSnapshot) commit(bottom *diffLayer) (*diskLayerSnapshot, er
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, diff *trieHistory, id uint64) (*diskLayerSnapshot, error) {
-	if diff.Root != snap.Root() {
-		return nil, errUnmatchedReverseDiff
-	}
-	if id != snap.id {
-		return nil, errUnmatchedReverseDiff
+func (snap *diskLayerSnapshot) revert(batch ethdb.Batch, h *trieHistory) (*diskLayerSnapshot, error) {
+	if h.Root != snap.Root() {
+		return nil, errUnexpectedTrieHistory
 	}
 	if snap.id == 0 {
-		return nil, fmt.Errorf("%w: zero reverse diff id", errStateUnrecoverable)
+		return nil, fmt.Errorf("%w: zero state id", errStateUnrecoverable)
 	}
 	// Mark the snapshot as stale before applying any mutations on top.
 	snap.lock.Lock()
 	defer snap.lock.Unlock()
 
 	snap.stale = true
-	diff.apply(batch)
-
+	if err := h.apply(batch); err != nil {
+		return nil, err
+	}
 	return &diskLayerSnapshot{
-		root:    diff.Parent,
+		root:    h.Parent,
 		id:      snap.id - 1,
 		datadir: snap.datadir,
 		diskdb:  snap.diskdb,

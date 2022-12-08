@@ -69,7 +69,7 @@ func (dl *diffLayer) Root() common.Hash {
 	return dl.root
 }
 
-// ID returns the id of associated reverse diff.
+// ID returns the state id represented by layer.
 func (dl *diffLayer) ID() uint64 {
 	return dl.id
 }
@@ -124,7 +124,7 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 			// If the trie node is not hash matched, or marked as removed,
 			// bubble up an error here. It shouldn't happen at all.
 			if n.hash != hash {
-				return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
+				return nil, fmt.Errorf("difflayer %w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
 			}
 			triedbDirtyHitMeter.Mark(1)
 			triedbDirtyNodeHitDepthHist.Update(int64(depth))

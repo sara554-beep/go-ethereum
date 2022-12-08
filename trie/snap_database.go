@@ -41,12 +41,12 @@ var (
 	// to not maintain the layer's original state.
 	errSnapshotStale = errors.New("snapshot stale")
 
-	// errUnmatchedReverseDiff is returned if an unmatched reverse-diff is applied
+	// errUnexpectedTrieHistory is returned if an unmatched trie history is applied
 	// to the database for state rollback.
-	errUnmatchedReverseDiff = errors.New("reverse diff is not matched")
+	errUnexpectedTrieHistory = errors.New("unexpected trie history")
 
 	// errStateUnrecoverable is returned if state is required to be reverted to
-	// a destination without associated reverse diff available.
+	// a destination without associated trie history available.
 	errStateUnrecoverable = errors.New("state is unrecoverable")
 
 	// errUnexpectedNode is returned if the requested node with specified path is
@@ -117,14 +117,14 @@ type snapDatabase struct {
 	// readOnly is the flag whether the mutation is allowed to be applied.
 	// It will be set automatically when the database is journaled during
 	// the shutdown to reject all following unexpected mutations.
-	readOnly  bool             // Indicator if database is opened in read only mode
-	dirtySize int              // Memory allowance (in bytes) for caching dirty nodes
-	config    *Config          // Configuration for database
-	diskdb    ethdb.Database   // Persistent storage for matured trie nodes
-	cleans    *fastcache.Cache // GC friendly memory cache of clean node RLPs
-	tree      *layerTree       // The group for all known layers
-	freezer   *rawdb.Freezer   // Freezer for storing trie histories, nil possible in tests
-	lock      sync.RWMutex     // Lock to prevent mutations from happening at the same time
+	readOnly  bool                     // Indicator if database is opened in read only mode
+	dirtySize int                      // Memory allowance (in bytes) for caching dirty nodes
+	config    *Config                  // Configuration for database
+	diskdb    ethdb.Database           // Persistent storage for matured trie nodes
+	cleans    *fastcache.Cache         // GC friendly memory cache of clean node RLPs
+	tree      *layerTree               // The group for all known layers
+	freezer   *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
+	lock      sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 
 // openSnapDatabase attempts to load an already existing snapshot from a
@@ -267,9 +267,9 @@ func (db *snapDatabase) Journal(root common.Hash) error {
 	return nil
 }
 
-// Reset wipes all available journal from the persistent database and discard
-// all caches and diff layers on top, rebuilds the database with the specified
-// state root.
+// Reset rebuilds the snap database with the specified state from scratch.
+// If the target state is non-empty, then the stored state must be matched
+// with provided state root.
 func (db *snapDatabase) Reset(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -280,22 +280,21 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 	}
 	root = convertEmpty(root)
 
-	// Ensure the requested state is existent before any
-	// action is applied.
-	_, hash := rawdb.ReadAccountTrieNode(db.diskdb, nil)
-	if hash != root {
-		if root != emptyRoot {
-			return fmt.Errorf("state is mismatched, local %x target %x", hash, root)
-		}
+	batch := db.diskdb.NewBatch()
+	if root == emptyRoot {
 		// Empty state is requested as the target, nuke out
 		// the root node and leave all others as dangling.
-		rawdb.DeleteAccountTrieNode(db.diskdb, nil)
+		rawdb.DeleteAccountTrieNode(batch, nil)
+	} else {
+		// Ensure the requested state is existent before any
+		// action is applied.
+		_, hash := rawdb.ReadAccountTrieNode(db.diskdb, nil)
+		if hash != root {
+			return fmt.Errorf("state is mismatched, local %x target %x", hash, root)
+		}
 	}
-	// Drop the stale state journal in persistent database.
-	rawdb.DeleteTrieJournal(db.diskdb)
-
 	// Iterate over all layers and mark them as stale
-	db.tree.forEach(func(_ common.Hash, layer snapshot) bool {
+	db.tree.forEachAndReset(func(layer snapshot) {
 		switch layer := layer.(type) {
 		case *diskLayer:
 			layer.MarkStale()
@@ -304,17 +303,22 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 		default:
 			panic(fmt.Sprintf("unknown layer type: %T", layer))
 		}
-		return true
 	})
-	// Clean up all reverse diffs in freezer.
-	var id uint64
-	if db.freezer != nil {
-		id, _ = db.freezer.Tail()
-		rawdb.WriteHeadState(db.diskdb, id)
-		truncateDiffs(db.freezer, id)
+	// Drop the stale state journal in persistent database
+	// and revert the head state indicator back to zero.
+	rawdb.DeleteTrieJournal(batch)
+	rawdb.WriteHeadState(batch, 0)
+	if err := batch.Write(); err != nil {
+		return err
 	}
-	db.tree = newLayerTree(newDiskLayer(root, id, db, newDiskcache(db.dirtySize, nil, 0)))
-	log.Info("Rebuilt trie database", "root", root, "id", id)
+	// Clean up all trie histories in freezer.
+	if db.freezer != nil {
+		if err := db.freezer.Reset(); err != nil {
+			return err
+		}
+	}
+	db.tree = newLayerTree(newDiskLayer(root, 0, db, newDiskcache(db.dirtySize, nil, 0)))
+	log.Info("Rebuilt trie database", "root", root)
 	return nil
 }
 
@@ -333,47 +337,45 @@ func (db *snapDatabase) Recover(root common.Hash) error {
 	if db.readOnly || db.freezer == nil {
 		return errors.New("state revert is non-supported")
 	}
-	// Iterate over all diff layers and mark them as stale. Disk layer
-	// will be handled later.
-	db.tree.forEach(func(hash common.Hash, layer snapshot) bool {
-		dl, ok := layer.(*diffLayer)
-		if ok {
-			dl.MarkStale()
-		}
-		return true
-	})
-	// Apply the trie histories upon the current disk layer in order.
+	// Iterate over all diff layers and mark them as stale.
+	// Disk layer will be handled later.
 	var (
-		dl      = db.tree.bottom().(*diskLayer)
-		cur     = dl.id
-		lookups []common.Hash
-		batch   = db.diskdb.NewBatch()
-		start   = time.Now()
+		dl    *diskLayer
+		batch = db.diskdb.NewBatch()
+		start = time.Now()
 	)
+	db.tree.forEachAndReset(func(layer snapshot) {
+		switch layer := layer.(type) {
+		case *diskLayer:
+			dl = layer
+		case *diffLayer:
+			layer.MarkStale()
+		default:
+			panic(fmt.Sprintf("unknown layer type: %T", layer))
+		}
+	})
+	// Apply the trie histories upon the current disk layer
+	// in order.
 	for {
-		h, err := loadTrieHistory(db.freezer, cur)
+		h, err := loadTrieHistory(db.freezer, dl.id)
 		if err != nil {
 			return err
 		}
-		dl, err = dl.revert(h, cur)
+		dl, err = dl.revert(h)
 		if err != nil {
 			return err
 		}
-		cur -= 1
-		lookups = append(lookups, h.Root)
+		rawdb.DeleteStateLookup(batch, h.Root)
+
 		if dl.Root() == root {
 			break
 		}
-	}
-	// Truncate the lookups and histories above
-	for _, lookup := range lookups {
-		rawdb.DeleteStateLookup(batch, lookup)
 	}
 	rawdb.DeleteTrieJournal(batch)
 	if err := batch.Write(); err != nil {
 		return err
 	}
-	_, err := truncateFromHead(db.freezer, cur)
+	_, err := truncateFromHead(db.freezer, dl.id)
 	if err != nil {
 		return err
 	}
@@ -388,12 +390,10 @@ func (db *snapDatabase) Recover(root common.Hash) error {
 func (db *snapDatabase) Recoverable(root common.Hash) bool {
 	// Ensure the requested state is a known state.
 	root = convertEmpty(root)
-	lookup := rawdb.ReadStateLookup(db.diskdb, root)
-	if lookup == nil {
+	id, exist := rawdb.ReadStateLookup(db.diskdb, root)
+	if !exist {
 		return false
 	}
-	id := *lookup
-
 	// Ensure the requested state is a canonical state.
 	h, err := loadTrieHistory(db.freezer, id+1)
 	if err != nil {
@@ -415,7 +415,7 @@ func (db *snapDatabase) Recoverable(root common.Hash) bool {
 	return true
 }
 
-// Close closes the trie database and closes the held reverse diff freezer.
+// Close closes the trie database and the held freezer.
 func (db *snapDatabase) Close() error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -430,14 +430,13 @@ func (db *snapDatabase) Close() error {
 // Size returns the current storage size of the memory cache in front of the
 // persistent database layer.
 func (db *snapDatabase) Size() (size common.StorageSize) {
-	db.tree.forEach(func(_ common.Hash, layer snapshot) bool {
+	db.tree.forEach(func(layer snapshot) {
 		if diff, ok := layer.(*diffLayer); ok {
 			size += common.StorageSize(diff.memory)
 		}
 		if disk, ok := layer.(*diskLayer); ok {
 			size += disk.size()
 		}
-		return true
 	})
 	return size
 }
@@ -447,11 +446,10 @@ func (db *snapDatabase) Size() (size common.StorageSize) {
 // points to a non-empty state.
 func (db *snapDatabase) IsEmpty() bool {
 	var nonempty bool
-	db.tree.forEach(func(_ common.Hash, layer snapshot) bool {
+	db.tree.forEach(func(layer snapshot) {
 		if layer.Root() != emptyRoot {
 			nonempty = true
 		}
-		return true
 	})
 	return !nonempty
 }

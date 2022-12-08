@@ -232,7 +232,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err
 	}
-	// Step three, write the corresponding reverse diff id into the journal
+	// Step three, write the corresponding state id into the journal
 	if err := rlp.Encode(buffer, dl.id); err != nil {
 		return err
 	}
