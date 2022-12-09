@@ -196,6 +196,42 @@ func (set *NodeSet) Summary() string {
 	return out.String()
 }
 
+// forEachTipNode2 iterates the outermost nodes with the order from left to right.
+func forEachTipNode2(nodes map[string]*memoryNode) ([]string, []*memoryNode) {
+	// Sort node paths according to lexicographical order,
+	// from top to bottom, from left to right.
+	var paths sort.StringSlice
+	for path := range nodes {
+		paths = append(paths, path)
+	}
+	paths.Sort()
+
+	// Find out the tips nodes according to the path.
+	var (
+		stack []string
+		tips  []string
+	)
+	for _, path := range paths {
+		stack = append(stack, path)
+		if len(stack) == 1 {
+			continue
+		}
+		prev, cur := stack[0], stack[1]
+		if !strings.HasPrefix(cur, prev) {
+			tips = append(tips, prev)
+		}
+		stack = stack[1:]
+	}
+	if len(stack) == 1 {
+		tips = append(tips, stack[0])
+	}
+	var ret []*memoryNode
+	for _, path := range tips {
+		ret = append(ret, nodes[path])
+	}
+	return tips, ret
+}
+
 // forEachTipNode iterates the outermost nodes with the order from left to right.
 func forEachTipNode(nodes map[string]*nodeWithPrev, callback func(path string, n *nodeWithPrev) error) error {
 	// Sort node paths according to lexicographical order,
@@ -249,6 +285,22 @@ func resolve(prefix []byte, n node, callback func(path []byte, blob []byte)) err
 			}
 			resolve(append(prefix, byte(i)), cn, callback)
 		}
+	case *rawShortNode:
+		key := compactToHex(nn.Key)
+		if !hasTerm(key) {
+			return fmt.Errorf("invalid tipnode %v", nn.Key)
+		}
+		path := append(prefix, nn.Key...)
+		callback(hexToKeybytes(path), nn.Val.(valueNode))
+
+	case rawFullNode:
+		for i, cn := range nn[:16] {
+			if cn == nil {
+				continue
+			}
+			resolve(append(prefix, byte(i)), cn, callback)
+		}
+
 	default:
 		// hashNode might be possible to occur in the tip node.
 		// The scenario is: fullnode has hashnode children and
@@ -266,6 +318,20 @@ func resolvePrevLeaves(nodes map[string]*nodeWithPrev, callback func(path []byte
 		n := mustDecodeNode(crypto.Keccak256(tip.prev), tip.prev)
 		return resolve([]byte(prefix), n, callback)
 	})
+}
+
+func resolvePrevLeaves2(nodes map[string]*memoryNode, callback func(path []byte, blob []byte)) error {
+	p, n := forEachTipNode2(nodes)
+	for i, pp := range p {
+		nn := n[i]
+		if nn.isDeleted() {
+			continue
+		}
+		if err := resolve([]byte(pp), nn.node, callback); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // MergedNodeSet represents a merged dirty node set for a group of tries.

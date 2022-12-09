@@ -46,6 +46,7 @@ type diskcache struct {
 	size   uint64                                 // The approximate size of cached nodes
 	limit  uint64                                 // The maximum memory allowance in bytes for cache
 	nodes  map[common.Hash]map[string]*memoryNode // The dirty node set, mapped by owner and path
+	states map[common.Hash]map[common.Hash][]byte
 }
 
 // newDiskcache initializes the dirty node cache with the given information.
@@ -60,7 +61,18 @@ func newDiskcache(limit int, nodes map[common.Hash]map[string]*memoryNode, layer
 			size += uint64(n.memorySize(len(path)))
 		}
 	}
-	return &diskcache{layers: layers, nodes: nodes, size: size, limit: uint64(limit)}
+	var (
+		states = make(map[common.Hash]map[common.Hash][]byte)
+	)
+	if nodes != nil {
+		for owner, subset := range nodes {
+			states[owner] = make(map[common.Hash][]byte)
+			resolvePrevLeaves2(subset, func(path []byte, blob []byte) {
+				states[owner][common.BytesToHash(path)] = common.CopyBytes(blob)
+			})
+		}
+	}
+	return &diskcache{layers: layers, nodes: nodes, states: states, size: size, limit: uint64(limit)}
 }
 
 // node retrieves the node with given node info.
@@ -75,6 +87,19 @@ func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (
 	}
 	if n.hash != hash {
 		return nil, fmt.Errorf("%w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
+	}
+	return n, nil
+}
+
+// node retrieves the node with given node info.
+func (cache *diskcache) getstate(owner common.Hash, hash common.Hash) ([]byte, error) {
+	subset, ok := cache.states[owner]
+	if !ok {
+		return nil, nil
+	}
+	n, ok := subset[hash]
+	if !ok {
+		return nil, nil
 	}
 	return n, nil
 }
@@ -106,6 +131,14 @@ func (cache *diskcache) commit(nodes map[common.Hash]map[string]*memoryNode) *di
 				cache.nodes[owner][path] = n
 			}
 		}
+	}
+	for owner, subset := range nodes {
+		resolvePrevLeaves2(subset, func(path []byte, blob []byte) {
+			if cache.states[owner] == nil {
+				cache.states[owner] = make(map[common.Hash][]byte)
+			}
+			cache.states[owner][common.BytesToHash(path)] = common.CopyBytes(blob)
+		})
 	}
 	cache.updateSize(delta)
 	cache.layers += 1
@@ -225,6 +258,16 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 				if clean != nil {
 					clean.Set(n.hash.Bytes(), blob)
 				}
+			}
+		}
+	}
+	for owner, subset := range cache.states {
+		accTrie := owner == (common.Hash{})
+		for path, n := range subset {
+			if accTrie {
+				rawdb.WriteAccountTrieNode(batch, path.Bytes(), n)
+			} else {
+				rawdb.WriteStorageTrieNode(batch, owner, path.Bytes(), n)
 			}
 		}
 	}

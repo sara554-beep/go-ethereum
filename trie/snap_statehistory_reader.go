@@ -39,6 +39,10 @@ func (r *HistoricStateReader) readAccount(accountHash common.Hash, number uint64
 }
 
 func (r *HistoricStateReader) ReadAccount(accountHash common.Hash, root common.Hash) ([]byte, error) {
+	data, err := r.db.tree.bottom().(*diskLayer).state(common.Hash{}, accountHash)
+	if err != nil {
+		return nil, err
+	}
 	id, exist := rawdb.ReadStateLookup(r.db.diskdb, root)
 	if !exist {
 		return nil, errors.New("no")
@@ -53,5 +57,5 @@ func (r *HistoricStateReader) ReadAccount(accountHash common.Hash, root common.H
 			return r.readAccount(accountHash, number)
 		}
 	}
-	return nil, nil // todo return latest
+	return data, nil // todo return latest
 }

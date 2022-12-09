@@ -139,6 +139,39 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	return &memoryNode{node: rawNode(nBlob), hash: hash, size: uint16(len(nBlob))}, nil
 }
 
+func (dl *diskLayer) state(owner common.Hash, hash common.Hash) ([]byte, error) {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if dl.stale {
+		return nil, errSnapshotStale
+	}
+	// Try to retrieve the trie node from the dirty memory cache.
+	// The map is lock free since it's impossible to mutate the
+	// disk layer before tagging it as stale.
+	n, err := dl.dirty.getstate(owner, hash)
+	if err != nil {
+		return nil, err
+	}
+	if n != nil {
+		return n, nil
+	}
+	// Try to retrieve the trie node from the disk.
+	var (
+		nBlob []byte
+	)
+	if owner == (common.Hash{}) {
+		nBlob, _ = rawdb.ReadAccountTrieNode(dl.db.diskdb, hash.Bytes())
+	} else {
+		nBlob, _ = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, hash.Bytes())
+	}
+	if dl.db.cleans != nil && len(nBlob) > 0 {
+		dl.db.cleans.Set(hash.Bytes(), nBlob)
+		triedbCleanWriteMeter.Mark(int64(len(nBlob)))
+	}
+	return nBlob, nil
+}
+
 // Node retrieves the trie node with the provided trie identifier, node path
 // and the corresponding node hash. No error will be returned if the node is
 // not found.
