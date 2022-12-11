@@ -117,14 +117,18 @@ func (h *trieHistory) apply(batch ethdb.Batch) {
 		for _, state := range entry.Nodes {
 			if len(state.Prev) > 0 {
 				if accTrie {
+					log.Info("Write account node", "path", []byte(state.Path))
 					rawdb.WriteAccountTrieNode(batch, state.Path, state.Prev)
 				} else {
+					log.Info("Write storage node", "owner", entry.Owner.Hex(), "path", []byte(state.Path))
 					rawdb.WriteStorageTrieNode(batch, entry.Owner, state.Path, state.Prev)
 				}
 			} else {
 				if accTrie {
+					log.Info("Delete account node", "path", []byte(state.Path))
 					rawdb.DeleteAccountTrieNode(batch, state.Path)
 				} else {
+					log.Info("Delete storage node", "owner", entry.Owner.Hex(), "path", []byte(state.Path))
 					rawdb.DeleteStorageTrieNode(batch, entry.Owner, state.Path)
 				}
 			}

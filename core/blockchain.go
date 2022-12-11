@@ -1509,6 +1509,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 				prev.Hash().Bytes()[:4], i, block.NumberU64(), block.Hash().Bytes()[:4], block.ParentHash().Bytes()[:4])
 		}
 	}
+	log.Info("Inserting chain", "from", chain[0].Number(), "to", chain[len(chain)-1].Number())
 	// Pre-checks passed, start the full block imports
 	if !bc.chainmu.TryLock() {
 		return 0, errChainStopped
@@ -1721,7 +1722,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		}
 
 		// Enable prefetching to pull in trie node paths while processing transactions
-		statedb.StartPrefetcher("chain")
+		statedb.StartPrefetcher("chain", block.NumberU64()-1)
 		activeState = statedb
 
 		// If we have a followup block, run that against the current state to pre-cache
