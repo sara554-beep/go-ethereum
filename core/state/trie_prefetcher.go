@@ -295,14 +295,14 @@ func (sf *subfetcher) loop() {
 	if sf.owner == (common.Hash{}) {
 		trie, err := sf.db.OpenTrie(sf.root)
 		if err != nil {
-			log.Warn("Trie prefetcher failed opening trie", "root", sf.root, "err", err)
+			log.Warn("Trie prefetcher failed opening account trie", "root", sf.root.Hex(), "err", err)
 			return
 		}
 		sf.trie = trie
 	} else {
 		trie, err := sf.db.OpenStorageTrie(sf.state, sf.owner, sf.root)
 		if err != nil {
-			log.Warn("Trie prefetcher failed opening trie", "root", sf.root, "err", err)
+			log.Warn("Trie prefetcher failed opening storage trie", "root", sf.root.Hex(), "err", err)
 			return
 		}
 		sf.trie = trie

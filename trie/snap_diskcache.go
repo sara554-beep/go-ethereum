@@ -236,8 +236,10 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 	triedbCommitNodesMeter.Mark(int64(len(cache.nodes)))
 	triedbCommitTimeTimer.UpdateSince(start)
 
-	log.Debug("Persisted uncommitted nodes",
+	log.Info("Persisted uncommitted nodes",
 		"nodes", len(cache.nodes),
+		"oldid", head,
+		"newid", id,
 		"size", common.StorageSize(batch.ValueSize()),
 		"elapsed", common.PrettyDuration(time.Since(start)),
 	)

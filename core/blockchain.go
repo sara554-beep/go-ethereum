@@ -1346,6 +1346,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// Commit all cached state changes into underlying memory database.
 	root, err := state.Commit(bc.chainConfig.IsEIP158(block.Number()))
 	if err != nil {
+		log.Info("Failed to commit state", "err", err)
 		return err
 	}
 	if bc.triedb.Scheme() == rawdb.PathScheme {

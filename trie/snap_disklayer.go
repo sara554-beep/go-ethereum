@@ -240,6 +240,7 @@ func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
 		if err != nil {
 			return nil, err
 		}
+		log.Info("Reverted in cache", "from", dl.id, "to", dl.id-1, "from-root", h.Root.Hex(), "to-root", h.Parent.Hex())
 	} else {
 		// The disk cache is empty, applies the state reverting
 		// on disk directly.
@@ -251,6 +252,7 @@ func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
 			log.Crit("Failed to write reverse h", "err", err)
 		}
 		batch.Reset()
+		log.Info("Reverted in disk", "from", dl.id, "to", dl.id-1, "from-root", h.Root.Hex(), "to-root", h.Parent.Hex())
 	}
 	return newDiskLayer(h.Parent, dl.id-1, dl.db, dl.dirty), nil
 }
