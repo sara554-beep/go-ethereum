@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"time"
@@ -161,7 +162,9 @@ func (s *stateObject) getTrie(db Database) Trie {
 			var err error
 			s.trie, err = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, s.data.Root)
 			if err != nil {
-				s.trie, _ = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, common.Hash{})
+				var x error
+				s.trie, x = db.OpenStorageTrie(s.db.originalRoot, s.addrHash, common.Hash{})
+				log.Info("Failed to open storage trie", "err", err, "x", x)
 				s.setError(fmt.Errorf("can't create storage trie: %v", err))
 			}
 		}
