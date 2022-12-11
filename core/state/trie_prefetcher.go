@@ -40,6 +40,7 @@ type triePrefetcher struct {
 	fetches  map[string]Trie        // Partially or fully fetcher tries
 	fetchers map[string]*subfetcher // Subfetchers for each trie
 	number   uint64
+	typ      string
 
 	deliveryMissMeter metrics.Meter
 	accountLoadMeter  metrics.Meter
@@ -52,13 +53,14 @@ type triePrefetcher struct {
 	storageWasteMeter metrics.Meter
 }
 
-func newTriePrefetcher(db Database, root common.Hash, namespace string, number uint64) *triePrefetcher {
+func newTriePrefetcher(db Database, root common.Hash, namespace string, number uint64, typ string) *triePrefetcher {
 	prefix := triePrefetchMetricsPrefix + namespace
 	p := &triePrefetcher{
 		db:       db,
 		root:     root,
 		fetchers: make(map[string]*subfetcher), // Active prefetchers use the fetchers map
 		number:   number,
+		typ:      typ,
 
 		deliveryMissMeter: metrics.GetOrRegisterMeter(prefix+"/deliverymiss", nil),
 		accountLoadMeter:  metrics.GetOrRegisterMeter(prefix+"/account/load", nil),
@@ -152,7 +154,7 @@ func (p *triePrefetcher) prefetch(owner common.Hash, root common.Hash, keys [][]
 	id := p.trieID(owner, root)
 	fetcher := p.fetchers[id]
 	if fetcher == nil {
-		fetcher = newSubfetcher(p.db, p.root, owner, root, p.number)
+		fetcher = newSubfetcher(p.db, p.root, owner, root, p.number, p.typ)
 		p.fetchers[id] = fetcher
 	}
 	fetcher.schedule(keys)
@@ -213,6 +215,7 @@ type subfetcher struct {
 	root   common.Hash // Root hash of the trie to prefetch
 	trie   Trie        // Trie being populated with nodes
 	number uint64
+	typ    string
 
 	tasks [][]byte   // Items queued up for retrieval
 	lock  sync.Mutex // Lock protecting the task queue
@@ -229,13 +232,14 @@ type subfetcher struct {
 
 // newSubfetcher creates a goroutine to prefetch state items belonging to a
 // particular root hash.
-func newSubfetcher(db Database, state common.Hash, owner common.Hash, root common.Hash, number uint64) *subfetcher {
+func newSubfetcher(db Database, state common.Hash, owner common.Hash, root common.Hash, number uint64, typ string) *subfetcher {
 	sf := &subfetcher{
 		db:     db,
 		state:  state,
 		owner:  owner,
 		root:   root,
 		number: number,
+		typ:    typ,
 		wake:   make(chan struct{}, 1),
 		stop:   make(chan struct{}),
 		term:   make(chan struct{}),
@@ -299,14 +303,14 @@ func (sf *subfetcher) loop() {
 	if sf.owner == (common.Hash{}) {
 		trie, err := sf.db.OpenTrie(sf.root)
 		if err != nil {
-			log.Warn("Trie prefetcher failed opening account trie", "number", sf.number, "root", sf.root.Hex(), "err", err)
+			log.Warn("Trie prefetcher failed opening account trie", "number", sf.number, "typ", sf.typ, "root", sf.root.Hex(), "err", err)
 			return
 		}
 		sf.trie = trie
 	} else {
 		trie, err := sf.db.OpenStorageTrie(sf.state, sf.owner, sf.root)
 		if err != nil {
-			log.Warn("Trie prefetcher failed opening storage trie", "number", sf.number, "root", sf.root.Hex(), "err", err)
+			log.Warn("Trie prefetcher failed opening storage trie", "number", sf.number, "typ", sf.typ, "root", sf.root.Hex(), "err", err)
 			return
 		}
 		sf.trie = trie

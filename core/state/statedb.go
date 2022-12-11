@@ -166,13 +166,13 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 // StartPrefetcher initializes a new trie prefetcher to pull in nodes from the
 // state trie concurrently while the state is mutated so that when we reach the
 // commit phase, most of the needed data is already hot.
-func (s *StateDB) StartPrefetcher(namespace string, number uint64) {
+func (s *StateDB) StartPrefetcher(namespace string, number uint64, typ string) {
 	if s.prefetcher != nil {
 		s.prefetcher.close()
 		s.prefetcher = nil
 	}
 	if s.snap != nil {
-		s.prefetcher = newTriePrefetcher(s.db, s.originalRoot, namespace, number)
+		s.prefetcher = newTriePrefetcher(s.db, s.originalRoot, namespace, number, typ)
 	}
 }
 
