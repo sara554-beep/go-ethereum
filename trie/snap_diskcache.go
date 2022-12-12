@@ -138,12 +138,14 @@ func (cache *diskcache) revert(diff *trieHistory) error {
 			if len(state.Prev) == 0 {
 				subset[string(state.Path)] = &memoryNode{}
 				delta -= int64(cur.size)
+				log.Info("Reverted(deleted) state", "owner", entry.Owner.Hex(), "path", state.Path)
 			} else {
 				subset[string(state.Path)] = &memoryNode{
 					node: rawNode(state.Prev),
 					size: uint16(len(state.Prev)),
 					hash: crypto.Keccak256Hash(state.Prev),
 				}
+				log.Info("Reverted(updated) state", "owner", entry.Owner.Hex(), "path", state.Path)
 				delta += int64(len(state.Prev)) - int64(cur.size)
 			}
 		}
