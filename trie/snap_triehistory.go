@@ -19,6 +19,7 @@ package trie
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -117,10 +118,10 @@ func (h *trieHistory) apply(batch ethdb.Batch) {
 		for _, state := range entry.Nodes {
 			if len(state.Prev) > 0 {
 				if accTrie {
-					log.Info("Write account node", "path", []byte(state.Path))
+					log.Info("Write account node", "path", []byte(state.Path), "newHash", crypto.Keccak256Hash(state.Prev))
 					rawdb.WriteAccountTrieNode(batch, state.Path, state.Prev)
 				} else {
-					log.Info("Write storage node", "owner", entry.Owner.Hex(), "path", []byte(state.Path))
+					log.Info("Write storage node", "owner", entry.Owner.Hex(), "path", []byte(state.Path), "newHash", crypto.Keccak256Hash(state.Prev))
 					rawdb.WriteStorageTrieNode(batch, entry.Owner, state.Path, state.Prev)
 				}
 			} else {

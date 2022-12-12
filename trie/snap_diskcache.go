@@ -145,7 +145,8 @@ func (cache *diskcache) revert(diff *trieHistory) error {
 					size: uint16(len(state.Prev)),
 					hash: crypto.Keccak256Hash(state.Prev),
 				}
-				log.Info("Reverted(updated) state", "owner", entry.Owner.Hex(), "path", state.Path)
+				newHash := crypto.Keccak256Hash(state.Prev)
+				log.Info("Reverted(updated) state", "owner", entry.Owner.Hex(), "path", state.Path, "newHash", newHash)
 				delta += int64(len(state.Prev)) - int64(cur.size)
 			}
 		}
