@@ -146,11 +146,10 @@ func New(root common.Hash, db Database, snap snapshot.Snapshot) (*StateDB, error
 		accessList:          newAccessList(),
 		transientStorage:    newTransientStorage(),
 		hasher:              crypto.NewKeccakState(),
-	}
-	if snap != nil {
-		sdb.snapDestructs = make(map[common.Hash]struct{})
-		sdb.snapAccounts = make(map[common.Hash][]byte)
-		sdb.snapStorage = make(map[common.Hash]map[common.Hash][]byte)
+
+		snapDestructs: make(map[common.Hash]struct{}),
+		snapAccounts:  make(map[common.Hash][]byte),
+		snapStorage:   make(map[common.Hash]map[common.Hash][]byte),
 	}
 	return sdb, nil
 }
@@ -163,9 +162,7 @@ func (db *StateDB) StartPrefetcher(namespace string) {
 		db.prefetcher.close()
 		db.prefetcher = nil
 	}
-	if db.snap != nil {
-		db.prefetcher = newTriePrefetcher(db.db, db.originalRoot, namespace)
-	}
+	db.prefetcher = newTriePrefetcher(db.db, db.originalRoot, namespace)
 }
 
 // StopPrefetcher terminates a running prefetcher and reports any leftover stats
@@ -493,14 +490,11 @@ func (db *StateDB) updateStateObject(obj *stateObject) {
 	if err := db.getTrie().TryUpdateAccount(addr[:], &obj.data); err != nil {
 		db.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
-
 	// If state snapshotting is active, cache the data til commit. Note, this
 	// update mechanism is not symmetric to the deletion, because whereas it is
 	// enough to track account updates at commit time, deletions need tracking
 	// at transaction boundary level to ensure we capture state clearing.
-	if db.snap != nil {
-		db.snapAccounts[obj.addrHash] = snapshot.SlimAccountRLP(obj.data.Nonce, obj.data.Balance, obj.data.Root, obj.data.CodeHash)
-	}
+	db.snapAccounts[obj.addrHash] = snapshot.SlimAccountRLP(obj.data.Nonce, obj.data.Balance, obj.data.Root, obj.data.CodeHash)
 }
 
 // deleteStateObject removes the given object from the state trie.
@@ -536,13 +530,12 @@ func (db *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 		return obj
 	}
 	// If no live objects are available, attempt to use snapshots
-	var data *types.StateAccount
+	var (
+		err  error
+		data *types.StateAccount
+	)
 	if db.snap != nil {
-		start := time.Now()
 		acc, err := db.snap.Account(crypto.HashData(db.hasher, addr.Bytes()))
-		if metrics.EnabledExpensive {
-			db.SnapshotAccountReads += time.Since(start)
-		}
 		if err == nil {
 			if acc == nil {
 				return nil
@@ -563,12 +556,7 @@ func (db *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 	}
 	// If snapshot unavailable or reading from it failed, load from the database
 	if data == nil {
-		start := time.Now()
-		var err error
 		data, err = db.getTrie().TryGetAccount(addr.Bytes())
-		if metrics.EnabledExpensive {
-			db.AccountReads += time.Since(start)
-		}
 		if err != nil {
 			db.setError(fmt.Errorf("getDeleteStateObject (%x) error: %w", addr.Bytes(), err))
 			return nil
@@ -602,7 +590,7 @@ func (db *StateDB) createObject(addr common.Address) (newobj, prev *stateObject)
 	prev = db.getDeletedStateObject(addr) // Note, prev might have been deleted, we need that!
 
 	var prevdestruct bool
-	if db.snap != nil && prev != nil {
+	if prev != nil {
 		_, prevdestruct = db.snapDestructs[prev.addrHash]
 		if !prevdestruct {
 			db.snapDestructs[prev.addrHash] = struct{}{}
@@ -742,30 +730,27 @@ func (db *StateDB) Copy() *StateDB {
 	if db.prefetcher != nil {
 		state.prefetcher = db.prefetcher.copy()
 	}
-	if db.snap != nil {
-		// In order for the miner to be able to use and make additions
-		// to the snapshot tree, we need to copy that aswell.
-		// Otherwise, any block mined by ourselves will cause gaps in the tree,
-		// and force the miner to operate trie-backed only
-		state.snap = db.snap
+	// In order for the miner to be able to use and make additions
+	// to the snapshot tree, we need to copy that aswell.
+	// Otherwise, any block mined by ourselves will cause gaps in the tree,
+	// and force the miner to operate trie-backed only
+	state.snap = db.snap
 
-		// deep copy needed
-		state.snapDestructs = make(map[common.Hash]struct{})
-		for k, v := range db.snapDestructs {
-			state.snapDestructs[k] = v
+	state.snapDestructs = make(map[common.Hash]struct{})
+	for k, v := range db.snapDestructs {
+		state.snapDestructs[k] = v
+	}
+	state.snapAccounts = make(map[common.Hash][]byte)
+	for k, v := range db.snapAccounts {
+		state.snapAccounts[k] = v
+	}
+	state.snapStorage = make(map[common.Hash]map[common.Hash][]byte)
+	for k, v := range db.snapStorage {
+		temp := make(map[common.Hash][]byte)
+		for kk, vv := range v {
+			temp[kk] = vv
 		}
-		state.snapAccounts = make(map[common.Hash][]byte)
-		for k, v := range db.snapAccounts {
-			state.snapAccounts[k] = v
-		}
-		state.snapStorage = make(map[common.Hash]map[common.Hash][]byte)
-		for k, v := range db.snapStorage {
-			temp := make(map[common.Hash][]byte)
-			for kk, vv := range v {
-				temp[kk] = vv
-			}
-			state.snapStorage[k] = temp
-		}
+		state.snapStorage[k] = temp
 	}
 	return state
 }
@@ -822,11 +807,9 @@ func (db *StateDB) Finalise(deleteEmptyObjects bool) {
 			// Note, we can't do this only at the end of a block because multiple
 			// transactions within the same block might self destruct and then
 			// resurrect an account; but the snapshotter needs both events.
-			if db.snap != nil {
-				db.snapDestructs[obj.addrHash] = struct{}{} // We need to maintain account deletions explicitly (will remain set indefinitely)
-				delete(db.snapAccounts, obj.addrHash)       // Clear out any previously updated account data (may be recreated via a resurrect)
-				delete(db.snapStorage, obj.addrHash)        // Clear out any previously updated storage data (may be recreated via a resurrect)
-			}
+			db.snapDestructs[obj.addrHash] = struct{}{} // We need to maintain account deletions explicitly (will remain set indefinitely)
+			delete(db.snapAccounts, obj.addrHash)       // Clear out any previously updated account data (may be recreated via a resurrect)
+			delete(db.snapStorage, obj.addrHash)        // Clear out any previously updated storage data (may be recreated via a resurrect)
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
 		}
