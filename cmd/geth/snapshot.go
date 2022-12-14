@@ -326,7 +326,7 @@ func traverseState(ctx *cli.Context) error {
 			storageTrie, err := trie.NewStateTrie(id, triedb)
 			if err != nil {
 				log.Error("Failed to open storage trie", "root", acc.Root, "err", err)
-				return err
+				goto checkCode
 			}
 			storageIter := trie.NewIterator(storageTrie.NodeIterator(nil))
 			for storageIter.Next() {
@@ -334,9 +334,10 @@ func traverseState(ctx *cli.Context) error {
 			}
 			if storageIter.Err != nil {
 				log.Error("Failed to traverse storage trie", "root", acc.Root, "err", storageIter.Err)
-				return storageIter.Err
+				goto checkCode
 			}
 		}
+	checkCode:
 		if !bytes.Equal(acc.CodeHash, emptyCode) {
 			if !rawdb.HasCode(chaindb, common.BytesToHash(acc.CodeHash)) {
 				log.Error("Code is missing", "hash", common.BytesToHash(acc.CodeHash))
