@@ -57,5 +57,5 @@ func (r *HistoricStateReader) ReadAccount(accountHash common.Hash, root common.H
 			return r.readAccount(accountHash, number)
 		}
 	}
-	return data, nil // todo return latest
+	return data, nil
 }

@@ -165,10 +165,6 @@ func (dl *diskLayer) state(owner common.Hash, hash common.Hash) ([]byte, error) 
 	} else {
 		nBlob, _ = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, hash.Bytes())
 	}
-	if dl.db.cleans != nil && len(nBlob) > 0 {
-		dl.db.cleans.Set(hash.Bytes(), nBlob)
-		triedbCleanWriteMeter.Mark(int64(len(nBlob)))
-	}
 	return nBlob, nil
 }
 

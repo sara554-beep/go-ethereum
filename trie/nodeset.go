@@ -290,7 +290,7 @@ func resolve(prefix []byte, n node, callback func(path []byte, blob []byte)) err
 		if !hasTerm(key) {
 			return fmt.Errorf("invalid tipnode %v", nn.Key)
 		}
-		path := append(prefix, nn.Key...)
+		path := append(prefix, key...)
 		callback(hexToKeybytes(path), nn.Val.(valueNode))
 
 	case rawFullNode:
@@ -318,20 +318,6 @@ func resolvePrevLeaves(nodes map[string]*nodeWithPrev, callback func(path []byte
 		n := mustDecodeNode(crypto.Keccak256(tip.prev), tip.prev)
 		return resolve([]byte(prefix), n, callback)
 	})
-}
-
-func resolvePrevLeaves2(nodes map[string]*memoryNode, callback func(path []byte, blob []byte)) error {
-	p, n := forEachTipNode2(nodes)
-	for i, pp := range p {
-		nn := n[i]
-		if nn.isDeleted() {
-			continue
-		}
-		if err := resolve([]byte(pp), nn.node, callback); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // MergedNodeSet represents a merged dirty node set for a group of tries.

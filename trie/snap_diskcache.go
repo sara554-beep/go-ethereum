@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"time"
@@ -46,7 +47,6 @@ type diskcache struct {
 	size   uint64                                 // The approximate size of cached nodes
 	limit  uint64                                 // The maximum memory allowance in bytes for cache
 	nodes  map[common.Hash]map[string]*memoryNode // The dirty node set, mapped by owner and path
-	states map[common.Hash]map[common.Hash][]byte
 }
 
 // newDiskcache initializes the dirty node cache with the given information.
@@ -61,18 +61,7 @@ func newDiskcache(limit int, nodes map[common.Hash]map[string]*memoryNode, layer
 			size += uint64(n.memorySize(len(path)))
 		}
 	}
-	var (
-		states = make(map[common.Hash]map[common.Hash][]byte)
-	)
-	if nodes != nil {
-		for owner, subset := range nodes {
-			states[owner] = make(map[common.Hash][]byte)
-			resolvePrevLeaves2(subset, func(path []byte, blob []byte) {
-				states[owner][common.BytesToHash(path)] = common.CopyBytes(blob)
-			})
-		}
-	}
-	return &diskcache{layers: layers, nodes: nodes, states: states, size: size, limit: uint64(limit)}
+	return &diskcache{layers: layers, nodes: nodes, size: size, limit: uint64(limit)}
 }
 
 // node retrieves the node with given node info.
@@ -91,17 +80,63 @@ func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (
 	return n, nil
 }
 
+func (cache *diskcache) leaves() ([]common.Hash, [][][]byte, [][][]byte, error) {
+	var (
+		keys   [][][]byte
+		vals   [][][]byte
+		owners []common.Hash
+	)
+	for owner, nodes := range cache.nodes {
+		tipPaths, tipNodes := forEachTipNode2(nodes)
+
+		var subKeys [][]byte
+		var subVals [][]byte
+		for i := 0; i < len(tipPaths); i++ {
+			if tipNodes[i].isDeleted() {
+				// TODO
+				continue
+			}
+			if err := resolve([]byte(tipPaths[i]), tipNodes[i].node, func(path []byte, blob []byte) {
+				subKeys = append(subVals, common.CopyBytes(path))
+				subVals = append(subVals, common.CopyBytes(blob))
+			}); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		keys = append(keys, subKeys)
+		vals = append(vals, subVals)
+		owners = append(owners, owner)
+	}
+	return owners, keys, vals, nil
+}
+
 // node retrieves the node with given node info.
 func (cache *diskcache) getstate(owner common.Hash, hash common.Hash) ([]byte, error) {
-	subset, ok := cache.states[owner]
-	if !ok {
-		return nil, nil
+	paths, nodes := forEachTipNode2(cache.nodes[owner])
+	for i := 0; i < len(paths); i++ {
+		if !bytes.HasPrefix(hash.Bytes(), []byte(paths[i])) {
+			continue
+		}
+		if nodes[i].isDeleted() {
+			continue
+		}
+		var (
+			result []byte
+			path   = []byte(paths[i])
+			node   = nodes[i].node
+		)
+		if err := resolve(path, node, func(path []byte, blob []byte) {
+			if common.BytesToHash(path) == hash {
+				result = common.CopyBytes(blob)
+			}
+		}); err != nil {
+			return nil, err
+		}
+		if result != nil {
+			return result, nil
+		}
 	}
-	n, ok := subset[hash]
-	if !ok {
-		return nil, nil
-	}
-	return n, nil
+	return nil, nil
 }
 
 // commit merges the dirty node belonging to the bottom-most diff layer
@@ -131,14 +166,6 @@ func (cache *diskcache) commit(nodes map[common.Hash]map[string]*memoryNode) *di
 				cache.nodes[owner][path] = n
 			}
 		}
-	}
-	for owner, subset := range nodes {
-		resolvePrevLeaves2(subset, func(path []byte, blob []byte) {
-			if cache.states[owner] == nil {
-				cache.states[owner] = make(map[common.Hash][]byte)
-			}
-			cache.states[owner][common.BytesToHash(path)] = common.CopyBytes(blob)
-		})
 	}
 	cache.updateSize(delta)
 	cache.layers += 1
@@ -261,13 +288,19 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 			}
 		}
 	}
-	for owner, subset := range cache.states {
+	owners, keys, vals, err := cache.leaves()
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(keys); i++ {
+		owner := owners[i]
 		accTrie := owner == (common.Hash{})
-		for path, n := range subset {
+
+		for j := 0; j < len(keys[i]); j += 1 {
 			if accTrie {
-				rawdb.WriteAccountTrieNode(batch, path.Bytes(), n)
+				rawdb.WriteAccountTrieNode(batch, keys[i][j], vals[i][j])
 			} else {
-				rawdb.WriteStorageTrieNode(batch, owner, path.Bytes(), n)
+				rawdb.WriteStorageTrieNode(batch, owner, keys[i][j], vals[i][j])
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"errors"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -28,6 +29,9 @@ func (snap *ArchiveSnapshot) Account(hash common.Hash) (*Account, error) {
 	data, err := snap.reader.ReadAccount(hash, snap.root)
 	if err != nil {
 		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, errors.New("not found")
 	}
 	account := new(Account)
 	if err := rlp.DecodeBytes(data, account); err != nil {
