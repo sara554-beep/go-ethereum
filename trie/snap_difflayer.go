@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -51,10 +52,20 @@ func newDiffLayer(parent snapshot, root common.Hash, id uint64, nodes map[common
 		parent: parent,
 	}
 	var total int64
-	for _, subset := range nodes {
+	for owner, subset := range nodes {
 		for path, n := range subset {
 			dl.memory += uint64(n.memorySize(len(path)))
 			total += int64(uint16(len(path)) + n.size)
+		}
+		if owner == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") {
+			log.Info("[DEBUG] HIT TARGET", "stateID", id)
+			for path, n := range subset {
+				log.Info("[DEBUG] STATE",
+					"path", path, "isDeleted", n.isDeleted(),
+					"prev", n.prev, "prevHash", crypto.Keccak256Hash(n.prev).Hex(),
+					"now", n.rlp(), "hash", n.hash.Hex())
+			}
+			log.Info("[DEBUG] END", "stateID", id)
 		}
 	}
 	triedbDirtyWriteMeter.Mark(total)
