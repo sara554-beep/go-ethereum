@@ -317,6 +317,10 @@ func (s *StateDB) GetCodeHash(addr common.Address) common.Hash {
 func (s *StateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
+		if stateObject.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+			stateObject.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
+			log.Info("[DEBUG] Get State", "addrHash", stateObject.addrHash.Hex(), "addr", addr.Hex(), "slot", hash.Hex(), "tx", s.thash.Hex())
+		}
 		return stateObject.GetState(s.db, hash)
 	}
 	return common.Hash{}
@@ -429,6 +433,10 @@ func (s *StateDB) SetCode(addr common.Address, code []byte) {
 func (s *StateDB) SetState(addr common.Address, key, value common.Hash) {
 	stateObject := s.GetOrNewStateObject(addr)
 	if stateObject != nil {
+		if stateObject.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+			stateObject.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
+			log.Info("[DEBUG] Set State", "addrHash", stateObject.addrHash.Hex(), "addr", addr.Hex(), "slot", key.Hex(), "val", value.Hex(), "tx", s.thash.Hex())
+		}
 		stateObject.SetState(s.db, key, value)
 	}
 }
@@ -460,6 +468,10 @@ func (s *StateDB) Suicide(addr common.Address) bool {
 	stateObject.markSuicided()
 	stateObject.data.Balance = new(big.Int)
 
+	if stateObject.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+		stateObject.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
+		log.Info("[DEBUG] Suicide", "addrHash", stateObject.addrHash.Hex(), "addr", addr.Hex(), "tx", s.thash.Hex())
+	}
 	return true
 }
 
@@ -648,7 +660,16 @@ func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) 
 func (s *StateDB) CreateAccount(addr common.Address) {
 	newObj, prev := s.createObject(addr)
 	if prev != nil {
+		if newObj.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+			newObj.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
+			log.Info("[DEBUG] Reset contract", "addrHash", newObj.addrHash.Hex(), "addr", addr.Hex(), "tx", s.thash.Hex())
+		}
 		newObj.setBalance(prev.data.Balance)
+	} else {
+		if newObj.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+			newObj.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
+			log.Info("[DEBUG] Create contract", "addrHash", newObj.addrHash.Hex(), "addr", addr.Hex(), "tx", s.thash.Hex())
+		}
 	}
 }
 
