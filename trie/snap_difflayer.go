@@ -57,8 +57,9 @@ func newDiffLayer(parent snapshot, root common.Hash, id uint64, nodes map[common
 			dl.memory += uint64(n.memorySize(len(path)))
 			total += int64(uint16(len(path)) + n.size)
 		}
-		if owner == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") {
-			log.Info("[DEBUG] HIT TARGET", "stateID", id)
+		if owner == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+			owner == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
+			log.Info("[DEBUG] HIT TARGET", "stateID", id, "owner", owner.Hex())
 			for path, n := range subset {
 				log.Info("[DEBUG] STATE",
 					"path", path, "isDeleted", n.isDeleted(),
