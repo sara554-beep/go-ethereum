@@ -46,6 +46,9 @@ func (n *memoryNode) memorySize(pathlen int) int {
 // rlp returns the raw rlp encoded blob of the cached trie node, either directly
 // from the cache, or by regenerating it from the collapsed node.
 func (n *memoryNode) rlp() []byte {
+	if n.node == nil {
+		return nil
+	}
 	if node, ok := n.node.(rawNode); ok {
 		return node
 	}
