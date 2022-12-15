@@ -1725,30 +1725,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		statedb.StartPrefetcher("chain", parent.Number.Uint64(), "block-execution")
 		activeState = statedb
 
-		// If we have a followup block, run that against the current state to pre-cache
-		// transactions and probabilistically some of the account/storage trie nodes.
-		var followupInterrupt uint32
-		if !bc.cacheConfig.TrieCleanNoPrefetch {
-			if followup, err := it.peek(); followup != nil && err == nil {
-				throwaway, _ := state.New(parent.Root, bc.stateCache, bc.snaps)
-
-				go func(start time.Time, followup *types.Block, throwaway *state.StateDB, interrupt *uint32) {
-					bc.prefetcher.Prefetch(followup, throwaway, bc.vmConfig, &followupInterrupt)
-
-					blockPrefetchExecuteTimer.Update(time.Since(start))
-					if atomic.LoadUint32(interrupt) == 1 {
-						blockPrefetchInterruptMeter.Mark(1)
-					}
-				}(time.Now(), followup, throwaway, &followupInterrupt)
-			}
-		}
-
 		// Process block using the parent state as reference point
 		substart := time.Now()
 		receipts, logs, usedGas, err := bc.processor.Process(block, statedb, bc.vmConfig)
 		if err != nil {
 			bc.reportBlock(block, receipts, err)
-			atomic.StoreUint32(&followupInterrupt, 1)
 			return it.index, err
 		}
 
@@ -1769,7 +1750,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		substart = time.Now()
 		if err := bc.validator.ValidateState(block, statedb, receipts, usedGas); err != nil {
 			bc.reportBlock(block, receipts, err)
-			atomic.StoreUint32(&followupInterrupt, 1)
 			return it.index, err
 		}
 		proctime := time.Since(start)
@@ -1788,7 +1768,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		} else {
 			status, err = bc.writeBlockAndSetHead(block, receipts, logs, statedb, false)
 		}
-		atomic.StoreUint32(&followupInterrupt, 1)
 		if err != nil {
 			return it.index, err
 		}
