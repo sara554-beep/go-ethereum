@@ -199,7 +199,6 @@ func (db *snapDatabase) Update(root common.Hash, parentRoot common.Hash, nodes *
 		log.Info("Snapshot failed to be added", "err", err, "parent", parentRoot.Hex(), "child", root.Hex())
 		return err
 	}
-	log.Info("Snapshot added new layer", "parent", parentRoot.Hex(), "child", root.Hex())
 	// Keep 128 diff layers in the memory, persistent layer is 129th.
 	// - head layer is paired with HEAD state
 	// - head-1 layer is paired with HEAD-1 state

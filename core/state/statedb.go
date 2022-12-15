@@ -317,11 +317,12 @@ func (s *StateDB) GetCodeHash(addr common.Address) common.Hash {
 func (s *StateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
 	stateObject := s.getStateObject(addr)
 	if stateObject != nil {
+		val := stateObject.GetState(s.db, hash)
 		if stateObject.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
 			stateObject.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
-			log.Info("[DEBUG] Get State", "addrHash", stateObject.addrHash.Hex(), "addr", addr.Hex(), "slot", hash.Hex(), "tx", s.thash.Hex())
+			log.Info("[DEBUG] Get State",
+				"addrHash", stateObject.addrHash.Hex(), "addr", addr.Hex(), "slot", hash.Hex(), "val", val.Hex(), "tx", s.thash.Hex())
 		}
-		return stateObject.GetState(s.db, hash)
 	}
 	return common.Hash{}
 }

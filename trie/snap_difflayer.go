@@ -61,8 +61,8 @@ func newDiffLayer(parent snapshot, root common.Hash, id uint64, nodes map[common
 			owner == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
 			log.Info("[DEBUG] HIT TARGET", "stateID", id, "owner", owner.Hex())
 			for path, n := range subset {
-				log.Info("[DEBUG] STATE",
-					"path", path, "isDeleted", n.isDeleted(),
+				log.Info("[DEBUG] STATE", "owner", owner.Hex(),
+					"path", []byte(path), "isDeleted", n.isDeleted(),
 					"prev", n.prev, "prevHash", crypto.Keccak256Hash(n.prev).Hex(),
 					"now", n.rlp(), "hash", n.hash.Hex())
 			}

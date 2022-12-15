@@ -19,6 +19,7 @@ package trie
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -97,6 +98,7 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[c
 
 	snap := parent.(snapshot).Update(root, parent.(snapshot).ID()+1, nodes)
 	tree.layers[snap.root] = snap
+	log.Info("Snapshot added new layer", "parent", parentRoot.Hex(), "child", root.Hex(), "id", snap.id)
 	return nil
 }
 
