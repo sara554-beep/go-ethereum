@@ -345,7 +345,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 
 		if s.addrHash == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
 			s.addrHash == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808") {
-			log.Info("[DEBUG]", "owner", s.addrHash.Hex(), "key", key.Hex(), "val", value.Hex())
+			log.Info("[DEBUG updateTrie]", "owner", s.addrHash.Hex(), "key", key.Hex(), "val", value.Hex())
 		}
 
 		var v []byte

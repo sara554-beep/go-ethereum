@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -225,6 +226,8 @@ func estimateSize(n node) int {
 
 // wrapDeletions puts all tracked deletions into the dirty nodeset.
 func wrapDeletions(set *NodeSet, tracer *tracer) {
+	report := set.owner == common.HexToHash("0xa391da12eb2962b133220b6ae9c8421ce123410e54b83d45accd401199d69061") ||
+		set.owner == common.HexToHash("0xf6994ecd1f167874cc9626ed84e1da5c9638ee8529b47e66677e1fbdebe50808")
 	for _, path := range tracer.deleteList() {
 		// There are a few possibilities for this scenario(the node is deleted
 		// but not present in database previously), for example the node was
@@ -232,8 +235,14 @@ func wrapDeletions(set *NodeSet, tracer *tracer) {
 		// it's noop from database's perspective.
 		val := tracer.getPrev(path)
 		if len(val) == 0 {
+			if report {
+				log.Info("[DEBUG] skip empty", "owner", set.owner.Hex(), "path", path)
+			}
 			continue
 		}
 		set.markDeleted(path, val)
+		if report {
+			log.Info("[DEBUG] mark delete", "owner", set.owner.Hex(), "path", path, "prev", val)
+		}
 	}
 }
