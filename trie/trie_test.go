@@ -237,6 +237,15 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+func TestFooBar(t *testing.T) {
+	trie := NewEmpty(newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme))
+	trie.TryDelete(crypto.Keccak256Hash(common.Hash{}.Bytes()).Bytes())
+	root, set, err := trie.Commit(true)
+	spew.Dump(root.Hex())
+	spew.Dump(set)
+	fmt.Println(err)
+}
+
 func TestEmptyValues(t *testing.T) {
 	trie := NewEmpty(NewHashDatabase(rawdb.NewMemoryDatabase()))
 
