@@ -323,6 +323,7 @@ func (s *StateDB) GetState(addr common.Address, hash common.Hash) common.Hash {
 			log.Info("[DEBUG] Get State",
 				"addrHash", stateObject.addrHash.Hex(), "addr", addr.Hex(), "slot", hash.Hex(), "val", val.Hex(), "tx", s.thash.Hex())
 		}
+		return val
 	}
 	return common.Hash{}
 }
