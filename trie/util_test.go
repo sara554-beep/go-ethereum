@@ -232,7 +232,7 @@ func TestTrieTracePrevValue(t *testing.T) {
 }
 
 func TestDeleteAll(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
+	db := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
 	trie := NewEmpty(db)
 	trie.tracer = newTracer()
 
@@ -250,7 +250,7 @@ func TestDeleteAll(t *testing.T) {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
 	root, set, err := trie.Commit(false)
-	if err := db.Update(NewWithNodeSet(set)); err != nil {
+	if err := db.Update(root, common.Hash{}, NewWithNodeSet(set)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,16 +281,19 @@ func TestDeleteAll(t *testing.T) {
 	if root != emptyRoot {
 		t.Fatalf("Invalid trie root %v", root)
 	}
-	for path, blob := range set.deletes {
+	for path, n := range set.nodes {
 		prev, ok := nodes[path]
 		if !ok {
 			t.Fatalf("Extra node deleted %v", []byte(path))
 		}
-		if !bytes.Equal(prev, blob) {
+		if !n.isDeleted() {
+			t.Fatalf("Unexpected node")
+		}
+		if !bytes.Equal(prev, n.prev) {
 			t.Fatalf("Unexpected previous value %v", []byte(path))
 		}
 	}
-	if len(set.deletes) != len(nodes) {
+	if len(set.nodes) != len(nodes) {
 		t.Fatalf("Unexpected deletion set")
 	}
 }
