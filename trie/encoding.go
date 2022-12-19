@@ -80,7 +80,8 @@ func hexToCompactInPlace(hex []byte) int {
 	return binLen
 }
 
-func compactToHex(compact []byte) []byte {
+// CompactToHex turns compacted key bytes into hex nibbles.
+func CompactToHex(compact []byte) []byte {
 	if len(compact) == 0 {
 		return compact
 	}

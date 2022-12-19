@@ -170,10 +170,9 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int) (value []byte, newnode
 	}
 }
 
-// TryGetNode attempts to retrieve a trie node by compact-encoded path. It is not
-// possible to use keybyte-encoding as the path might contain odd nibbles.
+// TryGetNode attempts to retrieve a trie node by path.
 func (t *Trie) TryGetNode(path []byte) ([]byte, int, error) {
-	item, newroot, resolved, err := t.tryGetNode(t.root, compactToHex(path), 0)
+	item, newroot, resolved, err := t.tryGetNode(t.root, path, 0)
 	if err != nil {
 		return nil, resolved, err
 	}

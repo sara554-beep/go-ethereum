@@ -131,6 +131,13 @@ func (t *odrTrie) TryGetAccount(key []byte) (*types.StateAccount, error) {
 	return &res, err
 }
 
+// TryGetNode attempts to retrieve a trie node by path. If the specified trie
+// node is not in the trie, nil will be returned. If a trie node is not found
+// in the database, a MissingNodeError is returned.
+func (t *odrTrie) TryGetNode(path []byte) ([]byte, int, error) {
+	panic("not implemented")
+}
+
 func (t *odrTrie) TryUpdateAccount(key []byte, acc *types.StateAccount) error {
 	key = crypto.Keccak256(key)
 	value, err := rlp.EncodeToBytes(acc)

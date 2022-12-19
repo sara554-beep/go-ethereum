@@ -156,7 +156,7 @@ func decodeShort(hash, elems []byte) (node, error) {
 		return nil, err
 	}
 	flag := nodeFlag{hash: hash}
-	key := compactToHex(kbuf)
+	key := CompactToHex(kbuf)
 	if hasTerm(key) {
 		// value node
 		val, _, err := rlp.SplitString(rest)

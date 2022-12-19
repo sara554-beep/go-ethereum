@@ -509,7 +509,7 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 
 		case 1:
 			// If we're only retrieving an account trie node, fetch it directly
-			blob, resolved, err := accTrie.TryGetNode(pathset[0])
+			blob, resolved, err := accTrie.TryGetNode(trie.CompactToHex(pathset[0]))
 			loads += resolved // always account database reads, even for failures
 			if err != nil {
 				break
@@ -544,7 +544,7 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 				break
 			}
 			for _, path := range pathset[1:] {
-				blob, resolved, err := stTrie.TryGetNode(path)
+				blob, resolved, err := stTrie.TryGetNode(trie.CompactToHex(path))
 				loads += resolved // always account database reads, even for failures
 				if err != nil {
 					break

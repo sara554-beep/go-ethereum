@@ -76,6 +76,11 @@ type Trie interface {
 	// TryGetAccount abstract an account read from the trie.
 	TryGetAccount(key []byte) (*types.StateAccount, error)
 
+	// TryGetNode attempts to retrieve a trie node by path. If the specified trie
+	// node is not in the trie, nil will be returned. If a trie node is not found
+	// in the database, a MissingNodeError is returned.
+	TryGetNode(path []byte) ([]byte, int, error)
+
 	// TryUpdate associates key with value in the trie. If value has length zero, any
 	// existing value is deleted from the trie. The value bytes must not be modified
 	// by the caller while they are stored in the trie. If a node was not found in the

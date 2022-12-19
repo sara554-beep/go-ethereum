@@ -376,9 +376,9 @@ func (s *stateObject) updateRoot(db Database) {
 
 // commitTrie submits the storage changes into the storage trie and re-computes
 // the root. Besides, all trie changes will be collected in a nodeset and returned.
-func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
+func (s *stateObject) commitTrie(destructed bool) (*trie.NodeSet, error) {
 	// If nothing changed, don't bother with hashing anything
-	if s.updateTrie(db) == nil {
+	if s.updateTrie(s.db.db) == nil {
 		return nil, nil
 	}
 	if s.dbErr != nil {
@@ -389,10 +389,49 @@ func (s *stateObject) commitTrie(db Database) (*trie.NodeSet, error) {
 		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 	}
 	root, nodes, err := s.trie.Commit(false)
-	if err == nil {
-		s.data.Root = root
+	if err != nil {
+		return nil, err
+	}
+	s.data.Root = root
+
+	// If the account with same address was destructed and resurrected
+	// in the same block, then the previous value recorded in the nodeset
+	// is incorrect(in this case, the previous value is nil because the
+	// storage trie is created from scratch). Correct the wrong previous
+	// value by loading original trie.
+	if destructed && nodes != nil {
+		if err := s.repairSet(nodes); err != nil {
+			return nil, err
+		}
 	}
 	return nodes, err
+}
+
+func (s *stateObject) repairSet(set *trie.NodeSet) error {
+	acctTrie, err := s.db.db.OpenTrie(s.db.originalRoot)
+	if err != nil {
+		return err
+	}
+	origin, err := acctTrie.TryGetAccount(s.address.Bytes())
+	if err != nil {
+		return err
+	}
+	// Short circuit if the storage trie was originally not
+	// existent or empty.
+	if origin == nil || origin.Root == emptyRoot {
+		return nil
+	}
+	stTrie, err := s.db.db.OpenStorageTrie(s.db.originalRoot, s.addrHash, origin.Root)
+	if err != nil {
+		return err
+	}
+	return set.Repair(func(path []byte) ([]byte, error) {
+		blob, _, err := stTrie.TryGetNode(path)
+		if err != nil {
+			return nil, err
+		}
+		return blob, nil
+	})
 }
 
 // AddBalance adds amount to s's balance.

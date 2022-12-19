@@ -116,10 +116,9 @@ func (t *StateTrie) TryGetAccountWithPreHashedKey(key []byte) (*types.StateAccou
 	return ret, err
 }
 
-// TryGetNode attempts to retrieve a trie node by compact-encoded path. It is not
-// possible to use keybyte-encoding as the path might contain odd nibbles.
-// If the specified trie node is not in the trie, nil will be returned.
-// If a trie node is not found in the database, a MissingNodeError is returned.
+// TryGetNode attempts to retrieve a trie node by path. If the specified trie
+// node is not in the trie, nil will be returned. If a trie node is not found
+// in the database, a MissingNodeError is returned.
 func (t *StateTrie) TryGetNode(path []byte) ([]byte, int, error) {
 	return t.trie.TryGetNode(path)
 }

@@ -101,17 +101,6 @@ func NewNodeSet(owner common.Hash) *NodeSet {
 	}
 }
 
-/*
-// NewNodeSetWithDeletion initializes the nodeset with provided deletion set.
-func NewNodeSetWithDeletion(owner common.Hash, paths [][]byte, prev [][]byte) *NodeSet {
-	set := NewNodeSet(owner)
-	for i, path := range paths {
-		set.markDeleted(path, prev[i])
-	}
-	return set
-}
-*/
-
 // forEachWithOrder iterates the dirty nodes with the specified order.
 // If topToBottom is true:
 //
@@ -133,6 +122,17 @@ func (set *NodeSet) forEachWithOrder(topToBottom bool, callback func(path string
 	for _, path := range paths {
 		callback(path, set.nodes[path])
 	}
+}
+
+func (set *NodeSet) Repair(fn func(path []byte) ([]byte, error)) error {
+	for path, n := range set.nodes {
+		prev, err := fn([]byte(path))
+		if err != nil {
+			return err
+		}
+		n.prev = prev
+	}
+	return nil
 }
 
 // markUpdated marks the node as dirty(newly-inserted or updated) with provided

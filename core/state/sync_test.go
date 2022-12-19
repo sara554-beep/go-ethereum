@@ -214,7 +214,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool) {
 		for i, node := range nodeElements {
 			if bypath {
 				if len(node.syncPath) == 1 {
-					data, _, err := srcTrie.TryGetNode(node.syncPath[0])
+					data, _, err := srcTrie.TryGetNode(trie.CompactToHex(node.syncPath[0]))
 					if err != nil {
 						t.Fatalf("failed to retrieve node data for path %x: %v", node.syncPath[0], err)
 					}
@@ -229,7 +229,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool) {
 					if err != nil {
 						t.Fatalf("failed to retriev storage trie for path %x: %v", node.syncPath[1], err)
 					}
-					data, _, err := stTrie.TryGetNode(node.syncPath[1])
+					data, _, err := stTrie.TryGetNode(trie.CompactToHex(node.syncPath[1]))
 					if err != nil {
 						t.Fatalf("failed to retrieve node data for path %x: %v", node.syncPath[1], err)
 					}

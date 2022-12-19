@@ -216,7 +216,7 @@ func defaultTrieRequestHandler(t *testPeer, requestId uint64, root common.Hash, 
 	for _, pathset := range paths {
 		switch len(pathset) {
 		case 1:
-			blob, _, err := t.accountTrie.TryGetNode(pathset[0])
+			blob, _, err := t.accountTrie.TryGetNode(trie.CompactToHex(pathset[0]))
 			if err != nil {
 				t.logger.Info("Error handling req", "error", err)
 				break
@@ -225,7 +225,7 @@ func defaultTrieRequestHandler(t *testPeer, requestId uint64, root common.Hash, 
 		default:
 			account := t.storageTries[(common.BytesToHash(pathset[0]))]
 			for _, path := range pathset[1:] {
-				blob, _, err := account.TryGetNode(path)
+				blob, _, err := account.TryGetNode(trie.CompactToHex(path))
 				if err != nil {
 					t.logger.Info("Error handling req", "error", err)
 					break

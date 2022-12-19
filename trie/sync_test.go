@@ -187,7 +187,7 @@ func testIterativeSync(t *testing.T, count int, bypath bool, scheme string) {
 			}
 		} else {
 			for i, element := range elements {
-				data, _, err := srcTrie.TryGetNode(element.syncPath[len(element.syncPath)-1])
+				data, _, err := srcTrie.TryGetNode([]byte(element.path))
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for path %x: %v", element.path, err)
 				}
@@ -645,8 +645,8 @@ func testSyncOrdering(t *testing.T, scheme string) {
 			// must always be single items. 2-tuples should be tested in state.
 			t.Errorf("Invalid request tuples: len(%v) or len(%v) > 1", reqs[i], reqs[i+1])
 		}
-		if bytes.Compare(compactToHex(reqs[i][0]), compactToHex(reqs[i+1][0])) > 0 {
-			t.Errorf("Invalid request order: %v before %v", compactToHex(reqs[i][0]), compactToHex(reqs[i+1][0]))
+		if bytes.Compare(CompactToHex(reqs[i][0]), CompactToHex(reqs[i+1][0])) > 0 {
+			t.Errorf("Invalid request order: %v before %v", CompactToHex(reqs[i][0]), CompactToHex(reqs[i+1][0]))
 		}
 	}
 }
