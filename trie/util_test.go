@@ -232,7 +232,7 @@ func TestTrieTracePrevValue(t *testing.T) {
 }
 
 func TestDeleteAll(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase())
+	db := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
 	trie := NewEmpty(db)
 
 	// Insert a batch of entries, all the nodes should be marked as inserted

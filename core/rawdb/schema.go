@@ -107,9 +107,8 @@ var (
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	skeletonHeaderPrefix  = []byte("S") // skeletonHeaderPrefix + num (uint64 big endian) -> header
 
-	// Path-based trie node scheme.
-	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
-	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
+	TrieNodeAccountPrefix = []byte("A") // TrieNodeAccountPrefix + hexPath -> trie node
+	TrieNodeStoragePrefix = []byte("O") // TrieNodeStoragePrefix + accountHash + hexPath -> trie node
 	stateLookupPrefix     = []byte("L") // stateLookupPrefix + state root -> state id
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
@@ -237,14 +236,14 @@ func IsCodeKey(key []byte) (bool, []byte) {
 	return false, nil
 }
 
-// accountTrieNodeKey = trieNodeAccountPrefix + nodePath.
+// accountTrieNodeKey = TrieNodeAccountPrefix + nodePath.
 func accountTrieNodeKey(path []byte) []byte {
-	return append(trieNodeAccountPrefix, path...)
+	return append(TrieNodeAccountPrefix, path...)
 }
 
-// storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
+// storageTrieNodeKey = TrieNodeStoragePrefix + accountHash + nodePath.
 func storageTrieNodeKey(accountHash common.Hash, path []byte) []byte {
-	return append(append(trieNodeStoragePrefix, accountHash.Bytes()...), path...)
+	return append(append(TrieNodeStoragePrefix, accountHash.Bytes()...), path...)
 }
 
 // IsLegacyTrieNode reports whether a provided database entry is a legacy trie
@@ -262,13 +261,13 @@ func IsLegacyTrieNode(key []byte, val []byte) bool {
 // account trie node in path-based state scheme, and returns the resolved
 // node path if so.
 func ResolveAccountTrieNodeKey(key []byte) (bool, []byte) {
-	if !bytes.HasPrefix(key, trieNodeAccountPrefix) {
+	if !bytes.HasPrefix(key, TrieNodeAccountPrefix) {
 		return false, nil
 	}
 	// The remaining key should only consist a hex node path
 	// whose length is in the range 0 to 64 (64 is excluded
 	// since leaves are always embedded in parent).
-	remain := key[len(trieNodeAccountPrefix):]
+	remain := key[len(TrieNodeAccountPrefix):]
 	if len(remain) >= common.HashLength*2 {
 		return false, nil
 	}
@@ -286,13 +285,13 @@ func IsAccountTrieNode(key []byte) bool {
 // trie node in path-based state scheme, and returns the resolved account hash
 // and node path if so.
 func ResolveStorageTrieNode(key []byte) (bool, common.Hash, []byte) {
-	if !bytes.HasPrefix(key, trieNodeStoragePrefix) {
+	if !bytes.HasPrefix(key, TrieNodeStoragePrefix) {
 		return false, common.Hash{}, nil
 	}
 	// The remaining key consists of 2 parts:
 	// - 32 bytes account hash
 	// - hex node path whose length is in the range 0 to 64
-	remain := key[len(trieNodeStoragePrefix):]
+	remain := key[len(TrieNodeStoragePrefix):]
 	if len(remain) < common.HashLength {
 		return false, common.Hash{}, nil
 	}
