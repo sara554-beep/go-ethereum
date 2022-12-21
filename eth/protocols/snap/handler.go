@@ -417,7 +417,7 @@ func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesP
 			if err != nil {
 				return nil, nil
 			}
-			acc, err := accTrie.TryGetAccountWithPreHashedKey(account[:])
+			acc, err := accTrie.TryGetAccountWithHash(account)
 			if err != nil || acc == nil {
 				return nil, nil
 			}
@@ -487,7 +487,6 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 	}
 	// Make sure we have the state associated with the request
 	triedb := chain.StateCache().TrieDB()
-
 	accTrie, err := trie.NewStateTrie(trie.StateTrieID(req.Root), triedb)
 	if err != nil {
 		// We don't have the requested state available, bail out
@@ -495,6 +494,7 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 	}
 	// The 'snap' might be nil, in which case we cannot serve storage slots.
 	snap := chain.Snapshots().Snapshot(req.Root)
+
 	// Retrieve trie nodes until the packet size limit is reached
 	var (
 		nodes [][]byte
@@ -502,48 +502,47 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 		loads int // Trie hash expansions to count database reads
 	)
 	for _, pathset := range req.Paths {
-		switch len(pathset) {
-		case 0:
+		if len(pathset) == 0 {
 			// Ensure we penalize invalid requests
 			return nil, fmt.Errorf("%w: zero-item pathset requested", errBadRequest)
-
-		case 1:
+		}
+		addrHash, paths := trie.ResolveSyncPath(pathset)
+		if addrHash == (common.Hash{}) {
 			// If we're only retrieving an account trie node, fetch it directly
-			blob, resolved, err := accTrie.TryGetNode(pathset[0])
+			blob, resolved, err := accTrie.TryGetNode(paths[0])
 			loads += resolved // always account database reads, even for failures
 			if err != nil {
 				break
 			}
 			nodes = append(nodes, blob)
 			bytes += uint64(len(blob))
-
-		default:
+		} else {
 			var stRoot common.Hash
 			// Storage slots requested, open the storage trie and retrieve from there
 			if snap == nil {
 				// We don't have the requested state snapshotted yet (or it is stale),
 				// but can look up the account via the trie instead.
-				account, err := accTrie.TryGetAccountWithPreHashedKey(pathset[0])
+				account, err := accTrie.TryGetAccountWithHash(addrHash)
 				loads += 8 // We don't know the exact cost of lookup, this is an estimate
 				if err != nil || account == nil {
 					break
 				}
 				stRoot = account.Root
 			} else {
-				account, err := snap.Account(common.BytesToHash(pathset[0]))
+				account, err := snap.Account(addrHash)
 				loads++ // always account database reads, even for failures
 				if err != nil || account == nil {
 					break
 				}
 				stRoot = common.BytesToHash(account.Root)
 			}
-			id := trie.StorageTrieID(req.Root, common.BytesToHash(pathset[0]), stRoot)
+			id := trie.StorageTrieID(req.Root, addrHash, stRoot)
 			stTrie, err := trie.NewStateTrie(id, triedb)
 			loads++ // always account database reads, even for failures
 			if err != nil {
 				break
 			}
-			for _, path := range pathset[1:] {
+			for _, path := range paths {
 				blob, resolved, err := stTrie.TryGetNode(path)
 				loads += resolved // always account database reads, even for failures
 				if err != nil {

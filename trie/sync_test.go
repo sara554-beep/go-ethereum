@@ -156,7 +156,8 @@ func testIterativeSync(t *testing.T, count int, bypath bool) {
 			}
 		} else {
 			for i, element := range elements {
-				data, _, err := srcTrie.TryGetNode(element.syncPath[len(element.syncPath)-1])
+				path := compactToHex(element.syncPath[len(element.syncPath)-1])
+				data, _, err := srcTrie.TryGetNode(path)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for path %x: %v", element.path, err)
 				}

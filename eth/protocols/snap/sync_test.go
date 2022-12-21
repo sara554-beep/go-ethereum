@@ -214,17 +214,17 @@ func defaultTrieRequestHandler(t *testPeer, requestId uint64, root common.Hash, 
 	// Pass the response
 	var nodes [][]byte
 	for _, pathset := range paths {
-		switch len(pathset) {
-		case 1:
-			blob, _, err := t.accountTrie.TryGetNode(pathset[0])
+		addrHash, nodePaths := trie.ResolveSyncPath(pathset)
+		if addrHash == (common.Hash{}) {
+			blob, _, err := t.accountTrie.TryGetNode(nodePaths[0])
 			if err != nil {
 				t.logger.Info("Error handling req", "error", err)
 				break
 			}
 			nodes = append(nodes, blob)
-		default:
-			account := t.storageTries[(common.BytesToHash(pathset[0]))]
-			for _, path := range pathset[1:] {
+		} else {
+			account := t.storageTries[addrHash]
+			for _, path := range nodePaths {
 				blob, _, err := account.TryGetNode(path)
 				if err != nil {
 					t.logger.Info("Error handling req", "error", err)

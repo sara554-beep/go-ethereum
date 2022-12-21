@@ -213,25 +213,26 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool) {
 		}
 		for i, node := range nodeElements {
 			if bypath {
-				if len(node.syncPath) == 1 {
-					data, _, err := srcTrie.TryGetNode(node.syncPath[0])
+				addrHash, nodePaths := trie.ResolveSyncPath(node.syncPath)
+				if addrHash == (common.Hash{}) {
+					data, _, err := srcTrie.TryGetNode(nodePaths[0])
 					if err != nil {
-						t.Fatalf("failed to retrieve node data for path %x: %v", node.syncPath[0], err)
+						t.Fatalf("failed to retrieve node data for path %x: %v", nodePaths[0], err)
 					}
 					nodeResults[i] = trie.NodeSyncResult{Path: node.path, Data: data}
 				} else {
 					var acc types.StateAccount
-					if err := rlp.DecodeBytes(srcTrie.Get(node.syncPath[0]), &acc); err != nil {
+					if err := rlp.DecodeBytes(srcTrie.Get(addrHash.Bytes()), &acc); err != nil {
 						t.Fatalf("failed to decode account on path %x: %v", node.syncPath[0], err)
 					}
-					id := trie.StorageTrieID(srcRoot, common.BytesToHash(node.syncPath[0]), acc.Root)
+					id := trie.StorageTrieID(srcRoot, addrHash, acc.Root)
 					stTrie, err := trie.New(id, srcDb.TrieDB())
 					if err != nil {
-						t.Fatalf("failed to retriev storage trie for path %x: %v", node.syncPath[1], err)
+						t.Fatalf("failed to retrieve storage trie for path %x: %v", nodePaths[0], err)
 					}
-					data, _, err := stTrie.TryGetNode(node.syncPath[1])
+					data, _, err := stTrie.TryGetNode(nodePaths[0])
 					if err != nil {
-						t.Fatalf("failed to retrieve node data for path %x: %v", node.syncPath[1], err)
+						t.Fatalf("failed to retrieve node data for path %x: %v", nodePaths[0], err)
 					}
 					nodeResults[i] = trie.NodeSyncResult{Path: node.path, Data: data}
 				}

@@ -19,7 +19,6 @@ package trie
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -170,10 +169,9 @@ func (t *Trie) tryGet(origNode node, key []byte, pos int) (value []byte, newnode
 	}
 }
 
-// TryGetNode attempts to retrieve a trie node by compact-encoded path. It is not
-// possible to use keybyte-encoding as the path might contain odd nibbles.
+// TryGetNode attempts to retrieve a trie node by node path(hex nibbles).
 func (t *Trie) TryGetNode(path []byte) ([]byte, int, error) {
-	item, newroot, resolved, err := t.tryGetNode(t.root, compactToHex(path), 0)
+	item, newroot, resolved, err := t.tryGetNode(t.root, path, 0)
 	if err != nil {
 		return nil, resolved, err
 	}
@@ -203,7 +201,7 @@ func (t *Trie) tryGetNode(origNode node, path []byte, pos int) (item []byte, new
 			hash, _ = origNode.cache()
 		}
 		if hash == nil {
-			return nil, origNode, 0, errors.New("non-consensus node")
+			return nil, origNode, 0, nil
 		}
 		blob, err := t.reader.nodeBlob(path, common.BytesToHash(hash))
 		return blob, origNode, 1, err

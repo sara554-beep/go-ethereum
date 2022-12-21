@@ -74,6 +74,27 @@ func NewSyncPath(path []byte) SyncPath {
 	return SyncPath{hexToKeybytes(path[:64]), hexToCompact(path[64:])}
 }
 
+// ResolveSyncPath resolves the provided pathSet. It's transmitted over
+// network with format defined in spec https://github.com/ethereum/devp2p/blob/master/caps/snap.md#gettrienodes-0x06
+func ResolveSyncPath(pathSet [][]byte) (common.Hash, [][]byte) {
+	// If there is only a path in the provided set, it must
+	// refer to a node in account trie.
+	if len(pathSet) == 1 {
+		return common.Hash{}, [][]byte{compactToHex(pathSet[0])}
+	}
+	// It's a set refer to a set of storage trie nodes. The
+	// first element refers to account hash and the remaining
+	// elements as paths(compact-encoded) in the storage trie.
+	var (
+		owner = common.BytesToHash(pathSet[0])
+		paths [][]byte
+	)
+	for i := 1; i < len(pathSet); i++ {
+		paths = append(paths, compactToHex(pathSet[i]))
+	}
+	return owner, paths
+}
+
 // LeafCallback is a callback type invoked when a trie operation reaches a leaf
 // node.
 //

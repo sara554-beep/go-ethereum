@@ -462,7 +462,7 @@ func runRandTest(rt randTest) bool {
 			// Validity the returned nodeset
 			if nodes != nil {
 				for path, node := range nodes.updates.nodes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
+					blob, _, _ := origTrie.TryGetNode([]byte(path))
 					got := node.prev
 					if !bytes.Equal(blob, got) {
 						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, got, blob)
@@ -470,7 +470,7 @@ func runRandTest(rt randTest) bool {
 					}
 				}
 				for path, prev := range nodes.deletes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
+					blob, _, _ := origTrie.TryGetNode([]byte(path))
 					if !bytes.Equal(blob, prev) {
 						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, prev, blob)
 						return false
