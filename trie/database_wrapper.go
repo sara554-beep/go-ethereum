@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"errors"
 	"runtime"
 	"time"
 
@@ -25,6 +26,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie/snap"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 )
 
 // NodeReader warps all the necessary functions for accessing trie node.
@@ -34,25 +37,12 @@ type NodeReader interface {
 	GetReader(root common.Hash) Reader
 }
 
-// Config defines all necessary options for database.
-type Config struct {
-	Cache     int    // Memory allowance (MB) to use for caching trie nodes in memory
-	Journal   string // Journal of clean cache to survive node restarts
-	Preimages bool   // Flag whether the preimage of trie key is recorded
-
-	// Configs for experimental path-based scheme, not used yet.
-	Scheme       string // Disk scheme for reading/writing trie nodes, hash-based as default
-	StateHistory uint64 // Number of recent blocks to maintain state history for
-	DirtySize    int    // Maximum memory allowance (MB) for caching dirty nodes
-	ReadOnly     bool   // Flag whether the database is opened in read only mode.
-}
-
 // nodeBackend defines the methods needed to access/update trie nodes in
 // different state scheme. It's implemented by hashDatabase and snapDatabase.
 type nodeBackend interface {
 	// GetReader returns a reader for accessing all trie nodes with provided
 	// state root. Nil is returned in case the state is not available.
-	GetReader(root common.Hash) Reader
+	GetReader(root common.Hash) triedb.Reader
 
 	// Update performs a state transition from specified parent to root by committing
 	// dirty nodes provided in the nodeset.
@@ -81,7 +71,7 @@ type nodeBackend interface {
 // different types of nodeBackends as an entrypoint. It's responsible for all
 // interactions relevant with trie nodes and the node preimages.
 type Database struct {
-	config    *Config          // Configuration for trie database.
+	config    *triedb.Config   // Configuration for trie database.
 	diskdb    ethdb.Database   // Persistent database to store the snapshot
 	cleans    *fastcache.Cache // Megabytes permitted using for read caches
 	preimages *preimageStore   // The store for caching preimages
@@ -90,7 +80,7 @@ type Database struct {
 
 // prepare initializes the database with provided configs, but the
 // database backend is still left as nil.
-func prepare(diskdb ethdb.Database, config *Config) *Database {
+func prepare(diskdb ethdb.Database, config *triedb.Config) *Database {
 	var cleans *fastcache.Cache
 	if config != nil && config.Cache > 0 {
 		if config.Journal == "" {
@@ -113,14 +103,14 @@ func prepare(diskdb ethdb.Database, config *Config) *Database {
 
 // NewHashDatabase initializes the trie database with legacy hash-based scheme.
 func NewHashDatabase(diskdb ethdb.Database) *Database {
-	return NewDatabase(diskdb, &Config{Scheme: rawdb.HashScheme})
+	return NewDatabase(diskdb, &triedb.Config{Scheme: rawdb.HashScheme})
 }
 
 // NewDatabase initializes the trie database with provided configs.
-func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
+func NewDatabase(diskdb ethdb.Database, config *triedb.Config) *Database {
 	db := prepare(diskdb, config)
 	if config != nil && config.Scheme == rawdb.PathScheme {
-		db.backend = openSnapDatabase(diskdb, db.cleans, config)
+		db.backend = snap.OpenDatabase(diskdb, db.cleans, config)
 	} else {
 		db.backend = openHashDatabase(diskdb, db.cleans)
 	}
@@ -129,7 +119,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 
 // GetReader returns a reader for accessing all trie nodes with provided
 // state root. Nil is returned in case the state is not available.
-func (db *Database) GetReader(blockRoot common.Hash) Reader {
+func (db *Database) GetReader(blockRoot common.Hash) triedb.Reader {
 	return db.backend.GetReader(blockRoot)
 }
 
@@ -227,4 +217,60 @@ func (db *Database) SaveCachePeriodically(dir string, interval time.Duration, st
 			return
 		}
 	}
+}
+
+// Recover rollbacks the database to a specified historical point. The state is
+// supported as the rollback destination only if it's canonical state and the
+// corresponding trie histories are existent. It's only supported by snap database
+// and will return an error for others.
+func (db *Database) Recover(target common.Hash) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Recover(target)
+}
+
+// Recoverable returns the indicator if the specified state is enabled to be
+// recovered. It's only supported by snap database and will return an error
+// for others.
+func (db *Database) Recoverable(root common.Hash) (bool, error) {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return false, errors.New("not supported")
+	}
+	return snapDB.Recoverable(root), nil
+}
+
+// Reset wipes all available journal from the persistent database and discard
+// all caches and diff layers. Using the given root to create a new disk layer.
+// It's only supported by path-based database and will return an error for others.
+func (db *Database) Reset(root common.Hash) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Reset(root)
+}
+
+// Journal commits an entire diff hierarchy to disk into a single journal entry.
+// This is meant to be used during shutdown to persist the snapshot without
+// flattening everything down (bad for reorgs). It's only supported by path-based
+// database and will return an error for others.
+func (db *Database) Journal(root common.Hash) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Journal(root)
+}
+
+// SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).
+// It's only supported by path-based database and will return an error for others.
+func (db *Database) SetCacheSize(size int) error {
+	snapDB, ok := db.backend.(*snap.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.SetCacheSize(size)
 }

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snap
 
 import (
 	"bytes"
@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 )
 
 var (
@@ -52,6 +53,8 @@ var (
 	// errUnexpectedNode is returned if the requested node with specified path is
 	// not hash matched or marked as deleted.
 	errUnexpectedNode = errors.New("unexpected node")
+
+	emptyRoot = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 )
 
 // maxDiffLayerDepth is the maximum depth allowed for a diff layer in the
@@ -62,14 +65,14 @@ const maxDiffLayerDepth = 128
 // layers(disklayer, difflayer). This interface supports some additional methods
 // for internal usage.
 type snapshot interface {
-	Reader
+	triedb.Reader
 
 	// node retrieves the trie node associated with a particular trie node database
 	// key and the corresponding node hash. The returned node is in a wrapper through
 	// which callers can obtain the RLP-format or canonical node representation
 	// easily.
 	// No error will be returned if the node is not found.
-	node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error)
+	node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error)
 
 	// nodeByPath retrieves the RLP-encoded trie node blob with the provided trie
 	// identifier, hexary node path regardless what's the node hash.
@@ -107,7 +110,7 @@ type snapshot interface {
 	ID() uint64
 }
 
-// snapDatabase is a multiple-layered structure for maintaining in-memory trie
+// Database is a multiple-layered structure for maintaining in-memory trie
 // nodes. It consists of one persistent base layer backed by a key-value store,
 // on top of which arbitrarily many in-memory diff layers are topped. The memory
 // diffs can form a tree with branching, but the disk layer is singleton and
@@ -118,13 +121,13 @@ type snapshot interface {
 // At most one readable and writable snap database can be opened at the same time
 // in the whole system which ensures that only one database writer can operate
 // disk state. Unexpected open operations can cause the system to panic.
-type snapDatabase struct {
+type Database struct {
 	// readOnly is the flag whether the mutation is allowed to be applied.
 	// It will be set automatically when the database is journaled during
 	// the shutdown to reject all following unexpected mutations.
 	readOnly  bool                     // Indicator if database is opened in read only mode
 	dirtySize int                      // Memory allowance (in bytes) for caching dirty nodes
-	config    *Config                  // Configuration for database
+	config    *triedb.Config           // Configuration for database
 	diskdb    ethdb.Database           // Persistent storage for matured trie nodes
 	cleans    *fastcache.Cache         // GC friendly memory cache of clean node RLPs
 	tree      *layerTree               // The group for all known layers
@@ -132,11 +135,11 @@ type snapDatabase struct {
 	lock      sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 
-// openSnapDatabase attempts to load an already existing snapshot from a
+// OpenDatabase attempts to load an already existing snapshot from a
 // persistent key-value store (with a number of memory layers from a journal).
 // If the journal is not matched with the base persistent layer, all the
 // recorded diff layers are discarded.
-func openSnapDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config) *snapDatabase {
+func OpenDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *triedb.Config) *Database {
 	// Resolve settings from configuration
 	var dirtySize = defaultCacheSize
 	if config != nil && config.DirtySize != 0 {
@@ -144,7 +147,7 @@ func openSnapDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *Co
 	}
 	readOnly := config != nil && config.ReadOnly
 
-	db := &snapDatabase{
+	db := &Database{
 		readOnly:  readOnly,
 		dirtySize: dirtySize,
 		config:    config,
@@ -183,7 +186,7 @@ func openSnapDatabase(diskdb ethdb.Database, cleans *fastcache.Cache, config *Co
 }
 
 // GetReader retrieves a snapshot belonging to the given state root.
-func (db *snapDatabase) GetReader(root common.Hash) Reader {
+func (db *Database) GetReader(root common.Hash) triedb.Reader {
 	return db.tree.get(root)
 }
 
@@ -191,7 +194,7 @@ func (db *snapDatabase) GetReader(root common.Hash) Reader {
 // old parent. It is disallowed to insert a disk layer (the origin of all). Apart
 // from that this function will flatten the extra diff layers at bottom into disk
 // to only keep 128 diff layers in memory.
-func (db *snapDatabase) Update(root common.Hash, parentRoot common.Hash, nodes *MergedNodeSet) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, nodes *MergedNodeSet) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -214,7 +217,7 @@ func (db *snapDatabase) Update(root common.Hash, parentRoot common.Hash, nodes *
 // Commit traverses downwards the snapshot tree from a specified layer with the
 // provided state root and all the layers below are flattened downwards. It can
 // be used alone and mostly for test purposes.
-func (db *snapDatabase) Commit(root common.Hash, report bool) error {
+func (db *Database) Commit(root common.Hash, report bool) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -230,11 +233,11 @@ func (db *snapDatabase) Commit(root common.Hash, report bool) error {
 // This is meant to be used during shutdown to persist the snapshot without
 // flattening everything down (bad for reorgs). And this function will mark the
 // database as read-only to prevent all following mutation to disk.
-func (db *snapDatabase) Journal(root common.Hash) error {
+func (db *Database) Journal(root common.Hash) error {
 	// Retrieve the head snapshot to journal from var snap snapshot
 	snap := db.tree.get(root)
 	if snap == nil {
-		return fmt.Errorf("triedb snapshot [%#x] missing", root)
+		return fmt.Errorf("snap snapshot [%#x] missing", root)
 	}
 	// Run the journaling
 	db.lock.Lock()
@@ -268,14 +271,14 @@ func (db *snapDatabase) Journal(root common.Hash) error {
 
 	// Set the db in read only mode to reject all following mutations
 	db.readOnly = true
-	log.Info("Stored journal in triedb", "disk", diskroot, "size", common.StorageSize(journal.Len()))
+	log.Info("Stored journal in snap", "disk", diskroot, "size", common.StorageSize(journal.Len()))
 	return nil
 }
 
 // Reset rebuilds the snap database with the specified state from scratch.
 // If the target state is non-empty, then the stored state must be matched
 // with provided state root.
-func (db *snapDatabase) Reset(root common.Hash) error {
+func (db *Database) Reset(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -330,7 +333,7 @@ func (db *snapDatabase) Reset(root common.Hash) error {
 // Recover rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding trie histories are existent.
-func (db *snapDatabase) Recover(root common.Hash) error {
+func (db *Database) Recover(root common.Hash) error {
 	root = convertEmpty(root)
 	if !db.Recoverable(root) {
 		return errStateUnrecoverable
@@ -392,7 +395,7 @@ func (db *snapDatabase) Recover(root common.Hash) error {
 
 // Recoverable returns the indicator if the specified state
 // is recoverable.
-func (db *snapDatabase) Recoverable(root common.Hash) bool {
+func (db *Database) Recoverable(root common.Hash) bool {
 	// Ensure the requested state is a known state.
 	root = convertEmpty(root)
 	id, exist := rawdb.ReadStateLookup(db.diskdb, root)
@@ -421,7 +424,7 @@ func (db *snapDatabase) Recoverable(root common.Hash) bool {
 }
 
 // Close closes the trie database and the held freezer.
-func (db *snapDatabase) Close() error {
+func (db *Database) Close() error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -434,7 +437,7 @@ func (db *snapDatabase) Close() error {
 
 // Size returns the current storage size of the memory cache in front of the
 // persistent database layer.
-func (db *snapDatabase) Size() (size common.StorageSize) {
+func (db *Database) Size() (size common.StorageSize) {
 	db.tree.forEach(func(layer snapshot) {
 		if diff, ok := layer.(*diffLayer); ok {
 			size += common.StorageSize(diff.memory)
@@ -448,7 +451,7 @@ func (db *snapDatabase) Size() (size common.StorageSize) {
 
 // Initialized returns an indicator if the state data is already
 // initialized in path-based scheme.
-func (db *snapDatabase) Initialized(genesisRoot common.Hash) bool {
+func (db *Database) Initialized(genesisRoot common.Hash) bool {
 	var inited bool
 	db.tree.forEach(func(layer snapshot) {
 		if layer.Root() != emptyRoot {
@@ -459,7 +462,7 @@ func (db *snapDatabase) Initialized(genesisRoot common.Hash) bool {
 }
 
 // SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).
-func (db *snapDatabase) SetCacheSize(size int) error {
+func (db *Database) SetCacheSize(size int) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -468,62 +471,6 @@ func (db *snapDatabase) SetCacheSize(size int) error {
 }
 
 // Scheme returns the node scheme used in the database.
-func (db *snapDatabase) Scheme() string {
+func (db *Database) Scheme() string {
 	return rawdb.PathScheme
-}
-
-// Recover rollbacks the database to a specified historical point. The state is
-// supported as the rollback destination only if it's canonical state and the
-// corresponding trie histories are existent. It's only supported by snap database
-// and will return an error for others.
-func (db *Database) Recover(target common.Hash) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.Recover(target)
-}
-
-// Recoverable returns the indicator if the specified state is enabled to be
-// recovered. It's only supported by snap database and will return an error
-// for others.
-func (db *Database) Recoverable(root common.Hash) (bool, error) {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return false, errors.New("not supported")
-	}
-	return snapDB.Recoverable(root), nil
-}
-
-// Reset wipes all available journal from the persistent database and discard
-// all caches and diff layers. Using the given root to create a new disk layer.
-// It's only supported by path-based database and will return an error for others.
-func (db *Database) Reset(root common.Hash) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.Reset(root)
-}
-
-// Journal commits an entire diff hierarchy to disk into a single journal entry.
-// This is meant to be used during shutdown to persist the snapshot without
-// flattening everything down (bad for reorgs). It's only supported by path-based
-// database and will return an error for others.
-func (db *Database) Journal(root common.Hash) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.Journal(root)
-}
-
-// SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).
-// It's only supported by path-based database and will return an error for others.
-func (db *Database) SetCacheSize(size int) error {
-	snapDB, ok := db.backend.(*snapDatabase)
-	if !ok {
-		return errors.New("not supported")
-	}
-	return snapDB.SetCacheSize(size)
 }

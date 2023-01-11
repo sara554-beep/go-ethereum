@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snap
 
 import (
 	"bytes"
@@ -47,7 +47,7 @@ func randomNode() *memoryNode {
 
 func emptyLayer() *diskLayer {
 	return &diskLayer{
-		db:    openSnapDatabase(rawdb.NewMemoryDatabase(), nil, nil),
+		db:    OpenDatabase(rawdb.NewMemoryDatabase(), nil, nil),
 		dirty: newDiskcache(defaultCacheSize, nil, 0),
 	}
 }

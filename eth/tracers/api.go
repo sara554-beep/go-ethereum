@@ -55,7 +55,7 @@ const (
 	// trace.
 	defaultTraceReexec = uint64(128)
 
-	// defaultTracechainMemLimit is the size of the triedb, at which traceChain
+	// defaultTracechainMemLimit is the size of the snap, at which traceChain
 	// switches over and tries to use a disk-backed database instead of building
 	// on top of memory.
 	// For non-archive nodes, this limit _will_ be overblown, as disk-backed tries

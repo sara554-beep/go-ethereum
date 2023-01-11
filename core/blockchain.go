@@ -71,7 +71,7 @@ var (
 	snapshotStorageReadTimer = metrics.NewRegisteredTimer("chain/snapshot/storage/reads", nil)
 	snapshotCommitTimer      = metrics.NewRegisteredTimer("chain/snapshot/commits", nil)
 
-	triedbCommitTimer = metrics.NewRegisteredTimer("chain/triedb/commits", nil)
+	triedbCommitTimer = metrics.NewRegisteredTimer("chain/snap/commits", nil)
 
 	blockInsertTimer     = metrics.NewRegisteredTimer("chain/inserts", nil)
 	blockValidationTimer = metrics.NewRegisteredTimer("chain/validation", nil)

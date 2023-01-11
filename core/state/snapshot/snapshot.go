@@ -130,7 +130,7 @@ type snapshot interface {
 	// the specified data items.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer
+	Update(blockRoot common.Hash, destructs map[common.Hash]struct{}, accounts AccountData, storage StorageData) *diffLayer
 
 	// Journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the snapshot without
@@ -340,7 +340,7 @@ func (t *Tree) Snapshots(root common.Hash, limits int, nodisk bool) []Snapshot {
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
-func (t *Tree) Update(blockRoot common.Hash, parentRoot common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) error {
+func (t *Tree) Update(blockRoot common.Hash, parentRoot common.Hash, destructs map[common.Hash]struct{}, accounts AccountData, storage StorageData) error {
 	// Reject noop updates to avoid self-loops in the snapshot tree. This is a
 	// special case that can only happen for Clique networks where empty blocks
 	// don't modify the state (0 block subsidy).
@@ -580,12 +580,12 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 			continue
 		}
 		// Push the account to disk
-		rawdb.WriteAccountSnapshot(batch, hash, data)
-		base.cache.Set(hash[:], data)
-		snapshotCleanAccountWriteMeter.Mark(int64(len(data)))
+		rawdb.WriteAccountSnapshot(batch, hash, data.Value)
+		base.cache.Set(hash[:], data.Value)
+		snapshotCleanAccountWriteMeter.Mark(int64(len(data.Value)))
 
 		snapshotFlushAccountItemMeter.Mark(1)
-		snapshotFlushAccountSizeMeter.Mark(int64(len(data)))
+		snapshotFlushAccountSizeMeter.Mark(int64(len(data.Value)))
 
 		// Ensure we don't write too much data blindly. It's ok to flush, the
 		// root will go missing in case of a crash and we'll detect and regen
@@ -611,16 +611,16 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 			if midAccount && bytes.Compare(storageHash[:], base.genMarker[common.HashLength:]) > 0 {
 				continue
 			}
-			if len(data) > 0 {
-				rawdb.WriteStorageSnapshot(batch, accountHash, storageHash, data)
-				base.cache.Set(append(accountHash[:], storageHash[:]...), data)
-				snapshotCleanStorageWriteMeter.Mark(int64(len(data)))
+			if len(data.Value) > 0 {
+				rawdb.WriteStorageSnapshot(batch, accountHash, storageHash, data.Value)
+				base.cache.Set(append(accountHash[:], storageHash[:]...), data.Value)
+				snapshotCleanStorageWriteMeter.Mark(int64(len(data.Value)))
 			} else {
 				rawdb.DeleteStorageSnapshot(batch, accountHash, storageHash)
 				base.cache.Set(append(accountHash[:], storageHash[:]...), nil)
 			}
 			snapshotFlushStorageItemMeter.Mark(1)
-			snapshotFlushStorageSizeMeter.Mark(int64(len(data)))
+			snapshotFlushStorageSizeMeter.Mark(int64(len(data.Value)))
 		}
 	}
 	// Update the snapshot block marker and write any remainder data

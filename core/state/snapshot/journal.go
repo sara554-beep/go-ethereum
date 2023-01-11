@@ -57,13 +57,15 @@ type journalDestruct struct {
 type journalAccount struct {
 	Hash common.Hash
 	Blob []byte
+	Prev []byte
 }
 
 // journalStorage is an account's storage map in a diffLayer's disk journal.
 type journalStorage struct {
-	Hash common.Hash
-	Keys []common.Hash
-	Vals [][]byte
+	Hash  common.Hash
+	Keys  []common.Hash
+	Vals  [][]byte
+	Prevs [][]byte
 }
 
 func ParseGeneratorStatus(generatorBlob []byte) string {
@@ -109,7 +111,7 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, jou
 	// is not matched with disk layer; or the it's the legacy-format journal,
 	// etc.), we just discard all diffs and try to recover them later.
 	var current snapshot = base
-	err := iterateJournal(db, func(parent common.Hash, root common.Hash, destructSet map[common.Hash]struct{}, accountData map[common.Hash][]byte, storageData map[common.Hash]map[common.Hash][]byte) error {
+	err := iterateJournal(db, func(parent common.Hash, root common.Hash, destructSet map[common.Hash]struct{}, accountData AccountData, storageData StorageData) error {
 		current = newDiffLayer(current, root, destructSet, accountData, storageData)
 		return nil
 	})
@@ -246,8 +248,8 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) (common.Hash, error) {
 		return common.Hash{}, err
 	}
 	accounts := make([]journalAccount, 0, len(dl.accountData))
-	for hash, blob := range dl.accountData {
-		accounts = append(accounts, journalAccount{Hash: hash, Blob: blob})
+	for hash, elem := range dl.accountData {
+		accounts = append(accounts, journalAccount{Hash: hash, Blob: elem.Value, Prev: elem.Prev})
 	}
 	if err := rlp.Encode(buffer, accounts); err != nil {
 		return common.Hash{}, err
@@ -256,11 +258,13 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) (common.Hash, error) {
 	for hash, slots := range dl.storageData {
 		keys := make([]common.Hash, 0, len(slots))
 		vals := make([][]byte, 0, len(slots))
-		for key, val := range slots {
+		prevs := make([][]byte, 0, len(slots))
+		for key, elem := range slots {
 			keys = append(keys, key)
-			vals = append(vals, val)
+			vals = append(vals, elem.Value)
+			prevs = append(prevs, elem.Prev)
 		}
-		storage = append(storage, journalStorage{Hash: hash, Keys: keys, Vals: vals})
+		storage = append(storage, journalStorage{Hash: hash, Keys: keys, Vals: vals, Prevs: prevs})
 	}
 	if err := rlp.Encode(buffer, storage); err != nil {
 		return common.Hash{}, err
@@ -271,7 +275,7 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) (common.Hash, error) {
 
 // journalCallback is a function which is invoked by iterateJournal, every
 // time a difflayer is loaded from disk.
-type journalCallback = func(parent common.Hash, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) error
+type journalCallback = func(parent common.Hash, root common.Hash, destructs map[common.Hash]struct{}, accounts AccountData, storage StorageData) error
 
 // iterateJournal iterates through the journalled difflayers, loading them from
 // the database, and invoking the callback for each loaded layer.
@@ -314,8 +318,8 @@ func iterateJournal(db ethdb.KeyValueReader, callback journalCallback) error {
 			accounts    []journalAccount
 			storage     []journalStorage
 			destructSet = make(map[common.Hash]struct{})
-			accountData = make(map[common.Hash][]byte)
-			storageData = make(map[common.Hash]map[common.Hash][]byte)
+			accountData = NewAccountData()
+			storageData = NewStorageData()
 		)
 		// Read the next diff journal entry
 		if err := r.Decode(&root); err != nil {
@@ -339,18 +343,30 @@ func iterateJournal(db ethdb.KeyValueReader, callback journalCallback) error {
 		}
 		for _, entry := range accounts {
 			if len(entry.Blob) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
-				accountData[entry.Hash] = entry.Blob
+				accountData[entry.Hash] = StateWithPrev{
+					Value: entry.Blob,
+					Prev:  entry.Prev,
+				}
 			} else {
-				accountData[entry.Hash] = nil
+				accountData[entry.Hash] = StateWithPrev{
+					Value: nil,
+					Prev:  entry.Prev,
+				}
 			}
 		}
 		for _, entry := range storage {
-			slots := make(map[common.Hash][]byte)
+			slots := make(map[common.Hash]StateWithPrev)
 			for i, key := range entry.Keys {
 				if len(entry.Vals[i]) > 0 { // RLP loses nil-ness, but `[]byte{}` is not a valid item, so reinterpret that
-					slots[key] = entry.Vals[i]
+					slots[key] = StateWithPrev{
+						Value: entry.Vals[i],
+						Prev:  entry.Prevs[i],
+					}
 				} else {
-					slots[key] = nil
+					slots[key] = StateWithPrev{
+						Value: nil,
+						Prev:  entry.Prevs[i],
+					}
 				}
 			}
 			storageData[entry.Hash] = slots

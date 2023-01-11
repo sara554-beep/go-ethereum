@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snap
 
 import (
 	"bytes"
@@ -54,7 +54,7 @@ type journalNodes struct {
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
-func (db *snapDatabase) loadJournal(diskRoot common.Hash) (snapshot, error) {
+func (db *Database) loadJournal(diskRoot common.Hash) (snapshot, error) {
 	journal := rawdb.ReadTrieJournal(db.diskdb)
 	if len(journal) == 0 {
 		return nil, errMissJournal
@@ -96,7 +96,7 @@ func (db *snapDatabase) loadJournal(diskRoot common.Hash) (snapshot, error) {
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func (db *snapDatabase) loadSnapshot() snapshot {
+func (db *Database) loadSnapshot() snapshot {
 	// Retrieve the root node of in-disk state.
 	_, root := rawdb.ReadAccountTrieNode(db.diskdb, nil)
 	if root == (common.Hash{}) {
@@ -119,7 +119,7 @@ func (db *snapDatabase) loadSnapshot() snapshot {
 
 // loadDiskLayer reads the binary blob from the snapshot journal, reconstructing a new
 // disk layer on it.
-func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
+func (db *Database) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 	// Resolve disk layer root
 	var root common.Hash
 	if err := r.Decode(&root); err != nil {
@@ -162,7 +162,7 @@ func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 
 // loadDiffLayer reads the next sections of a snapshot journal, reconstructing a new
 // diff and verifying that it can be linked to the requested parent.
-func (db *snapDatabase) loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
+func (db *Database) loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 	// Read the next diff journal entry
 	var root common.Hash
 	if err := r.Decode(&root); err != nil {
@@ -211,7 +211,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	// Step one, write the disk root into the journal.
 	diskroot := dl.root
 	if diskroot == (common.Hash{}) {
-		return errors.New("invalid disk root in triedb")
+		return errors.New("invalid disk root in snap")
 	}
 	if err := rlp.Encode(buffer, diskroot); err != nil {
 		return err

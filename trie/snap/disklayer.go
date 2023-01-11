@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snap
 
 import (
 	"fmt"
@@ -27,16 +27,16 @@ import (
 
 // diskLayer is a low level persistent snapshot built on top of a key-value store.
 type diskLayer struct {
-	root  common.Hash   // Immutable, root hash of the base snapshot
-	id    uint64        // Immutable, corresponding state id
-	db    *snapDatabase // Path-based trie database
-	dirty *diskcache    // Dirty node cache to aggregate writes and temporary cache.
-	stale bool          // Signals that the layer became stale (state progressed)
-	lock  sync.RWMutex  // Lock used to protect stale flag
+	root  common.Hash  // Immutable, root hash of the base snapshot
+	id    uint64       // Immutable, corresponding state id
+	db    *Database    // Path-based trie database
+	dirty *diskcache   // Dirty node cache to aggregate writes and temporary cache.
+	stale bool         // Signals that the layer became stale (state progressed)
+	lock  sync.RWMutex // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, id uint64, db *snapDatabase, dirty *diskcache) *diskLayer {
+func newDiskLayer(root common.Hash, id uint64, db *Database, dirty *diskcache) *diskLayer {
 	return &diskLayer{
 		root:  root,
 		id:    id,
@@ -75,7 +75,7 @@ func (dl *diskLayer) MarkStale() {
 	defer dl.lock.Unlock()
 
 	if dl.stale {
-		panic("triedb disk layer is stale") // we've committed into the same base from two children, boom
+		panic("snap disk layer is stale") // we've committed into the same base from two children, boom
 	}
 	dl.stale = true
 }
@@ -83,7 +83,7 @@ func (dl *diskLayer) MarkStale() {
 // node retrieves the node with provided storage key and node hash. The returned
 // node is in a wrapper through which callers can obtain the RLP-format or canonical
 // node representation easily. No error will be returned if node is not found.
-func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error) {
+func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -102,7 +102,7 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 		triedbDirtyHitMeter.Mark(1)
 		triedbDirtyNodeHitDepthHist.Update(int64(depth))
 		triedbDirtyReadMeter.Mark(int64(n.size))
-		return n, nil
+		return n.rlp(), nil
 	}
 	// If we're in the disk layer, all diff layers missed
 	triedbDirtyMissMeter.Mark(1)
@@ -112,7 +112,7 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 		if blob := dl.db.cleans.Get(nil, hash.Bytes()); len(blob) > 0 {
 			triedbCleanHitMeter.Mark(1)
 			triedbCleanReadMeter.Mark(int64(len(blob)))
-			return &memoryNode{node: rawNode(blob), hash: hash, size: uint16(len(blob))}, nil
+			return blob, nil
 		}
 		triedbCleanMissMeter.Mark(1)
 	}
@@ -136,18 +136,7 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	if len(nBlob) == 0 {
 		return nil, nil
 	}
-	return &memoryNode{node: rawNode(nBlob), hash: hash, size: uint16(len(nBlob))}, nil
-}
-
-// Node retrieves the trie node with the provided trie identifier, node path
-// and the corresponding node hash. No error will be returned if the node is
-// not found.
-func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
-	n, err := dl.node(owner, path, hash, 0)
-	if err != nil || n == nil {
-		return nil, err
-	}
-	return n.obj(), nil
+	return nBlob, nil
 }
 
 // NodeBlob retrieves the RLP-encoded trie node blob with the provided trie
@@ -158,7 +147,7 @@ func (dl *diskLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) 
 	if err != nil || n == nil {
 		return nil, err
 	}
-	return n.rlp(), nil
+	return n, nil
 }
 
 // nodeByPath retrieves the RLP-encoded trie node blob with the provided trie

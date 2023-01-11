@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snap
 
 import (
 	"fmt"
@@ -101,7 +101,7 @@ func (dl *diffLayer) MarkStale() {
 	defer dl.lock.Unlock()
 
 	if dl.stale {
-		panic("triedb diff layer is stale")
+		panic("snap diff layer is stale")
 	}
 	dl.stale = true
 }
@@ -109,7 +109,7 @@ func (dl *diffLayer) MarkStale() {
 // node retrieves the node with provided storage key and node hash. The returned
 // node is in a wrapper through which callers can obtain the RLP-format or canonical
 // node representation easily. No error will be returned if node is not found.
-func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error) {
+func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
@@ -133,22 +133,11 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 			triedbDirtyHitMeter.Mark(1)
 			triedbDirtyNodeHitDepthHist.Update(int64(depth))
 			triedbDirtyReadMeter.Mark(int64(n.size))
-			return n.unwrap(), nil
+			return n.rlp(), nil
 		}
 	}
 	// Trie node unknown to this layer, resolve from parent
 	return dl.parent.node(owner, path, hash, depth+1)
-}
-
-// Node retrieves the trie node with the provided trie identifier, node path
-// and the corresponding node hash. No error will be returned if the node is
-// not found.
-func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
-	n, err := dl.node(owner, path, hash, 0)
-	if err != nil || n == nil {
-		return nil, err
-	}
-	return n.obj(), nil
 }
 
 // NodeBlob retrieves the RLP-encoded trie node blob with the provided trie
@@ -159,7 +148,7 @@ func (dl *diffLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) 
 	if err != nil || n == nil {
 		return nil, err
 	}
-	return n.rlp(), nil
+	return n, nil
 }
 
 // nodeByPath retrieves the RLP-encoded trie node blob with the provided trie

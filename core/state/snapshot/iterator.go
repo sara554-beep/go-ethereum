@@ -141,7 +141,7 @@ func (it *diffAccountIterator) Hash() common.Hash {
 // Note the returned account is not a copy, please don't modify it.
 func (it *diffAccountIterator) Account() []byte {
 	it.layer.lock.RLock()
-	blob, ok := it.layer.accountData[it.curHash]
+	elem, ok := it.layer.accountData[it.curHash]
 	if !ok {
 		if _, ok := it.layer.destructSet[it.curHash]; ok {
 			it.layer.lock.RUnlock()
@@ -153,7 +153,7 @@ func (it *diffAccountIterator) Account() []byte {
 	if it.layer.Stale() {
 		it.fail, it.keys = ErrSnapshotStale, nil
 	}
-	return blob
+	return elem.Value
 }
 
 // Release is a noop for diff account iterators as there are no held resources.
@@ -313,7 +313,7 @@ func (it *diffStorageIterator) Slot() []byte {
 		panic(fmt.Sprintf("iterator referenced non-existent account storage: %x", it.account))
 	}
 	// Storage slot might be nil(deleted), but it must exist
-	blob, ok := storage[it.curHash]
+	elem, ok := storage[it.curHash]
 	if !ok {
 		panic(fmt.Sprintf("iterator referenced non-existent storage slot: %x", it.curHash))
 	}
@@ -321,7 +321,7 @@ func (it *diffStorageIterator) Slot() []byte {
 	if it.layer.Stale() {
 		it.fail, it.keys = ErrSnapshotStale, nil
 	}
-	return blob
+	return elem.Value
 }
 
 // Release is a noop for diff account iterators as there are no held resources.

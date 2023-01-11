@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snap
 
 import (
 	"bytes"
@@ -149,7 +149,7 @@ func TestDatabaseRollback(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.nodeDb.backend.(*Database)
 		dl    = db.tree.bottom().(*diskLayer)
 		index int
 	)
@@ -220,7 +220,7 @@ func TestDatabaseBatchRollback(t *testing.T) {
 
 	var (
 		env = fillDB(t)
-		db  = env.nodeDb.backend.(*snapDatabase)
+		db  = env.nodeDb.backend.(*Database)
 	)
 	// Revert the db to historical point with all trie histories available
 	if err := env.nodeDb.Recover(common.Hash{}); err != nil {
@@ -271,7 +271,7 @@ func TestDatabaseRecoverable(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.nodeDb.backend.(*Database)
 		dl    = db.tree.bottom()
 		index int
 	)
@@ -310,12 +310,12 @@ func TestJournal(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.nodeDb.backend.(*Database)
 		dl    = db.tree.bottom()
 		index int
 	)
 	if err := env.nodeDb.Journal(env.roots[len(env.roots)-1]); err != nil {
-		t.Error("Failed to journal triedb", "err", err)
+		t.Error("Failed to journal snap", "err", err)
 	}
 	env.nodeDb.Close()
 
@@ -351,7 +351,7 @@ func TestReset(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.nodeDb.backend.(*Database)
 		dl    = db.tree.bottom().(*diskLayer)
 		index int
 	)
@@ -398,7 +398,7 @@ func TestCommit(t *testing.T) {
 
 	var (
 		env = fillDB(t)
-		db  = env.nodeDb.backend.(*snapDatabase)
+		db  = env.nodeDb.backend.(*Database)
 	)
 	if err := db.Commit(env.roots[len(env.roots)-1], false); err != nil {
 		t.Fatalf("Failed to cap database %v", err)

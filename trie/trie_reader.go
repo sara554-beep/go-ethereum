@@ -22,11 +22,6 @@ import (
 
 // Reader wraps the Node and NodeBlob method of a backing trie store.
 type Reader interface {
-	// Node retrieves the trie node with the provided trie identifier, hexary
-	// node path and the corresponding node hash.
-	// No error will be returned if the node is not found.
-	Node(owner common.Hash, path []byte, hash common.Hash) (node, error)
-
 	// NodeBlob retrieves the RLP-encoded trie node blob with the provided trie
 	// identifier, hexary node path and the corresponding node hash.
 	// No error will be returned if the node is not found.
@@ -54,26 +49,6 @@ func newTrieReader(stateRoot, owner common.Hash, db NodeReader) (*trieReader, er
 // should be forbidden and returns the MissingNodeError.
 func newEmptyReader() *trieReader {
 	return &trieReader{}
-}
-
-// node retrieves the trie node with the provided trie node information.
-// An MissingNodeError will be returned in case the node is not found or
-// any error is encountered.
-func (r *trieReader) node(path []byte, hash common.Hash) (node, error) {
-	// Perform the logics in tests for preventing trie node access.
-	if r.banned != nil {
-		if _, ok := r.banned[string(path)]; ok {
-			return nil, &MissingNodeError{Owner: r.owner, NodeHash: hash, Path: path}
-		}
-	}
-	if r.reader == nil {
-		return nil, &MissingNodeError{Owner: r.owner, NodeHash: hash, Path: path}
-	}
-	node, err := r.reader.Node(r.owner, path, hash)
-	if err != nil || node == nil {
-		return nil, &MissingNodeError{Owner: r.owner, NodeHash: hash, Path: path, err: err}
-	}
-	return node, nil
 }
 
 // node retrieves the rlp-encoded trie node with the provided trie node

@@ -14,11 +14,12 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package trie
+package snap
 
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -46,7 +47,7 @@ func newLayerTree(head snapshot) *layerTree {
 }
 
 // get retrieves a snapshot belonging to the given block root.
-func (tree *layerTree) get(blockRoot common.Hash) Reader {
+func (tree *layerTree) get(blockRoot common.Hash) triedb.Reader {
 	tree.lock.RLock()
 	defer tree.lock.RUnlock()
 
@@ -99,7 +100,7 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, set *Merged
 	}
 	parent := tree.get(parentRoot)
 	if parent == nil {
-		return fmt.Errorf("triedb parent [%#x] snapshot missing", parentRoot)
+		return fmt.Errorf("snap parent [%#x] snapshot missing", parentRoot)
 	}
 	nodes, err := simplify(set, parent.(snapshot))
 	if err != nil {
@@ -123,11 +124,11 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 	root = convertEmpty(root)
 	snap := tree.get(root)
 	if snap == nil {
-		return fmt.Errorf("triedb snapshot [%#x] missing", root)
+		return fmt.Errorf("snap snapshot [%#x] missing", root)
 	}
 	diff, ok := snap.(*diffLayer)
 	if !ok {
-		return fmt.Errorf("triedb snapshot [%#x] is disk layer", root)
+		return fmt.Errorf("snap snapshot [%#x] is disk layer", root)
 	}
 	tree.lock.Lock()
 	defer tree.lock.Unlock()
@@ -174,7 +175,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		diff.lock.Unlock()
 
 	default:
-		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
+		panic(fmt.Sprintf("unknown data layer in snap: %T", parent))
 	}
 	// Remove any layer that is stale or links into a stale layer
 	children := make(map[common.Hash][]common.Hash)
