@@ -112,11 +112,11 @@ type diffLayer struct {
 	// happen that in the tx_1, account A is self-destructed while in the tx_2
 	// it's recreated. But we still need this marker to indicate the "old" A is
 	// deleted, all data in other set belongs to the "new" A.
-	destructSet map[common.Hash]struct{}               // Keyed markers for deleted (and potentially) recreated accounts
-	accountList []common.Hash                          // List of account for iteration. If it exists, it's sorted, otherwise it's nil
-	accountData map[common.Hash][]byte                 // Keyed accounts for direct retrieval (nil means deleted)
-	storageList map[common.Hash][]common.Hash          // List of storage slots for iterated retrievals, one per account. Any existing lists are sorted if non-nil
-	storageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
+	destructSet map[common.Hash]struct{}      // Keyed markers for deleted (and potentially) recreated accounts
+	accountList []common.Hash                 // List of account for iteration. If it exists, it's sorted, otherwise it's nil
+	accountData AccountData                   // Keyed accounts for direct retrieval
+	storageList map[common.Hash][]common.Hash // List of storage slots for iterated retrievals, one per account. Any existing lists are sorted if non-nil
+	storageData StorageData                   // Keyed storage slots for direct retrieval. one per account
 
 	diffed *bloomfilter.Filter // Bloom filter tracking all the diffed items up to the disk layer
 
@@ -168,7 +168,7 @@ func (h storageBloomHasher) Sum64() uint64 {
 
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
-func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer {
+func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]struct{}, accounts AccountData, storage StorageData) *diffLayer {
 	// Create the new layer with some pre-allocated data segments
 	dl := &diffLayer{
 		parent:      parent,
@@ -187,22 +187,22 @@ func newDiffLayer(parent snapshot, root common.Hash, destructs map[common.Hash]s
 		panic("unknown parent type")
 	}
 	// Sanity check that accounts or storage slots are never nil
-	for accountHash, blob := range accounts {
-		if blob == nil {
+	for accountHash, elem := range accounts {
+		if elem.Value == nil {
 			panic(fmt.Sprintf("account %#x nil", accountHash))
 		}
 		// Determine memory size and track the dirty writes
-		dl.memory += uint64(common.HashLength + len(blob))
-		snapshotDirtyAccountWriteMeter.Mark(int64(len(blob)))
+		dl.memory += uint64(common.HashLength + elem.size())
+		snapshotDirtyAccountWriteMeter.Mark(int64(len(elem.Value)))
 	}
 	for accountHash, slots := range storage {
 		if slots == nil {
 			panic(fmt.Sprintf("storage %#x nil", accountHash))
 		}
 		// Determine memory size and track the dirty writes
-		for _, data := range slots {
-			dl.memory += uint64(common.HashLength + len(data))
-			snapshotDirtyStorageWriteMeter.Mark(int64(len(data)))
+		for _, elem := range slots {
+			dl.memory += uint64(common.HashLength + elem.size())
+			snapshotDirtyStorageWriteMeter.Mark(int64(len(elem.Value)))
 		}
 	}
 	dl.memory += uint64(len(destructs) * common.HashLength)
@@ -331,9 +331,9 @@ func (dl *diffLayer) accountRLP(hash common.Hash, depth int) ([]byte, error) {
 	if data, ok := dl.accountData[hash]; ok {
 		snapshotDirtyAccountHitMeter.Mark(1)
 		snapshotDirtyAccountHitDepthHist.Update(int64(depth))
-		snapshotDirtyAccountReadMeter.Mark(int64(len(data)))
+		snapshotDirtyAccountReadMeter.Mark(int64(len(data.Value)))
 		snapshotBloomAccountTrueHitMeter.Mark(1)
-		return data, nil
+		return data.Value, nil
 	}
 	// If the account is known locally, but deleted, return it
 	if _, ok := dl.destructSet[hash]; ok {
@@ -398,13 +398,13 @@ func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([
 		if data, ok := storage[storageHash]; ok {
 			snapshotDirtyStorageHitMeter.Mark(1)
 			snapshotDirtyStorageHitDepthHist.Update(int64(depth))
-			if n := len(data); n > 0 {
+			if n := len(data.Value); n > 0 {
 				snapshotDirtyStorageReadMeter.Mark(int64(n))
 			} else {
 				snapshotDirtyStorageInexMeter.Mark(1)
 			}
 			snapshotBloomStorageTrueHitMeter.Mark(1)
-			return data, nil
+			return data.Value, nil
 		}
 	}
 	// If the account is known locally, but deleted, return an empty slot
@@ -426,7 +426,7 @@ func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([
 
 // Update creates a new layer on top of the existing snapshot diff tree with
 // the specified data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storage map[common.Hash]map[common.Hash][]byte) *diffLayer {
+func (dl *diffLayer) Update(blockRoot common.Hash, destructs map[common.Hash]struct{}, accounts AccountData, storage StorageData) *diffLayer {
 	return newDiffLayer(dl, blockRoot, destructs, accounts, storage)
 }
 

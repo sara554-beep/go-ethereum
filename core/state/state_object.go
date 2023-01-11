@@ -19,6 +19,7 @@ package state
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"io"
 	"math/big"
 	"time"
@@ -293,7 +294,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 	}
 	// The snapshot storage map for the object
 	var (
-		storage map[common.Hash][]byte
+		storage map[common.Hash]snapshot.StateWithPrev
 		hasher  = s.db.hasher
 	)
 	tr, err := s.getTrie(db)
@@ -307,6 +308,10 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		// Skip noop changes, persist actual changes
 		if value == s.originStorage[key] {
 			continue
+		}
+		prev := s.originStorage[key].Bytes()
+		if _, ok := s.db.stateObjectsDestruct[s.address]; ok {
+			// TODO
 		}
 		s.originStorage[key] = value
 
@@ -331,11 +336,14 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 			if storage == nil {
 				// Retrieve the old storage map, if available, create a new one otherwise
 				if storage = s.db.snapStorage[s.addrHash]; storage == nil {
-					storage = make(map[common.Hash][]byte)
+					storage = make(map[common.Hash]snapshot.StateWithPrev)
 					s.db.snapStorage[s.addrHash] = storage
 				}
 			}
-			storage[crypto.HashData(hasher, key[:])] = v // v will be nil if it's deleted
+			storage[crypto.HashData(hasher, key[:])] = snapshot.StateWithPrev{
+				Value: v, //  v will be nil if it's deleted
+				Prev:  prev,
+			}
 		}
 		usedStorage = append(usedStorage, common.CopyBytes(key[:])) // Copy needed for closure
 	}

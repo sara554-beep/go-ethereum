@@ -74,11 +74,12 @@ type StateDB struct {
 
 	snaps        *snapshot.Tree
 	snap         snapshot.Snapshot
-	snapAccounts map[common.Hash][]byte
-	snapStorage  map[common.Hash]map[common.Hash][]byte
+	snapAccounts snapshot.AccountData
+	snapStorage  snapshot.StorageData
 
 	// This map holds 'live' objects, which will get modified while processing a state transition.
 	stateObjects         map[common.Address]*stateObject
+	stateObjectOrigin    map[common.Address][]byte   // State objects original rlp-encoded values
 	stateObjectsPending  map[common.Address]struct{} // State objects finalized but not yet written to the trie
 	stateObjectsDirty    map[common.Address]struct{} // State objects modified in the current execution
 	stateObjectsDestruct map[common.Address]struct{} // State objects destructed in the block
@@ -145,6 +146,7 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 		originalRoot:         root,
 		snaps:                snaps,
 		stateObjects:         make(map[common.Address]*stateObject),
+		stateObjectOrigin:    make(map[common.Address][]byte),
 		stateObjectsPending:  make(map[common.Address]struct{}),
 		stateObjectsDirty:    make(map[common.Address]struct{}),
 		stateObjectsDestruct: make(map[common.Address]struct{}),
@@ -157,8 +159,8 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 	}
 	if sdb.snaps != nil {
 		if sdb.snap = sdb.snaps.Snapshot(root); sdb.snap != nil {
-			sdb.snapAccounts = make(map[common.Hash][]byte)
-			sdb.snapStorage = make(map[common.Hash]map[common.Hash][]byte)
+			sdb.snapAccounts = snapshot.NewAccountData()
+			sdb.snapStorage = snapshot.NewStorageData()
 		}
 	}
 	return sdb, nil
@@ -526,7 +528,10 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	// enough to track account updates at commit time, deletions need tracking
 	// at transaction boundary level to ensure we capture state clearing.
 	if s.snap != nil {
-		s.snapAccounts[obj.addrHash] = snapshot.SlimAccountRLP(obj.data.Nonce, obj.data.Balance, obj.data.Root, obj.data.CodeHash)
+		s.snapAccounts[obj.addrHash] = snapshot.StateWithPrev{
+			Value: snapshot.SlimAccountRLP(obj.data.Nonce, obj.data.Balance, obj.data.Root, obj.data.CodeHash),
+			Prev:  s.stateObjectOrigin[obj.address],
+		}
 	}
 }
 
@@ -607,6 +612,14 @@ func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 	// Insert into the live set
 	obj := newObject(s, addr, *data)
 	s.setStateObject(obj)
+
+	// Track the original value of accessed accounts.
+	// It might be possible accounts are get suicided and then resurrected
+	// in the same block. But the initial version account in disk must be
+	// loaded and tracked here.
+	if s.stateObjectOrigin[addr] == nil {
+		s.stateObjectOrigin[addr] = snapshot.SlimAccountRLP(obj.data.Nonce, obj.data.Balance, obj.data.Root, obj.data.CodeHash)
+	}
 	return obj
 }
 
@@ -786,20 +799,8 @@ func (s *StateDB) Copy() *StateDB {
 		// and force the miner to operate trie-backed only
 		state.snaps = s.snaps
 		state.snap = s.snap
-
-		// deep copy needed
-		state.snapAccounts = make(map[common.Hash][]byte)
-		for k, v := range s.snapAccounts {
-			state.snapAccounts[k] = v
-		}
-		state.snapStorage = make(map[common.Hash]map[common.Hash][]byte)
-		for k, v := range s.snapStorage {
-			temp := make(map[common.Hash][]byte)
-			for kk, vv := range v {
-				temp[kk] = vv
-			}
-			state.snapStorage[k] = temp
-		}
+		state.snapAccounts = s.snapAccounts.Copy()
+		state.snapStorage = s.snapStorage.Copy()
 	}
 	return state
 }
