@@ -54,6 +54,9 @@ var (
 	// SnapshotRootKey tracks the hash of the last snapshot.
 	SnapshotRootKey = []byte("SnapshotRoot")
 
+	// SnapshotIDKey tracks the id of the last snapshot.
+	SnapshotIDKey = []byte("SnapshotID")
+
 	// snapshotJournalKey tracks the in-memory diff layers across restarts.
 	snapshotJournalKey = []byte("SnapshotJournal")
 
@@ -99,6 +102,9 @@ var (
 	SnapshotStoragePrefix = []byte("o") // SnapshotStoragePrefix + account hash + storage hash -> storage trie value
 	CodePrefix            = []byte("c") // CodePrefix + code hash -> account code
 	skeletonHeaderPrefix  = []byte("S") // skeletonHeaderPrefix + num (uint64 big endian) -> header
+
+	AccountIndexPrefix = []byte("P") // AccountIndexPrefix + accountHash -> numbers
+	StorageIndexPrefix = []byte("Q") // StorageIndexPrefix + accountHash + storageHash -> numbers
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -191,6 +197,16 @@ func storageSnapshotKey(accountHash, storageHash common.Hash) []byte {
 // storageSnapshotsKey = SnapshotStoragePrefix + account hash + storage hash
 func storageSnapshotsKey(accountHash common.Hash) []byte {
 	return append(SnapshotStoragePrefix, accountHash.Bytes()...)
+}
+
+// accountTrieNodeKey = trieNodeAccountPrefix + nodePath.
+func accountIndexNodeKey(accountHash common.Hash) []byte {
+	return append(AccountIndexPrefix, accountHash.Bytes()...)
+}
+
+// storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.
+func storageIndexNodeKey(accountHash common.Hash, slotHash common.Hash) []byte {
+	return append(append(StorageIndexPrefix, accountHash.Bytes()...), slotHash.Bytes()...)
 }
 
 // bloomBitsKey = bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash

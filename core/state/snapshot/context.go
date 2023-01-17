@@ -87,16 +87,16 @@ func (gs *generatorStats) Log(msg string, root common.Hash, marker []byte) {
 
 // generatorContext carries a few global values to be shared by all generation functions.
 type generatorContext struct {
-	stats   *generatorStats     // Generation statistic collection
-	db      ethdb.KeyValueStore // Key-value store containing the snapshot data
-	account *holdableIterator   // Iterator of account snapshot data
-	storage *holdableIterator   // Iterator of storage snapshot data
-	batch   ethdb.Batch         // Database batch for writing batch data atomically
-	logged  time.Time           // The timestamp when last generation progress was displayed
+	stats   *generatorStats   // Generation statistic collection
+	db      ethdb.Database    // Key-value store containing the snapshot data
+	account *holdableIterator // Iterator of account snapshot data
+	storage *holdableIterator // Iterator of storage snapshot data
+	batch   ethdb.Batch       // Database batch for writing batch data atomically
+	logged  time.Time         // The timestamp when last generation progress was displayed
 }
 
 // newGeneratorContext initializes the context for generation.
-func newGeneratorContext(stats *generatorStats, db ethdb.KeyValueStore, accMarker []byte, storageMarker []byte) *generatorContext {
+func newGeneratorContext(stats *generatorStats, db ethdb.Database, accMarker []byte, storageMarker []byte) *generatorContext {
 	ctx := &generatorContext{
 		stats:  stats,
 		db:     db,

@@ -72,6 +72,34 @@ func DeleteSnapshotRoot(db ethdb.KeyValueWriter) {
 	}
 }
 
+// ReadSnapshotID retrieves the root of the block whose state is contained in
+// the persisted snapshot.
+func ReadSnapshotID(db ethdb.KeyValueReader) uint64 {
+	data, _ := db.Get(SnapshotIDKey)
+	if len(data) != 8 {
+		return 0
+	}
+	return binary.BigEndian.Uint64(data)
+}
+
+// WriteSnapshotID stores the root of the block whose state is contained in
+// the persisted snapshot.
+func WriteSnapshotID(db ethdb.KeyValueWriter, number uint64) {
+	if err := db.Put(SnapshotIDKey, encodeBlockNumber(number)); err != nil {
+		log.Crit("Failed to store snapshot root", "err", err)
+	}
+}
+
+// DeleteSnapshotID deletes the hash of the block whose state is contained in
+// the persisted snapshot. Since snapshots are not immutable, this  method can
+// be used during updates, so a crash or failure will mark the entire snapshot
+// invalid.
+func DeleteSnapshotID(db ethdb.KeyValueWriter) {
+	if err := db.Delete(SnapshotIDKey); err != nil {
+		log.Crit("Failed to remove snapshot root", "err", err)
+	}
+}
+
 // ReadAccountSnapshot retrieves the snapshot entry of an account trie leaf.
 func ReadAccountSnapshot(db ethdb.KeyValueReader, hash common.Hash) []byte {
 	data, _ := db.Get(accountSnapshotKey(hash))

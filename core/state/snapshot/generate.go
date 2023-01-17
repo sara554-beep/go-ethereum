@@ -61,7 +61,7 @@ var (
 // generateSnapshot regenerates a brand new snapshot based on an existing state
 // database and head block asynchronously. The snapshot is returned immediately
 // and generation is continued in the background until done.
-func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root common.Hash) *diskLayer {
+func generateSnapshot(diskdb ethdb.Database, triedb *trie.Database, cache int, root common.Hash) *diskLayer {
 	// Create a new disk layer with an initialized state marker at zero
 	var (
 		stats     = &generatorStats{start: time.Now()}
@@ -69,6 +69,7 @@ func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache i
 		genMarker = []byte{} // Initialized but empty!
 	)
 	rawdb.WriteSnapshotRoot(batch, root)
+	rawdb.WriteSnapshotID(batch, 0)
 	journalProgress(batch, genMarker, stats)
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to write initialized state marker", "err", err)
@@ -77,6 +78,7 @@ func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache i
 		diskdb:     diskdb,
 		triedb:     triedb,
 		root:       root,
+		id:         0,
 		cache:      fastcache.New(cache * 1024 * 1024),
 		genMarker:  genMarker,
 		genPending: make(chan struct{}),

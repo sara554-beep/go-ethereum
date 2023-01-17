@@ -18,12 +18,12 @@ package snapshot
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"testing"
 
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -99,13 +99,11 @@ func TestDiskMerge(t *testing.T) {
 
 	// Create a disk layer based on the above and cache in some data
 	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			baseRoot: &diskLayer{
-				diskdb: db,
-				cache:  fastcache.New(500 * 1024),
-				root:   baseRoot,
-			},
-		},
+		tree: newLayerTree(&diskLayer{
+			diskdb: db,
+			cache:  fastcache.New(500 * 1024),
+			root:   baseRoot,
+		}),
 	}
 	base := snaps.Snapshot(baseRoot)
 	base.AccountRLP(accNoModCache)
@@ -295,15 +293,13 @@ func TestDiskPartialMerge(t *testing.T) {
 		// Create a disk layer based on the above using a random progress marker
 		// and cache in some data.
 		snaps := &Tree{
-			layers: map[common.Hash]snapshot{
-				baseRoot: &diskLayer{
-					diskdb: db,
-					cache:  fastcache.New(500 * 1024),
-					root:   baseRoot,
-				},
-			},
+			tree: newLayerTree(&diskLayer{
+				diskdb: db,
+				cache:  fastcache.New(500 * 1024),
+				root:   baseRoot,
+			}),
 		}
-		snaps.layers[baseRoot].(*diskLayer).genMarker = genMarker
+		snaps.tree.layers[baseRoot].(*diskLayer).genMarker = genMarker
 		base := snaps.Snapshot(baseRoot)
 
 		// assertAccount ensures that an account matches the given blob if it's
@@ -452,14 +448,12 @@ func TestDiskGeneratorPersistence(t *testing.T) {
 
 	// Create a disk layer based on all above updates
 	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			baseRoot: &diskLayer{
-				diskdb:    db,
-				cache:     fastcache.New(500 * 1024),
-				root:      baseRoot,
-				genMarker: genMarker,
-			},
-		},
+		tree: newLayerTree(&diskLayer{
+			diskdb:    db,
+			cache:     fastcache.New(500 * 1024),
+			root:      baseRoot,
+			genMarker: genMarker,
+		}),
 	}
 	// Modify or delete some accounts, flatten everything onto disk
 	if err := snaps.Update(diffRoot, baseRoot, nil, map[common.Hash][]byte{
@@ -487,7 +481,7 @@ func TestDiskGeneratorPersistence(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to update snapshot tree: %v", err)
 	}
-	diskLayer := snaps.layers[snaps.diskRoot()].(*diskLayer)
+	diskLayer := snaps.tree.layers[snaps.diskRoot()].(*diskLayer)
 	diskLayer.genMarker = nil // Construction finished
 	if err := snaps.Cap(diffTwoRoot, 0); err != nil {
 		t.Fatalf("failed to flatten snapshot tree: %v", err)
@@ -530,13 +524,11 @@ func TestDiskSeek(t *testing.T) {
 	rawdb.WriteSnapshotRoot(db, baseRoot)
 
 	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			baseRoot: &diskLayer{
-				diskdb: db,
-				cache:  fastcache.New(500 * 1024),
-				root:   baseRoot,
-			},
-		},
+		tree: newLayerTree(&diskLayer{
+			diskdb: db,
+			cache:  fastcache.New(500 * 1024),
+			root:   baseRoot,
+		}),
 	}
 	// Test some different seek positions
 	type testcase struct {

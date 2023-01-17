@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie"
 	"io"
 	"time"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 const journalVersion uint64 = 0
@@ -90,7 +90,7 @@ func ParseGeneratorStatus(generatorBlob []byte) string {
 }
 
 // loadAndParseJournal tries to parse the snapshot journal in latest format.
-func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, journalGenerator, error) {
+func loadAndParseJournal(db ethdb.Database, base *diskLayer) (snapshot, journalGenerator, error) {
 	// Retrieve the disk layer generator. It must exist, no matter the
 	// snapshot is fully generated or not. Otherwise the entire disk
 	// layer is invalid.
@@ -110,7 +110,7 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, jou
 	// etc.), we just discard all diffs and try to recover them later.
 	var current snapshot = base
 	err := iterateJournal(db, func(parent common.Hash, root common.Hash, destructSet map[common.Hash]struct{}, accountData map[common.Hash][]byte, storageData map[common.Hash]map[common.Hash][]byte) error {
-		current = newDiffLayer(current, root, destructSet, accountData, storageData)
+		current = newDiffLayer(current, root, current.ID()+1, destructSet, accountData, storageData)
 		return nil
 	})
 	if err != nil {
@@ -120,7 +120,7 @@ func loadAndParseJournal(db ethdb.KeyValueStore, base *diskLayer) (snapshot, jou
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, root common.Hash, cache int, recovery bool, noBuild bool) (snapshot, bool, error) {
+func loadSnapshot(diskdb ethdb.Database, triedb *trie.Database, root common.Hash, cache int, recovery bool, noBuild bool) (snapshot, bool, error) {
 	// If snapshotting is disabled (initial sync in progress), don't do anything,
 	// wait for the chain to permit us to do something meaningful
 	if rawdb.ReadSnapshotDisabled(diskdb) {
@@ -137,6 +137,7 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, root common
 		triedb: triedb,
 		cache:  fastcache.New(cache * 1024 * 1024),
 		root:   baseRoot,
+		id:     rawdb.ReadSnapshotID(diskdb),
 	}
 	snapshot, generator, err := loadAndParseJournal(diskdb, base)
 	if err != nil {
@@ -279,7 +280,7 @@ type journalCallback = func(parent common.Hash, root common.Hash, destructs map[
 // the most recent layer.
 // This method returns error either if there was some error reading from disk,
 // OR if the callback returns an error when invoked.
-func iterateJournal(db ethdb.KeyValueReader, callback journalCallback) error {
+func iterateJournal(db ethdb.Database, callback journalCallback) error {
 	journal := rawdb.ReadSnapshotJournal(db)
 	if len(journal) == 0 {
 		log.Warn("Loaded snapshot journal", "diffs", "missing")

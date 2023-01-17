@@ -403,7 +403,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			CacheSize:  bc.cacheConfig.SnapshotLimit,
 			Recovery:   recover,
 			NoBuild:    bc.cacheConfig.SnapshotNoBuild,
-			AsyncBuild: !bc.cacheConfig.SnapshotWait,
+			AsyncBuild: false, // wait until snapshot is fully generated
 		}
 		bc.snaps, _ = snapshot.New(snapconfig, bc.db, bc.triedb, head.Root())
 	}

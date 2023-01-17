@@ -53,11 +53,11 @@ func TestAccountIteratorBasics(t *testing.T) {
 		}
 	}
 	// Add some (identical) layers on top
-	diffLayer := newDiffLayer(emptyLayer(), common.Hash{}, copyDestructs(destructs), copyAccounts(accounts), copyStorage(storage))
+	diffLayer := newDiffLayer(emptyLayer(), common.Hash{}, 1, copyDestructs(destructs), copyAccounts(accounts), copyStorage(storage))
 	it := diffLayer.AccountIterator(common.Hash{})
 	verifyIterator(t, 100, it, verifyNothing) // Nil is allowed for single layer iterator
 
-	diskLayer := diffToDisk(diffLayer)
+	diskLayer, _ := diffToDisk(diffLayer, nil)
 	it = diskLayer.AccountIterator(common.Hash{})
 	verifyIterator(t, 100, it, verifyNothing) // Nil is allowed for single layer iterator
 }
@@ -91,13 +91,13 @@ func TestStorageIteratorBasics(t *testing.T) {
 		nilStorage[h] = nilstorage
 	}
 	// Add some (identical) layers on top
-	diffLayer := newDiffLayer(emptyLayer(), common.Hash{}, nil, copyAccounts(accounts), copyStorage(storage))
+	diffLayer := newDiffLayer(emptyLayer(), common.Hash{}, 1, nil, copyAccounts(accounts), copyStorage(storage))
 	for account := range accounts {
 		it, _ := diffLayer.StorageIterator(account, common.Hash{})
 		verifyIterator(t, 100, it, verifyNothing) // Nil is allowed for single layer iterator
 	}
 
-	diskLayer := diffToDisk(diffLayer)
+	diskLayer, _ := diffToDisk(diffLayer, nil)
 	for account := range accounts {
 		it, _ := diskLayer.StorageIterator(account, common.Hash{})
 		verifyIterator(t, 100-nilStorage[account], it, verifyNothing) // Nil is allowed for single layer iterator
@@ -215,11 +215,8 @@ func TestAccountIteratorTraversal(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Stack three diff layers on top with various overlaps
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil,
 		randomAccountSet("0xaa", "0xee", "0xff", "0xf0"), nil)
@@ -262,11 +259,8 @@ func TestStorageIteratorTraversal(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Stack three diff layers on top with various overlaps
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil,
 		randomAccountSet("0xaa"), randomStorageSet([]string{"0xaa"}, [][]string{{"0x01", "0x02", "0x03"}}, nil))
@@ -312,11 +306,8 @@ func TestAccountIteratorTraversalValues(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Create a batch of account sets to seed subsequent layers with
 	var (
 		a = make(map[common.Hash][]byte)
@@ -406,11 +397,8 @@ func TestStorageIteratorTraversalValues(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	wrapStorage := func(storage map[common.Hash][]byte) map[common.Hash]map[common.Hash][]byte {
 		return map[common.Hash]map[common.Hash][]byte{
 			common.HexToHash("0xaa"): storage,
@@ -516,11 +504,8 @@ func TestAccountIteratorLargeTraversal(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	for i := 1; i < 128; i++ {
 		snaps.Update(common.HexToHash(fmt.Sprintf("0x%02x", i+1)), common.HexToHash(fmt.Sprintf("0x%02x", i)), nil, makeAccounts(200), nil)
 	}
@@ -560,11 +545,8 @@ func TestAccountIteratorFlattening(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Create a stack of diffs on top
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil,
 		randomAccountSet("0xaa", "0xee", "0xff", "0xf0"), nil)
@@ -592,11 +574,8 @@ func TestAccountIteratorSeek(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil,
 		randomAccountSet("0xaa", "0xee", "0xff", "0xf0"), nil)
 
@@ -655,11 +634,8 @@ func TestStorageIteratorSeek(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Stack three diff layers on top with various overlaps
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil,
 		randomAccountSet("0xaa"), randomStorageSet([]string{"0xaa"}, [][]string{{"0x01", "0x03", "0x05"}}, nil))
@@ -718,11 +694,8 @@ func TestAccountIteratorDeletions(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Stack three diff layers on top with various overlaps
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"),
 		nil, randomAccountSet("0x11", "0x22", "0x33"), nil)
@@ -764,11 +737,8 @@ func TestStorageIteratorDeletions(t *testing.T) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	// Stack three diff layers on top with various overlaps
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil,
 		randomAccountSet("0xaa"), randomStorageSet([]string{"0xaa"}, [][]string{{"0x01", "0x03", "0x05"}}, nil))
@@ -842,11 +812,8 @@ func BenchmarkAccountIteratorTraversal(b *testing.B) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	for i := 1; i <= 100; i++ {
 		snaps.Update(common.HexToHash(fmt.Sprintf("0x%02x", i+1)), common.HexToHash(fmt.Sprintf("0x%02x", i)), nil, makeAccounts(200), nil)
 	}
@@ -938,11 +905,8 @@ func BenchmarkAccountIteratorLargeBaselayer(b *testing.B) {
 		root:   common.HexToHash("0x01"),
 		cache:  fastcache.New(1024 * 500),
 	}
-	snaps := &Tree{
-		layers: map[common.Hash]snapshot{
-			base.root: base,
-		},
-	}
+	snaps := &Tree{tree: newLayerTree(base)}
+
 	snaps.Update(common.HexToHash("0x02"), common.HexToHash("0x01"), nil, makeAccounts(2000), nil)
 	for i := 2; i <= 100; i++ {
 		snaps.Update(common.HexToHash(fmt.Sprintf("0x%02x", i+1)), common.HexToHash(fmt.Sprintf("0x%02x", i)), nil, makeAccounts(20), nil)
