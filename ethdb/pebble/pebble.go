@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	// minCache is the minimum amount of memory in megabytes to allocate to leveldb
+	// minCache is the minimum amount of memory in megabytes to allocate to pebble
 	// read and write caching, split half and half.
 	minCache = 16
 
@@ -44,7 +44,7 @@ const (
 	// database files.
 	minHandles = 16
 
-	// metricsGatheringInterval specifies the interval to retrieve leveldb database
+	// metricsGatheringInterval specifies the interval to retrieve pebble database
 	// compaction, io and pause stats to report to the user.
 	metricsGatheringInterval = 3 * time.Second
 )
@@ -158,9 +158,7 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 	if memTableSize > maxMemTableSize {
 		memTableSize = maxMemTableSize
 	}
-
-	// Open the db and recover any potential corruptions
-	db, err := pebble.Open(file, &pebble.Options{
+	opt := &pebble.Options{
 		// Pebble has a single combined cache area and the write
 		// buffers are taken from this too. Assign all available
 		// memory allowance for cache.
@@ -186,7 +184,13 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		},
 		ReadOnly:      readonly,
 		EventListener: eventListener,
-	})
+	}
+	// Disable seek compaction explicitly. Check https://github.com/ethereum/go-ethereum/pull/20130
+	// for more details.
+	opt.Experimental.ReadSamplingMultiplier = -1
+
+	// Open the db and recover any potential corruptions
+	db, err := pebble.Open(file, opt)
 	if err != nil {
 		return nil, err
 	}
