@@ -144,7 +144,6 @@ func (env *environment) discard() {
 	if env.state == nil {
 		return
 	}
-	env.state.StopPrefetcher()
 }
 
 // task contains all information for consensus engine sealing and result submitting.
@@ -797,8 +796,6 @@ func (w *worker) makeEnv(parent *types.Block, header *types.Header, coinbase com
 	if err != nil {
 		return nil, err
 	}
-	state.StartPrefetcher("miner")
-
 	// Note the passed coinbase may be different with header.Coinbase.
 	env := &environment{
 		signer:    types.MakeSigner(w.chainConfig, header.Number),

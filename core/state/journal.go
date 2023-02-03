@@ -26,7 +26,7 @@ import (
 // reverted on demand.
 type journalEntry interface {
 	// revert undoes the changes introduced by this journal entry.
-	revert(*StateDB)
+	revert(*stateCore)
 
 	// dirtied returns the Ethereum address modified by this journal entry.
 	dirtied() *common.Address
@@ -57,7 +57,7 @@ func (j *journal) append(entry journalEntry) {
 
 // revert undoes a batch of journalled modifications along with any reverted
 // dirty handling too.
-func (j *journal) revert(statedb *StateDB, snapshot int) {
+func (j *journal) revert(statedb *stateCore, snapshot int) {
 	for i := len(j.entries) - 1; i >= snapshot; i-- {
 		// Undo the changes made by the operation
 		j.entries[i].revert(statedb)
@@ -145,7 +145,7 @@ type (
 	}
 )
 
-func (ch createObjectChange) revert(s *StateDB) {
+func (ch createObjectChange) revert(s *stateCore) {
 	delete(s.stateObjects, *ch.account)
 	delete(s.stateObjectsDirty, *ch.account)
 }
@@ -154,7 +154,7 @@ func (ch createObjectChange) dirtied() *common.Address {
 	return ch.account
 }
 
-func (ch resetObjectChange) revert(s *StateDB) {
+func (ch resetObjectChange) revert(s *stateCore) {
 	s.setStateObject(ch.prev)
 	if !ch.prevdestruct {
 		delete(s.stateObjectsDestruct, ch.prev.address)
@@ -165,7 +165,7 @@ func (ch resetObjectChange) dirtied() *common.Address {
 	return nil
 }
 
-func (ch suicideChange) revert(s *StateDB) {
+func (ch suicideChange) revert(s *stateCore) {
 	obj := s.getStateObject(*ch.account)
 	if obj != nil {
 		obj.suicided = ch.prev
@@ -179,14 +179,14 @@ func (ch suicideChange) dirtied() *common.Address {
 
 var ripemd = common.HexToAddress("0000000000000000000000000000000000000003")
 
-func (ch touchChange) revert(s *StateDB) {
+func (ch touchChange) revert(s *stateCore) {
 }
 
 func (ch touchChange) dirtied() *common.Address {
 	return ch.account
 }
 
-func (ch balanceChange) revert(s *StateDB) {
+func (ch balanceChange) revert(s *stateCore) {
 	s.getStateObject(*ch.account).setBalance(ch.prev)
 }
 
@@ -194,7 +194,7 @@ func (ch balanceChange) dirtied() *common.Address {
 	return ch.account
 }
 
-func (ch nonceChange) revert(s *StateDB) {
+func (ch nonceChange) revert(s *stateCore) {
 	s.getStateObject(*ch.account).setNonce(ch.prev)
 }
 
@@ -202,7 +202,7 @@ func (ch nonceChange) dirtied() *common.Address {
 	return ch.account
 }
 
-func (ch codeChange) revert(s *StateDB) {
+func (ch codeChange) revert(s *stateCore) {
 	s.getStateObject(*ch.account).setCode(common.BytesToHash(ch.prevhash), ch.prevcode)
 }
 
@@ -210,7 +210,7 @@ func (ch codeChange) dirtied() *common.Address {
 	return ch.account
 }
 
-func (ch storageChange) revert(s *StateDB) {
+func (ch storageChange) revert(s *stateCore) {
 	s.getStateObject(*ch.account).setState(ch.key, ch.prevalue)
 }
 
@@ -218,7 +218,7 @@ func (ch storageChange) dirtied() *common.Address {
 	return ch.account
 }
 
-func (ch transientStorageChange) revert(s *StateDB) {
+func (ch transientStorageChange) revert(s *stateCore) {
 	s.setTransientState(*ch.account, ch.key, ch.prevalue)
 }
 
@@ -226,7 +226,7 @@ func (ch transientStorageChange) dirtied() *common.Address {
 	return nil
 }
 
-func (ch refundChange) revert(s *StateDB) {
+func (ch refundChange) revert(s *stateCore) {
 	s.refund = ch.prev
 }
 
@@ -234,7 +234,7 @@ func (ch refundChange) dirtied() *common.Address {
 	return nil
 }
 
-func (ch addLogChange) revert(s *StateDB) {
+func (ch addLogChange) revert(s *stateCore) {
 	logs := s.logs[ch.txhash]
 	if len(logs) == 1 {
 		delete(s.logs, ch.txhash)
@@ -248,7 +248,7 @@ func (ch addLogChange) dirtied() *common.Address {
 	return nil
 }
 
-func (ch addPreimageChange) revert(s *StateDB) {
+func (ch addPreimageChange) revert(s *stateCore) {
 	delete(s.preimages, ch.hash)
 }
 
@@ -256,7 +256,7 @@ func (ch addPreimageChange) dirtied() *common.Address {
 	return nil
 }
 
-func (ch accessListAddAccountChange) revert(s *StateDB) {
+func (ch accessListAddAccountChange) revert(s *stateCore) {
 	/*
 		One important invariant here, is that whenever a (addr, slot) is added, if the
 		addr is not already present, the add causes two journal entries:
@@ -273,7 +273,7 @@ func (ch accessListAddAccountChange) dirtied() *common.Address {
 	return nil
 }
 
-func (ch accessListAddSlotChange) revert(s *StateDB) {
+func (ch accessListAddSlotChange) revert(s *stateCore) {
 	s.accessList.DeleteSlot(*ch.address, *ch.slot)
 }
 
