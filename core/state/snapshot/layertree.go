@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/log"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -180,7 +179,6 @@ func (tree *layerTree) cap(root common.Hash, layers int, freezer *rawdb.Resettab
 			remove(root)
 		}
 	}
-	log.Info("Capped state snapshot", "root", root)
 	return nil
 }
 

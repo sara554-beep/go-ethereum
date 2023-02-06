@@ -48,6 +48,11 @@ import (
 //                     | History 1 |----> | ...  |---->| History n |
 //                     +-----------+      +------+     +-----------+
 
+const (
+	storageIndexSize = common.HashLength + 8
+	accountIndexSize = common.HashLength + 16
+)
+
 // storageIndex describes the metadata belongs to a storage slot.
 type storageIndex struct {
 	Hash   common.Hash // The hash of storage slot
@@ -56,7 +61,7 @@ type storageIndex struct {
 }
 
 func (index storageIndex) encode() []byte {
-	var buffer [common.HashLength + 8]byte
+	var buffer [storageIndexSize]byte
 	copy(buffer[:], index.Hash.Bytes())
 	binary.BigEndian.PutUint32(buffer[common.HashLength:], index.Offset)
 	binary.BigEndian.PutUint32(buffer[common.HashLength+4:], index.Length)
@@ -73,7 +78,7 @@ type accountIndex struct {
 }
 
 func (index accountIndex) encode() []byte {
-	var buffer [common.HashLength + 16]byte
+	var buffer [accountIndexSize]byte
 	copy(buffer[:], index.Hash.Bytes())
 	binary.BigEndian.PutUint32(buffer[common.HashLength:], index.Offset)
 	binary.BigEndian.PutUint32(buffer[common.HashLength+4:], index.Length)

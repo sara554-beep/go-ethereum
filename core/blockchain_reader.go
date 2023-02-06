@@ -17,6 +17,7 @@
 package core
 
 import (
+	"errors"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -321,6 +322,22 @@ func (bc *BlockChain) State() (*state.StateDB, error) {
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
 	return state.New(root, bc.stateCache, bc.snaps)
+}
+
+// StateReaderAt returns a new read-only state based on a particular point in time.
+func (bc *BlockChain) StateReaderAt(root common.Hash) (*state.StateReader, error) {
+	if bc.snaps == nil {
+		return nil, errors.New("not available")
+	}
+	snap := bc.snaps.Snapshot(root)
+	if snap != nil {
+		return state.NewStateReader(root, bc.stateCache, snap)
+	}
+	snap, err := bc.snaps.NewHistoricSnapshot(root)
+	if err != nil {
+		return nil, err
+	}
+	return state.NewStateReader(root, bc.stateCache, snap)
 }
 
 // Config retrieves the chain's fork configuration.

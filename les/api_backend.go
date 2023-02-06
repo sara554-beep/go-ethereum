@@ -162,6 +162,10 @@ func (b *LesApiBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockN
 	return nil, nil, errors.New("invalid arguments; neither block nor hash specified")
 }
 
+func (b *LesApiBackend) StateReaderAndHeader(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateReader, *types.Header, error) {
+	return nil, nil, errors.New("not supported")
+}
+
 func (b *LesApiBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	if number := rawdb.ReadHeaderNumber(b.eth.chainDb, hash); number != nil {
 		return light.GetBlockReceipts(ctx, b.eth.odr, hash, *number)

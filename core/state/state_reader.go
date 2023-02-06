@@ -168,6 +168,3 @@ func (reader *trieAndSnap) ContractCodeSize(address common.Hash, hash common.Has
 func (reader *trieAndSnap) update(ts *tries) {
 	reader.ts = ts
 }
-
-type snapOnly struct {
-}

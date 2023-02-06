@@ -1,6 +1,8 @@
 package rawdb
 
 import (
+	"encoding/binary"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -128,5 +130,30 @@ func WriteStorageIndex(db ethdb.KeyValueWriter, accountHash, storageHash common.
 func DeleteStorageIndex(db ethdb.KeyValueWriter, accountHash, storageHash common.Hash) {
 	if err := db.Delete(storageIndexNodeKey(accountHash, storageHash)); err != nil {
 		log.Crit("Failed to delete storage index", "err", err)
+	}
+}
+
+// ReadStateLookup retrieves the state id with the provided state root.
+func ReadStateLookup(db ethdb.KeyValueReader, root common.Hash) (uint64, bool) {
+	data, err := db.Get(stateLookupKey(root))
+	if err != nil || len(data) == 0 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint64(data), true
+}
+
+// WriteStateLookup writes the provided state lookup to database.
+func WriteStateLookup(db ethdb.KeyValueWriter, root common.Hash, id uint64) {
+	var buff [8]byte
+	binary.BigEndian.PutUint64(buff[:], id)
+	if err := db.Put(stateLookupKey(root), buff[:]); err != nil {
+		log.Crit("Failed to store state lookup", "err", err)
+	}
+}
+
+// DeleteStateLookup deletes the specified state lookup from the database.
+func DeleteStateLookup(db ethdb.KeyValueWriter, root common.Hash) {
+	if err := db.Delete(stateLookupKey(root)); err != nil {
+		log.Crit("Failed to delete state lookup", "err", err)
 	}
 }

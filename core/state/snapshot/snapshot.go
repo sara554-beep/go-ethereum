@@ -457,6 +457,15 @@ func diffToDisk(bottom *diffLayer, freezer *rawdb.ResettableFreezer) (*diskLayer
 	rawdb.WriteSnapshotRoot(batch, bottom.root)
 	rawdb.WriteSnapshotID(batch, bottom.id)
 
+	// Store the root->id lookup afterwards. All stored lookups are
+	// identified by the **unique** state root. It's impossible that
+	// in the same chain blocks which are not adjacent have the same
+	// root.
+	if base.id == 0 {
+		rawdb.WriteStateLookup(batch, base.root, 0)
+	}
+	rawdb.WriteStateLookup(batch, bottom.Root(), bottom.ID())
+
 	// Write out the generator progress marker and report
 	journalProgress(batch, base.genMarker, stats)
 

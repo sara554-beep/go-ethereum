@@ -20,51 +20,80 @@ package state
 import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
-type StateDBRead struct {
-	*stateCore
-
-	snaps *snapshot.Tree
-	snap  snapshot.Snapshot
+type snapOnly struct {
+	root   common.Hash
+	db     Database
+	snap   snapshot.Snapshot
+	hasher crypto.KeccakState
 }
 
-func NewStateDBReadRead(root common.Hash, snaps *snapshot.Tree) (*StateDBRead, error) {
-	var snap snapshot.Snapshot
-	if snaps != nil {
-		snap = snaps.Snapshot(root)
+func newSnapOnly(root common.Hash, db Database, snap snapshot.Snapshot) *snapOnly {
+	return &snapOnly{
+		root:   root,
+		db:     db,
+		snap:   snap,
+		hasher: crypto.NewKeccakState(),
 	}
-	core, err := newStateCore(root, nil)
+}
+
+// Account retrieves the account associated with a particular
+// account address. Nil will be returned in case the account
+// is not existent.
+func (t *snapOnly) Account(address common.Address) (*types.StateAccount, error) {
+	acc, err := t.snap.Account(crypto.HashData(t.hasher, address.Bytes()))
 	if err != nil {
 		return nil, err
 	}
-	sdb := &StateDBRead{
+	if acc == nil {
+		return nil, nil
+	}
+	data := &types.StateAccount{
+		Nonce:    acc.Nonce,
+		Balance:  acc.Balance,
+		CodeHash: acc.CodeHash,
+		Root:     common.BytesToHash(acc.Root),
+	}
+	if len(data.CodeHash) == 0 {
+		data.CodeHash = emptyCodeHash
+	}
+	if data.Root == (common.Hash{}) {
+		data.Root = emptyRoot
+	}
+	return data, nil
+}
+
+// Storage retrieves the storage data associated with a particular
+// slot hash along with an account address. Nil will be returned
+// in case the corresponding account or the storage slot itself
+// is not existent.
+func (t *snapOnly) Storage(address common.Address, storageHash common.Hash, root common.Hash) ([]byte, error) {
+	return t.snap.Storage(crypto.HashData(t.hasher, address.Bytes()), crypto.Keccak256Hash(storageHash.Bytes()))
+}
+
+// ContractCode retrieves a particular contract's code.
+func (t *snapOnly) ContractCode(address common.Hash, hash common.Hash) ([]byte, error) {
+	return t.db.ContractCode(address, hash)
+}
+
+// ContractCodeSize retrieves a particular contracts code's size.
+func (t *snapOnly) ContractCodeSize(address common.Hash, hash common.Hash) (int, error) {
+	return t.db.ContractCodeSize(address, hash)
+}
+
+type StateReader struct {
+	*stateCore
+}
+
+func NewStateReader(root common.Hash, db Database, snap snapshot.Snapshot) (*StateReader, error) {
+	core, err := newStateCore(root, newSnapOnly(root, db, snap))
+	if err != nil {
+		return nil, err
+	}
+	return &StateReader{
 		stateCore: core,
-		snaps:     snaps,
-		snap:      snap,
-	}
-	return sdb, nil
-}
-
-// setError remembers the first non-nil error it is called with.
-func (db *StateDBRead) setError(err error) {
-	if db.dbErr == nil {
-		db.dbErr = err
-	}
-}
-
-func (db *StateDBRead) Error() error {
-	return db.dbErr
-}
-
-// Copy creates a deep, independent copy of the state.
-// Snapshots of the copied state cannot be applied to the copy.
-func (db *StateDBRead) Copy() *StateDBRead {
-	// Copy all the basic fields, initialize the memory ones
-	state := &StateDBRead{
-		stateCore: db.stateCore.Copy(),
-		snaps:     db.snaps,
-		snap:      db.snap,
-	}
-	return state
+	}, nil
 }

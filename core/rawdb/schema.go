@@ -105,6 +105,7 @@ var (
 
 	AccountIndexPrefix = []byte("P") // AccountIndexPrefix + accountHash -> numbers
 	StorageIndexPrefix = []byte("Q") // StorageIndexPrefix + accountHash + storageHash -> numbers
+	stateLookupPrefix  = []byte("L") // stateLookupPrefix + state root -> state id
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -251,4 +252,9 @@ func configKey(hash common.Hash) []byte {
 // genesisStateSpecKey = genesisPrefix + hash
 func genesisStateSpecKey(hash common.Hash) []byte {
 	return append(genesisPrefix, hash.Bytes()...)
+}
+
+// stateLookupKey = stateLookupPrefix + root (32 bytes)
+func stateLookupKey(root common.Hash) []byte {
+	return append(stateLookupPrefix, root.Bytes()...)
 }
