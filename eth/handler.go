@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
@@ -187,7 +188,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 			// Checkpoint passed, sanity check the timestamp to have a fallback mechanism
 			// for non-checkpointed (number = 0) private networks.
 			if head.Time >= uint64(time.Now().AddDate(0, -1, 0).Unix()) {
-				atomic.StoreUint32(&h.acceptTxs, 1)
+				h.setSynced()
 			}
 		}
 	}
@@ -288,7 +289,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 		n, err := h.chain.InsertChain(blocks)
 		if err == nil {
-			atomic.StoreUint32(&h.acceptTxs, 1) // Mark initial sync done on any fetcher import
+			h.setSynced() // Mark initial sync done on any fetcher import
 		}
 		return n, err
 	}
@@ -686,5 +687,13 @@ func (h *handler) txBroadcastLoop() {
 		case <-h.txsSub.Err():
 			return
 		}
+	}
+}
+
+// setSynced sets the flag as true when node finishes chain sync.
+func (h *handler) setSynced() {
+	atomic.StoreUint32(&h.acceptTxs, 1)
+	if h.chain.TrieDB().Scheme() == rawdb.PathScheme {
+		h.chain.TrieDB().SetCacheSize(64)
 	}
 }
