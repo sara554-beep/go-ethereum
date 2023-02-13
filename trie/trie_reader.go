@@ -17,10 +17,8 @@
 package trie
 
 import (
-	"fmt"
-
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // Reader wraps the Node method of a backing trie store.
@@ -46,12 +44,12 @@ type trieReader struct {
 
 // newTrieReader initializes the trie reader with the given node reader.
 func newTrieReader(stateRoot, owner common.Hash, db *Database) (*trieReader, error) {
-	if stateRoot == types.EmptyRootHash {
-		return &trieReader{owner: owner}, nil
-	}
+	//if stateRoot == types.EmptyRootHash || stateRoot == (common.Hash{}) {
+	//	return &trieReader{owner: owner}, nil
+	//}
 	reader := db.Reader(stateRoot)
 	if reader == nil {
-		return nil, fmt.Errorf("state not found #%x", stateRoot)
+		return nil, &MissingNodeError{Owner: owner, NodeHash: stateRoot, Path: nil}
 	}
 	return &trieReader{owner: owner, reader: reader}, nil
 }
@@ -80,4 +78,18 @@ func (r *trieReader) node(path []byte, hash common.Hash) ([]byte, error) {
 		return nil, &MissingNodeError{Owner: r.owner, NodeHash: hash, Path: path, err: err}
 	}
 	return blob, nil
+}
+
+type trieLoader struct {
+	db *Database
+}
+
+// OpenTrie opens the main account trie.
+func (l *trieLoader) OpenTrie(root common.Hash) (triestate.Trie, error) {
+	return New(TrieID(root), l.db)
+}
+
+// OpenStorageTrie opens the storage trie of an account.
+func (l *trieLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (triestate.Trie, error) {
+	return New(StorageTrieID(stateRoot, addrHash, root), l.db)
 }

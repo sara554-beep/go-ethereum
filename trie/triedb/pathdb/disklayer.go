@@ -160,7 +160,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// corresponding states(journal), the stored state history will
 	// be truncated in the next restart.
 	if dl.db.freezer != nil {
-		err := storeStateHistory(dl.db.freezer, bottom, dl.db.config.StateLimit)
+		err := storeStateHistory(dl.db.freezer, bottom, dl.db.config.StateHistory)
 		if err != nil {
 			return nil, err
 		}
@@ -195,12 +195,6 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 	if dl.id == 0 {
 		return nil, fmt.Errorf("%w: zero state id", errStateUnrecoverable)
 	}
-	// Mark the diskLayer as stale before applying any mutations on top.
-	dl.lock.Lock()
-	defer dl.lock.Unlock()
-
-	dl.stale = true
-
 	// Apply the reverse state changes upon the current state, generate
 	// the corresponding trie nodes for reverting.
 	states := triestate.New(h.meta.parent, h.meta.root, h.accounts, h.storages)
@@ -208,6 +202,12 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 	if err != nil {
 		return nil, err
 	}
+	// Mark the diskLayer as stale before applying any mutations on top.
+	dl.lock.Lock()
+	defer dl.lock.Unlock()
+
+	dl.stale = true
+
 	if !dl.buffer.empty() {
 		// Revert embedded states in the node buffer first in case
 		// it's not empty.

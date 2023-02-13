@@ -26,22 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 )
-
-type MPTConstructor struct {
-	db *Database
-}
-
-// OpenTrie opens the main account trie.
-func (mpt MPTConstructor) OpenTrie(root common.Hash) (triestate.Trie, error) {
-	return New(StateTrieID(root), mpt.db)
-}
-
-// OpenStorageTrie opens the storage trie of an account.
-func (mpt MPTConstructor) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (triestate.Trie, error) {
-	return New(StorageTrieID(stateRoot, addrHash, root), mpt.db)
-}
 
 // Trie is a Merkle Patricia Trie. Use New to create a trie that sits on
 // top of a database. Whenever trie performs a commit operation, the generated

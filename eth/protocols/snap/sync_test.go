@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	"math/big"
 	"sort"
 	"sync"
@@ -558,7 +559,9 @@ func noProofStorageRequestHandler(t *testPeer, requestId uint64, root common.Has
 // TestSyncBloatedProof tests a scenario where we provide only _one_ value, but
 // also ship the entire trie inside the proof. If the attack is successful,
 // the remote side does not do any follow-up requests
-func TestSyncBloatedProof(t *testing.T) {
+func TestSyncBloatedProofHashBased(t *testing.T) { testSyncBloatedProof(t, rawdb.HashScheme) }
+func TestSyncBloatedProofPathBased(t *testing.T) { testSyncBloatedProof(t, rawdb.PathScheme) }
+func testSyncBloatedProof(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -570,7 +573,7 @@ func TestSyncBloatedProof(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100, scheme)
 	source := newTestPeer("source", t, term)
 	source.accountTrie = sourceAccountTrie.Copy()
 	source.accountValues = elems
@@ -635,7 +638,10 @@ func setupSyncer(scheme string, peers ...*testPeer) *Syncer {
 }
 
 // TestSync tests a basic sync with one peer
-func TestSync(t *testing.T) {
+func TestSyncHashBased(t *testing.T) { testSync(t, rawdb.HashScheme) }
+func TestSyncPathBased(t *testing.T) { testSync(t, rawdb.PathScheme) }
+
+func testSync(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -647,7 +653,7 @@ func TestSync(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100, scheme)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -659,12 +665,15 @@ func TestSync(t *testing.T) {
 	if err := syncer.Sync(sourceAccountTrie.Hash(), cancel); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncTinyTriePanic tests a basic sync with one peer, and a tiny trie. This caused a
 // panic within the prover
-func TestSyncTinyTriePanic(t *testing.T) {
+func TestSyncTinyTriePanicHashBased(t *testing.T) { testSyncTinyTriePanic(t, rawdb.HashScheme) }
+func TestSyncTinyTriePanicPathBased(t *testing.T) { testSyncTinyTriePanic(t, rawdb.PathScheme) }
+
+func testSyncTinyTriePanic(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -676,7 +685,7 @@ func TestSyncTinyTriePanic(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(1)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(1, scheme)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -690,11 +699,14 @@ func TestSyncTinyTriePanic(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestMultiSync tests a basic sync with multiple peers
-func TestMultiSync(t *testing.T) {
+func TestMultiSyncHashBased(t *testing.T) { testMultiSync(t, rawdb.HashScheme) }
+func TestMultiSyncPathBased(t *testing.T) { testMultiSync(t, rawdb.PathScheme) }
+
+func testMultiSync(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -706,7 +718,7 @@ func TestMultiSync(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100, scheme)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -720,11 +732,14 @@ func TestMultiSync(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncWithStorage tests  basic sync using accounts + storage + code
-func TestSyncWithStorage(t *testing.T) {
+func TestSyncWithStorageHashBased(t *testing.T) { testSyncWithStorage(t, rawdb.HashScheme) }
+func TestSyncWithStoragePathBased(t *testing.T) { testSyncWithStorage(t, rawdb.PathScheme) }
+
+func testSyncWithStorage(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -736,7 +751,7 @@ func TestSyncWithStorage(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(3, 3000, true, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 3, 3000, true, false)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -752,11 +767,14 @@ func TestSyncWithStorage(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestMultiSyncManyUseless contains one good peer, and many which doesn't return anything valuable at all
-func TestMultiSyncManyUseless(t *testing.T) {
+func TestMultiSyncManyUselessHashBased(t *testing.T) { testMultiSyncManyUseless(t, rawdb.HashScheme) }
+func TestMultiSyncManyUselessPathBased(t *testing.T) { testMultiSyncManyUseless(t, rawdb.PathScheme) }
+
+func testMultiSyncManyUseless(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -768,7 +786,7 @@ func TestMultiSyncManyUseless(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(100, 3000, true, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 100, 3000, true, false)
 
 	mkSource := func(name string, noAccount, noStorage, noTrieNode bool) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -801,11 +819,18 @@ func TestMultiSyncManyUseless(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestMultiSyncManyUseless contains one good peer, and many which doesn't return anything valuable at all
-func TestMultiSyncManyUselessWithLowTimeout(t *testing.T) {
+func TestMultiSyncManyUselessWithLowTimeoutHashBased(t *testing.T) {
+	testMultiSyncManyUselessWithLowTimeout(t, rawdb.HashScheme)
+}
+func TestMultiSyncManyUselessWithLowTimeoutPathBased(t *testing.T) {
+	testMultiSyncManyUselessWithLowTimeout(t, rawdb.PathScheme)
+}
+
+func testMultiSyncManyUselessWithLowTimeout(t *testing.T, scheme string) {
 	var (
 		once   sync.Once
 		cancel = make(chan struct{})
@@ -815,7 +840,7 @@ func TestMultiSyncManyUselessWithLowTimeout(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(100, 3000, true, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 100, 3000, true, false)
 
 	mkSource := func(name string, noAccount, noStorage, noTrieNode bool) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -853,11 +878,18 @@ func TestMultiSyncManyUselessWithLowTimeout(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestMultiSyncManyUnresponsive contains one good peer, and many which doesn't respond at all
-func TestMultiSyncManyUnresponsive(t *testing.T) {
+func TestMultiSyncManyUnresponsiveHashBased(t *testing.T) {
+	testMultiSyncManyUnresponsive(t, rawdb.HashScheme)
+}
+func TestMultiSyncManyUnresponsivePathBased(t *testing.T) {
+	testMultiSyncManyUnresponsive(t, rawdb.PathScheme)
+}
+
+func testMultiSyncManyUnresponsive(t *testing.T, scheme string) {
 	var (
 		once   sync.Once
 		cancel = make(chan struct{})
@@ -867,7 +899,7 @@ func TestMultiSyncManyUnresponsive(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(100, 3000, true, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 100, 3000, true, false)
 
 	mkSource := func(name string, noAccount, noStorage, noTrieNode bool) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -903,7 +935,7 @@ func TestMultiSyncManyUnresponsive(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 func checkStall(t *testing.T, term func()) chan struct{} {
@@ -922,7 +954,14 @@ func checkStall(t *testing.T, term func()) chan struct{} {
 
 // TestSyncBoundaryAccountTrie tests sync against a few normal peers, but the
 // account trie has a few boundary elements.
-func TestSyncBoundaryAccountTrie(t *testing.T) {
+func TestSyncBoundaryAccountTrieHashBased(t *testing.T) {
+	testSyncBoundaryAccountTrie(t, rawdb.HashScheme)
+}
+func TestSyncBoundaryAccountTriePathBased(t *testing.T) {
+	testSyncBoundaryAccountTrie(t, rawdb.PathScheme)
+}
+
+func testSyncBoundaryAccountTrie(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -934,7 +973,7 @@ func TestSyncBoundaryAccountTrie(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeBoundaryAccountTrie(3000)
+	nodeScheme, sourceAccountTrie, elems := makeBoundaryAccountTrie(scheme, 3000)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -952,12 +991,19 @@ func TestSyncBoundaryAccountTrie(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncNoStorageAndOneCappedPeer tests sync using accounts and no storage, where one peer is
 // consistently returning very small results
-func TestSyncNoStorageAndOneCappedPeer(t *testing.T) {
+func TestSyncNoStorageAndOneCappedPeerHashBased(t *testing.T) {
+	testSyncNoStorageAndOneCappedPeer(t, rawdb.HashScheme)
+}
+func TestSyncNoStorageAndOneCappedPeerPathBased(t *testing.T) {
+	testSyncNoStorageAndOneCappedPeer(t, rawdb.PathScheme)
+}
+
+func testSyncNoStorageAndOneCappedPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -969,7 +1015,7 @@ func TestSyncNoStorageAndOneCappedPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000, scheme)
 
 	mkSource := func(name string, slow bool) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -994,12 +1040,19 @@ func TestSyncNoStorageAndOneCappedPeer(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncNoStorageAndOneCodeCorruptPeer has one peer which doesn't deliver
 // code requests properly.
-func TestSyncNoStorageAndOneCodeCorruptPeer(t *testing.T) {
+func TestSyncNoStorageAndOneCodeCorruptPeerHashBased(t *testing.T) {
+	testSyncNoStorageAndOneCodeCorruptPeer(t, rawdb.HashScheme)
+}
+func TestSyncNoStorageAndOneCodeCorruptPeerPathBased(t *testing.T) {
+	testSyncNoStorageAndOneCodeCorruptPeer(t, rawdb.PathScheme)
+}
+
+func testSyncNoStorageAndOneCodeCorruptPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1011,7 +1064,7 @@ func TestSyncNoStorageAndOneCodeCorruptPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000, scheme)
 
 	mkSource := func(name string, codeFn codeHandlerFunc) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1034,10 +1087,17 @@ func TestSyncNoStorageAndOneCodeCorruptPeer(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
-func TestSyncNoStorageAndOneAccountCorruptPeer(t *testing.T) {
+func TestSyncNoStorageAndOneAccountCorruptPeerHashBased(t *testing.T) {
+	testSyncNoStorageAndOneAccountCorruptPeer(t, rawdb.HashScheme)
+}
+func TestSyncNoStorageAndOneAccountCorruptPeerPathBased(t *testing.T) {
+	testSyncNoStorageAndOneAccountCorruptPeer(t, rawdb.PathScheme)
+}
+
+func testSyncNoStorageAndOneAccountCorruptPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1049,7 +1109,7 @@ func TestSyncNoStorageAndOneAccountCorruptPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000, scheme)
 
 	mkSource := func(name string, accFn accountHandlerFunc) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1072,12 +1132,19 @@ func TestSyncNoStorageAndOneAccountCorruptPeer(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncNoStorageAndOneCodeCappedPeer has one peer which delivers code hashes
 // one by one
-func TestSyncNoStorageAndOneCodeCappedPeer(t *testing.T) {
+func TestSyncNoStorageAndOneCodeCappedPeerHashBased(t *testing.T) {
+	testSyncNoStorageAndOneCodeCappedPeer(t, rawdb.HashScheme)
+}
+func TestSyncNoStorageAndOneCodeCappedPeerPathBased(t *testing.T) {
+	testSyncNoStorageAndOneCodeCappedPeer(t, rawdb.PathScheme)
+}
+
+func testSyncNoStorageAndOneCodeCappedPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1089,7 +1156,7 @@ func TestSyncNoStorageAndOneCodeCappedPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(3000, scheme)
 
 	mkSource := func(name string, codeFn codeHandlerFunc) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1123,12 +1190,19 @@ func TestSyncNoStorageAndOneCodeCappedPeer(t *testing.T) {
 	if threshold := 100; counter > threshold {
 		t.Logf("Error, expected < %d invocations, got %d", threshold, counter)
 	}
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncBoundaryStorageTrie tests sync against a few normal peers, but the
 // storage trie has a few boundary elements.
-func TestSyncBoundaryStorageTrie(t *testing.T) {
+func TestSyncBoundaryStorageTrieHashBased(t *testing.T) {
+	testSyncBoundaryStorageTrie(t, rawdb.HashScheme)
+}
+func TestSyncBoundaryStorageTriePathBased(t *testing.T) {
+	testSyncBoundaryStorageTrie(t, rawdb.PathScheme)
+}
+
+func testSyncBoundaryStorageTrie(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1140,7 +1214,7 @@ func TestSyncBoundaryStorageTrie(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(10, 1000, false, true)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 10, 1000, false, true)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1160,12 +1234,19 @@ func TestSyncBoundaryStorageTrie(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncWithStorageAndOneCappedPeer tests sync using accounts + storage, where one peer is
 // consistently returning very small results
-func TestSyncWithStorageAndOneCappedPeer(t *testing.T) {
+func TestSyncWithStorageAndOneCappedPeerHashBased(t *testing.T) {
+	testSyncWithStorageAndOneCappedPeer(t, rawdb.HashScheme)
+}
+func TestSyncWithStorageAndOneCappedPeerPathBased(t *testing.T) {
+	testSyncWithStorageAndOneCappedPeer(t, rawdb.PathScheme)
+}
+
+func testSyncWithStorageAndOneCappedPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1177,7 +1258,7 @@ func TestSyncWithStorageAndOneCappedPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(300, 1000, false, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 300, 1000, false, false)
 
 	mkSource := func(name string, slow bool) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1202,12 +1283,19 @@ func TestSyncWithStorageAndOneCappedPeer(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncWithStorageAndCorruptPeer tests sync using accounts + storage, where one peer is
 // sometimes sending bad proofs
-func TestSyncWithStorageAndCorruptPeer(t *testing.T) {
+func TestSyncWithStorageAndCorruptPeerHashBased(t *testing.T) {
+	testSyncWithStorageAndCorruptPeer(t, rawdb.HashScheme)
+}
+func TestSyncWithStorageAndCorruptPeerPathBased(t *testing.T) {
+	testSyncWithStorageAndCorruptPeer(t, rawdb.PathScheme)
+}
+
+func testSyncWithStorageAndCorruptPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1219,7 +1307,7 @@ func TestSyncWithStorageAndCorruptPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(100, 3000, true, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 100, 3000, true, false)
 
 	mkSource := func(name string, handler storageHandlerFunc) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1243,10 +1331,17 @@ func TestSyncWithStorageAndCorruptPeer(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
-func TestSyncWithStorageAndNonProvingPeer(t *testing.T) {
+func TestSyncWithStorageAndNonProvingPeerHashBased(t *testing.T) {
+	testSyncWithStorageAndNonProvingPeer(t, rawdb.HashScheme)
+}
+func TestSyncWithStorageAndNonProvingPeerPathBased(t *testing.T) {
+	testSyncWithStorageAndNonProvingPeer(t, rawdb.PathScheme)
+}
+
+func testSyncWithStorageAndNonProvingPeer(t *testing.T, scheme string) {
 	t.Parallel()
 
 	var (
@@ -1258,7 +1353,7 @@ func TestSyncWithStorageAndNonProvingPeer(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(100, 3000, true, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorage(scheme, 100, 3000, true, false)
 
 	mkSource := func(name string, handler storageHandlerFunc) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1281,14 +1376,21 @@ func TestSyncWithStorageAndNonProvingPeer(t *testing.T) {
 		t.Fatalf("sync failed: %v", err)
 	}
 	close(done)
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 // TestSyncWithStorage tests  basic sync using accounts + storage + code, against
 // a peer who insists on delivering full storage sets _and_ proofs. This triggered
 // an error, where the recipient erroneously clipped the boundary nodes, but
 // did not mark the account for healing.
-func TestSyncWithStorageMisbehavingProve(t *testing.T) {
+func TestSyncWithStorageMisbehavingProveHashBased(t *testing.T) {
+	testSyncWithStorageMisbehavingProve(t, rawdb.HashScheme)
+}
+func TestSyncWithStorageMisbehavingProvePathBased(t *testing.T) {
+	testSyncWithStorageMisbehavingProve(t, rawdb.PathScheme)
+}
+
+func testSyncWithStorageMisbehavingProve(t *testing.T, scheme string) {
 	t.Parallel()
 	var (
 		once   sync.Once
@@ -1299,7 +1401,7 @@ func TestSyncWithStorageMisbehavingProve(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorageWithUniqueStorage(10, 30, false)
+	nodeScheme, sourceAccountTrie, elems, storageTries, storageElems := makeAccountTrieWithStorageWithUniqueStorage(scheme, 10, 30, false)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1314,7 +1416,7 @@ func TestSyncWithStorageMisbehavingProve(t *testing.T) {
 	if err := syncer.Sync(sourceAccountTrie.Hash(), cancel); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 }
 
 type kv struct {
@@ -1367,9 +1469,9 @@ func getCodeByHash(hash common.Hash) []byte {
 }
 
 // makeAccountTrieNoStorage spits out a trie, along with the leafs
-func makeAccountTrieNoStorage(n int) (string, *trie.Trie, entrySlice) {
+func makeAccountTrieNoStorage(n int, scheme string) (string, *trie.Trie, entrySlice) {
 	var (
-		db      = trie.NewDatabase(rawdb.NewMemoryDatabase())
+		db      = trie.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
 		accTrie = trie.NewEmpty(db)
 		entries entrySlice
 	)
@@ -1399,12 +1501,12 @@ func makeAccountTrieNoStorage(n int) (string, *trie.Trie, entrySlice) {
 // makeBoundaryAccountTrie constructs an account trie. Instead of filling
 // accounts normally, this function will fill a few accounts which have
 // boundary hash.
-func makeBoundaryAccountTrie(n int) (string, *trie.Trie, entrySlice) {
+func makeBoundaryAccountTrie(scheme string, n int) (string, *trie.Trie, entrySlice) {
 	var (
 		entries    entrySlice
 		boundaries []common.Hash
 
-		db      = trie.NewDatabase(rawdb.NewMemoryDatabase())
+		db      = trie.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
 		accTrie = trie.NewEmpty(db)
 	)
 	// Initialize boundaries
@@ -1460,9 +1562,9 @@ func makeBoundaryAccountTrie(n int) (string, *trie.Trie, entrySlice) {
 
 // makeAccountTrieWithStorageWithUniqueStorage creates an account trie where each accounts
 // has a unique storage set.
-func makeAccountTrieWithStorageWithUniqueStorage(accounts, slots int, code bool) (string, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
+func makeAccountTrieWithStorageWithUniqueStorage(scheme string, accounts, slots int, code bool) (string, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
 	var (
-		db             = trie.NewDatabase(rawdb.NewMemoryDatabase())
+		db             = trie.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
 		accTrie        = trie.NewEmpty(db)
 		entries        entrySlice
 		storageRoots   = make(map[common.Hash]common.Hash)
@@ -1515,9 +1617,9 @@ func makeAccountTrieWithStorageWithUniqueStorage(accounts, slots int, code bool)
 }
 
 // makeAccountTrieWithStorage spits out a trie, along with the leafs
-func makeAccountTrieWithStorage(accounts, slots int, code, boundary bool) (string, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
+func makeAccountTrieWithStorage(scheme string, accounts, slots int, code, boundary bool) (string, *trie.Trie, entrySlice, map[common.Hash]*trie.Trie, map[common.Hash]entrySlice) {
 	var (
-		db             = trie.NewDatabase(rawdb.NewMemoryDatabase())
+		db             = trie.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
 		accTrie        = trie.NewEmpty(db)
 		entries        entrySlice
 		storageRoots   = make(map[common.Hash]common.Hash)
@@ -1659,9 +1761,9 @@ func makeBoundaryStorageTrie(owner common.Hash, n int, db *trie.Database) (commo
 	return root, nodes, entries
 }
 
-func verifyTrie(db ethdb.KeyValueStore, root common.Hash, t *testing.T) {
+func verifyTrie(scheme string, db ethdb.KeyValueStore, root common.Hash, t *testing.T) {
 	t.Helper()
-	triedb := trie.NewDatabase(rawdb.NewDatabase(db))
+	triedb := trie.NewDatabase(rawdb.NewDatabase(db), newDbConfig(scheme))
 	accTrie, err := trie.New(trie.StateTrieID(root), triedb)
 	if err != nil {
 		t.Fatal(err)
@@ -1702,7 +1804,14 @@ func verifyTrie(db ethdb.KeyValueStore, root common.Hash, t *testing.T) {
 
 // TestSyncAccountPerformance tests how efficient the snap algo is at minimizing
 // state healing
-func TestSyncAccountPerformance(t *testing.T) {
+func TestSyncAccountPerformanceHashBased(t *testing.T) {
+	testSyncAccountPerformance(t, rawdb.HashScheme)
+}
+func TestSyncAccountPerformancePathBased(t *testing.T) {
+	testSyncAccountPerformance(t, rawdb.PathScheme)
+}
+
+func testSyncAccountPerformance(t *testing.T, scheme string) {
 	// Set the account concurrency to 1. This _should_ result in the
 	// range root to become correct, and there should be no healing needed
 	defer func(old int) { accountConcurrency = old }(accountConcurrency)
@@ -1717,7 +1826,7 @@ func TestSyncAccountPerformance(t *testing.T) {
 			})
 		}
 	)
-	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100)
+	nodeScheme, sourceAccountTrie, elems := makeAccountTrieNoStorage(100, scheme)
 
 	mkSource := func(name string) *testPeer {
 		source := newTestPeer(name, t, term)
@@ -1730,7 +1839,7 @@ func TestSyncAccountPerformance(t *testing.T) {
 	if err := syncer.Sync(sourceAccountTrie.Hash(), cancel); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
-	verifyTrie(syncer.db, sourceAccountTrie.Hash(), t)
+	verifyTrie(scheme, syncer.db, sourceAccountTrie.Hash(), t)
 	// The trie root will always be requested, since it is added when the snap
 	// sync cycle starts. When popping the queue, we do not look it up again.
 	// Doing so would bring this number down to zero in this artificial testcase,
@@ -1789,4 +1898,11 @@ func TestSlotEstimation(t *testing.T) {
 			t.Errorf("test %d: have %d want %d", i, have, want)
 		}
 	}
+}
+
+func newDbConfig(scheme string) *trie.Config {
+	if scheme == rawdb.HashScheme {
+		return &trie.Config{}
+	}
+	return &trie.Config{PathDB: pathdb.Defaults}
 }

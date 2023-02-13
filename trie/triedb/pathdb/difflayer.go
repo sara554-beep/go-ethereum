@@ -63,8 +63,9 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, nodes map[common.Ha
 		}
 		count += len(subset)
 	}
-	dl.memory += uint64(states.Size)
-
+	if states != nil {
+		dl.memory += uint64(states.Size)
+	}
 	dirtyWriteMeter.Mark(size)
 	diffLayerNodesMeter.Mark(int64(count))
 	diffLayerSizeMeter.Mark(int64(dl.memory))
