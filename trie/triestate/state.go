@@ -40,7 +40,7 @@ type Trie interface {
 
 	// Commit the trie and returns a set of dirty nodes generated along with
 	// the new root hash.
-	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet)
+	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error)
 }
 
 // TrieLoader wraps functions to load tries.
@@ -126,7 +126,10 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash]
 			return nil, fmt.Errorf("failed to revert state, err: %w", err)
 		}
 	}
-	root, result := tr.Commit(false)
+	root, result, err := tr.Commit(false)
+	if err != nil {
+		return nil, err
+	}
 	if root != prevRoot {
 		return nil, fmt.Errorf("failed to revert state, want %#x, got %#x", prevRoot, root)
 	}
@@ -174,7 +177,10 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 			return err
 		}
 	}
-	root, result := st.Commit(false)
+	root, result, err := st.Commit(false)
+	if err != nil {
+		return err
+	}
 	if root != prev.Root {
 		return errors.New("failed to reset storage trie")
 	}
@@ -221,7 +227,10 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 			return err
 		}
 	}
-	root, result := st.Commit(false)
+	root, result, err := st.Commit(false)
+	if err != nil {
+		return err
+	}
 	if root != types.EmptyRootHash {
 		return errors.New("failed to clear storage trie")
 	}
