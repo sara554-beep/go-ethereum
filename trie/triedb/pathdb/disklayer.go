@@ -161,7 +161,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// corresponding states(journal), the stored state history will
 	// be truncated in the next restart.
 	if dl.db.freezer != nil {
-		err := writeStateHistory(dl.db.freezer, bottom, dl.db.config.StateLimit)
+		err := writeStateHistory(dl.db.freezer, bottom, dl.db.config.StateHistory)
 		if err != nil {
 			return nil, err
 		}
