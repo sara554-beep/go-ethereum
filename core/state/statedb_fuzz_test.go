@@ -178,7 +178,7 @@ func (test *stateTest) run() bool {
 			storageList = append(storageList, copyStorages(states.Storages))
 		}
 		disk      = rawdb.NewMemoryDatabase()
-		tdb       = trie.NewDatabaseWithConfig(disk, &trie.Config{OnCommit: onCommit})
+		tdb       = trie.NewDatabase(disk, &trie.Config{OnCommit: onCommit})
 		sdb       = NewDatabaseWithNodeDB(disk, tdb)
 		byzantium = rand.Intn(2) == 0
 	)
