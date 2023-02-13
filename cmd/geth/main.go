@@ -138,7 +138,7 @@ var (
 		utils.GpoMaxGasPriceFlag,
 		utils.GpoIgnoreGasPriceFlag,
 		configFileFlag,
-	}, utils.NetworkFlags, utils.DatabasePathFlags)
+	}, utils.NetworkFlags, utils.DatabasePathFlags, utils.StateSchemeFlags)
 
 	rpcFlags = []cli.Flag{
 		utils.HTTPEnabledFlag,
