@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package trie
+package snapshot
 
 import (
 	"errors"
@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // layerTree is a group of state layers identified by the state root.
@@ -46,7 +47,7 @@ func newLayerTree(head snapshot) *layerTree {
 }
 
 // get retrieves a snapshot belonging to the given block root.
-func (tree *layerTree) get(blockRoot common.Hash) Reader {
+func (tree *layerTree) get(blockRoot common.Hash) snapshot {
 	tree.lock.RLock()
 	defer tree.lock.RUnlock()
 
@@ -86,7 +87,7 @@ func (tree *layerTree) len() int {
 
 // add inserts a new snapshot into the tree if it can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all).
-func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, set *MergedNodeSet) error {
+func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, nodes map[common.Hash]map[string][]byte, hashes map[common.Hash]map[string]common.Hash, accessLists map[common.Hash]map[string][]byte) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// happen for clique networks and proof-of-stake networks where empty blocks
 	// don't modify the state (0 block subsidy).
@@ -101,14 +102,14 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, set *Merged
 	if parent == nil {
 		return fmt.Errorf("triedb parent [%#x] snapshot missing", parentRoot)
 	}
-	nodes, err := simplify(set, parent.(snapshot))
+	set, err := wrap(nodes, hashes, accessLists, parent)
 	if err != nil {
 		return err
 	}
 	tree.lock.Lock()
 	defer tree.lock.Unlock()
 
-	snap := parent.(snapshot).Update(root, parent.(snapshot).ID()+1, nodes)
+	snap := parent.Update(root, parent.ID()+1, set)
 	tree.layers[snap.root] = snap
 	return nil
 }
@@ -223,25 +224,32 @@ func (tree *layerTree) bottom() snapshot {
 // convertEmpty converts the given hash to predefined emptyHash if it's empty.
 func convertEmpty(hash common.Hash) common.Hash {
 	if hash == (common.Hash{}) {
-		return emptyRoot
+		return types.EmptyRootHash
 	}
 	return hash
 }
 
-// simplify converts the set to a two-dimensional map in which nodes are mapped
-// by owner and path, also fill the previous value either from database or the
-// optional tracked accessList.
-func simplify(set *MergedNodeSet, layer snapshot) (map[common.Hash]map[string]*nodeWithPrev, error) {
+// wrap converts the set to a two-dimensional map in which nodes are mapped
+// by owner and path, also fill the previous value either from database or
+// the optional tracked accessList.
+func wrap(nodes map[common.Hash]map[string][]byte, hashes map[common.Hash]map[string]common.Hash, accessLists map[common.Hash]map[string][]byte, layer snapshot) (map[common.Hash]map[string]*nodeWithPrev, error) {
 	var (
-		hits  int
-		miss  int
-		nodes = make(map[common.Hash]map[string]*nodeWithPrev)
+		hits int
+		miss int
+		set  = make(map[common.Hash]map[string]*nodeWithPrev)
 	)
-	for owner, subset := range set.sets {
-		nodes[owner] = make(map[string]*nodeWithPrev)
-		for path, n := range subset.nodes {
-			prev, ok := subset.accessList[path]
-			if ok {
+	for owner, subset := range nodes {
+		set[owner] = make(map[string]*nodeWithPrev)
+		accessList := accessLists[owner]
+		for path, blob := range subset {
+			var (
+				prev []byte
+				hit  bool
+			)
+			if accessList != nil {
+				prev, hit = accessList[path]
+			}
+			if hit {
 				hits += 1
 			} else {
 				// If the original value is not found in the accessList,
@@ -257,13 +265,16 @@ func simplify(set *MergedNodeSet, layer snapshot) (map[common.Hash]map[string]*n
 				prev = blob // blob can be nil in case it's not existent
 				miss += 1
 			}
-			nodes[owner][path] = &nodeWithPrev{
-				memoryNode: n,
-				prev:       prev,
+			set[owner][path] = &nodeWithPrev{
+				memoryNode: &memoryNode{
+					blob: blob,
+					hash: hashes[owner][path],
+				},
+				prev: prev,
 			}
 		}
 	}
 	triedbHitAccessListMeter.Mark(int64(hits))
 	triedbHitDatabaseMeter.Mark(int64(miss))
-	return nodes, nil
+	return set, nil
 }

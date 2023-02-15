@@ -259,7 +259,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 				}
 			} else {
 				owner, inner := trie.ResolvePath([]byte(node.path))
-				data, err := ndb.GetReader(srcRoot).NodeBlob(owner, inner, node.hash)
+				data, err := ndb.GetReader(srcRoot).Node(owner, inner, node.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for key %v", []byte(node.path))
 				}
@@ -358,7 +358,7 @@ func testIterativeDelayedStateSync(t *testing.T, scheme string) {
 			nodeResults := make([]trie.NodeSyncResult, len(nodeElements)/2+1)
 			for i, element := range nodeElements[:len(nodeResults)] {
 				owner, inner := trie.ResolvePath([]byte(element.path))
-				data, err := ndb.GetReader(srcRoot).NodeBlob(owner, inner, element.hash)
+				data, err := ndb.GetReader(srcRoot).Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve contract bytecode for %x", element.code)
 				}
@@ -455,7 +455,7 @@ func testIterativeRandomStateSync(t *testing.T, count int, scheme string) {
 			results := make([]trie.NodeSyncResult, 0, len(nodeQueue))
 			for path, element := range nodeQueue {
 				owner, inner := trie.ResolvePath([]byte(element.path))
-				data, err := ndb.GetReader(srcRoot).NodeBlob(owner, inner, element.hash)
+				data, err := ndb.GetReader(srcRoot).Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x %v %v", element.hash, []byte(element.path), element.path)
 				}
@@ -550,7 +550,7 @@ func testIterativeRandomDelayedStateSync(t *testing.T, scheme string) {
 				delete(nodeQueue, path)
 
 				owner, inner := trie.ResolvePath([]byte(element.path))
-				data, err := ndb.GetReader(srcRoot).NodeBlob(owner, inner, element.hash)
+				data, err := ndb.GetReader(srcRoot).Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", element.hash)
 				}
@@ -653,7 +653,7 @@ func testIncompleteStateSync(t *testing.T, scheme string) {
 			results := make([]trie.NodeSyncResult, 0, len(nodeQueue))
 			for path, element := range nodeQueue {
 				owner, inner := trie.ResolvePath([]byte(element.path))
-				data, err := ndb.GetReader(srcRoot).NodeBlob(owner, inner, element.hash)
+				data, err := ndb.GetReader(srcRoot).Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", element.hash)
 				}

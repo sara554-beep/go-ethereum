@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snapshot
 
 import (
 	"fmt"
@@ -44,22 +44,22 @@ type diffLayer struct {
 // newDiffLayer creates a new diff on top of an existing snapshot, whether that's a low
 // level persistent database or a hierarchical diff already.
 func newDiffLayer(parent snapshot, root common.Hash, id uint64, nodes map[common.Hash]map[string]*nodeWithPrev) *diffLayer {
-	dl := &diffLayer{
-		root:   root,
-		id:     id,
-		nodes:  nodes,
-		parent: parent,
-	}
 	var (
 		size  int64
 		count int
 	)
 	for _, subset := range nodes {
 		for path, n := range subset {
-			dl.memory += uint64(n.memorySize(len(path)))
-			size += int64(uint16(len(path)) + n.size)
+			size += int64(n.memorySize(len(path)))
 		}
 		count += len(subset)
+	}
+	dl := &diffLayer{
+		root:   root,
+		id:     id,
+		nodes:  nodes,
+		parent: parent,
+		memory: uint64(size),
 	}
 	triedbDirtyWriteMeter.Mark(size)
 	triedbDiffLayerSizeMeter.Mark(int64(dl.memory))
@@ -109,7 +109,7 @@ func (dl *diffLayer) MarkStale() {
 // node retrieves the node with provided storage key and node hash. The returned
 // node is in a wrapper through which callers can obtain the RLP-format or canonical
 // node representation easily. No error will be returned if node is not found.
-func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) (*memoryNode, error) {
+func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
@@ -132,8 +132,8 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 			}
 			triedbDirtyHitMeter.Mark(1)
 			triedbDirtyNodeHitDepthHist.Update(int64(depth))
-			triedbDirtyReadMeter.Mark(int64(n.size))
-			return n.unwrap(), nil
+			triedbDirtyReadMeter.Mark(int64(len(n.blob)))
+			return n.blob, nil
 		}
 	}
 	// Trie node unknown to this layer, resolve from parent
@@ -143,23 +143,8 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 // Node retrieves the trie node with the provided trie identifier, node path
 // and the corresponding node hash. No error will be returned if the node is
 // not found.
-func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) (node, error) {
-	n, err := dl.node(owner, path, hash, 0)
-	if err != nil || n == nil {
-		return nil, err
-	}
-	return n.obj(), nil
-}
-
-// NodeBlob retrieves the RLP-encoded trie node blob with the provided trie
-// identifier, node path and the corresponding node hash. No error will be
-// returned if the node is not found.
-func (dl *diffLayer) NodeBlob(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	n, err := dl.node(owner, path, hash, 0)
-	if err != nil || n == nil {
-		return nil, err
-	}
-	return n.rlp(), nil
+func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+	return dl.node(owner, path, hash, 0)
 }
 
 // nodeByPath retrieves the RLP-encoded trie node blob with the provided trie
@@ -183,7 +168,7 @@ func (dl *diffLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) 
 			if n.isDeleted() {
 				return nil, nil
 			}
-			return n.rlp(), nil
+			return n.blob, nil
 		}
 	}
 	// Trie node unknown to this layer, resolve from parent

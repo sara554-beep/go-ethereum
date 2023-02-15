@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package trie
+package snapshot
 
 import (
 	"bytes"
@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
@@ -133,7 +134,7 @@ func (h *trieHistory) apply(batch ethdb.Batch) error {
 			if accTrie && len(state.Path) == 0 {
 				root := crypto.Keccak256Hash(state.Prev)
 				if len(state.Prev) == 0 {
-					root = emptyRoot
+					root = types.EmptyRootHash
 				}
 				if h.Parent == root {
 					continue

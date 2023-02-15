@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snapshot
 
 import (
 	"errors"
@@ -64,7 +64,7 @@ func newDiskcache(limit int, nodes map[common.Hash]map[string]*memoryNode, layer
 }
 
 // node retrieves the node with given node info.
-func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (*memoryNode, error) {
+func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
 	subset, ok := cache.nodes[owner]
 	if !ok {
 		return nil, nil
@@ -76,7 +76,7 @@ func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (
 	if n.hash != hash {
 		return nil, fmt.Errorf("diskcache %w %x!=%x(%x %v)", errUnexpectedNode, n.hash, hash, owner, path)
 	}
-	return n, nil
+	return n.blob, nil
 }
 
 // nodeByPath retrieves the node blob with given node info.
@@ -92,7 +92,7 @@ func (cache *diskcache) nodeByPath(owner common.Hash, path []byte) ([]byte, bool
 	if n.isDeleted() {
 		return nil, true
 	}
-	return n.rlp(), true
+	return n.blob, true
 }
 
 // commit merges the dirty node belonging to the bottom-most diff layer
@@ -115,9 +115,9 @@ func (cache *diskcache) commit(nodes map[common.Hash]map[string]*memoryNode) *di
 				if orig, exist := current[path]; !exist {
 					delta += int64(n.memorySize(len(path)))
 				} else {
-					delta += int64(n.size) - int64(orig.size)
+					delta += int64(len(n.blob)) - int64(len(orig.blob))
 					overwrites += 1
-					overwriteSizes += int64(orig.size)
+					overwriteSizes += int64(len(orig.blob))
 				}
 				cache.nodes[owner][path] = n
 			}
@@ -153,14 +153,13 @@ func (cache *diskcache) revert(h *trieHistory) error {
 			}
 			if len(state.Prev) == 0 {
 				subset[string(state.Path)] = &memoryNode{}
-				delta -= int64(cur.size)
+				delta -= int64(len(cur.blob))
 			} else {
 				subset[string(state.Path)] = &memoryNode{
-					node: rawNode(state.Prev),
-					size: uint16(len(state.Prev)),
+					blob: state.Prev,
 					hash: crypto.Keccak256Hash(state.Prev),
 				}
-				delta += int64(len(state.Prev)) - int64(cur.size)
+				delta += int64(len(state.Prev)) - int64(len(cur.blob))
 			}
 		}
 	}
@@ -224,14 +223,13 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 					rawdb.DeleteStorageTrieNode(batch, owner, []byte(path))
 				}
 			} else {
-				blob := n.rlp()
 				if accTrie {
-					rawdb.WriteAccountTrieNode(batch, []byte(path), blob)
+					rawdb.WriteAccountTrieNode(batch, []byte(path), n.blob)
 				} else {
-					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), blob)
+					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), n.blob)
 				}
 				if clean != nil {
-					clean.Set(n.hash.Bytes(), blob)
+					clean.Set(n.hash.Bytes(), n.blob)
 				}
 			}
 		}

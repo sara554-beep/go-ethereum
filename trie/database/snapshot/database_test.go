@@ -14,10 +14,11 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snapshot
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/core/types"
 	"math/rand"
 	"testing"
 
@@ -29,22 +30,22 @@ import (
 
 // testEnv is the environment for all test fields.
 type testEnv struct {
-	db     ethdb.Database
-	nodeDb *Database
-	roots  []common.Hash
-	paths  [][][]byte
-	blobs  [][][]byte
+	disk  ethdb.Database
+	db    *Database
+	roots []common.Hash
+	paths [][][]byte
+	blobs [][][]byte
 }
 
 // fill creates a list of random nodes for simulation.
-func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte) (common.Hash, *NodeSet) {
+func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte) (common.Hash, map[string]*memoryNode) {
 	var (
-		nodes    = NewNodeSet(common.Hash{}, nil)
+		nodes    = make(map[string]*memoryNode)
 		checkDup = func(path []byte) bool {
 			if len(path) == 0 {
 				return true
 			}
-			if _, ok := nodes.nodes[string(path)]; ok {
+			if _, ok := nodes[string(path)]; ok {
 				return true
 			}
 			return false
@@ -58,7 +59,7 @@ func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte) (common.Hash, *Node
 			if checkDup(path) {
 				continue
 			}
-			nodes.markUpdated(path, randomNode())
+			nodes[string(path)] = randomNode()
 		case 1:
 			// node modification
 			if len(prevPaths) == 0 {
@@ -73,7 +74,7 @@ func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte) (common.Hash, *Node
 			if checkDup(path) {
 				continue
 			}
-			nodes.markUpdated(path, randomNode())
+			nodes[string(path)] = randomNode()
 		case 2:
 			// node deletion
 			if len(prevPaths) == 0 {
@@ -91,19 +92,19 @@ func fill(n int, prevPaths [][][]byte, prevBlobs [][][]byte) (common.Hash, *Node
 			if checkDup(path) {
 				continue
 			}
-			nodes.markDeleted(path)
+			nodes[string(path)] = &memoryNode{}
 		}
 	}
 	// Add the root node
 	root := randomNode()
-	nodes.markUpdated(nil, root)
+	nodes[""] = root
 	return root.hash, nodes
 }
 
 func fillDB(t *testing.T) *testEnv {
 	var (
 		diskdb, _ = rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), t.TempDir(), "", false)
-		nodeDb    = newTestDatabase(diskdb, rawdb.PathScheme)
+		db        = New(diskdb, nil, &Config{})
 		roots     []common.Hash
 		paths     [][][]byte
 		blobs     [][][]byte
@@ -118,26 +119,32 @@ func fillDB(t *testing.T) *testEnv {
 		root, set := fill(500, paths, blobs)
 		roots = append(roots, root)
 
-		set.forEachWithOrder(false, func(path string, n *memoryNode) {
+		var (
+			nodes  = make(map[string][]byte)
+			hashes = make(map[string]common.Hash)
+		)
+		for path, n := range set {
 			pathlist = append(pathlist, []byte(path))
 			if n.isDeleted() {
 				bloblist = append(bloblist, nil)
 			} else {
-				bloblist = append(bloblist, set.nodes[path].rlp())
+				bloblist = append(bloblist, n.blob)
 			}
-		})
+			nodes[path] = n.blob
+			hashes[path] = n.hash
+		}
 		paths = append(paths, pathlist)
 		blobs = append(blobs, bloblist)
 
-		nodeDb.Update(root, parent, NewWithNodeSet(set))
+		db.Update(root, parent, map[common.Hash]map[string][]byte{{}: nodes}, map[common.Hash]map[string]common.Hash{{}: hashes}, nil)
 		parent = root
 	}
 	return &testEnv{
-		db:     diskdb,
-		nodeDb: nodeDb,
-		roots:  roots,
-		paths:  paths,
-		blobs:  blobs,
+		disk:  diskdb,
+		db:    db,
+		roots: roots,
+		paths: paths,
+		blobs: blobs,
 	}
 }
 
@@ -149,7 +156,7 @@ func TestDatabaseRollback(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.db
 		dl    = db.tree.bottom().(*diskLayer)
 		index int
 	)
@@ -159,7 +166,7 @@ func TestDatabaseRollback(t *testing.T) {
 		}
 	}
 	// Ensure all the trie histories are stored properly
-	var parent = emptyRoot
+	var parent = types.EmptyRootHash
 	for i := uint64(1); i <= dl.id; i++ {
 		h, err := loadTrieHistory(db.freezer, i)
 		if err != nil {
@@ -172,14 +179,14 @@ func TestDatabaseRollback(t *testing.T) {
 	}
 	// Ensure immature trie histories are not persisted
 	for i := dl.id + 1; i <= uint64(len(env.roots)); i++ {
-		blob := rawdb.ReadTrieHistory(env.nodeDb.diskdb, i)
+		blob := rawdb.ReadTrieHistory(env.db.diskdb, i)
 		if len(blob) != 0 {
 			t.Error("Unexpected trie history", "id", i)
 		}
 	}
 	// Revert the db to historical point with reverse state available
 	for i := index; i > 0; i-- {
-		if err := env.nodeDb.Recover(env.roots[i-1]); err != nil {
+		if err := env.db.Recover(env.roots[i-1]); err != nil {
 			t.Error("Failed to revert db status", "err", err)
 		}
 		if db.tree.bottom().Root() != env.roots[i-1] {
@@ -188,16 +195,16 @@ func TestDatabaseRollback(t *testing.T) {
 		// Compare the reverted state with the constructed one, they should be same.
 		paths, blobs := env.paths[i-1], env.blobs[i-1]
 		for j := 0; j < len(paths); j++ {
-			layer := env.nodeDb.GetReader(env.roots[i-1])
+			layer := env.db.GetReader(env.roots[i-1])
 			if len(blobs[j]) == 0 {
 				// deleted node, expect error
-				blob, _ := layer.NodeBlob(common.Hash{}, paths[j], crypto.Keccak256Hash(blobs[j]))
+				blob, _ := layer.Node(common.Hash{}, paths[j], crypto.Keccak256Hash(blobs[j]))
 				if len(blob) != 0 {
 					t.Error("Unexpected state", "path", paths[j], "got", blob)
 				}
 			} else {
 				// normal node, expect correct value
-				blob, err := layer.NodeBlob(common.Hash{}, paths[j], crypto.Keccak256Hash(blobs[j]))
+				blob, err := layer.Node(common.Hash{}, paths[j], crypto.Keccak256Hash(blobs[j]))
 				if err != nil {
 					t.Error("Failed to retrieve state", "err", err)
 				}
@@ -220,14 +227,14 @@ func TestDatabaseBatchRollback(t *testing.T) {
 
 	var (
 		env = fillDB(t)
-		db  = env.nodeDb.backend.(*snapDatabase)
+		db  = env.db
 	)
 	// Revert the db to historical point with all trie histories available
-	if err := env.nodeDb.Recover(common.Hash{}); err != nil {
+	if err := env.db.Recover(common.Hash{}); err != nil {
 		t.Error("Failed to revert db", "err", err)
 	}
 	ndl := db.tree.bottom().(*diskLayer)
-	if ndl.Root() != emptyRoot {
+	if ndl.Root() != types.EmptyRootHash {
 		t.Error("Unexpected disk layer root")
 	}
 	if db.tree.len() != 1 {
@@ -241,7 +248,7 @@ func TestDatabaseBatchRollback(t *testing.T) {
 				continue
 			}
 			hash := crypto.Keccak256Hash(blobs[j])
-			blob, _ := ndl.NodeBlob(common.Hash{}, path, hash)
+			blob, _ := ndl.Node(common.Hash{}, path, hash)
 			if len(blob) != 0 {
 				t.Error("Unexpected state")
 			}
@@ -271,7 +278,7 @@ func TestDatabaseRecoverable(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.db
 		dl    = db.tree.bottom()
 		index int
 	)
@@ -281,13 +288,13 @@ func TestDatabaseRecoverable(t *testing.T) {
 		}
 	}
 	// Initial state should be recoverable
-	result, _ := env.nodeDb.Recoverable(common.Hash{})
+	result := env.db.Recoverable(common.Hash{})
 	if !result {
 		t.Error("Layer unrecoverable")
 	}
 	// All the states below the disk layer should be recoverable.
 	for i := 0; i < index; i++ {
-		result, _ := env.nodeDb.Recoverable(env.roots[i])
+		result := env.db.Recoverable(env.roots[i])
 		if !result {
 			t.Error("Layer unrecoverable")
 		}
@@ -295,7 +302,7 @@ func TestDatabaseRecoverable(t *testing.T) {
 	// All other layers above(including disk layer) shouldn't be
 	// recoverable since they are accessible.
 	for i := index + 1; i < len(env.roots); i++ {
-		result, _ := env.nodeDb.Recoverable(env.roots[i])
+		result := env.db.Recoverable(env.roots[i])
 		if result {
 			t.Error("Layer should be unrecoverable")
 		}
@@ -310,16 +317,16 @@ func TestJournal(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.db
 		dl    = db.tree.bottom()
 		index int
 	)
-	if err := env.nodeDb.Journal(env.roots[len(env.roots)-1]); err != nil {
+	if err := env.db.Journal(env.roots[len(env.roots)-1]); err != nil {
 		t.Error("Failed to journal triedb", "err", err)
 	}
-	env.nodeDb.Close()
+	env.db.Close()
 
-	newdb := newTestDatabase(env.nodeDb.diskdb, rawdb.PathScheme)
+	newdb := New(env.db.diskdb, nil, &Config{})
 	for index = 0; index < len(env.roots); index++ {
 		if env.roots[index] == dl.Root() {
 			break
@@ -332,7 +339,7 @@ func TestJournal(t *testing.T) {
 				continue
 			}
 			layer := newdb.GetReader(env.roots[i])
-			blob, err := layer.NodeBlob(common.Hash{}, paths[j], crypto.Keccak256Hash(blobs[j]))
+			blob, err := layer.Node(common.Hash{}, paths[j], crypto.Keccak256Hash(blobs[j]))
 			if err != nil {
 				t.Error("Failed to retrieve state", "err", err)
 			}
@@ -351,7 +358,7 @@ func TestReset(t *testing.T) {
 
 	var (
 		env   = fillDB(t)
-		db    = env.nodeDb.backend.(*snapDatabase)
+		db    = env.db
 		dl    = db.tree.bottom().(*diskLayer)
 		index int
 	)
@@ -361,16 +368,16 @@ func TestReset(t *testing.T) {
 		}
 	}
 	// Reset database to non-existent target, should reject it
-	if err := env.nodeDb.Reset(randomHash()); err == nil {
+	if err := env.db.Reset(randomHash()); err == nil {
 		t.Fatal("Failed to reject invalid reset")
 	}
 	// Reset database to state persisted in the disk
-	_, hash := rawdb.ReadAccountTrieNode(env.db, nil)
-	if err := env.nodeDb.Reset(hash); err != nil {
+	_, hash := rawdb.ReadAccountTrieNode(env.disk, nil)
+	if err := env.db.Reset(hash); err != nil {
 		t.Fatalf("Failed to reset database %v", err)
 	}
 	// Ensure journal is deleted from disk
-	if blob := rawdb.ReadTrieJournal(env.db); len(blob) != 0 {
+	if blob := rawdb.ReadTrieJournal(env.disk); len(blob) != 0 {
 		t.Fatal("Failed to clean journal")
 	}
 	// Ensure all trie histories are nuked
@@ -398,7 +405,7 @@ func TestCommit(t *testing.T) {
 
 	var (
 		env = fillDB(t)
-		db  = env.nodeDb.backend.(*snapDatabase)
+		db  = env.db
 	)
 	if err := db.Commit(env.roots[len(env.roots)-1], false); err != nil {
 		t.Fatalf("Failed to cap database %v", err)
@@ -410,7 +417,7 @@ func TestCommit(t *testing.T) {
 	if db.tree.bottom().Root() != env.roots[len(env.roots)-1] {
 		t.Fatalf("Root hash is not matched exp %x got %x", env.roots[len(env.roots)-1], db.tree.bottom().Root())
 	}
-	_, hash := rawdb.ReadAccountTrieNode(env.db, nil)
+	_, hash := rawdb.ReadAccountTrieNode(env.disk, nil)
 	if hash != env.roots[len(env.roots)-1] {
 		t.Fatalf("Root hash is not matched exp %x got %x", env.roots[len(env.roots)-1], hash)
 	}

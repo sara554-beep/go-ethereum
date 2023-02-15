@@ -14,15 +14,22 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package trie
+package snapshot
 
 import (
+	crand "crypto/rand"
 	"math/rand"
 	"reflect"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/core/rawdb"
 )
+
+func randBytes(n int) []byte {
+	r := make([]byte, n)
+	crand.Read(r)
+	return r
+}
 
 func makeTrieHistories(n int) []trieHistory {
 	var (

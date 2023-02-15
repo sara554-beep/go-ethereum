@@ -14,11 +14,10 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snapshot
 
 import (
 	"bytes"
-	"encoding/binary"
 	"math/rand"
 	"testing"
 
@@ -40,14 +39,13 @@ func randomNode() *memoryNode {
 	val := randBytes(100)
 	return &memoryNode{
 		hash: crypto.Keccak256Hash(val),
-		node: rawNode(val),
-		size: 100,
+		blob: val,
 	}
 }
 
 func emptyLayer() *diskLayer {
 	return &diskLayer{
-		db:    openSnapDatabase(rawdb.NewMemoryDatabase(), nil, nil),
+		db:    New(rawdb.NewMemoryDatabase(), nil, nil),
 		dirty: newDiskcache(defaultCacheSize, nil, 0),
 	}
 }
@@ -87,7 +85,6 @@ func benchmarkSearch(b *testing.B, depth int, total int) {
 			var (
 				path = randomHash().Bytes()
 				node = randomNode()
-				blob = node.rlp()
 			)
 			nodes[common.Hash{}][string(path)] = &nodeWithPrev{
 				memoryNode: node,
@@ -95,8 +92,8 @@ func benchmarkSearch(b *testing.B, depth int, total int) {
 			}
 			if npath == nil && depth == index {
 				npath = common.CopyBytes(path)
-				nblob = common.CopyBytes(blob)
-				nhash = crypto.Keccak256Hash(blob)
+				nblob = common.CopyBytes(node.blob)
+				nhash = crypto.Keccak256Hash(node.blob)
 			}
 		}
 		return newDiffLayer(parent, common.Hash{}, 0, nodes)
@@ -113,59 +110,13 @@ func benchmarkSearch(b *testing.B, depth int, total int) {
 		err  error
 	)
 	for i := 0; i < b.N; i++ {
-		have, err = layer.NodeBlob(common.Hash{}, npath, nhash)
+		have, err = layer.Node(common.Hash{}, npath, nhash)
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
 	if !bytes.Equal(have, nblob) {
 		b.Fatalf("have %x want %x", have, nblob)
-	}
-}
-
-// goos: darwin
-// goarch: arm64
-// pkg: github.com/ethereum/go-ethereum/trie
-// BenchmarkGetNode
-// BenchmarkGetNode-8   	 7024152	       168.0 ns/op
-func BenchmarkGetNode(b *testing.B) { benchmarkGetNode(b, false) }
-
-// goos: darwin
-// goarch: arm64
-// pkg: github.com/ethereum/go-ethereum/trie
-// BenchmarkGetNodeBlob
-// BenchmarkGetNodeBlob-8   	 6826884	       170.6 ns/op
-func BenchmarkGetNodeBlob(b *testing.B) { benchmarkGetNode(b, true) }
-
-func benchmarkGetNode(b *testing.B, getBlob bool) {
-	db := newTestDatabase(rawdb.NewDatabase(rawdb.NewMemoryDatabase()), rawdb.PathScheme)
-	trie, _ := New(TrieID(common.Hash{}), db)
-
-	k := make([]byte, 32)
-	for i := 0; i < benchElemCount; i++ {
-		binary.LittleEndian.PutUint64(k, uint64(i))
-		trie.Update(k, randBytes(100))
-	}
-	root, nodes := trie.Commit(false)
-	db.Update(root, common.Hash{}, NewWithNodeSet(nodes))
-
-	var (
-		path  []byte
-		hash  common.Hash
-		layer = db.GetReader(root)
-	)
-	for p, node := range nodes.nodes {
-		path = []byte(p)
-		hash = node.hash
-		break
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if getBlob {
-			layer.NodeBlob(common.Hash{}, path, hash)
-		} else {
-			layer.Node(common.Hash{}, path, hash)
-		}
 	}
 }
 

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package snapshot
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -54,7 +55,7 @@ type journalNodes struct {
 }
 
 // loadJournal tries to parse the snapshot journal from the disk.
-func (db *snapDatabase) loadJournal(diskRoot common.Hash) (snapshot, error) {
+func (db *Database) loadJournal(diskRoot common.Hash) (snapshot, error) {
 	journal := rawdb.ReadTrieJournal(db.diskdb)
 	if len(journal) == 0 {
 		return nil, errMissJournal
@@ -96,11 +97,11 @@ func (db *snapDatabase) loadJournal(diskRoot common.Hash) (snapshot, error) {
 }
 
 // loadSnapshot loads a pre-existing state snapshot backed by a key-value store.
-func (db *snapDatabase) loadSnapshot() snapshot {
+func (db *Database) loadSnapshot() snapshot {
 	// Retrieve the root node of in-disk state.
 	_, root := rawdb.ReadAccountTrieNode(db.diskdb, nil)
 	if root == (common.Hash{}) {
-		root = emptyRoot
+		root = types.EmptyRootHash
 	}
 	// Load the in-memory diff layers by resolving the journal
 	snap, err := db.loadJournal(root)
@@ -110,7 +111,7 @@ func (db *snapDatabase) loadSnapshot() snapshot {
 	// Journal is not matched(or missing) with the in-disk state, discard it.
 	// Display log for discarding journal, but try to avoid showing useless
 	// information when the db is created from scratch.
-	if !(root == emptyRoot && errors.Is(err, errMissJournal)) {
+	if !(root == types.EmptyRootHash && errors.Is(err, errMissJournal)) {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Construct the entire layer tree with the single in-disk state.
@@ -119,7 +120,7 @@ func (db *snapDatabase) loadSnapshot() snapshot {
 
 // loadDiskLayer reads the binary blob from the snapshot journal, reconstructing a new
 // disk layer on it.
-func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
+func (db *Database) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 	// Resolve disk layer root
 	var root common.Hash
 	if err := r.Decode(&root); err != nil {
@@ -137,8 +138,7 @@ func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 			if len(n.Blob) > 0 {
 				subset[string(n.Path)] = &memoryNode{
 					hash: crypto.Keccak256Hash(n.Blob),
-					node: rawNode(n.Blob),
-					size: uint16(len(n.Blob)),
+					blob: n.Blob,
 				}
 			} else {
 				subset[string(n.Path)] = &memoryNode{}
@@ -162,7 +162,7 @@ func (db *snapDatabase) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 
 // loadDiffLayer reads the next sections of a snapshot journal, reconstructing a new
 // diff and verifying that it can be linked to the requested parent.
-func (db *snapDatabase) loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
+func (db *Database) loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot, error) {
 	// Read the next diff journal entry
 	var root common.Hash
 	if err := r.Decode(&root); err != nil {
@@ -184,8 +184,7 @@ func (db *snapDatabase) loadDiffLayer(parent snapshot, r *rlp.Stream) (snapshot,
 				subset[string(n.Path)] = &nodeWithPrev{
 					memoryNode: &memoryNode{
 						hash: crypto.Keccak256Hash(n.Blob),
-						node: rawNode(n.Blob),
-						size: uint16(len(n.Blob)),
+						blob: n.Blob,
 					},
 					prev: n.Prev,
 				}
@@ -223,7 +222,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 		for path, node := range subset {
 			jnode := journalNode{Path: []byte(path)}
 			if !node.isDeleted() {
-				jnode.Blob = node.rlp()
+				jnode.Blob = node.blob
 			}
 			entry.Nodes = append(entry.Nodes, jnode)
 		}
@@ -263,7 +262,7 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 		for path, node := range subset {
 			jnode := journalNode{Path: []byte(path), Prev: node.prev}
 			if !node.isDeleted() {
-				jnode.Blob = node.rlp()
+				jnode.Blob = node.blob
 			}
 			entry.Nodes = append(entry.Nodes, jnode)
 		}

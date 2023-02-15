@@ -19,6 +19,7 @@ package trie
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/database"
 	"io"
 	"reflect"
 	"sync"
@@ -799,7 +800,7 @@ func (db *hashDatabase) Scheme() string {
 }
 
 // GetReader retrieves a node reader belonging to the given state root.
-func (db *hashDatabase) GetReader(root common.Hash) Reader {
+func (db *hashDatabase) GetReader(root common.Hash) database.Reader {
 	return newHashReader(db)
 }
 
@@ -815,15 +816,8 @@ func newHashReader(db *hashDatabase) *hashReader {
 
 // Node retrieves the trie node with the given node hash.
 // No error will be returned if the node is not found.
-func (reader *hashReader) Node(_ common.Hash, _ []byte, hash common.Hash) (node, error) {
-	return reader.db.node(hash), nil
-}
-
-// NodeBlob retrieves the RLP-encoded trie node blob with the given node hash.
-// No error will be returned if the node is not found.
-func (reader *hashReader) NodeBlob(_ common.Hash, _ []byte, hash common.Hash) ([]byte, error) {
-	blob, _ := reader.db.Node(hash)
-	return blob, nil
+func (reader *hashReader) Node(_ common.Hash, _ []byte, hash common.Hash) ([]byte, error) {
+	return reader.db.Node(hash)
 }
 
 // Cap iteratively flushes old but still referenced trie nodes until the total

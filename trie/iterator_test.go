@@ -142,7 +142,7 @@ func testNodeIteratorCoverage(t *testing.T, scheme string) {
 	}
 	// Cross check the hashes and the database itself
 	for _, element := range elements {
-		if blob, err := nodeDb.GetReader(trie.Hash()).NodeBlob(common.Hash{}, element.path, element.hash); err != nil {
+		if blob, err := nodeDb.GetReader(trie.Hash()).Node(common.Hash{}, element.path, element.hash); err != nil {
 			t.Errorf("failed to retrieve reported node %x: %v", element.hash, err)
 		} else if !bytes.Equal(blob, element.blob) {
 			t.Errorf("node blob is different, want %v got %v", element.blob, blob)

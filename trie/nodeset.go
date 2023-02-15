@@ -66,23 +66,6 @@ func (n *memoryNode) isDeleted() bool {
 	return n.hash == (common.Hash{})
 }
 
-// nodeWithPrev wraps the memoryNode with the previous node value.
-type nodeWithPrev struct {
-	*memoryNode
-	prev []byte // RLP-encoded previous value, nil means it's non-existent
-}
-
-// unwrap returns the internal memoryNode object.
-func (n *nodeWithPrev) unwrap() *memoryNode {
-	return n.memoryNode
-}
-
-// memorySize returns the total memory size used by this node. It overloads
-// the function in memoryNode by counting the size of previous value as well.
-func (n *nodeWithPrev) memorySize(pathlen int) int {
-	return n.memoryNode.memorySize(pathlen) + len(n.prev)
-}
-
 // NodeSet contains all dirty nodes collected during the commit operation.
 // Each node is keyed by path. It's not thread-safe to use.
 type NodeSet struct {
@@ -210,4 +193,24 @@ func (set *MergedNodeSet) Merge(other *NodeSet) error {
 	}
 	set.sets[other.owner] = other
 	return nil
+}
+
+func (set *MergedNodeSet) unwrap() (map[common.Hash]map[string][]byte, map[common.Hash]map[string]common.Hash, map[common.Hash]map[string][]byte) {
+	var (
+		nodes       = make(map[common.Hash]map[string][]byte)
+		hashes      = make(map[common.Hash]map[string]common.Hash)
+		accessLists = make(map[common.Hash]map[string][]byte)
+	)
+	for owner, subset := range set.sets {
+		nodes[owner] = make(map[string][]byte)
+		hashes[owner] = make(map[string]common.Hash)
+		accessLists[owner] = make(map[string][]byte)
+
+		for path, n := range subset.nodes {
+			nodes[owner][path] = n.rlp()
+			hashes[owner][path] = n.hash
+			accessLists[owner][path] = subset.accessList[path]
+		}
+	}
+	return nodes, hashes, accessLists
 }

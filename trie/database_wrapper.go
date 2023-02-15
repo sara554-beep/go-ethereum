@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"errors"
 	"runtime"
 	"time"
 
@@ -25,14 +26,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie/database"
+	sdb "github.com/ethereum/go-ethereum/trie/database/snapshot"
 )
-
-// NodeReader warps all the necessary functions for accessing trie node.
-type NodeReader interface {
-	// GetReader returns a reader for accessing all trie nodes with provided
-	// state root. Nil is returned in case the state is not available.
-	GetReader(root common.Hash) Reader
-}
 
 // Config defines all necessary options for database.
 type Config struct {
@@ -47,45 +43,15 @@ type Config struct {
 	ReadOnly     bool   // Flag whether the database is opened in read only mode.
 }
 
-// nodeBackend defines the methods needed to access/update trie nodes in
-// different state scheme. It's implemented by hashDatabase and snapDatabase.
-type nodeBackend interface {
-	// GetReader returns a reader for accessing all trie nodes with provided
-	// state root. Nil is returned in case the state is not available.
-	GetReader(root common.Hash) Reader
-
-	// Update performs a state transition from specified parent to root by committing
-	// dirty nodes provided in the nodeset.
-	Update(root common.Hash, parent common.Hash, nodes *MergedNodeSet) error
-
-	// Commit writes all relevant trie nodes belonging to the specified state to disk.
-	// Report specifies whether logs will be displayed in info level.
-	Commit(root common.Hash, report bool) error
-
-	// Initialized returns an indicator if the state data is already initialized
-	// according to the state scheme.
-	Initialized(genesisRoot common.Hash) bool
-
-	// Size returns the current storage size of the memory cache in front of the
-	// persistent database layer.
-	Size() common.StorageSize
-
-	// Scheme returns the node scheme used in the database.
-	Scheme() string
-
-	// Close closes the trie database backend and releases all held resources.
-	Close() error
-}
-
 // Database is the wrapper of the underlying nodeBackend which is shared by
 // different types of nodeBackends as an entrypoint. It's responsible for all
 // interactions relevant with trie nodes and the node preimages.
 type Database struct {
-	config    *Config          // Configuration for trie database.
-	diskdb    ethdb.Database   // Persistent database to store the snapshot
-	cleans    *fastcache.Cache // Megabytes permitted using for read caches
-	preimages *preimageStore   // The store for caching preimages
-	backend   nodeBackend      // The backend for managing trie nodes
+	config    *Config           // Configuration for trie database.
+	diskdb    ethdb.Database    // Persistent database to store the snapshot
+	cleans    *fastcache.Cache  // Megabytes permitted using for read caches
+	preimages *preimageStore    // The store for caching preimages
+	backend   database.Database // The backend for managing trie nodes
 }
 
 // prepare initializes the database with provided configs, but the
@@ -120,7 +86,11 @@ func NewHashDatabase(diskdb ethdb.Database) *Database {
 func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	db := prepare(diskdb, config)
 	if config != nil && config.Scheme == rawdb.PathScheme {
-		db.backend = openSnapDatabase(diskdb, db.cleans, config)
+		db.backend = sdb.New(diskdb, db.cleans, &sdb.Config{
+			StateHistory: config.StateHistory,
+			DirtySize:    config.DirtySize,
+			ReadOnly:     config.ReadOnly,
+		})
 	} else {
 		db.backend = openHashDatabase(diskdb, db.cleans)
 	}
@@ -129,7 +99,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 
 // GetReader returns a reader for accessing all trie nodes with provided
 // state root. Nil is returned in case the state is not available.
-func (db *Database) GetReader(blockRoot common.Hash) Reader {
+func (db *Database) GetReader(blockRoot common.Hash) database.Reader {
 	return db.backend.GetReader(blockRoot)
 }
 
@@ -137,11 +107,19 @@ func (db *Database) GetReader(blockRoot common.Hash) Reader {
 // in the given set in order to update state from the specified parent to
 // the specified root. The held pre-images accumulated up to this point
 // will be flushed in case the size exceeds the threshold.
-func (db *Database) Update(root common.Hash, parent common.Hash, nodes *MergedNodeSet) error {
+func (db *Database) Update(root common.Hash, parent common.Hash, set *MergedNodeSet) error {
 	if db.preimages != nil {
 		db.preimages.commit(false)
 	}
-	return db.backend.Update(root, parent, nodes)
+	switch backend := db.backend.(type) {
+	case *hashDatabase:
+		return backend.Update(root, parent, set)
+	case *sdb.Database:
+		nodes, hashes, accessLists := set.unwrap()
+		return backend.Update(root, parent, nodes, hashes, accessLists)
+	default:
+		panic("undefined backend")
+	}
 }
 
 // Commit iterates over all the children of a particular node, writes them out
@@ -187,6 +165,62 @@ func (db *Database) Close() error {
 		db.preimages.commit(true)
 	}
 	return db.backend.Close()
+}
+
+// Recover rollbacks the database to a specified historical point. The state is
+// supported as the rollback destination only if it's canonical state and the
+// corresponding trie histories are existent. It's only supported by snap database
+// and will return an error for others.
+func (db *Database) Recover(target common.Hash) error {
+	snapDB, ok := db.backend.(*sdb.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Recover(target)
+}
+
+// Recoverable returns the indicator if the specified state is enabled to be
+// recovered. It's only supported by snap database and will return an error
+// for others.
+func (db *Database) Recoverable(root common.Hash) (bool, error) {
+	snapDB, ok := db.backend.(*sdb.Database)
+	if !ok {
+		return false, errors.New("not supported")
+	}
+	return snapDB.Recoverable(root), nil
+}
+
+// Reset wipes all available journal from the persistent database and discard
+// all caches and diff layers. Using the given root to create a new disk layer.
+// It's only supported by path-based database and will return an error for others.
+func (db *Database) Reset(root common.Hash) error {
+	snapDB, ok := db.backend.(*sdb.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Reset(root)
+}
+
+// Journal commits an entire diff hierarchy to disk into a single journal entry.
+// This is meant to be used during shutdown to persist the snapshot without
+// flattening everything down (bad for reorgs). It's only supported by path-based
+// database and will return an error for others.
+func (db *Database) Journal(root common.Hash) error {
+	snapDB, ok := db.backend.(*sdb.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.Journal(root)
+}
+
+// SetCacheSize sets the dirty cache size to the provided value(in mega-bytes).
+// It's only supported by path-based database and will return an error for others.
+func (db *Database) SetCacheSize(size int) error {
+	snapDB, ok := db.backend.(*sdb.Database)
+	if !ok {
+		return errors.New("not supported")
+	}
+	return snapDB.SetCacheSize(size)
 }
 
 // saveCache saves clean state cache to given directory path
