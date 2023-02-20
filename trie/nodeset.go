@@ -19,6 +19,7 @@ package trie
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -40,8 +41,8 @@ var memoryNodeSize = int(reflect.TypeOf(memoryNode{}).Size())
 
 // memorySize returns the total memory size used by this node.
 // nolint:unused
-func (n *memoryNode) memorySize(key int) int {
-	return int(n.size) + memoryNodeSize + key
+func (n *memoryNode) memorySize(pathlen int) int {
+	return int(n.size) + memoryNodeSize + pathlen
 }
 
 // rlp returns the raw rlp encoded blob of the cached trie node, either directly
@@ -64,7 +65,13 @@ func (n *memoryNode) obj() node {
 	return expandNode(n.hash[:], n.node)
 }
 
+// isDeleted returns the indicator if the node is marked as deleted.
+func (n *memoryNode) isDeleted() bool {
+	return n.hash == (common.Hash{})
+}
+
 // nodeWithPrev wraps the memoryNode with the previous node value.
+// nolint: unused
 type nodeWithPrev struct {
 	*memoryNode
 	prev []byte // RLP-encoded previous value, nil means it's non-existent
@@ -79,64 +86,62 @@ func (n *nodeWithPrev) unwrap() *memoryNode {
 // memorySize returns the total memory size used by this node. It overloads
 // the function in memoryNode by counting the size of previous value as well.
 // nolint: unused
-func (n *nodeWithPrev) memorySize(key int) int {
-	return n.memoryNode.memorySize(key) + len(n.prev)
-}
-
-// nodesWithOrder represents a collection of dirty nodes which includes
-// newly-inserted and updated nodes. The modification order of all nodes
-// is represented by order list.
-type nodesWithOrder struct {
-	order []string                 // the path list of dirty nodes, sort by insertion order
-	nodes map[string]*nodeWithPrev // the map of dirty nodes, keyed by node path
+func (n *nodeWithPrev) memorySize(pathlen int) int {
+	return n.memoryNode.memorySize(pathlen) + len(n.prev)
 }
 
 // NodeSet contains all dirty nodes collected during the commit operation.
 // Each node is keyed by path. It's not thread-safe to use.
 type NodeSet struct {
-	owner   common.Hash       // the identifier of the trie
-	updates *nodesWithOrder   // the set of updated nodes(newly inserted, updated)
-	deletes map[string][]byte // the map of deleted nodes, keyed by node
-	leaves  []*leaf           // the list of dirty leaves
+	owner      common.Hash            // the identifier of the trie
+	nodes      map[string]*memoryNode // the set of dirty nodes(inserted, updated, deleted)
+	leaves     []*leaf                // the list of dirty leaves
+	accessList map[string][]byte      // The list of accessed nodes, which records the original node value
 }
 
 // NewNodeSet initializes an empty node set to be used for tracking dirty nodes
 // from a specific account or storage trie. The owner is zero for the account
 // trie and the owning account address hash for storage tries.
-func NewNodeSet(owner common.Hash) *NodeSet {
+func NewNodeSet(owner common.Hash, accessList map[string][]byte) *NodeSet {
 	return &NodeSet{
-		owner: owner,
-		updates: &nodesWithOrder{
-			nodes: make(map[string]*nodeWithPrev),
-		},
-		deletes: make(map[string][]byte),
+		owner:      owner,
+		nodes:      make(map[string]*memoryNode),
+		accessList: accessList,
 	}
 }
 
-/*
-// NewNodeSetWithDeletion initializes the nodeset with provided deletion set.
-func NewNodeSetWithDeletion(owner common.Hash, paths [][]byte, prev [][]byte) *NodeSet {
-	set := NewNodeSet(owner)
-	for i, path := range paths {
-		set.markDeleted(path, prev[i])
+// forEachWithOrder iterates the dirty nodes with the specified order.
+// If topToBottom is true:
+//
+//	then the order of iteration is top to bottom, left to right.
+//
+// If topToBottom is false:
+//
+//	then the order of iteration is bottom to top, right to left.
+func (set *NodeSet) forEachWithOrder(topToBottom bool, callback func(path string, n *memoryNode)) {
+	var paths sort.StringSlice
+	for path := range set.nodes {
+		paths = append(paths, path)
 	}
-	return set
+	if topToBottom {
+		paths.Sort()
+	} else {
+		sort.Sort(sort.Reverse(paths))
+	}
+	for _, path := range paths {
+		callback(path, set.nodes[path])
+	}
 }
-*/
 
 // markUpdated marks the node as dirty(newly-inserted or updated) with provided
 // node path, node object along with its previous value.
-func (set *NodeSet) markUpdated(path []byte, node *memoryNode, prev []byte) {
-	set.updates.order = append(set.updates.order, string(path))
-	set.updates.nodes[string(path)] = &nodeWithPrev{
-		memoryNode: node,
-		prev:       prev,
-	}
+func (set *NodeSet) markUpdated(path []byte, node *memoryNode) {
+	set.nodes[string(path)] = node
 }
 
 // markDeleted marks the node as deleted with provided path and previous value.
-func (set *NodeSet) markDeleted(path []byte, prev []byte) {
-	set.deletes[string(path)] = prev
+func (set *NodeSet) markDeleted(path []byte) {
+	set.nodes[string(path)] = &memoryNode{}
 }
 
 // addLeaf collects the provided leaf node into set.
@@ -146,14 +151,25 @@ func (set *NodeSet) addLeaf(node *leaf) {
 
 // Size returns the number of updated and deleted nodes contained in the set.
 func (set *NodeSet) Size() (int, int) {
-	return len(set.updates.order), len(set.deletes)
+	var (
+		updates int
+		deletes int
+	)
+	for _, n := range set.nodes {
+		if n.isDeleted() {
+			deletes += 1
+		} else {
+			updates += 1
+		}
+	}
+	return updates, deletes
 }
 
 // Hashes returns the hashes of all updated nodes. TODO(rjl493456442) how can
 // we get rid of it?
 func (set *NodeSet) Hashes() []common.Hash {
 	var ret []common.Hash
-	for _, node := range set.updates.nodes {
+	for _, node := range set.nodes {
 		ret = append(ret, node.hash)
 	}
 	return ret
@@ -163,18 +179,22 @@ func (set *NodeSet) Hashes() []common.Hash {
 func (set *NodeSet) Summary() string {
 	var out = new(strings.Builder)
 	fmt.Fprintf(out, "nodeset owner: %v\n", set.owner)
-	if set.updates != nil {
-		for _, key := range set.updates.order {
-			updated := set.updates.nodes[key]
-			if updated.prev != nil {
-				fmt.Fprintf(out, "  [*]: %x -> %v prev: %x\n", key, updated.hash, updated.prev)
-			} else {
-				fmt.Fprintf(out, "  [+]: %x -> %v\n", key, updated.hash)
+	if set.nodes != nil {
+		for path, n := range set.nodes {
+			// Deletion
+			if n.isDeleted() {
+				fmt.Fprintf(out, "  [-]: %x prev: %x\n", path, set.accessList[path])
+				continue
 			}
+			// Insertion
+			origin, ok := set.accessList[path]
+			if !ok {
+				fmt.Fprintf(out, "  [+]: %x -> %v\n", path, n.hash)
+				continue
+			}
+			// Update
+			fmt.Fprintf(out, "  [*]: %x -> %v prev: %x\n", path, n.hash, origin)
 		}
-	}
-	for k, n := range set.deletes {
-		fmt.Fprintf(out, "  [-]: %x -> %x\n", k, n)
 	}
 	for _, n := range set.leaves {
 		fmt.Fprintf(out, "[leaf]: %v\n", n)

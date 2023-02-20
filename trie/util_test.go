@@ -25,264 +25,196 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-// Tests if the trie diffs are tracked correctly.
+var (
+	tiny = []struct{ k, v string }{
+		{"k1", "v1"},
+		{"k2", "v2"},
+		{"k3", "v3"},
+	}
+	nonAligned = []struct{ k, v string }{
+		{"do", "verb"},
+		{"ether", "wookiedoo"},
+		{"horse", "stallion"},
+		{"shaman", "horse"},
+		{"doge", "coin"},
+		{"dog", "puppy"},
+		{"somethingveryoddindeedthis is", "myothernodedata"},
+	}
+	standard = []struct{ k, v string }{
+		{string(randBytes(32)), "verb"},
+		{string(randBytes(32)), "wookiedoo"},
+		{string(randBytes(32)), "stallion"},
+		{string(randBytes(32)), "horse"},
+		{string(randBytes(32)), "coin"},
+		{string(randBytes(32)), "puppy"},
+		{string(randBytes(32)), "myothernodedata"},
+	}
+)
+
 func TestTrieTracer(t *testing.T) {
+	testTrieTracer(t, tiny)
+	testTrieTracer(t, nonAligned)
+	testTrieTracer(t, standard)
+}
+
+// Tests if the trie diffs are tracked correctly. Tracer should capture
+// all non-leave dirty nodes, no matter the node is embedded or not.
+func testTrieTracer(t *testing.T, vals []struct{ k, v string }) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
-	trie.tracer = newTracer()
 
-	// Insert a batch of entries, all the nodes should be marked as inserted
-	vals := []struct{ k, v string }{
-		{"do", "verb"},
-		{"ether", "wookiedoo"},
-		{"horse", "stallion"},
-		{"shaman", "horse"},
-		{"doge", "coin"},
-		{"dog", "puppy"},
-		{"somethingveryoddindeedthis is", "myothernodedata"},
-	}
+	// Determine all insertions are tracked
 	for _, val := range vals {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
-	trie.Hash()
-
-	seen := make(map[string]struct{})
-	it := trie.NodeIterator(nil)
-	for it.Next(true) {
-		if it.Leaf() {
-			continue
-		}
-		seen[string(it.Path())] = struct{}{}
-	}
-	inserted := trie.tracer.insertList()
-	if len(inserted) != len(seen) {
-		t.Fatalf("Unexpected inserted node tracked want %d got %d", len(seen), len(inserted))
-	}
-	for _, k := range inserted {
-		_, ok := seen[string(k)]
-		if !ok {
-			t.Fatalf("Unexpected inserted node")
-		}
-	}
-	deleted := trie.tracer.deleteList()
-	if len(deleted) != 0 {
-		t.Fatalf("Unexpected deleted node tracked %d", len(deleted))
-	}
-
-	// Commit the changes and re-create with new root
+	insertSet := copySet(trie.tracer.insert) // copy before commit
+	deleteSet := copySet(trie.tracer.delete) // copy before commit
 	root, nodes := trie.Commit(false)
-	if err := db.Update(NewWithNodeSet(nodes)); err != nil {
-		t.Fatal(err)
-	}
-	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
+	db.Update(NewWithNodeSet(nodes))
 
-	// Delete all the elements, check deletion set
+	seen := setKeys(iterNodes(db, root))
+	if !compareSet(insertSet, seen) {
+		t.Fatal("Unexpected insertion set")
+	}
+	if !compareSet(deleteSet, nil) {
+		t.Fatal("Unexpected deletion set")
+	}
+
+	// Determine all deletions are tracked
+	trie, _ = New(TrieID(root), db)
 	for _, val := range vals {
 		trie.Delete([]byte(val.k))
 	}
-	trie.Hash()
-
-	inserted = trie.tracer.insertList()
-	if len(inserted) != 0 {
-		t.Fatalf("Unexpected inserted node tracked %d", len(inserted))
+	insertSet, deleteSet = copySet(trie.tracer.insert), copySet(trie.tracer.delete)
+	if !compareSet(insertSet, nil) {
+		t.Fatal("Unexpected insertion set")
 	}
-	deleted = trie.tracer.deleteList()
-	if len(deleted) != len(seen) {
-		t.Fatalf("Unexpected deleted node tracked want %d got %d", len(seen), len(deleted))
-	}
-	for _, k := range deleted {
-		_, ok := seen[string(k)]
-		if !ok {
-			t.Fatalf("Unexpected inserted node")
-		}
+	if !compareSet(deleteSet, seen) {
+		t.Fatal("Unexpected deletion set")
 	}
 }
 
+// Test that after inserting a new batch of nodes and deleting them immediately,
+// the trie tracer should be cleared normally as no operation happened.
 func TestTrieTracerNoop(t *testing.T) {
-	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
-	trie.tracer = newTracer()
+	testTrieTracerNoop(t, tiny)
+	testTrieTracerNoop(t, nonAligned)
+	testTrieTracerNoop(t, standard)
+}
 
-	// Insert a batch of entries, all the nodes should be marked as inserted
-	vals := []struct{ k, v string }{
-		{"do", "verb"},
-		{"ether", "wookiedoo"},
-		{"horse", "stallion"},
-		{"shaman", "horse"},
-		{"doge", "coin"},
-		{"dog", "puppy"},
-		{"somethingveryoddindeedthis is", "myothernodedata"},
-	}
+func testTrieTracerNoop(t *testing.T, vals []struct{ k, v string }) {
+	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase()))
 	for _, val := range vals {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
 	for _, val := range vals {
 		trie.Delete([]byte(val.k))
 	}
-	if len(trie.tracer.insertList()) != 0 {
-		t.Fatalf("Unexpected inserted node tracked %d", len(trie.tracer.insertList()))
+	if len(trie.tracer.insert) != 0 {
+		t.Fatal("Unexpected insertion set")
 	}
-	if len(trie.tracer.deleteList()) != 0 {
-		t.Fatalf("Unexpected deleted node tracked %d", len(trie.tracer.deleteList()))
+	if len(trie.tracer.delete) != 0 {
+		t.Fatal("Unexpected deletion set")
 	}
 }
 
-func TestTrieTracePrevValue(t *testing.T) {
+// Test whether the original value of the loaded nodes are correctly recorded.
+// Besides, this will also ensure the accessList won't be spammed because of
+// trie iteration and proving.
+func TestAccessList(t *testing.T) {
+	testAccessList(t, tiny)
+	testAccessList(t, nonAligned)
+	testAccessList(t, standard)
+}
+
+func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
-	trie.tracer = newTracer()
-
-	paths, blobs := trie.tracer.prevList()
-	if len(paths) != 0 || len(blobs) != 0 {
-		t.Fatalf("Nothing should be tracked")
-	}
-	// Insert a batch of entries, all the nodes should be marked as inserted
-	vals := []struct{ k, v string }{
-		{"do", "verb"},
-		{"ether", "wookiedoo"},
-		{"horse", "stallion"},
-		{"shaman", "horse"},
-		{"doge", "coin"},
-		{"dog", "puppy"},
-		{"somethingveryoddindeedthis is", "myothernodedata"},
-	}
 	for _, val := range vals {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
-	paths, blobs = trie.tracer.prevList()
-	if len(paths) != 0 || len(blobs) != 0 {
+	if len(trie.tracer.accessList) != 0 {
 		t.Fatalf("Nothing should be tracked")
 	}
-
-	// Commit the changes and re-create with new root
 	root, nodes := trie.Commit(false)
-	if err := db.Update(NewWithNodeSet(nodes)); err != nil {
-		t.Fatal(err)
-	}
-	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-	trie.resolveAndTrack(root.Bytes(), nil)
+	db.Update(NewWithNodeSet(nodes))
 
-	// Load all nodes in trie
+	// Reload all nodes in trie
+	trie, _ = New(TrieID(root), db)
 	for _, val := range vals {
 		trie.TryGet([]byte(val.k))
 	}
-
-	// Ensure all nodes are tracked by tracer with correct prev-values
-	iter := trie.NodeIterator(nil)
-	seen := make(map[string][]byte)
-	for iter.Next(true) {
-		// Embedded nodes are ignored since they are not present in
-		// database.
-		if iter.Hash() == (common.Hash{}) {
-			continue
-		}
-		seen[string(iter.Path())] = common.CopyBytes(iter.NodeBlob())
-	}
-
-	paths, blobs = trie.tracer.prevList()
-	if len(paths) != len(seen) || len(blobs) != len(seen) {
-		t.Fatalf("Unexpected tracked values")
-	}
-	for i, path := range paths {
-		blob := blobs[i]
-		prev, ok := seen[string(path)]
-		if !ok {
-			t.Fatalf("Missing node %v", path)
-		}
-		if !bytes.Equal(blob, prev) {
-			t.Fatalf("Unexpected value path: %v, want: %v, got: %v", path, prev, blob)
-		}
+	// Ensure all nodes are tracked by tracer with correct values,
+	// which should be aligned with *non-embedded* trie nodes.
+	seen := iterNodesWithHash(db, root)
+	if !compareValueSet(trie.tracer.accessList, seen) {
+		t.Fatal("Unexpected accessList")
 	}
 
 	// Re-open the trie and iterate the trie, ensure nothing will be tracked.
 	// Iterator will not link any loaded nodes to trie.
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-
-	iter = trie.NodeIterator(nil)
+	prev := len(trie.tracer.accessList)
+	iter := trie.NodeIterator(nil)
 	for iter.Next(true) {
 	}
-	paths, blobs = trie.tracer.prevList()
-	if len(paths) != 0 || len(blobs) != 0 {
+	if len(trie.tracer.accessList) != prev {
 		t.Fatalf("Nothing should be tracked")
 	}
 
 	// Re-open the trie and generate proof for entries, ensure nothing will
 	// be tracked. Prover will not link any loaded nodes to trie.
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
+	prev = len(trie.tracer.accessList)
 	for _, val := range vals {
 		trie.Prove([]byte(val.k), 0, rawdb.NewMemoryDatabase())
 	}
-	paths, blobs = trie.tracer.prevList()
-	if len(paths) != 0 || len(blobs) != 0 {
+	if len(trie.tracer.accessList) != prev {
 		t.Fatalf("Nothing should be tracked")
 	}
 
-	// Delete entries from trie, ensure all previous values are correct.
+	// Delete entries from trie, ensure all previous values are correct,
+	// which should be aligned with *non-embedded* trie nodes.
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-	trie.resolveAndTrack(root.Bytes(), nil)
-
 	for _, val := range vals {
 		trie.TryDelete([]byte(val.k))
 	}
-	paths, blobs = trie.tracer.prevList()
-	if len(paths) != len(seen) || len(blobs) != len(seen) {
-		t.Fatalf("Unexpected tracked values")
-	}
-	for i, path := range paths {
-		blob := blobs[i]
-		prev, ok := seen[string(path)]
-		if !ok {
-			t.Fatalf("Missing node %v", path)
-		}
-		if !bytes.Equal(blob, prev) {
-			t.Fatalf("Unexpected value path: %v, want: %v, got: %v", path, prev, blob)
-		}
+	if !compareValueSet(trie.tracer.accessList, seen) {
+		t.Fatal("Unexpected accessList")
 	}
 }
 
-func TestDeleteAll(t *testing.T) {
+// Tests that nodes are correctly recorded when inserting or deleting nodes
+// into the trie.
+func TestNodeSet(t *testing.T) {
+	testNodeSet(t, tiny)
+	testNodeSet(t, nonAligned)
+	testNodeSet(t, standard)
+}
+
+func testNodeSet(t *testing.T, vals []struct{ k, v string }) {
 	db := NewDatabase(rawdb.NewMemoryDatabase())
 	trie := NewEmpty(db)
-	trie.tracer = newTracer()
-
-	// Insert a batch of entries, all the nodes should be marked as inserted
-	vals := []struct{ k, v string }{
-		{"do", "verb"},
-		{"ether", "wookiedoo"},
-		{"horse", "stallion"},
-		{"shaman", "horse"},
-		{"doge", "coin"},
-		{"dog", "puppy"},
-		{"somethingveryoddindeedthis is", "myothernodedata"},
-	}
 	for _, val := range vals {
 		trie.Update([]byte(val.k), []byte(val.v))
 	}
 	root, set := trie.Commit(false)
-	if err := db.Update(NewWithNodeSet(set)); err != nil {
-		t.Fatal(err)
+	db.Update(NewWithNodeSet(set))
+
+	nodes := iterNodesWithHash(db, root)
+	dirty := make(map[string]struct{})
+	for path := range set.nodes {
+		dirty[path] = struct{}{}
 	}
+	if !compareSet(dirty, setKeys(nodes)) {
+		t.Fatal("Unexpected nodeset")
+	}
+	if !compareValueSet(set.accessList, nil) {
+		t.Fatal("Unexpected accessList")
+	}
+
 	// Delete entries from trie, ensure all values are detected
 	trie, _ = New(TrieID(root), db)
-	trie.tracer = newTracer()
-	trie.resolveAndTrack(root.Bytes(), nil)
-
-	// Iterate all existent nodes
-	var (
-		it    = trie.NodeIterator(nil)
-		nodes = make(map[string][]byte)
-	)
-	for it.Next(true) {
-		if it.Hash() != (common.Hash{}) {
-			nodes[string(it.Path())] = common.CopyBytes(it.NodeBlob())
-		}
-	}
-
-	// Perform deletion to purge the entire trie
 	for _, val := range vals {
 		trie.Delete([]byte(val.k))
 	}
@@ -290,16 +222,129 @@ func TestDeleteAll(t *testing.T) {
 	if root != types.EmptyRootHash {
 		t.Fatalf("Invalid trie root %v", root)
 	}
-	for path, blob := range set.deletes {
-		prev, ok := nodes[path]
+	dirty = make(map[string]struct{})
+	for path := range set.nodes {
+		dirty[path] = struct{}{}
+	}
+	if !compareSet(dirty, setKeys(nodes)) {
+		t.Fatal("Unexpected nodeset")
+	}
+	if !compareValueSet(set.accessList, nodes) {
+		t.Fatal("Unexpected accessList")
+	}
+}
+
+// Tests whether the original tree node is correctly deleted after being embedded
+// in its parent due to the smaller size of the original tree node.
+func TestEmbedNode(t *testing.T) {
+	var (
+		db   = NewDatabase(rawdb.NewMemoryDatabase())
+		trie = NewEmpty(db)
+	)
+	for _, val := range tiny {
+		trie.Update([]byte(val.k), randBytes(32))
+	}
+	root, set := trie.Commit(false)
+	db.Update(NewWithNodeSet(set))
+	nodesA := iterNodesWithHash(db, root)
+
+	trie, _ = New(TrieID(root), db)
+	for _, val := range tiny {
+		trie.Update([]byte(val.k), []byte(val.v))
+	}
+	root, set = trie.Commit(false)
+	db.Update(NewWithNodeSet(set))
+	nodesB := iterNodesWithHash(db, root)
+
+	// The nodes in old set but not in new set are the nodes
+	// get removed from trie.
+	for path, blob := range nodesA {
+		if _, ok := nodesB[path]; ok {
+			continue
+		}
+		n, ok := set.nodes[path]
 		if !ok {
-			t.Fatalf("Extra node deleted %v", []byte(path))
+			t.Fatal("missing node")
 		}
-		if !bytes.Equal(prev, blob) {
-			t.Fatalf("Unexpected previous value %v", []byte(path))
+		if !n.isDeleted() {
+			t.Fatal("unexpected node")
+		}
+		if !bytes.Equal(set.accessList[path], blob) {
+			t.Fatal("unexpected accessList")
 		}
 	}
-	if len(set.deletes) != len(nodes) {
-		t.Fatalf("Unexpected deletion set")
+}
+
+func compareSet(setA, setB map[string]struct{}) bool {
+	if len(setA) != len(setB) {
+		return false
 	}
+	for key := range setA {
+		if _, ok := setB[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func compareValueSet(setA, setB map[string][]byte) bool {
+	if len(setA) != len(setB) {
+		return false
+	}
+	for key, valA := range setA {
+		valB, ok := setB[key]
+		if !ok {
+			return false
+		}
+		if !bytes.Equal(valA, valB) {
+			return false
+		}
+	}
+	return true
+}
+
+func iterNodes(db *Database, root common.Hash) map[string][]byte {
+	var (
+		trie, _ = New(TrieID(root), db)
+		it      = trie.NodeIterator(nil)
+		nodes   = make(map[string][]byte)
+	)
+	for it.Next(true) {
+		if it.Leaf() {
+			continue
+		}
+		nodes[string(it.Path())] = common.CopyBytes(it.NodeBlob())
+	}
+	return nodes
+}
+
+func iterNodesWithHash(db *Database, root common.Hash) map[string][]byte {
+	var (
+		trie, _ = New(TrieID(root), db)
+		it      = trie.NodeIterator(nil)
+		nodes   = make(map[string][]byte)
+	)
+	for it.Next(true) {
+		if it.Hash() == (common.Hash{}) {
+			continue
+		}
+		nodes[string(it.Path())] = common.CopyBytes(it.NodeBlob())
+	}
+	return nodes
+}
+
+func setKeys(set map[string][]byte) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for k := range set {
+		keys[k] = struct{}{}
+	}
+	return keys
+}
+
+func copySet(set map[string]struct{}) map[string]struct{} {
+	copied := make(map[string]struct{})
+	for k := range set {
+		copied[k] = struct{}{}
+	}
+	return copied
 }

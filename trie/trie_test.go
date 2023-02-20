@@ -410,8 +410,6 @@ func runRandTest(rt randTest) bool {
 		values   = make(map[string]string) // tracks content of the trie
 		origTrie = NewEmpty(triedb)
 	)
-	tr.tracer = newTracer()
-
 	for i, step := range rt {
 		// fmt.Printf("{op: %d, key: common.Hex2Bytes(\"%x\"), value: common.Hex2Bytes(\"%x\")}, // step %d\n",
 		// 	step.op, step.key, step.value, i)
@@ -449,19 +447,12 @@ func runRandTest(rt randTest) bool {
 			root, nodes := tr.Commit(true)
 			// Validity the returned nodeset
 			if nodes != nil {
-				for path, node := range nodes.updates.nodes {
+				for path := range nodes.nodes {
 					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
-					got := node.prev
+					got := nodes.accessList[path]
 					if !bytes.Equal(blob, got) {
 						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, got, blob)
 						panic(rt[i].err)
-					}
-				}
-				for path, prev := range nodes.deletes {
-					blob, _, _ := origTrie.TryGetNode(hexToCompact([]byte(path)))
-					if !bytes.Equal(blob, prev) {
-						rt[i].err = fmt.Errorf("prevalue mismatch for 0x%x, got 0x%x want 0x%x", path, prev, blob)
-						return false
 					}
 				}
 			}
@@ -474,12 +465,6 @@ func runRandTest(rt randTest) bool {
 				return false
 			}
 			tr = newtr
-
-			// Enable node tracing. Resolve the root node again explicitly
-			// since it's not captured at the beginning.
-			tr.tracer = newTracer()
-			tr.resolveAndTrack(root.Bytes(), nil)
-
 			origTrie = tr.Copy()
 		case opItercheckhash:
 			checktr := NewEmpty(triedb)
@@ -492,8 +477,6 @@ func runRandTest(rt randTest) bool {
 			}
 		case opNodeDiff:
 			var (
-				inserted = tr.tracer.insertList()
-				deleted  = tr.tracer.deleteList()
 				origIter = origTrie.NodeIterator(nil)
 				curIter  = tr.NodeIterator(nil)
 				origSeen = make(map[string]struct{})
@@ -527,19 +510,19 @@ func runRandTest(rt randTest) bool {
 					deleteExp[path] = struct{}{}
 				}
 			}
-			if len(insertExp) != len(inserted) {
+			if len(insertExp) != len(tr.tracer.insert) {
 				rt[i].err = fmt.Errorf("insert set mismatch")
 			}
-			if len(deleteExp) != len(deleted) {
+			if len(deleteExp) != len(tr.tracer.delete) {
 				rt[i].err = fmt.Errorf("delete set mismatch")
 			}
-			for _, insert := range inserted {
-				if _, present := insertExp[string(insert)]; !present {
+			for insert := range tr.tracer.insert {
+				if _, present := insertExp[insert]; !present {
 					rt[i].err = fmt.Errorf("missing inserted node")
 				}
 			}
-			for _, del := range deleted {
-				if _, present := deleteExp[string(del)]; !present {
+			for del := range tr.tracer.delete {
+				if _, present := deleteExp[del]; !present {
 					rt[i].err = fmt.Errorf("missing deleted node")
 				}
 			}
