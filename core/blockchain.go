@@ -1357,7 +1357,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 	// If we exceeded our memory allowance, flush matured singleton nodes to disk
 	var (
 		nodes, imgs = bc.triedb.Size()
-		limit       = common.StorageSize(bc.cacheConfig.TrieDirtyLimit) * 1024 * 1024
+		limit       = common.StorageSize(bc.cacheConfig.TrieDirtyLimit) * 1024 * 1024 * 2
 	)
 	if nodes > limit || imgs > 4*1024*1024 {
 		bc.triedb.Cap(limit - ethdb.IdealBatchSize)

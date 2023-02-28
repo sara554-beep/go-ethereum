@@ -27,14 +27,15 @@ import (
 // memoryNode is all the information we know about a single cached trie node
 // in the memory.
 type memoryNode struct {
-	hash common.Hash // Node hash, computed by hashing rlp value, empty for deleted nodes
-	node []byte      // Cached RLP-encoded trie node, nil for deleted nodes
+	hash     common.Hash   // Node hash, computed by hashing rlp value, empty for deleted nodes
+	node     []byte        // Cached RLP-encoded trie node, nil for deleted nodes
+	children []common.Hash // The list of children hashes
 }
 
 // memorySize returns the total memory size used by this node.
 // nolint:unused
 func (n *memoryNode) memorySize(pathlen int) int {
-	return len(n.node) + common.HashLength + pathlen
+	return len(n.node) + (1+len(n.children))*common.HashLength + pathlen
 }
 
 // rlp returns the raw rlp encoded blob of the cached trie node, either directly

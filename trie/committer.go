@@ -47,15 +47,16 @@ func newCommitter(nodeset *NodeSet, collectLeaf bool) *committer {
 // Commit collapses a node down into a hash node and returns it along with
 // the modified nodeset.
 func (c *committer) Commit(n node) hashNode {
-	return c.commit(nil, n).(hashNode)
+	node, _ := c.commit(nil, n)
+	return node.(hashNode)
 }
 
 // commit collapses a node down into a hash node and returns it.
-func (c *committer) commit(path []byte, n node) node {
+func (c *committer) commit(path []byte, n node) (node, bool) {
 	// if this path is clean, use available cached data
 	hash, dirty := n.cache()
 	if hash != nil && !dirty {
-		return hash
+		return hash, true
 	}
 	// Commit children, then parent, and remove the dirty flag.
 	switch cn := n.(type) {
@@ -65,29 +66,37 @@ func (c *committer) commit(path []byte, n node) node {
 
 		// If the child is fullNode, recursively commit,
 		// otherwise it can only be hashNode or valueNode.
-		if _, ok := cn.Val.(*fullNode); ok {
-			collapsed.Val = c.commit(append(path, cn.Key...), cn.Val)
+		var children []common.Hash
+		switch nn := cn.Val.(type) {
+		case *fullNode:
+			child, hashed := c.commit(append(path, cn.Key...), cn.Val)
+			if hashed {
+				children = append(children, common.BytesToHash(child.(hashNode)))
+			}
+			collapsed.Val = child
+		case hashNode:
+			children = append(children, common.BytesToHash(nn))
 		}
 		// The key needs to be copied, since we're adding it to the
 		// modified nodeset.
 		collapsed.Key = hexToCompact(cn.Key)
-		hashedNode := c.store(path, collapsed)
+		hashedNode := c.store(path, collapsed, children)
 		if hn, ok := hashedNode.(hashNode); ok {
-			return hn
+			return hn, true
 		}
-		return collapsed
+		return collapsed, false
 	case *fullNode:
-		hashedKids := c.commitChildren(path, cn)
+		hashedKids, children := c.commitChildren(path, cn)
 		collapsed := cn.copy()
 		collapsed.Children = hashedKids
 
-		hashedNode := c.store(path, collapsed)
+		hashedNode := c.store(path, collapsed, children)
 		if hn, ok := hashedNode.(hashNode); ok {
-			return hn
+			return hn, true
 		}
-		return collapsed
+		return collapsed, false
 	case hashNode:
-		return cn
+		return cn, true
 	default:
 		// nil, valuenode shouldn't be committed
 		panic(fmt.Sprintf("%T: invalid node: %v", n, n))
@@ -95,8 +104,11 @@ func (c *committer) commit(path []byte, n node) node {
 }
 
 // commitChildren commits the children of the given fullnode
-func (c *committer) commitChildren(path []byte, n *fullNode) [17]node {
-	var children [17]node
+func (c *committer) commitChildren(path []byte, n *fullNode) ([17]node, []common.Hash) {
+	var (
+		children [17]node
+		hashes   []common.Hash
+	)
 	for i := 0; i < 16; i++ {
 		child := n.Children[i]
 		if child == nil {
@@ -107,23 +119,28 @@ func (c *committer) commitChildren(path []byte, n *fullNode) [17]node {
 		// is a valueNode.
 		if hn, ok := child.(hashNode); ok {
 			children[i] = hn
+			hashes = append(hashes, common.BytesToHash(hn))
 			continue
 		}
 		// Commit the child recursively and store the "hashed" value.
 		// Note the returned node can be some embedded nodes, so it's
 		// possible the type is not hashNode.
-		children[i] = c.commit(append(path, byte(i)), child)
+		child, hashed := c.commit(append(path, byte(i)), child)
+		if hashed {
+			hashes = append(hashes, common.BytesToHash(child.(hashNode)))
+		}
+		children[i] = child
 	}
 	// For the 17th child, it's possible the type is valuenode.
 	if n.Children[16] != nil {
 		children[16] = n.Children[16]
 	}
-	return children
+	return children, hashes
 }
 
 // store hashes the node n and adds it to the modified nodeset. If leaf collection
 // is enabled, leaf nodes will be tracked in the modified nodeset as well.
-func (c *committer) store(path []byte, n node) node {
+func (c *committer) store(path []byte, n node, children []common.Hash) node {
 	// Larger nodes are replaced by their hash and stored in the database.
 	var hash, _ = n.cache()
 
@@ -145,8 +162,9 @@ func (c *committer) store(path []byte, n node) node {
 	var (
 		nhash = common.BytesToHash(hash)
 		mnode = &memoryNode{
-			hash: nhash,
-			node: nodeToBytes(n),
+			hash:     nhash,
+			node:     nodeToBytes(n),
+			children: children,
 		}
 	)
 	// Collect the dirty node to nodeset for return.
