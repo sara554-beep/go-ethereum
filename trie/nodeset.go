@@ -22,65 +22,14 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/trie/types"
 )
-
-// memoryNode is all the information we know about a single cached trie node
-// in the memory.
-type memoryNode struct {
-	hash common.Hash // Node hash by hashing node blob, empty for deleted nodes
-	node []byte      // Encoded node blob, nil for deleted nodes
-}
-
-// memorySize returns the total memory size used by this node.
-// nolint:unused
-func (n *memoryNode) memorySize(pathlen int) int {
-	return len(n.node) + common.HashLength + pathlen
-}
-
-// rlp returns the raw rlp encoded blob of the cached trie node, either directly
-// from the cache, or by regenerating it from the collapsed node.
-// nolint:unused
-func (n *memoryNode) rlp() []byte {
-	return n.node
-}
-
-// obj returns the decoded and expanded trie node, either directly from the cache,
-// or by regenerating it from the rlp encoded blob.
-// nolint:unused
-func (n *memoryNode) obj() node {
-	return mustDecodeNode(n.hash[:], n.node)
-}
-
-// isDeleted returns the indicator if the node is marked as deleted.
-func (n *memoryNode) isDeleted() bool {
-	return n.hash == (common.Hash{})
-}
-
-// nodeWithPrev wraps the memoryNode with the previous node value.
-// nolint: unused
-type nodeWithPrev struct {
-	*memoryNode
-	prev []byte // RLP-encoded previous value, nil means it's non-existent
-}
-
-// unwrap returns the internal memoryNode object.
-// nolint:unused
-func (n *nodeWithPrev) unwrap() *memoryNode {
-	return n.memoryNode
-}
-
-// memorySize returns the total memory size used by this node. It overloads
-// the function in memoryNode by counting the size of previous value as well.
-// nolint: unused
-func (n *nodeWithPrev) memorySize(pathlen int) int {
-	return n.memoryNode.memorySize(pathlen) + len(n.prev)
-}
 
 // NodeSet contains all dirty nodes collected during the commit operation.
 // Each node is keyed by path. It's not thread-safe to use.
 type NodeSet struct {
 	owner   common.Hash            // the identifier of the trie
-	nodes   map[string]*memoryNode // the set of dirty nodes(inserted, updated, deleted)
+	nodes   map[string]*types.Node // the set of dirty nodes(inserted, updated, deleted)
 	leaves  []*leaf                // the list of dirty leaves
 	updates int                    // the count of updated and inserted nodes
 	deletes int                    // the count of deleted nodes
@@ -97,14 +46,14 @@ type NodeSet struct {
 func NewNodeSet(owner common.Hash, accessList map[string][]byte) *NodeSet {
 	return &NodeSet{
 		owner:      owner,
-		nodes:      make(map[string]*memoryNode),
+		nodes:      make(map[string]*types.Node),
 		accessList: accessList,
 	}
 }
 
 // forEachWithOrder iterates the dirty nodes with the order from bottom to top,
 // right to left, nodes with the longest path will be iterated first.
-func (set *NodeSet) forEachWithOrder(callback func(path string, n *memoryNode)) {
+func (set *NodeSet) forEachWithOrder(callback func(path string, n *types.Node)) {
 	var paths sort.StringSlice
 	for path := range set.nodes {
 		paths = append(paths, path)
@@ -117,14 +66,14 @@ func (set *NodeSet) forEachWithOrder(callback func(path string, n *memoryNode)) 
 }
 
 // markUpdated marks the node as dirty(newly-inserted or updated).
-func (set *NodeSet) markUpdated(path []byte, node *memoryNode) {
+func (set *NodeSet) markUpdated(path []byte, node *types.Node) {
 	set.nodes[string(path)] = node
 	set.updates += 1
 }
 
 // markDeleted marks the node as deleted.
 func (set *NodeSet) markDeleted(path []byte) {
-	set.nodes[string(path)] = &memoryNode{}
+	set.nodes[string(path)] = types.NewDeletedNode()
 	set.deletes += 1
 }
 
@@ -143,7 +92,7 @@ func (set *NodeSet) Size() (int, int) {
 func (set *NodeSet) Hashes() []common.Hash {
 	var ret []common.Hash
 	for _, node := range set.nodes {
-		ret = append(ret, node.hash)
+		ret = append(ret, node.Hash)
 	}
 	return ret
 }
@@ -155,18 +104,18 @@ func (set *NodeSet) Summary() string {
 	if set.nodes != nil {
 		for path, n := range set.nodes {
 			// Deletion
-			if n.isDeleted() {
+			if n.IsDeleted() {
 				fmt.Fprintf(out, "  [-]: %x prev: %x\n", path, set.accessList[path])
 				continue
 			}
 			// Insertion
 			origin, ok := set.accessList[path]
 			if !ok {
-				fmt.Fprintf(out, "  [+]: %x -> %v\n", path, n.hash)
+				fmt.Fprintf(out, "  [+]: %x -> %v\n", path, n.Hash)
 				continue
 			}
 			// Update
-			fmt.Fprintf(out, "  [*]: %x -> %v prev: %x\n", path, n.hash, origin)
+			fmt.Fprintf(out, "  [*]: %x -> %v prev: %x\n", path, n.Hash, origin)
 		}
 	}
 	for _, n := range set.leaves {

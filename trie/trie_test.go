@@ -408,7 +408,7 @@ func verifyAccessList(old *Trie, new *Trie, set *NodeSet) error {
 	// Check insertion set
 	for path := range inserts {
 		n, ok := set.nodes[path]
-		if !ok || n.isDeleted() {
+		if !ok || n.IsDeleted() {
 			return errors.New("expect new node")
 		}
 		_, ok = set.accessList[path]
@@ -419,7 +419,7 @@ func verifyAccessList(old *Trie, new *Trie, set *NodeSet) error {
 	// Check deletion set
 	for path, blob := range deletes {
 		n, ok := set.nodes[path]
-		if !ok || !n.isDeleted() {
+		if !ok || !n.IsDeleted() {
 			return errors.New("expect deleted node")
 		}
 		v, ok := set.accessList[path]
@@ -433,7 +433,7 @@ func verifyAccessList(old *Trie, new *Trie, set *NodeSet) error {
 	// Check update set
 	for path, blob := range updates {
 		n, ok := set.nodes[path]
-		if !ok || n.isDeleted() {
+		if !ok || n.IsDeleted() {
 			return errors.New("expect updated node")
 		}
 		v, ok := set.accessList[path]

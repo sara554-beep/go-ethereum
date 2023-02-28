@@ -18,6 +18,7 @@ package trie
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/types"
 
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -139,15 +140,9 @@ func (c *committer) store(path []byte, n node) node {
 		}
 		return n
 	}
-	var (
-		nhash = common.BytesToHash(hash)
-		mnode = &memoryNode{
-			hash: nhash,
-			node: nodeToBytes(n),
-		}
-	)
 	// Collect the dirty node to nodeset for return.
-	c.nodes.markUpdated(path, mnode)
+	nhash := common.BytesToHash(hash)
+	c.nodes.markUpdated(path, types.NewNode(nhash, nodeToBytes(n)))
 
 	// Collect the corresponding leaf node if it's required. We don't check
 	// full node since it's impossible to store value in fullNode. The key
