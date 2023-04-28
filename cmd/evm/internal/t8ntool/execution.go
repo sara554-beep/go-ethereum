@@ -288,6 +288,11 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		h := types.DeriveSha(types.Withdrawals(pre.Env.Withdrawals), trie.NewStackTrie(nil))
 		execRs.WithdrawalsRoot = &h
 	}
+	statedb, err = state.New(root, statedb.Database(), nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not reopen state: %v", err)
+		return nil, nil, NewError(ErrorEVM, fmt.Errorf("could not reopen state: %v", err))
+	}
 	return statedb, execRs, nil
 }
 

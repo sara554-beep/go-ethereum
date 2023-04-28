@@ -615,7 +615,11 @@ func (db *Database) Scheme() string {
 }
 
 // GetReader retrieves a node reader belonging to the given state root.
+// Nil is returned in case the requested state is not available.
 func (db *Database) GetReader(root common.Hash) *reader {
+	if n, _ := db.Node(root); len(n) == 0 {
+		return nil
+	}
 	return &reader{db: db}
 }
 

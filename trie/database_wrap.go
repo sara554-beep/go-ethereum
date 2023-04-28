@@ -113,9 +113,13 @@ func NewDatabaseWithConfig(diskdb ethdb.Database, config *Config) *Database {
 }
 
 // GetReader returns a reader for accessing all trie nodes with provided
-// state root. Nil is returned in case the state is not available.
-func (db *Database) GetReader(blockRoot common.Hash) Reader {
-	return db.backend.(*hashdb.Database).GetReader(blockRoot)
+// state root. An error will be returned in case the state is not available.
+func (db *Database) GetReader(blockRoot common.Hash) (Reader, error) {
+	reader := db.backend.(*hashdb.Database).GetReader(blockRoot)
+	if reader == nil {
+		return nil, errors.New("state not available")
+	}
+	return reader, nil
 }
 
 // Update performs a state transition by committing dirty nodes contained

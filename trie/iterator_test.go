@@ -144,8 +144,12 @@ func testNodeIteratorCoverage(t *testing.T, scheme string) {
 		}
 	}
 	// Cross check the hashes and the database itself
+	reader, err := nodeDb.GetReader(trie.Hash())
+	if err != nil {
+		t.Fatalf("state is not available %x", trie.Hash())
+	}
 	for _, element := range elements {
-		if blob, err := nodeDb.GetReader(trie.Hash()).Node(common.Hash{}, element.path, element.hash); err != nil {
+		if blob, err := reader.Node(common.Hash{}, element.path, element.hash); err != nil {
 			t.Errorf("failed to retrieve reported node %x: %v", element.hash, err)
 		} else if !bytes.Equal(blob, element.blob) {
 			t.Errorf("node blob is different, want %v got %v", element.blob, blob)
@@ -597,7 +601,10 @@ func makeLargeTestTrie() (*Database, *StateTrie, *loggingDb) {
 	}
 	root, nodes := trie.Commit(false)
 	triedb.Update(root, common.Hash{}, trienode.NewWithNodeSet(nodes))
+	triedb.Commit(root, false)
+
 	// Return the generated trie
+	trie, _ = NewStateTrie(TrieID(root), triedb)
 	return triedb, trie, logDb
 }
 
@@ -609,8 +616,8 @@ func TestNodeIteratorLargeTrie(t *testing.T) {
 	// Do a seek operation
 	trie.NodeIterator(common.FromHex("0x77667766776677766778855885885885"))
 	// master: 24 get operations
-	// this pr: 5 get operations
-	if have, want := logDb.getCount, uint64(5); have != want {
+	// this pr: 6 get operations
+	if have, want := logDb.getCount, uint64(6); have != want {
 		t.Fatalf("Too many lookups during seek, have %d want %d", have, want)
 	}
 }

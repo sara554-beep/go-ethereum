@@ -17,9 +17,8 @@
 package trie
 
 import (
-	"fmt"
-
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // Reader wraps the Node method of a backing trie store.
@@ -33,8 +32,8 @@ type Reader interface {
 // NodeReader wraps all the necessary functions for accessing trie node.
 type NodeReader interface {
 	// GetReader returns a reader for accessing all trie nodes with provided
-	// state root. Nil is returned in case the state is not available.
-	GetReader(root common.Hash) Reader
+	// state root. An error will be returned in case the state is not available.
+	GetReader(root common.Hash) (Reader, error)
 }
 
 // trieReader is a wrapper of the underlying node reader. It's not safe
@@ -47,9 +46,12 @@ type trieReader struct {
 
 // newTrieReader initializes the trie reader with the given node reader.
 func newTrieReader(stateRoot, owner common.Hash, db NodeReader) (*trieReader, error) {
-	reader := db.GetReader(stateRoot)
-	if reader == nil {
-		return nil, fmt.Errorf("state not found #%x", stateRoot)
+	if stateRoot == (common.Hash{}) || stateRoot == types.EmptyRootHash {
+		return &trieReader{owner: owner}, nil
+	}
+	reader, err := db.GetReader(stateRoot)
+	if err != nil {
+		return nil, &MissingNodeError{Owner: owner, NodeHash: stateRoot, err: err}
 	}
 	return &trieReader{owner: owner, reader: reader}, nil
 }

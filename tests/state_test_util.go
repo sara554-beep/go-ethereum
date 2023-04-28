@@ -203,6 +203,11 @@ func (t *StateTest) Run(subtest StateSubtest, vmconfig vm.Config, snapshotter bo
 	if logs := rlpHash(statedb.Logs()); logs != common.Hash(post.Logs) {
 		return snaps, statedb, fmt.Errorf("post state logs hash mismatch: got %x, want %x", logs, post.Logs)
 	}
+	// Re-init a post state db for further operation
+	statedb, err = state.New(root, statedb.Database(), snaps)
+	if err != nil {
+		return nil, nil, err
+	}
 	return snaps, statedb, nil
 }
 

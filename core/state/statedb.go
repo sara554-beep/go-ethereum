@@ -58,6 +58,9 @@ func (n *proofList) Delete(key []byte) error {
 // nested states. It's the general query interface to retrieve:
 // * Contracts
 // * Accounts
+//
+// Once the state is committed, it's not usable anymore. Callers have to
+// re-create the state instance with new root based on the updated database.
 type StateDB struct {
 	db         Database
 	prefetcher *triePrefetcher
@@ -958,6 +961,8 @@ func (s *StateDB) clearJournalAndRefund() {
 }
 
 // Commit writes the state to the underlying in-memory trie database.
+// Once the state is committed, it's not usable anymore and callers
+// have to re-create a new one based on the updated database.
 func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	// Short circuit in case any database failure occurred earlier.
 	if s.dbErr != nil {
