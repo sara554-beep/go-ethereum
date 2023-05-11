@@ -19,10 +19,10 @@ package pathdb
 import "github.com/ethereum/go-ethereum/metrics"
 
 var (
-	cleanHitMeter   = metrics.NewRegisteredMeter("trie/triedb/clean/hit", nil)
-	cleanMissMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/miss", nil)
-	cleanReadMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/read", nil)
-	cleanWriteMeter = metrics.NewRegisteredMeter("trie/triedb/clean/write", nil)
+	//cleanHitMeter   = metrics.NewRegisteredMeter("trie/triedb/clean/hit", nil)
+	//cleanMissMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/miss", nil)
+	//cleanReadMeter  = metrics.NewRegisteredMeter("trie/triedb/clean/read", nil)
+	//cleanWriteMeter = metrics.NewRegisteredMeter("trie/triedb/clean/write", nil)
 
 	dirtyHitMeter         = metrics.NewRegisteredMeter("trie/triedb/dirty/hit", nil)
 	dirtyMissMeter        = metrics.NewRegisteredMeter("trie/triedb/dirty/miss", nil)

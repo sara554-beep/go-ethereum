@@ -131,15 +131,11 @@ func (db *Database) loadDiskLayer(r *rlp.Stream) (snapshot, error) {
 	if err := r.Decode(&encoded); err != nil {
 		return nil, fmt.Errorf("load disk accounts: %v", err)
 	}
-	var nodes = make(map[common.Hash]map[string]*trienode.Node)
+	var nodes = make(map[common.Hash]map[string][]byte)
 	for _, entry := range encoded {
-		subset := make(map[string]*trienode.Node)
+		subset := make(map[string][]byte)
 		for _, n := range entry.Nodes {
-			if len(n.Blob) > 0 {
-				subset[string(n.Path)] = trienode.New(crypto.Keccak256Hash(n.Blob), n.Blob)
-			} else {
-				subset[string(n.Path)] = trienode.New(common.Hash{}, nil)
-			}
+			subset[string(n.Path)] = n.Blob
 		}
 		nodes[entry.Owner] = subset
 	}
@@ -204,11 +200,7 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	for owner, subset := range dl.dirty.nodes {
 		entry := journalNodes{Owner: owner}
 		for path, node := range subset {
-			jnode := journalNode{Path: []byte(path)}
-			if !node.IsDeleted() {
-				jnode.Blob = node.Blob
-			}
-			entry.Nodes = append(entry.Nodes, jnode)
+			entry.Nodes = append(entry.Nodes, journalNode{Path: []byte(path), Blob: node})
 		}
 		nodes = append(nodes, entry)
 	}

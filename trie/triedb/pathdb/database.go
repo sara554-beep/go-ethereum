@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -37,21 +38,11 @@ import (
 // maxDiffLayers is the maximum diff layers allowed in the layer tree.
 const maxDiffLayers = 128
 
-// snapshot is the interface implemented by all state layers which includes some
-// public methods and some additional methods for internal usage.
+// snapshot is the interface implemented by all state layers.
 type snapshot interface {
-	// nodeByPath retrieves the trie node with the provided trie identifier and
-	// node path regardless what's the node hash. No error will be returned if
-	// the node is not found.
-	nodeByPath(owner common.Hash, path []byte) ([]byte, error)
-
 	// Node retrieves the trie node with the node info. No error will be returned
 	// if the node is not found.
-	//
-	// TODO(rjl493456442) remove this function. Hash is essentially not required
-	// for accessing a trie node, nodeByPath is enough as the accessor. Keep it
-	// for a while to make initial version easier.
-	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
+	Node(owner common.Hash, path []byte) ([]byte, error)
 
 	// Root returns the root hash for which this snapshot was made.
 	Root() common.Hash
@@ -165,9 +156,28 @@ func New(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config) *Databa
 	return db
 }
 
+type reader struct {
+	snap snapshot
+}
+
+func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+	blob, err := r.snap.Node(owner, path)
+	if err != nil {
+		return nil, err
+	}
+	if crypto.Keccak256Hash(blob) == hash {
+		return blob, nil
+	}
+	return nil, nil
+}
+
 // Reader retrieves a snapshot belonging to the given state root.
-func (db *Database) Reader(root common.Hash) snapshot {
-	return db.tree.get(root)
+func (db *Database) Reader(root common.Hash) *reader {
+	snap := db.tree.get(root)
+	if snap == nil {
+		return nil
+	}
+	return &reader{snap: snap}
 }
 
 // Update adds a new snapshot into the tree, if that can be linked to an existing

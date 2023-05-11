@@ -230,9 +230,8 @@ func TestDatabaseBatchRollback(t *testing.T) {
 			if len(blobs[j]) == 0 {
 				continue
 			}
-			hash := crypto.Keccak256Hash(blobs[j])
-			blob, _ := ndl.Node(common.Hash{}, path, hash)
-			if len(blob) != 0 {
+			blob, _ := ndl.Node(common.Hash{}, path)
+			if bytes.Equal(blob, blobs[j]) {
 				t.Fatal("Unexpected state", blob)
 			}
 		}

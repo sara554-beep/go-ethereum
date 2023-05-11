@@ -28,6 +28,11 @@ type Reader interface {
 	// identifier, node path and the corresponding node hash. No error will
 	// be returned if the node is not found.
 	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
+
+	// NodeByPath retrieves the RLP-encoded trie node blob with the provided
+	// trie identifier, node path and the corresponding node hash. No error
+	// will be returned if the node is not found.
+	// NodeByPath(owner common.Hash, path []byte) ([]byte, error)
 }
 
 // NodeReader wraps all the necessary functions for accessing trie node.

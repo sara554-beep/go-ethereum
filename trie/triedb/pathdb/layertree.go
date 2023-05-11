@@ -233,7 +233,7 @@ func fixset(sets *trienode.MergedNodeSet, layer snapshot) (map[common.Hash]map[s
 			// of destructed account in the database, it's possible
 			// that there are some dangling nodes have the exact same
 			// node path which should be treated as the origin value.
-			prev, err := layer.nodeByPath(owner, []byte(path))
+			prev, err := layer.Node(owner, []byte(path))
 			if err != nil {
 				return nil, err
 			}

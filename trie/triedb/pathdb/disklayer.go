@@ -83,7 +83,7 @@ func (dl *diskLayer) MarkStale() {
 
 // Node retrieves the trie node with the provided node info. No error will be
 // returned if the node is not found.
-func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+func (dl *diskLayer) Node(owner common.Hash, path []byte) ([]byte, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -93,28 +93,25 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	// Try to retrieve the trie node from the dirty memory cache.
 	// The map is lock free since it's impossible to mutate the
 	// disk layer before tagging it as stale.
-	n, err := dl.dirty.node(owner, path, hash)
-	if err != nil {
-		return nil, err
-	}
-	if n != nil {
+	n, ok := dl.dirty.node(owner, path)
+	if ok {
 		// Hit node in disk cache which resides in disk layer
 		dirtyHitMeter.Mark(1)
-		dirtyReadMeter.Mark(int64(len(n.Blob)))
-		return n.Blob, nil
+		dirtyReadMeter.Mark(int64(len(n)))
+		return n, nil
 	}
 	// If we're in the disk layer, all diff layers missed
 	dirtyMissMeter.Mark(1)
 
 	// Try to retrieve the trie node from the clean memory cache
-	if dl.db.cleans != nil {
-		if blob := dl.db.cleans.Get(nil, hash.Bytes()); len(blob) > 0 {
-			cleanHitMeter.Mark(1)
-			cleanReadMeter.Mark(int64(len(blob)))
-			return blob, nil
-		}
-		cleanMissMeter.Mark(1)
-	}
+	//if dl.db.cleans != nil {
+	//	//if blob := dl.db.cleans.Get(nil, hash.Bytes()); len(blob) > 0 {
+	//	//	cleanHitMeter.Mark(1)
+	//	//	cleanReadMeter.Mark(int64(len(blob)))
+	//	//	return blob, nil
+	//	//}
+	//	//cleanMissMeter.Mark(1)
+	//}
 	// Try to retrieve the trie node from the disk.
 	var (
 		nBlob []byte
@@ -125,45 +122,20 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	} else {
 		nBlob, nHash = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
 	}
-	if nHash != hash {
-		return nil, &UnexpectedNodeErr{
-			typ:   "disk",
-			want:  hash,
-			has:   nHash,
-			owner: owner,
-			path:  path,
-		}
-	}
-	if dl.db.cleans != nil && len(nBlob) > 0 {
-		dl.db.cleans.Set(hash.Bytes(), nBlob)
-		cleanWriteMeter.Mark(int64(len(nBlob)))
-	}
-	return nBlob, nil
-}
-
-// nodeByPath retrieves the trie node with the provided trie identifier and node
-// path. No error will be returned if the node is not found.
-func (dl *diskLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	if dl.stale {
-		return nil, errSnapshotStale
-	}
-	// Try to retrieve the trie node from the dirty memory cache.
-	// The map is lock free since it's impossible to mutate the
-	// disk layer before tagging it as stale.
-	n, find := dl.dirty.nodeByPath(owner, path)
-	if find {
-		return n, nil
-	}
-	// Try to retrieve the trie node from the disk.
-	var nBlob []byte
-	if owner == (common.Hash{}) {
-		nBlob, _ = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
-	} else {
-		nBlob, _ = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
-	}
+	_ = nHash
+	//if nHash != hash {
+	//	return nil, &UnexpectedNodeErr{
+	//		typ:   "disk",
+	//		want:  hash,
+	//		has:   nHash,
+	//		owner: owner,
+	//		path:  path,
+	//	}
+	//}
+	//if dl.db.cleans != nil && len(nBlob) > 0 {
+	//	dl.db.cleans.Set(hash.Bytes(), nBlob)
+	//	cleanWriteMeter.Mark(int64(len(nBlob)))
+	//}
 	return nBlob, nil
 }
 
@@ -202,11 +174,11 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	rawdb.WriteStateLookup(dl.db.diskdb, bottom.Root(), bottom.ID())
 
 	// Drop the previous value to reduce memory usage.
-	slim := make(map[common.Hash]map[string]*trienode.Node)
+	slim := make(map[common.Hash]map[string][]byte)
 	for owner, nodes := range bottom.nodes {
-		subset := make(map[string]*trienode.Node)
+		subset := make(map[string][]byte)
 		for path, n := range nodes {
-			subset[path] = n.Unwrap()
+			subset[path] = n.Blob
 		}
 		slim[owner] = subset
 	}
@@ -254,9 +226,9 @@ func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
 			log.Crit("Failed to write states", "err", err)
 		}
 		// Reset the clean cache in case disk state is mutated.
-		if dl.db.cleans != nil {
-			dl.db.cleans.Reset()
-		}
+		//if dl.db.cleans != nil {
+		//	dl.db.cleans.Reset()
+		//}
 	}
 	return newDiskLayer(h.Parent, dl.id-1, dl.db, dl.dirty), nil
 }

@@ -109,7 +109,7 @@ func (dl *diffLayer) MarkStale() {
 
 // node retrieves the node with provided node information. No error will be
 // returned if node is not found.
-func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
+func (dl *diffLayer) node(owner common.Hash, path []byte, depth int) ([]byte, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
@@ -125,17 +125,6 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	if ok {
 		n, ok := subset[string(path)]
 		if ok {
-			// If the trie node is not hash matched, or marked as removed,
-			// bubble up an error here. It shouldn't happen at all.
-			if n.Hash != hash {
-				return nil, &UnexpectedNodeErr{
-					typ:   "diff",
-					want:  hash,
-					has:   n.Hash,
-					owner: owner,
-					path:  path,
-				}
-			}
 			dirtyHitMeter.Mark(1)
 			dirtyNodeHitDepthHist.Update(int64(depth))
 			dirtyReadMeter.Mark(int64(len(n.Blob)))
@@ -144,44 +133,16 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	}
 	// Trie node unknown to this layer, resolve from parent
 	if diff, ok := dl.parent.(*diffLayer); ok {
-		return diff.node(owner, path, hash, depth+1)
+		return diff.node(owner, path, depth+1)
 	}
 	// Failed to resolve through diff layers, fallback to disk layer
-	return dl.parent.Node(owner, path, hash)
+	return dl.parent.Node(owner, path)
 }
 
 // Node retrieves the trie node blob with the provided node information. No error
 // will be returned if the node is not found.
-func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	return dl.node(owner, path, hash, 0)
-}
-
-// nodeByPath retrieves the trie node with the provided trie identifier and node
-// path. No error will be returned if the node is not found.
-func (dl *diffLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) {
-	// Hold the lock, ensure the parent won't be changed during the
-	// state accessing.
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	// If the layer was flattened into, consider it invalid (any live reference to
-	// the original should be marked as unusable).
-	if dl.stale {
-		return nil, errSnapshotStale
-	}
-	// If the trie node is known locally, return it
-	subset, ok := dl.nodes[owner]
-	if ok {
-		n, ok := subset[string(path)]
-		if ok {
-			if n.IsDeleted() {
-				return nil, nil
-			}
-			return n.Blob, nil
-		}
-	}
-	// Trie node unknown to this layer, resolve from parent
-	return dl.parent.nodeByPath(owner, path)
+func (dl *diffLayer) Node(owner common.Hash, path []byte) ([]byte, error) {
+	return dl.node(owner, path, 0)
 }
 
 // Update creates a new layer on top of the existing layer tree with the specified

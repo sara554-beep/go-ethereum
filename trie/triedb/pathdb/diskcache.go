@@ -24,10 +24,8 @@ import (
 	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
 var (
@@ -43,22 +41,22 @@ var (
 // diskcache is not thread-safe, callers must manage concurrency issues
 // by themselves.
 type diskcache struct {
-	layers uint64                                    // The number of diff layers aggregated inside
-	size   uint64                                    // The size of aggregated writes
-	limit  uint64                                    // The maximum memory allowance in bytes for cache
-	nodes  map[common.Hash]map[string]*trienode.Node // The dirty node set, mapped by owner and path
+	layers uint64                            // The number of diff layers aggregated inside
+	size   uint64                            // The size of aggregated writes
+	limit  uint64                            // The maximum memory allowance in bytes for cache
+	nodes  map[common.Hash]map[string][]byte // The dirty node set, mapped by owner and path
 }
 
 // newDiskcache initializes the dirty node cache with the given information.
-func newDiskcache(limit int, nodes map[common.Hash]map[string]*trienode.Node, layers uint64) *diskcache {
+func newDiskcache(limit int, nodes map[common.Hash]map[string][]byte, layers uint64) *diskcache {
 	// Don't panic for lazy callers.
 	if nodes == nil {
-		nodes = make(map[common.Hash]map[string]*trienode.Node)
+		nodes = make(map[common.Hash]map[string][]byte)
 	}
 	var size uint64
 	for _, subset := range nodes {
 		for path, n := range subset {
-			size += uint64(len(n.Blob) + len(path))
+			size += uint64(len(n) + len(path))
 		}
 	}
 	return &diskcache{
@@ -70,29 +68,7 @@ func newDiskcache(limit int, nodes map[common.Hash]map[string]*trienode.Node, la
 }
 
 // node retrieves the trie node with given node info.
-func (cache *diskcache) node(owner common.Hash, path []byte, hash common.Hash) (*trienode.Node, error) {
-	subset, ok := cache.nodes[owner]
-	if !ok {
-		return nil, nil
-	}
-	n, ok := subset[string(path)]
-	if !ok {
-		return nil, nil
-	}
-	if n.Hash != hash {
-		return nil, &UnexpectedNodeErr{
-			typ:   "cache",
-			want:  hash,
-			has:   n.Hash,
-			owner: owner,
-			path:  path,
-		}
-	}
-	return n, nil
-}
-
-// nodeByPath retrieves the trie node with given node info.
-func (cache *diskcache) nodeByPath(owner common.Hash, path []byte) ([]byte, bool) {
+func (cache *diskcache) node(owner common.Hash, path []byte) ([]byte, bool) {
 	subset, ok := cache.nodes[owner]
 	if !ok {
 		return nil, false
@@ -101,15 +77,15 @@ func (cache *diskcache) nodeByPath(owner common.Hash, path []byte) ([]byte, bool
 	if !ok {
 		return nil, false
 	}
-	if n.IsDeleted() {
+	if len(n) == 0 {
 		return nil, true
 	}
-	return n.Blob, true
+	return n, true
 }
 
 // commit merges the dirty node belonging to the bottom-most diff layer
 // into the disk cache.
-func (cache *diskcache) commit(nodes map[common.Hash]map[string]*trienode.Node) *diskcache {
+func (cache *diskcache) commit(nodes map[common.Hash]map[string][]byte) *diskcache {
 	var (
 		delta          int64
 		overwrites     int64
@@ -120,16 +96,16 @@ func (cache *diskcache) commit(nodes map[common.Hash]map[string]*trienode.Node) 
 		if !exist {
 			cache.nodes[owner] = subset
 			for path, n := range subset {
-				delta += int64(len(n.Blob) + len(path))
+				delta += int64(len(n) + len(path))
 			}
 		} else {
 			for path, n := range subset {
 				if orig, exist := current[path]; !exist {
-					delta += int64(len(n.Blob) + len(path))
+					delta += int64(len(n) + len(path))
 				} else {
-					delta += int64(len(n.Blob) - len(orig.Blob))
+					delta += int64(len(n) - len(orig))
 					overwrites += 1
-					overwriteSizes += int64(len(orig.Blob) + len(path))
+					overwriteSizes += int64(len(orig) + len(path))
 				}
 				cache.nodes[owner][path] = n
 			}
@@ -163,13 +139,8 @@ func (cache *diskcache) revert(h *trieHistory) error {
 			if !ok {
 				panic(fmt.Sprintf("non-existent node (%x %v)", entry.Owner, state.Path))
 			}
-			if len(state.Prev) == 0 {
-				subset[string(state.Path)] = trienode.New(common.Hash{}, nil)
-				delta -= int64(len(cur.Blob))
-			} else {
-				subset[string(state.Path)] = trienode.New(crypto.Keccak256Hash(state.Prev), state.Prev)
-				delta += int64(len(state.Prev)) - int64(len(cur.Blob))
-			}
+			subset[string(state.Path)] = state.Prev
+			delta += int64(len(state.Prev)) - int64(len(cur))
 		}
 	}
 	cache.updateSize(delta)
@@ -192,7 +163,7 @@ func (cache *diskcache) updateSize(delta int64) {
 func (cache *diskcache) reset() {
 	cache.layers = 0
 	cache.size = 0
-	cache.nodes = make(map[common.Hash]map[string]*trienode.Node)
+	cache.nodes = make(map[common.Hash]map[string][]byte)
 }
 
 // empty returns an indicator if diskcache contains any state transition inside.
@@ -224,7 +195,7 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 	)
 	for owner, subset := range cache.nodes {
 		for path, n := range subset {
-			if n.IsDeleted() {
+			if len(n) == 0 {
 				if owner == (common.Hash{}) {
 					rawdb.DeleteAccountTrieNode(batch, []byte(path))
 				} else {
@@ -232,13 +203,13 @@ func (cache *diskcache) mayFlush(db ethdb.KeyValueStore, clean *fastcache.Cache,
 				}
 			} else {
 				if owner == (common.Hash{}) {
-					rawdb.WriteAccountTrieNode(batch, []byte(path), n.Blob)
+					rawdb.WriteAccountTrieNode(batch, []byte(path), n)
 				} else {
-					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), n.Blob)
+					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), n)
 				}
-				if clean != nil {
-					clean.Set(n.Hash.Bytes(), n.Blob)
-				}
+				//if clean != nil {
+				//	//clean.Set(n.Hash.Bytes(), n.Blob)
+				//}
 			}
 		}
 	}
