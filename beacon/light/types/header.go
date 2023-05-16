@@ -18,13 +18,14 @@ package types
 
 import (
 	"encoding/binary"
-	"encoding/json"
 
 	"github.com/ethereum/go-ethereum/beacon/merkle"
 	"github.com/ethereum/go-ethereum/beacon/params"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/minio/sha256-simd"
 )
+
+//go:generate go run github.com/fjl/gencodec -type Header -field-override headerMarshaling -out gen_header_json.go
 
 // Header defines a beacon header
 //
@@ -38,42 +39,10 @@ type Header struct {
 	BodyRoot      common.Hash
 }
 
-// Header defines a beacon header and supports JSON encoding according to the
-// standard beacon API format
-//
-// See data structure definition here:
-// https://github.com/ethereum/consensus-specs/blob/dev/specs/phase0/beacon-chain.md#beaconblockheader
-type jsonHeader struct {
-	Slot          common.Decimal `json:"slot"`
-	ProposerIndex common.Decimal `json:"proposer_index"`
-	ParentRoot    common.Hash    `json:"parent_root"`
-	StateRoot     common.Hash    `json:"state_root"`
-	BodyRoot      common.Hash    `json:"body_root"`
-}
-
-// MarshalJSON marshals as JSON.
-func (bh *Header) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&jsonHeader{
-		Slot:          common.Decimal(bh.Slot),
-		ProposerIndex: common.Decimal(bh.ProposerIndex),
-		ParentRoot:    bh.ParentRoot,
-		StateRoot:     bh.StateRoot,
-		BodyRoot:      bh.BodyRoot,
-	})
-}
-
-// UnmarshalJSON unmarshals from JSON.
-func (bh *Header) UnmarshalJSON(input []byte) error {
-	var dec jsonHeader
-	if err := json.Unmarshal(input, &dec); err != nil {
-		return err
-	}
-	bh.Slot = uint64(dec.Slot)
-	bh.ProposerIndex = uint64(dec.ProposerIndex)
-	bh.ParentRoot = dec.ParentRoot
-	bh.StateRoot = dec.StateRoot
-	bh.BodyRoot = dec.BodyRoot
-	return nil
+// field type overrides for gencodec
+type headerMarshaling struct {
+	Slot          common.Decimal
+	ProposerIndex common.Decimal
 }
 
 // Hash calculates the block root of the header
@@ -117,8 +86,9 @@ func PeriodOfSlot(slot uint64) uint64 {
 // SignedHeader represents a beacon header signed by a sync committee
 //
 // Note: this structure is created from either an optimistic update or an instant update:
-//  https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/light-client/sync-protocol.md#lightclientoptimisticupdate
-//  https://github.com/zsfelfoldi/beacon-APIs/blob/instant_update/apis/beacon/light_client/instant_update.yaml
+//
+//	https://github.com/ethereum/consensus-specs/blob/dev/specs/altair/light-client/sync-protocol.md#lightclientoptimisticupdate
+//	https://github.com/zsfelfoldi/beacon-APIs/blob/instant_update/apis/beacon/light_client/instant_update.yaml
 type SignedHeader struct {
 	Header        Header        // signed beacon header
 	SyncAggregate SyncAggregate // sync committee signature aggregate
