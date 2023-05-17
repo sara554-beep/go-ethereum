@@ -24,17 +24,15 @@ import (
 
 // Reader wraps the Node method of a backing trie store.
 type Reader interface {
-	// Node retrieves the RLP-encoded trie node blob with the provided trie
-	// identifier, node path and the corresponding node hash. No error will
-	// be returned if the node is not found.
+	// Node retrieves the trie node blob with the provided trie identifier, node path and
+	// the corresponding node hash. No error will be returned if the node is not found.
+	//
+	// When looking up nodes in the account trie, 'owner' is the zero hash. For contract
+	// storage trie nodes, 'owner' is the hash of the account address that containing the
+	// storage.
+	//
+	// TODO(rjl493456442): remove the 'hash' parameter, it's redundant in PBSS.
 	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
-}
-
-// NodeReader wraps all the necessary functions for accessing trie node.
-type NodeReader interface {
-	// Reader returns a reader for accessing all trie nodes with provided
-	// state root. Nil is returned in case the state is not available.
-	Reader(root common.Hash) Reader
 }
 
 // trieReader is a wrapper of the underlying node reader. It's not safe
@@ -46,7 +44,7 @@ type trieReader struct {
 }
 
 // newTrieReader initializes the trie reader with the given node reader.
-func newTrieReader(stateRoot, owner common.Hash, db NodeReader) (*trieReader, error) {
+func newTrieReader(stateRoot, owner common.Hash, db *Database) (*trieReader, error) {
 	reader := db.Reader(stateRoot)
 	if reader == nil {
 		return nil, fmt.Errorf("state not found #%x", stateRoot)
