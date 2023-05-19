@@ -1041,8 +1041,8 @@ func (s *StateDB) deleteStorage(addrHash common.Hash, root common.Hash) (bool, m
 		if it.Hash() == (common.Hash{}) {
 			continue
 		}
-		nodeSize += common.StorageSize(len(it.Path()) + len(it.NodeBlob()))
-		set.AddNode(it.Path(), trienode.NewWithPrev(common.Hash{}, nil, it.NodeBlob()))
+		nodeSize += common.StorageSize(len(it.Path()))
+		set.AddNode(it.Path(), trienode.NewDeleted())
 	}
 	if err := it.Error(); err != nil {
 		return false, nil, nil, err
