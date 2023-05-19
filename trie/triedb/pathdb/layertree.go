@@ -182,8 +182,8 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		}
 		delete(children, root)
 	}
-	for root, l := range tree.layers {
-		if l.Stale() {
+	for root, layer := range tree.layers {
+		if dl, ok := layer.(*diskLayer); ok && dl.Stale() {
 			remove(root)
 		}
 	}

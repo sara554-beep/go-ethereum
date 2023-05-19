@@ -74,10 +74,6 @@ type layer interface {
 	// flattening everything down (bad for reorgs).
 	Journal(buffer *bytes.Buffer) error
 
-	// Stale returns whether this layer has become stale (was flattened across) or
-	// if it's still live.
-	Stale() bool
-
 	// ID returns the associated state id.
 	ID() uint64
 }
@@ -286,8 +282,6 @@ func (db *Database) Reset(root common.Hash) error {
 		switch layer := layer.(type) {
 		case *diskLayer:
 			layer.MarkStale()
-		case *diffLayer:
-			layer.MarkStale()
 		default:
 			panic(fmt.Sprintf("unknown layer type: %T", layer))
 		}
@@ -335,8 +329,6 @@ func (db *Database) Recover(root common.Hash) error {
 		switch layer := layer.(type) {
 		case *diskLayer:
 			dl = layer
-		case *diffLayer:
-			layer.MarkStale()
 		default:
 			panic(fmt.Sprintf("unknown layer type: %T", layer))
 		}

@@ -37,10 +37,8 @@ type diffLayer struct {
 	nodes  map[common.Hash]map[string]*trienode.WithPrev // Cached trie nodes indexed by owner and path
 	memory uint64                                        // Approximate guess as to how much memory we use
 
-	parent layer // Parent layer modified by this one, never nil, **can be changed**
-	// TODO(gary) remove the staleness from memory-layers.
-	stale bool         // Signals that the layer became stale (state progressed)
-	lock  sync.RWMutex // Lock used to protect parent and stale fields.
+	parent layer        // Parent layer modified by this one, never nil, **can be changed**
+	lock   sync.RWMutex // Lock used to protect parent
 }
 
 // newDiffLayer creates a new diff on top of an existing layer.
@@ -87,28 +85,6 @@ func (dl *diffLayer) Parent() layer {
 	return dl.parent
 }
 
-// Stale return whether this layer has become stale (was flattened across) or if
-// it's still live.
-// TODO remove
-func (dl *diffLayer) Stale() bool {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	return dl.stale
-}
-
-// MarkStale sets the stale flag as true.
-// TODO remove
-func (dl *diffLayer) MarkStale() {
-	dl.lock.Lock()
-	defer dl.lock.Unlock()
-
-	if dl.stale {
-		panic("triedb diff layer is stale")
-	}
-	dl.stale = true
-}
-
 // node retrieves the node with provided node information. No error will be
 // returned if node is not found.
 func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
@@ -117,11 +93,6 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
-	// If the layer was flattened into, consider it invalid (any live reference to
-	// the original should be marked as unusable).
-	if dl.stale {
-		return nil, errSnapshotStale
-	}
 	// If the trie node is known locally, return it
 	subset, ok := dl.nodes[owner]
 	if ok {
@@ -166,11 +137,6 @@ func (dl *diffLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) 
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
-	// If the layer was flattened into, consider it invalid (any live reference to
-	// the original should be marked as unusable).
-	if dl.stale {
-		return nil, errSnapshotStale
-	}
 	// If the trie node is known locally, return it
 	subset, ok := dl.nodes[owner]
 	if ok {

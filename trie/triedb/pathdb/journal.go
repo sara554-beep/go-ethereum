@@ -233,9 +233,6 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	if err := dl.parent.Journal(buffer); err != nil {
 		return err
 	}
-	if dl.Stale() {
-		return errSnapshotStale
-	}
 	// Everything below was journaled, persist this layer too
 	if err := rlp.Encode(buffer, dl.root); err != nil {
 		return err
