@@ -575,14 +575,20 @@ func (t *Trie) Hash() common.Hash {
 func (t *Trie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {
 	defer t.tracer.reset()
 
-	nodes := trienode.NewNodeSet(t.owner)
-	t.tracer.markDeletions(nodes)
-
 	// Trie is empty and can be classified into two types of situations:
-	// - The trie was empty and no update happens
-	// - The trie was non-empty and all nodes are dropped
+	// (a) The trie was empty and no update happens => return nil
+	// (b) The trie was non-empty and all nodes are dropped => return
+	//     the node set includes all deleted nodes
 	if t.root == nil {
-		return types.EmptyRootHash, nodes
+		paths := t.tracer.deletedNodes()
+		if len(paths) == 0 {
+			return types.EmptyRootHash, nil // case (a)
+		}
+		nodes := trienode.NewNodeSet(t.owner)
+		for _, path := range paths {
+			nodes.AddNode([]byte(path), trienode.NewDeleted())
+		}
+		return types.EmptyRootHash, nodes // case (b)
 	}
 	// Derive the hash for all dirty nodes first. We hold the assumption
 	// in the following procedure that all nodes are hashed.
@@ -595,6 +601,10 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {
 		// ensure all resolved nodes are dropped after the commit.
 		t.root = hashedNode
 		return rootHash, nil
+	}
+	nodes := trienode.NewNodeSet(t.owner)
+	for _, path := range t.tracer.deletedNodes() {
+		nodes.AddNode([]byte(path), trienode.NewDeleted())
 	}
 	t.root = newCommitter(nodes, t.tracer, collectLeaf).Commit(t.root)
 	return rootHash, nodes

@@ -95,27 +95,6 @@ func DeleteCode(db ethdb.KeyValueWriter, hash common.Hash) {
 	}
 }
 
-// ReadTrieHistory retrieves the trie history with the given id. Calculate
-// the real position of trie history in freezer by minus one since the first
-// history object is started from one(zero for empty state).
-func ReadTrieHistory(db ethdb.AncientReaderOp, stateID uint64) []byte {
-	blob, err := db.Ancient(trieHistoryTable, stateID-1)
-	if err != nil {
-		return nil
-	}
-	return blob
-}
-
-// WriteTrieHistory writes the provided trie history to database. Calculate the
-// real position of trie history in freezer by minus one since the first history
-// object is started from one(zero is not existent corresponds to empty state).
-func WriteTrieHistory(db ethdb.AncientWriter, stateID uint64, blob []byte) {
-	db.ModifyAncients(func(op ethdb.AncientWriteOp) error {
-		op.AppendRaw(trieHistoryTable, stateID-1, blob)
-		return nil
-	})
-}
-
 // ReadStateID retrieves the state id with the provided state root.
 func ReadStateID(db ethdb.KeyValueReader, root common.Hash) (uint64, bool) {
 	data, err := db.Get(stateIDKey(root))
@@ -178,4 +157,81 @@ func DeleteTrieJournal(db ethdb.KeyValueWriter) {
 	if err := db.Delete(trieJournalKey); err != nil {
 		log.Crit("Failed to remove tries journal", "err", err)
 	}
+}
+
+// WriteStateHistory writes the provided state history to database. Calculate the
+// real position of state history in freezer by minus one since the first state
+// history is started from one(zero for empty state).
+func WriteStateHistory(db ethdb.AncientWriter, id uint64, meta []byte, accountIndex []byte, storageIndex []byte, accounts []byte, storages []byte) {
+	db.ModifyAncients(func(op ethdb.AncientWriteOp) error {
+		op.AppendRaw(stateHistoryMeta, id-1, meta)
+		op.AppendRaw(stateHistoryAccountIndex, id-1, accountIndex)
+		op.AppendRaw(stateHistoryStorageIndex, id-1, storageIndex)
+		op.AppendRaw(stateHistoryAccountData, id-1, accounts)
+		op.AppendRaw(stateHistoryStorageData, id-1, storages)
+		return nil
+	})
+}
+
+// ReadStateHistoryMeta retrieves the metadata corresponding to the specified
+// state history. Calculate the real position of state history in freezer by minus
+// one since the first state history is started from one(zero for empty state).
+func ReadStateHistoryMeta(db ethdb.AncientReaderOp, id uint64) []byte {
+	blob, err := db.Ancient(stateHistoryMeta, id-1)
+	if err != nil {
+		return nil
+	}
+	return blob
+}
+
+// ReadStateHistoryMetaList retrieves a batch of meta objects with the specified
+// start position and count. Calculate the real position of state history in freezer
+// by minus one since the first state history is started from one(zero for empty
+// state).
+func ReadStateHistoryMetaList(db ethdb.AncientReaderOp, start uint64, count uint64, limit uint64) ([][]byte, error) {
+	return db.AncientRange(stateHistoryMeta, start-1, count, limit)
+}
+
+// ReadStateAccountIndex retrieves the state root corresponding to the specified
+// state history. Calculate the real position of state history in freezer by minus
+// one since the first state history is started from one(zero for empty state).
+func ReadStateAccountIndex(db ethdb.AncientReaderOp, id uint64) []byte {
+	blob, err := db.Ancient(stateHistoryAccountIndex, id-1)
+	if err != nil {
+		return nil
+	}
+	return blob
+}
+
+// ReadStateStorageIndex retrieves the state root corresponding to the specified
+// state history. Calculate the real position of state history in freezer by minus
+// one since the first state history is started from one(zero for empty state).
+func ReadStateStorageIndex(db ethdb.AncientReaderOp, id uint64) []byte {
+	blob, err := db.Ancient(stateHistoryStorageIndex, id-1)
+	if err != nil {
+		return nil
+	}
+	return blob
+}
+
+// ReadStateAccountHistory retrieves the state root corresponding to the specified
+// state history. Calculate the real position of state history in freezer by minus
+// one since the first state history is started from one(zero for empty state).
+func ReadStateAccountHistory(db ethdb.AncientReaderOp, id uint64) []byte {
+	blob, err := db.Ancient(stateHistoryAccountData, id-1)
+	if err != nil {
+		return nil
+	}
+	return blob
+}
+
+// ReadStateStorageHistory retrieves the state root corresponding to the specified
+// state history. Calculate the real position of state history in freezer by minus
+// one since the first state history is started from one(zero for empty state).
+func ReadStateStorageHistory(db ethdb.AncientReaderOp, id uint64) []byte {
+	blob, err := db.Ancient(stateHistoryStorageData, id-1)
+	if err != nil {
+		return nil
+	}
+	return blob
 }
