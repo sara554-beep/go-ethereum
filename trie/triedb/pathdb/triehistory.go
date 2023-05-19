@@ -169,8 +169,8 @@ func storeTrieHistory(freezer *rawdb.ResettableFreezer, dl *diffLayer, limit uin
 	var (
 		start = time.Now()
 		enc   = &trieHistory{
-			Parent: dl.Parent().Root(),
-			Root:   dl.Root(),
+			Parent: dl.parent().root(),
+			Root:   dl.root(),
 		}
 	)
 	for owner, subset := range dl.nodes {

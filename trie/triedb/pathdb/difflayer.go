@@ -32,13 +32,13 @@ import (
 // made to the state, that have not yet graduated into a semi-immutable state.
 type diffLayer struct {
 	// Immutables
-	root   common.Hash                                   // Root hash to which this layer diff belongs to
-	id     uint64                                        // Corresponding state id
-	nodes  map[common.Hash]map[string]*trienode.WithPrev // Cached trie nodes indexed by owner and path
-	memory uint64                                        // Approximate guess as to how much memory we use
+	rootHash common.Hash                                   // Root hash to which this layer diff belongs to
+	id       uint64                                        // Corresponding state id
+	nodes    map[common.Hash]map[string]*trienode.WithPrev // Cached trie nodes indexed by owner and path
+	memory   uint64                                        // Approximate guess as to how much memory we use
 
-	parent layer        // Parent layer modified by this one, never nil, **can be changed**
-	lock   sync.RWMutex // Lock used to protect parent
+	parentLayer layer        // Parent layer modified by this one, never nil, **can be changed**
+	lock        sync.RWMutex // Lock used to protect parent
 }
 
 // newDiffLayer creates a new diff on top of an existing layer.
@@ -48,10 +48,10 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, nodes map[common.Ha
 		count int
 	)
 	dl := &diffLayer{
-		root:   root,
-		id:     id,
-		nodes:  nodes,
-		parent: parent,
+		rootHash:    root,
+		id:          id,
+		nodes:       nodes,
+		parentLayer: parent,
 	}
 	for _, subset := range nodes {
 		for path, n := range subset {
@@ -68,26 +68,27 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, nodes map[common.Ha
 }
 
 // Root returns the root hash of corresponding state.
-func (dl *diffLayer) Root() common.Hash {
-	return dl.root
+func (dl *diffLayer) root() common.Hash {
+	return dl.rootHash
 }
 
 // ID returns the state id represented by layer.
-func (dl *diffLayer) ID() uint64 {
+func (dl *diffLayer) stateID() uint64 {
 	return dl.id
 }
 
 // Parent returns the subsequent layer of a diff layer.
-func (dl *diffLayer) Parent() layer {
+func (dl *diffLayer) parent() layer {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
-	return dl.parent
+	return dl.parentLayer
 }
 
-// node retrieves the node with provided node information. No error will be
-// returned if node is not found.
-func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
+// nodeInternal retrieves the node with provided node information. It's the
+// internal version of node function with additional accessed layer tracked.
+// No error will be returned if node is not found.
+func (dl *diffLayer) nodeInternal(owner common.Hash, path []byte, hash common.Hash, depth int) ([]byte, error) {
 	// Hold the lock, ensure the parent won't be changed during the
 	// state accessing.
 	dl.lock.RLock()
@@ -116,17 +117,17 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, hash common.Hash, dept
 		}
 	}
 	// Trie node unknown to this layer, resolve from parent
-	if diff, ok := dl.parent.(*diffLayer); ok {
-		return diff.node(owner, path, hash, depth+1)
+	if diff, ok := dl.parentLayer.(*diffLayer); ok {
+		return diff.nodeInternal(owner, path, hash, depth+1)
 	}
 	// Failed to resolve through diff layers, fallback to disk layer
-	return dl.parent.Node(owner, path, hash)
+	return dl.parentLayer.Node(owner, path, hash)
 }
 
 // Node retrieves the trie node blob with the provided node information. No error
 // will be returned if the node is not found.
 func (dl *diffLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	return dl.node(owner, path, hash, 0)
+	return dl.nodeInternal(owner, path, hash, 0)
 }
 
 // nodeByPath retrieves the trie node with the provided trie identifier and node
@@ -149,29 +150,31 @@ func (dl *diffLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) 
 		}
 	}
 	// Trie node unknown to this layer, resolve from parent
-	return dl.parent.nodeByPath(owner, path)
+	return dl.parentLayer.nodeByPath(owner, path)
 }
 
 // Update creates a new layer on top of the existing layer tree with the specified
 // data items.
-func (dl *diffLayer) Update(blockRoot common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer {
+func (dl *diffLayer) update(blockRoot common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer {
 	return newDiffLayer(dl, blockRoot, id, nodes)
 }
 
-// persist stores the diff layer and all its parent diff layers to disk.
+// persist flushes the diff layer and all its parent layers to disk layer.
 func (dl *diffLayer) persist(force bool) (layer, error) {
-	if parent, ok := dl.Parent().(*diffLayer); !ok {
+	if parent, ok := dl.parent().(*diffLayer); ok {
 		// Hold the lock to prevent any read operation until the new
 		// parent is linked correctly.
 		dl.lock.Lock()
-		// The merging of difflayers starts at the bottom-most layer, therefore
-		// we recurse down here, flattening on the way up (diffToDisk).
+
+		// The merging of difflayers starts at the bottom-most layer,
+		// therefore we recurse down here, flattening on the way up
+		// (diffToDisk).
 		result, err := parent.persist(force)
 		if err != nil {
 			dl.lock.Unlock()
 			return nil, err
 		}
-		dl.parent = result
+		dl.parentLayer = result
 		dl.lock.Unlock()
 	}
 	return diffToDisk(dl, force)
@@ -179,10 +182,10 @@ func (dl *diffLayer) persist(force bool) (layer, error) {
 
 // diffToDisk merges a bottom-most diff into the persistent disk layer underneath
 // it. The method will panic if called onto a non-bottom-most diff layer.
-func diffToDisk(bottom *diffLayer, force bool) (layer, error) {
-	disk, ok := bottom.Parent().(*diskLayer)
+func diffToDisk(layer *diffLayer, force bool) (layer, error) {
+	disk, ok := layer.parent().(*diskLayer)
 	if !ok {
-		panic(fmt.Sprintf("unknown layer type: %T", bottom.Parent()))
+		panic(fmt.Sprintf("unknown layer type: %T", layer.parent()))
 	}
-	return disk.commit(bottom, force)
+	return disk.commit(layer, force)
 }

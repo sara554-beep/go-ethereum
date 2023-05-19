@@ -93,7 +93,7 @@ func (db *Database) loadJournal(diskRoot common.Hash) (layer, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Debug("Loaded layer journal", "diskroot", diskRoot, "diffhead", snapshot.Root())
+	log.Debug("Loaded layer journal", "diskroot", diskRoot, "diffhead", snapshot.root())
 	return snapshot, nil
 }
 
@@ -185,18 +185,18 @@ func (db *Database) loadDiffLayer(parent layer, r *rlp.Stream) (layer, error) {
 		}
 		nodes[entry.Owner] = subset
 	}
-	return db.loadDiffLayer(newDiffLayer(parent, root, parent.ID()+1, nodes), r)
+	return db.loadDiffLayer(newDiffLayer(parent, root, parent.stateID()+1, nodes), r)
 }
 
 // Journal terminates any in-progress layer generation, also implicitly pushing
 // the progress into the database.
-func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
+func (dl *diskLayer) journal(buffer *bytes.Buffer) error {
 	// Ensure the layer didn't get stale
 	if dl.Stale() {
 		return errSnapshotStale
 	}
 	// Step one, write the disk root into the journal.
-	if err := rlp.Encode(buffer, dl.root); err != nil {
+	if err := rlp.Encode(buffer, dl.rootHash); err != nil {
 		return err
 	}
 	// Step two, write all accumulated dirty nodes into the journal
@@ -219,22 +219,22 @@ func (dl *diskLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, dl.id); err != nil {
 		return err
 	}
-	log.Debug("Journaled disk layer", "root", dl.root, "nodes", len(dl.dirty.nodes))
+	log.Debug("Journaled disk layer", "root", dl.rootHash, "nodes", len(dl.dirty.nodes))
 	return nil
 }
 
 // Journal writes the memory layer contents into a buffer to be stored in the
 // database as the layer journal.
-func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
+func (dl *diffLayer) journal(buffer *bytes.Buffer) error {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	// Journal the parent first
-	if err := dl.parent.Journal(buffer); err != nil {
+	if err := dl.parentLayer.journal(buffer); err != nil {
 		return err
 	}
 	// Everything below was journaled, persist this layer too
-	if err := rlp.Encode(buffer, dl.root); err != nil {
+	if err := rlp.Encode(buffer, dl.rootHash); err != nil {
 		return err
 	}
 	nodes := make([]journalNodes, 0, len(dl.nodes))
@@ -252,6 +252,6 @@ func (dl *diffLayer) Journal(buffer *bytes.Buffer) error {
 	if err := rlp.Encode(buffer, nodes); err != nil {
 		return err
 	}
-	log.Debug("Journaled diff layer", "root", dl.root, "parent", dl.parent.Root(), "nodes", len(dl.nodes))
+	log.Debug("Journaled diff layer", "root", dl.rootHash, "parent", dl.parentLayer.root(), "nodes", len(dl.nodes))
 	return nil
 }

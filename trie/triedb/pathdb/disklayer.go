@@ -28,36 +28,36 @@ import (
 
 // diskLayer is a low level persistent layer built on top of a key-value store.
 type diskLayer struct {
-	root  common.Hash  // Immutable, root hash of the base layer
-	id    uint64       // Immutable, corresponding state id
-	db    *Database    // Path-based trie database
-	dirty *nodebuffer  // Dirty node cache to aggregate writes.
-	stale bool         // Signals that the layer became stale (state progressed)
-	lock  sync.RWMutex // Lock used to protect stale flag
+	rootHash common.Hash  // Immutable, root hash of the base layer
+	id       uint64       // Immutable, corresponding state id
+	db       *Database    // Path-based trie database
+	dirty    *nodebuffer  // Node buffer to aggregate writes.
+	stale    bool         // Signals that the layer became stale (state progressed)
+	lock     sync.RWMutex // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
 func newDiskLayer(root common.Hash, id uint64, db *Database, dirty *nodebuffer) *diskLayer {
 	return &diskLayer{
-		root:  root,
-		id:    id,
-		db:    db,
-		dirty: dirty,
+		rootHash: root,
+		id:       id,
+		db:       db,
+		dirty:    dirty,
 	}
 }
 
 // Root returns root hash of corresponding state.
-func (dl *diskLayer) Root() common.Hash {
-	return dl.root
+func (dl *diskLayer) root() common.Hash {
+	return dl.rootHash
 }
 
 // Parent always returns nil as there's no layer below the disk.
-func (dl *diskLayer) Parent() layer {
+func (dl *diskLayer) parent() layer {
 	return nil
 }
 
 // ID returns the state id of disk layer.
-func (dl *diskLayer) ID() uint64 {
+func (dl *diskLayer) stateID() uint64 {
 	return dl.id
 }
 
@@ -168,7 +168,7 @@ func (dl *diskLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) 
 }
 
 // Update returns a new diff layer on top with the given dirty node set.
-func (dl *diskLayer) Update(blockHash common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer {
+func (dl *diskLayer) update(blockHash common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer {
 	return newDiffLayer(dl, blockHash, id, nodes)
 }
 
@@ -181,7 +181,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 
 	// Construct and store the trie history first. If crash happens
 	// after storing the trie history but without flushing the
-	// corresponding statehashes(journal), the stored trie history will be
+	// corresponding states(journal), the stored trie history will be
 	// truncated in the next restart.
 	if dl.db.freezer != nil {
 		err := storeTrieHistory(dl.db.freezer, bottom, dl.db.config.StateLimit)
@@ -197,9 +197,9 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// in the same chain blocks which are not adjacent have the same
 	// root.
 	if dl.id == 0 {
-		rawdb.WriteStateID(dl.db.diskdb, dl.root, 0)
+		rawdb.WriteStateID(dl.db.diskdb, dl.rootHash, 0)
 	}
-	rawdb.WriteStateID(dl.db.diskdb, bottom.Root(), bottom.ID())
+	rawdb.WriteStateID(dl.db.diskdb, bottom.root(), bottom.stateID())
 
 	// Drop the previous value to reduce memory usage.
 	slim := make(map[common.Hash]map[string]*trienode.Node)
@@ -210,7 +210,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 		}
 		slim[owner] = subset
 	}
-	ndl := newDiskLayer(bottom.root, bottom.id, dl.db, dl.dirty.commit(slim))
+	ndl := newDiskLayer(bottom.rootHash, bottom.id, dl.db, dl.dirty.commit(slim))
 
 	// Persist the content in disk layer if there are too many nodes cached.
 	err := ndl.dirty.flush(ndl.db.diskdb, ndl.db.cleans, ndl.id, force)
@@ -223,7 +223,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
 func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
-	if h.Root != dl.Root() {
+	if h.Root != dl.root() {
 		return nil, errUnexpectedTrieHistory
 	}
 	if dl.id == 0 {

@@ -30,7 +30,7 @@ import (
 // This structure defines a few basic operations for manipulating
 // state layers linked with each other in a tree structure. It's
 // thread-safe to use. However, callers need to ensure the thread-safety
-// of the layer layer operated by themselves.
+// of the referenced layer by themselves.
 type layerTree struct {
 	lock   sync.RWMutex
 	layers map[common.Hash]layer
@@ -41,8 +41,8 @@ type layerTree struct {
 func newLayerTree(head layer) *layerTree {
 	var layers = make(map[common.Hash]layer)
 	for head != nil {
-		layers[head.Root()] = head
-		head = head.Parent()
+		layers[head.root()] = head
+		head = head.parent()
 	}
 	return &layerTree{layers: layers}
 }
@@ -55,7 +55,7 @@ func (tree *layerTree) get(blockRoot common.Hash) layer {
 	return tree.layers[types.TrieRootHash(blockRoot)]
 }
 
-// forEach iterates the stored layer layers inside and applies the
+// forEach iterates the stored layers inside and applies the
 // given callback on them.
 func (tree *layerTree) forEach(onLayer func(layer)) {
 	tree.lock.RLock()
@@ -95,10 +95,10 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, sets *trien
 	if err != nil {
 		return err
 	}
-	l := parent.Update(root, parent.ID()+1, nodes)
+	l := parent.update(root, parent.stateID()+1, nodes)
 
 	tree.lock.Lock()
-	tree.layers[l.root] = l
+	tree.layers[l.rootHash] = l
 	tree.lock.Unlock()
 	return nil
 }
@@ -129,13 +129,13 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 			return err
 		}
 		// Replace the entire layer tree with the flat base
-		tree.layers = map[common.Hash]layer{base.Root(): base}
+		tree.layers = map[common.Hash]layer{base.root(): base}
 		return nil
 	}
 	// Dive until we run out of layers or reach the persistent database
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
-		if parent, ok := diff.Parent().(*diffLayer); ok {
+		if parent, ok := diff.parent().(*diffLayer); ok {
 			diff = parent
 		} else {
 			// Diff stack too shallow, return without modifications
@@ -144,7 +144,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 	}
 	// We're out of layers, flatten anything below, stopping if it's the disk or if
 	// the memory limit is not yet exceeded.
-	switch parent := diff.Parent().(type) {
+	switch parent := diff.parent().(type) {
 	case *diskLayer:
 		return nil
 
@@ -158,8 +158,8 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 			diff.lock.Unlock()
 			return err
 		}
-		tree.layers[base.Root()] = base
-		diff.parent = base
+		tree.layers[base.root()] = base
+		diff.parentLayer = base
 
 		diff.lock.Unlock()
 
@@ -170,7 +170,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 	children := make(map[common.Hash][]common.Hash)
 	for root, layer := range tree.layers {
 		if dl, ok := layer.(*diffLayer); ok {
-			parent := dl.Parent().Root()
+			parent := dl.parent().root()
 			children[parent] = append(children[parent], root)
 		}
 	}
@@ -199,14 +199,14 @@ func (tree *layerTree) bottom() layer {
 	if len(tree.layers) == 0 {
 		return nil // Shouldn't happen, empty tree
 	}
-	// pick a random one
+	// pick a random one as the entry point
 	var current layer
 	for _, layer := range tree.layers {
 		current = layer
 		break
 	}
-	for current.Parent() != nil {
-		current = current.Parent()
+	for current.parent() != nil {
+		current = current.parent()
 	}
 	return current
 }

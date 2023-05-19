@@ -65,7 +65,7 @@ func (env *testEnv) rand() (bool, []byte, []byte) {
 func (env *testEnv) bottomIndex() int {
 	bottom := env.db.tree.bottom()
 	for index := 0; index < len(env.hashes); index++ {
-		if env.hashes[index] == bottom.Root() {
+		if env.hashes[index] == bottom.root() {
 			return index
 		}
 	}
@@ -159,7 +159,7 @@ func TestDatabaseRollback(t *testing.T) {
 	)
 	// Ensure all the trie histories are stored properly
 	var parent = types.EmptyRootHash
-	for i := uint64(1); i <= dl.ID(); i++ {
+	for i := uint64(1); i <= dl.stateID(); i++ {
 		h, err := loadTrieHistory(env.db.freezer, i)
 		if err != nil {
 			t.Errorf("Failed to load trie history, index %d, err %v", i, err)
@@ -170,7 +170,7 @@ func TestDatabaseRollback(t *testing.T) {
 		parent = h.Root
 	}
 	// Ensure immature trie histories are not persisted
-	for i := dl.ID() + 1; i <= uint64(len(env.roots)); i++ {
+	for i := dl.stateID() + 1; i <= uint64(len(env.roots)); i++ {
 		blob := rawdb.ReadTrieHistory(env.db.diskdb, i)
 		if len(blob) != 0 {
 			t.Error("Unexpected trie history", "id", i)
@@ -181,7 +181,7 @@ func TestDatabaseRollback(t *testing.T) {
 		if err := env.db.Recover(env.hashes[i-1]); err != nil {
 			t.Error("Failed to revert db status", "err", err)
 		}
-		if env.db.tree.bottom().Root() != env.hashes[i-1] {
+		if env.db.tree.bottom().root() != env.hashes[i-1] {
 			t.Error("Unexpected disk layer root")
 		}
 		// Compare the reverted state with the constructed one, they should be same.
@@ -217,7 +217,7 @@ func TestDatabaseBatchRollback(t *testing.T) {
 		t.Error("Failed to revert db", "err", err)
 	}
 	ndl := env.db.tree.bottom()
-	if ndl.Root() != types.EmptyRootHash {
+	if ndl.root() != types.EmptyRootHash {
 		t.Error("Unexpected disk layer root")
 	}
 	if env.db.tree.len() != 1 {
@@ -336,8 +336,8 @@ func TestReset(t *testing.T) {
 	if env.db.tree.len() != 1 {
 		t.Fatalf("Extra layer kept %d", env.db.tree.len())
 	}
-	if env.db.tree.bottom().Root() != hash {
-		t.Fatalf("Root hash is not matched exp %x got %x", hash, env.db.tree.bottom().Root())
+	if env.db.tree.bottom().root() != hash {
+		t.Fatalf("Root hash is not matched exp %x got %x", hash, env.db.tree.bottom().root())
 	}
 }
 
@@ -350,8 +350,8 @@ func TestCommit(t *testing.T) {
 	if env.db.tree.len() != 1 {
 		t.Fatalf("Extra layer kept %d", env.db.tree.len())
 	}
-	if env.db.tree.bottom().Root() != env.lastHash() {
-		t.Fatalf("Root hash is not matched exp %x got %x", env.lastHash(), env.db.tree.bottom().Root())
+	if env.db.tree.bottom().root() != env.lastHash() {
+		t.Fatalf("Root hash is not matched exp %x got %x", env.lastHash(), env.db.tree.bottom().root())
 	}
 	_, hash := rawdb.ReadAccountTrieNode(env.db.diskdb, nil)
 	if hash != env.lastHash() {

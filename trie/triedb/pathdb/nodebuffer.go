@@ -110,7 +110,7 @@ func (b *nodebuffer) nodeByPath(owner common.Hash, path []byte) ([]byte, bool) {
 	return n.Blob, true
 }
 
-// commit merges the dirty nodes into the nodebuffer b.
+// commit merges the dirty nodes into the nodebuffer.
 // (The nodes typically belongs to the bottom-most difflayer)
 // This operation takes ownership of the nodes map, and the caller must no longer
 // use it.

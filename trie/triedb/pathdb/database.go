@@ -40,11 +40,6 @@ const maxDiffLayers = 128
 // layer is the interface implemented by all state layers which includes some
 // public methods and some additional methods for internal usage.
 type layer interface {
-	// nodeByPath retrieves the trie node with the provided trie identifier and
-	// node path regardless what's the node hash. No error will be returned if
-	// the node is not found.
-	nodeByPath(owner common.Hash, path []byte) ([]byte, error)
-
 	// Node retrieves the trie node with the node info. No error will be returned
 	// if the node is not found.
 	//
@@ -53,29 +48,30 @@ type layer interface {
 	// for a while to make initial version easier.
 	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
 
-	// Root returns the root hash for which this layer was made.
-	Root() common.Hash
+	// nodeByPath retrieves the trie node with the provided trie identifier and
+	// node path regardless what's the node hash. No error will be returned if
+	// the node is not found.
+	nodeByPath(owner common.Hash, path []byte) ([]byte, error)
 
-	// Parent returns the subsequent layer of a layer, or nil if the base was
-	// reached.
-	//
-	// Note, the method is an internal helper to avoid type switching between the
-	// disk and diff layers. There is no locking involved.
-	Parent() layer
+	// root returns the root hash for which this layer was made.
+	root() common.Hash
 
-	// Update creates a new layer on top of the existing layer diff tree with
+	// parent returns the subsequent layer of it, or nil if the base was reached.
+	parent() layer
+
+	// update creates a new layer on top of the existing layer diff tree with
 	// the given dirty trie node set. The deleted trie nodes are also included.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	Update(blockRoot common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer
+	update(blockRoot common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer
 
-	// Journal commits an entire diff hierarchy to disk into a single journal entry.
+	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
 	// flattening everything down (bad for reorgs).
-	Journal(buffer *bytes.Buffer) error
+	journal(buffer *bytes.Buffer) error
 
-	// ID returns the associated state id.
-	ID() uint64
+	// stateID returns the associated state id of layer.
+	stateID() uint64
 }
 
 // Config contains the settings for database.
@@ -149,7 +145,7 @@ func New(diskdb ethdb.Database, cleans *fastcache.Cache, config *Config) *Databa
 
 		// Truncate the extra trie histories above in freezer in case
 		// it's not aligned with the disk layer.
-		pruned, err := truncateFromHead(freezer, db.tree.bottom().ID())
+		pruned, err := truncateFromHead(freezer, db.tree.bottom().stateID())
 		if err != nil {
 			log.Crit("Failed to truncate extra trie histories", "err", err)
 		}
@@ -210,9 +206,9 @@ func (db *Database) Commit(root common.Hash, report bool) error {
 // flattening everything down (bad for reorgs). And this function will mark the
 // database as read-only to prevent all following mutation to disk.
 func (db *Database) Journal(root common.Hash) error {
-	// Retrieve the head layer to journal from var snap layer
-	snap := db.tree.get(root)
-	if snap == nil {
+	// Retrieve the head layer to journal from.
+	layer := db.tree.get(root)
+	if layer == nil {
 		return fmt.Errorf("triedb layer [%#x] missing", root)
 	}
 	// Run the journaling
@@ -239,7 +235,7 @@ func (db *Database) Journal(root common.Hash) error {
 		return err
 	}
 	// Finally write out the journal of each layer in reverse order.
-	if err := snap.Journal(journal); err != nil {
+	if err := layer.journal(journal); err != nil {
 		return err
 	}
 	// Store the journal into the database and return
@@ -277,15 +273,10 @@ func (db *Database) Reset(root common.Hash) error {
 			return fmt.Errorf("state is mismatched, local %x target %x", hash, root)
 		}
 	}
-	// Iterate over all layers and mark them as stale
-	db.tree.forEach(func(layer layer) {
-		switch layer := layer.(type) {
-		case *diskLayer:
-			layer.MarkStale()
-		default:
-			panic(fmt.Sprintf("unknown layer type: %T", layer))
-		}
-	})
+	// Mark the disk layer as stale since state in disk is mutated.
+	bottom := db.tree.bottom().(*diskLayer)
+	bottom.MarkStale()
+
 	// Drop the stale state journal in persistent database
 	// and revert the head state indicator back to zero.
 	rawdb.DeleteTrieJournal(batch)
@@ -308,9 +299,10 @@ func (db *Database) Reset(root common.Hash) error {
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding trie histories are existent.
 func (db *Database) Recover(root common.Hash) error {
-	root = types.TrieRootHash(root)
 	db.lock.Lock()
 	defer db.lock.Unlock()
+
+	root = types.TrieRootHash(root)
 	if !db.Recoverable(root) {
 		return errStateUnrecoverable
 	}
@@ -321,20 +313,12 @@ func (db *Database) Recover(root common.Hash) error {
 	// Iterate over all diff layers and mark them as stale.
 	// Disk layer will be handled later.
 	var (
-		dl    *diskLayer
 		batch = db.diskdb.NewBatch()
 		start = time.Now()
+		dl    = db.tree.bottom().(*diskLayer)
 	)
-	db.tree.forEach(func(layer layer) {
-		switch layer := layer.(type) {
-		case *diskLayer:
-			dl = layer
-		default:
-			panic(fmt.Sprintf("unknown layer type: %T", layer))
-		}
-	})
 	// Apply the trie histories upon the current disk layer in order.
-	for dl.Root() != root {
+	for dl.root() != root {
 		h, err := loadTrieHistory(db.freezer, dl.id)
 		if err != nil {
 			return err
@@ -378,7 +362,7 @@ func (db *Database) Recoverable(root common.Hash) bool {
 	// Recoverable state must below the disk layer. The recoverable
 	// state only refers the state that is currently not available,
 	// but can be restored by applying trie history.
-	if id >= db.tree.bottom().ID() {
+	if id >= db.tree.bottom().stateID() {
 		return false
 	}
 	// In theory all the trie histories starts from the id+1 until
@@ -419,7 +403,7 @@ func (db *Database) Size() (size common.StorageSize) {
 func (db *Database) Initialized(genesisRoot common.Hash) bool {
 	var inited bool
 	db.tree.forEach(func(layer layer) {
-		if layer.Root() != types.EmptyRootHash {
+		if layer.root() != types.EmptyRootHash {
 			inited = true
 		}
 	})
