@@ -186,7 +186,7 @@ func (f *fuzzer) fuzz() int {
 	// Flush trie -> database
 	rootA, nodes := trieA.Commit(false)
 	if nodes != nil {
-		dbA.Update(rootA, types.EmptyRootHash, trienode.NewWithNodeSet(nodes))
+		dbA.Update(rootA, types.EmptyRootHash, trienode.NewWithNodeSet(nodes), nil)
 	}
 	// Flush memdb -> disk (sponge)
 	dbA.Commit(rootA, false)

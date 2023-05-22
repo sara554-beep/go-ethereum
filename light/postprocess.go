@@ -217,7 +217,7 @@ func (c *ChtIndexerBackend) Commit() error {
 	root, nodes := c.trie.Commit(false)
 	// Commit trie changes into trie database in case it's not nil.
 	if nodes != nil {
-		if err := c.triedb.Update(root, c.originRoot, trienode.NewWithNodeSet(nodes)); err != nil {
+		if err := c.triedb.Update(root, c.originRoot, trienode.NewWithNodeSet(nodes), nil); err != nil {
 			return err
 		}
 		if err := c.triedb.Commit(root, false); err != nil {
@@ -468,7 +468,7 @@ func (b *BloomTrieIndexerBackend) Commit() error {
 	root, nodes := b.trie.Commit(false)
 	// Commit trie changes into trie database in case it's not nil.
 	if nodes != nil {
-		if err := b.triedb.Update(root, b.originRoot, trienode.NewWithNodeSet(nodes)); err != nil {
+		if err := b.triedb.Update(root, b.originRoot, trienode.NewWithNodeSet(nodes), nil); err != nil {
 			return err
 		}
 		if err := b.triedb.Commit(root, false); err != nil {
