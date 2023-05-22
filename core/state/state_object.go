@@ -57,34 +57,48 @@ func (s Storage) Copy() Storage {
 // stateObject represents an Ethereum account which is being modified.
 //
 // The usage pattern is as follows:
-// First you need to obtain a state object.
-// Account values can be accessed and modified through the object.
-// Finally, call commitTrie to write the modified storage trie into a database.
+// - First you need to obtain a state object.
+// - Account values as well as storages can be accessed and modified through the object.
+// - Finally, call commit to return the changes of storage trie and update account data.
 type stateObject struct {
-	address  common.Address
-	addrHash common.Hash // hash of ethereum address of the account
-	data     types.StateAccount
 	db       *StateDB
+	address  common.Address     // address of ethereum account
+	addrHash common.Hash        // hash of ethereum address of the account
+	origin   types.StateAccount // Account original data without any change applied, be updated by commit
+	data     types.StateAccount // Account data with all mutations applied in the scope of block
 
 	// Write caches.
 	trie Trie // storage trie, which becomes non-nil on first access
 	code Code // contract bytecode, which gets set when code is loaded
 
-	originStorage  Storage // Storage cache of original entries to dedup rewrites, reset for every transaction
+	originStorage  Storage // Storage cache of original entries to dedup rewrites
 	pendingStorage Storage // Storage entries that need to be flushed to disk, at the end of an entire block
-	dirtyStorage   Storage // Storage entries that have been modified in the current transaction execution
+	dirtyStorage   Storage // Storage entries that have been modified in the current transaction execution, reset for every transaction
 
 	// Cache flags.
-	// When an object is marked suicided it will be deleted from the trie
-	// during the "update" phase of the state transition.
 	dirtyCode bool // true if the code was updated
-	suicided  bool
-	deleted   bool
+
+	// Flag whether the account was marked as suicided. The suicided account
+	// is still accessible in the scope of same transaction.
+	suicided bool
+
+	// Flag whether the account was marked as deleted. The suicided account
+	// or the account is considered as empty will be marked as deleted at
+	// the end of transaction and no longer accessible anymore.
+	deleted bool
 }
 
-// empty returns whether the account is considered empty.
-func (s *stateObject) empty() bool {
-	return s.data.Nonce == 0 && s.data.Balance.Sign() == 0 && bytes.Equal(s.data.CodeHash, types.EmptyCodeHash.Bytes())
+// isEmpty returns whether the account is considered empty.
+func isEmpty(account types.StateAccount) bool {
+	return account.Nonce == 0 && account.Balance.Sign() == 0 && bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes())
+}
+
+// isExist returns whether the account was present in ethereum state.
+func isExist(account types.StateAccount) bool {
+	if !isEmpty(account) {
+		return true
+	}
+	return account.Root != types.EmptyRootHash
 }
 
 // newObject creates a state object.
@@ -102,6 +116,7 @@ func newObject(db *StateDB, address common.Address, data types.StateAccount) *st
 		db:             db,
 		address:        address,
 		addrHash:       crypto.Keccak256Hash(address[:]),
+		origin:         data,
 		data:           data,
 		originStorage:  make(Storage),
 		pendingStorage: make(Storage),
@@ -135,10 +150,8 @@ func (s *stateObject) touch() {
 func (s *stateObject) getTrie(db Database) (Trie, error) {
 	if s.trie == nil {
 		// Try fetching from prefetcher first
-		// We don't prefetch empty tries
 		if s.data.Root != types.EmptyRootHash && s.db.prefetcher != nil {
-			// When the miner is creating the pending state, there is no
-			// prefetcher
+			// When the miner is creating the pending state, there is no prefetcher
 			s.trie = s.db.prefetcher.trie(s.addrHash, s.data.Root)
 		}
 		if s.trie == nil {
@@ -263,7 +276,7 @@ func (s *stateObject) finalise(prefetch bool) {
 // updateTrie writes cached storage modifications into the object's storage trie.
 // It will return nil if the trie has not been loaded and no changes have been
 // made. An error will be returned if the trie can't be loaded/updated correctly.
-func (s *stateObject) updateTrie(db Database) (Trie, error) {
+func (s *stateObject) updateTrie(db Database, commit bool) (Trie, error) {
 	// Make sure all dirty slots are finalized into the pending storage area
 	s.finalise(false) // Don't prefetch anymore, pull directly if need be
 	if len(s.pendingStorage) == 0 {
@@ -276,6 +289,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 	// The snapshot storage map for the object
 	var (
 		storage map[common.Hash][]byte
+		origin  map[common.Hash][]byte
 		hasher  = s.db.hasher
 	)
 	tr, err := s.getTrie(db)
@@ -290,6 +304,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 		if value == s.originStorage[key] {
 			continue
 		}
+		prev := s.originStorage[key]
 		s.originStorage[key] = value
 
 		var v []byte
@@ -308,17 +323,34 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 			}
 			s.db.StorageUpdated += 1
 		}
-		// If state snapshotting is active, cache the data til commit
-		if s.db.snap != nil {
-			if storage == nil {
-				// Retrieve the old storage map, if available, create a new one otherwise
-				if storage = s.db.snapStorage[s.addrHash]; storage == nil {
-					storage = make(map[common.Hash][]byte)
-					s.db.snapStorage[s.addrHash] = storage
-				}
+		// Cache the mutated storage slots until commit
+		if storage == nil {
+			if storage = s.db.storages[s.addrHash]; storage == nil {
+				storage = make(map[common.Hash][]byte)
+				s.db.storages[s.addrHash] = storage
 			}
-			storage[crypto.HashData(hasher, key[:])] = v // v will be nil if it's deleted
 		}
+		khash := crypto.HashData(hasher, key[:])
+		storage[khash] = v // v will be nil if it's deleted
+
+		// Cache the original value of mutated storage slots
+		if origin == nil {
+			if origin = s.db.storagesOrigin[s.addrHash]; origin == nil {
+				origin = make(map[common.Hash][]byte)
+				s.db.storagesOrigin[s.addrHash] = origin
+			}
+		}
+		// Track the slot original value only if it's mutated first time
+		if _, ok := origin[khash]; !ok {
+			if prev == (common.Hash{}) {
+				origin[khash] = nil // nil if it was not present previously
+			} else {
+				// Encoding []byte cannot fail, ok to ignore the error.
+				b, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(prev[:]))
+				origin[khash] = b
+			}
+		}
+		// Cache the items for preloading
 		usedStorage = append(usedStorage, common.CopyBytes(key[:])) // Copy needed for closure
 	}
 	if s.db.prefetcher != nil {
@@ -333,7 +365,7 @@ func (s *stateObject) updateTrie(db Database) (Trie, error) {
 // UpdateRoot sets the trie root to the current root hash of. An error
 // will be returned if trie root hash is not computed correctly.
 func (s *stateObject) updateRoot(db Database) {
-	tr, err := s.updateTrie(db)
+	tr, err := s.updateTrie(db, false)
 	if err != nil {
 		return
 	}
@@ -348,10 +380,9 @@ func (s *stateObject) updateRoot(db Database) {
 	s.data.Root = tr.Hash()
 }
 
-// commitTrie submits the storage changes into the storage trie and re-computes
-// the root. Besides, all trie changes will be collected in a nodeset and returned.
-func (s *stateObject) commitTrie(db Database) (*trienode.NodeSet, error) {
-	tr, err := s.updateTrie(db)
+// commit returns the changes made in storage trie and updates the account data.
+func (s *stateObject) commit(db Database) (*trienode.NodeSet, error) {
+	tr, err := s.updateTrie(db, true)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +396,7 @@ func (s *stateObject) commitTrie(db Database) (*trienode.NodeSet, error) {
 	}
 	root, nodes := tr.Commit(false)
 	s.data.Root = root
+	s.origin = s.data // update account data at the end
 	return nodes, nil
 }
 
@@ -374,7 +406,7 @@ func (s *stateObject) AddBalance(amount *big.Int) {
 	// EIP161: We must check emptiness for the objects such that the account
 	// clearing (0,0,0 objects) can take effect.
 	if amount.Sign() == 0 {
-		if s.empty() {
+		if isEmpty(s.data) {
 			s.touch()
 		}
 		return

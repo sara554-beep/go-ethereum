@@ -34,6 +34,9 @@ type Config struct {
 	Cache     int    // Memory allowance (MB) to use for caching trie nodes in memory
 	Journal   string // Journal of clean cache to survive node restarts
 	Preimages bool   // Flag whether the preimage of trie key is recorded
+
+	// Testing hooks
+	OnCommit func(accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte)
 }
 
 // backend defines the methods needed to access/update trie nodes in different
@@ -123,6 +126,13 @@ func (db *Database) Reader(blockRoot common.Hash) Reader {
 // root. The held pre-images accumulated up to this point will be flushed in case
 // the size exceeds the threshold.
 func (db *Database) Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet) error {
+	// Invoke the hook at the end of function if it's registered.
+	defer func() {
+		if db.config == nil || db.config.OnCommit == nil {
+			return
+		}
+		db.config.OnCommit(nodes.Accounts, nodes.Storages)
+	}()
 	if db.preimages != nil {
 		db.preimages.commit(false)
 	}
