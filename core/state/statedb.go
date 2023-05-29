@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 type revision struct {
@@ -1028,7 +1029,7 @@ func (s *StateDB) handleDestruction(nodes *trienode.MergedNodeSet) error {
 			if it.Hash() == (common.Hash{}) {
 				continue
 			}
-			set.AddNode(it.Path(), trienode.NewWithPrev(common.Hash{}, nil, it.NodeBlob()))
+			set.AddNode(it.Path(), trienode.NewDeleted())
 		}
 		if it.Error() != nil {
 			return it.Error()
@@ -1150,8 +1151,7 @@ func (s *StateDB) Commit(deleteEmptyObjects bool) (common.Hash, error) {
 	}
 	if root != origin {
 		start := time.Now()
-		nodes.AddStateChanges(s.accountsOrigin, s.storagesOrigin)
-		if err := s.db.TrieDB().Update(root, origin, nodes); err != nil {
+		if err := s.db.TrieDB().Update(root, origin, nodes, triestate.New(origin, root, s.accountsOrigin, s.storagesOrigin)); err != nil {
 			return common.Hash{}, err
 		}
 		s.originalRoot = root

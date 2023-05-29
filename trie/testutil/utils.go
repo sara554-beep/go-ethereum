@@ -19,7 +19,6 @@ package testutil
 import (
 	crand "crypto/rand"
 	"encoding/binary"
-	"fmt"
 	mrand "math/rand"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -35,7 +34,6 @@ func initRand() *mrand.Rand {
 	var seed [8]byte
 	crand.Read(seed[:])
 	rnd := mrand.New(mrand.NewSource(int64(binary.LittleEndian.Uint64(seed[:]))))
-	fmt.Printf("Seed: %x\n", seed)
 	return rnd
 }
 
@@ -57,8 +55,23 @@ func RandomNode() *trienode.Node {
 	return trienode.New(crypto.Keccak256Hash(val), val)
 }
 
-// RandomNodeWithPrev generates a random node with original value attached.
-func RandomNodeWithPrev(prev []byte) *trienode.WithPrev {
-	val := RandBytes(100)
-	return trienode.NewWithPrev(crypto.Keccak256Hash(val), val, prev)
+// CopyAccounts returns a deep-copied account set of the provided one.
+func CopyAccounts(set map[common.Hash][]byte) map[common.Hash][]byte {
+	copied := make(map[common.Hash][]byte, len(set))
+	for key, val := range set {
+		copied[key] = common.CopyBytes(val)
+	}
+	return copied
+}
+
+// CopyStorages returns a deep-copied storage set of the provided one.
+func CopyStorages(set map[common.Hash]map[common.Hash][]byte) map[common.Hash]map[common.Hash][]byte {
+	copied := make(map[common.Hash]map[common.Hash][]byte, len(set))
+	for addr, subset := range set {
+		copied[addr] = make(map[common.Hash][]byte, len(subset))
+		for key, val := range subset {
+			copied[addr][key] = common.CopyBytes(val)
+		}
+	}
+	return copied
 }

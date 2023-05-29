@@ -120,10 +120,10 @@ func (t *tracer) markDeletions(set *trienode.NodeSet) {
 		// It's possible a few deleted nodes were embedded
 		// in their parent before, the deletions can be no
 		// effect by deleting nothing, filter them out.
-		prev, ok := t.accessList[path]
+		_, ok := t.accessList[path]
 		if !ok {
 			continue
 		}
-		set.AddNode([]byte(path), trienode.NewWithPrev(common.Hash{}, nil, prev))
+		set.AddNode([]byte(path), trienode.NewDeleted())
 	}
 }

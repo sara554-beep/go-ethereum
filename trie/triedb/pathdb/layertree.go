@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // layerTree is a group of state layers identified by the state root.
@@ -74,9 +75,8 @@ func (tree *layerTree) len() int {
 	return len(tree.layers)
 }
 
-// add inserts a new layer into the tree if it can be linked to an existing
-// old parent. It is disallowed to insert a disk layer (the origin of all).
-func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, sets *trienode.MergedNodeSet) error {
+// add inserts a new layer into the tree if it can be linked to an existing old parent.
+func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, sets *trienode.MergedNodeSet, states *triestate.Set) error {
 	// Reject noop updates to avoid self-loops. This is a special case that can
 	// happen for clique networks and proof-of-stake networks where empty blocks
 	// don't modify the state (0 block subsidy).
@@ -91,11 +91,7 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, sets *trien
 	if parent == nil {
 		return fmt.Errorf("triedb parent [%#x] layer missing", parentRoot)
 	}
-	nodes, err := fixset(sets, parent)
-	if err != nil {
-		return err
-	}
-	l := parent.update(root, parent.stateID()+1, nodes)
+	l := parent.update(root, parent.stateID()+1, sets.Nodes(), states)
 
 	tree.lock.Lock()
 	tree.layers[l.rootHash] = l
@@ -111,11 +107,11 @@ func (tree *layerTree) add(root common.Hash, parentRoot common.Hash, sets *trien
 func (tree *layerTree) cap(root common.Hash, layers int) error {
 	// Retrieve the head layer to cap from
 	root = types.TrieRootHash(root)
-	snap := tree.get(root)
-	if snap == nil {
+	l := tree.get(root)
+	if l == nil {
 		return fmt.Errorf("triedb layer [%#x] missing", root)
 	}
-	diff, ok := snap.(*diffLayer)
+	diff, ok := l.(*diffLayer)
 	if !ok {
 		return fmt.Errorf("triedb layer [%#x] is disk layer", root)
 	}
@@ -183,7 +179,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		delete(children, root)
 	}
 	for root, layer := range tree.layers {
-		if dl, ok := layer.(*diskLayer); ok && dl.Stale() {
+		if dl, ok := layer.(*diskLayer); ok && dl.isStale() {
 			remove(root)
 		}
 	}
@@ -192,7 +188,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 
 // bottom returns the bottom-most layer in this tree. The returned
 // layer can be diskLayer or nil if something corrupted.
-func (tree *layerTree) bottom() layer {
+func (tree *layerTree) bottom() *diskLayer {
 	tree.lock.RLock()
 	defer tree.lock.RUnlock()
 
@@ -208,40 +204,5 @@ func (tree *layerTree) bottom() layer {
 	for current.parent() != nil {
 		current = current.parent()
 	}
-	return current
-}
-
-// fixset iterates the provided nodeset and tries to retrieve the original value
-// of nodes from parent layer in case the original value is not recorded.
-func fixset(sets *trienode.MergedNodeSet, parent layer) (map[common.Hash]map[string]*trienode.WithPrev, error) {
-	var (
-		hits  int
-		miss  int
-		nodes = make(map[common.Hash]map[string]*trienode.WithPrev)
-	)
-	for owner, set := range sets.Sets {
-		nodes[owner] = set.Nodes
-		for path, n := range nodes[owner] {
-			if len(n.Prev) != 0 {
-				hits += 1
-				continue
-			}
-			miss += 1
-			// If the original value is not recorded, try to retrieve
-			// it from database directly. It can happen that the node
-			// is newly created which is considered not existent in
-			// database previously. But since we left the storage tries
-			// of destructed account in the database, it's possible
-			// that there are some dangling nodes have the exact same
-			// node path which should be treated as the origin value.
-			prev, err := parent.nodeByPath(owner, []byte(path))
-			if err != nil {
-				return nil, err
-			}
-			nodes[owner][path] = trienode.NewWithPrev(n.Hash, n.Blob, prev)
-		}
-	}
-	hitAccessListMeter.Mark(int64(hits))
-	hitDatabaseMeter.Mark(int64(miss))
-	return nodes, nil
+	return current.(*diskLayer)
 }

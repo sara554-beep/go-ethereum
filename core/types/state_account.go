@@ -35,6 +35,15 @@ type StateAccount struct {
 	CodeHash []byte
 }
 
+// NewEmptyStateAccount constructs an empty state account.
+func NewEmptyStateAccount() *StateAccount {
+	return &StateAccount{
+		Balance:  big.NewInt(0),
+		Root:     EmptyRootHash,
+		CodeHash: EmptyCodeHash.Bytes(),
+	}
+}
+
 // slimAccount is a modified version of an Account, where the root is replaced
 // with a byte slice. This format can be used to represent full-consensus format
 // or slim format which replaces the empty root and code hash as nil byte slice.

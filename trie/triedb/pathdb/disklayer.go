@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // diskLayer is a low level persistent layer built on top of a key-value store.
@@ -31,47 +32,47 @@ type diskLayer struct {
 	rootHash common.Hash  // Immutable, root hash of the base layer
 	id       uint64       // Immutable, corresponding state id
 	db       *Database    // Path-based trie database
-	dirty    *nodebuffer  // Node buffer to aggregate writes.
+	buffer   *nodebuffer  // Node buffer to aggregate writes.
 	stale    bool         // Signals that the layer became stale (state progressed)
 	lock     sync.RWMutex // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, id uint64, db *Database, dirty *nodebuffer) *diskLayer {
+func newDiskLayer(root common.Hash, id uint64, db *Database, buffer *nodebuffer) *diskLayer {
 	return &diskLayer{
 		rootHash: root,
 		id:       id,
 		db:       db,
-		dirty:    dirty,
+		buffer:   buffer,
 	}
 }
 
-// Root returns root hash of corresponding state.
+// root returns root hash of corresponding state.
 func (dl *diskLayer) root() common.Hash {
 	return dl.rootHash
 }
 
-// Parent always returns nil as there's no layer below the disk.
+// parent always returns nil as there's no layer below the disk.
 func (dl *diskLayer) parent() layer {
 	return nil
 }
 
-// ID returns the state id of disk layer.
+// stateID returns the state id of disk layer.
 func (dl *diskLayer) stateID() uint64 {
 	return dl.id
 }
 
-// Stale return whether this layer has become stale (was flattened across) or if
+// isStale return whether this layer has become stale (was flattened across) or if
 // it's still live.
-func (dl *diskLayer) Stale() bool {
+func (dl *diskLayer) isStale() bool {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	return dl.stale
 }
 
-// MarkStale sets the stale flag as true.
-func (dl *diskLayer) MarkStale() {
+// markStale sets the stale flag as true.
+func (dl *diskLayer) markStale() {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
@@ -90,10 +91,11 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	if dl.stale {
 		return nil, errSnapshotStale
 	}
-	// Try to retrieve the trie node from the dirty memory cache.
-	// The map is lock free since it's impossible to mutate the
-	// disk layer before tagging it as stale.
-	n, err := dl.dirty.node(owner, path, hash)
+	// Try to retrieve the trie node from the not-yet-written
+	// node buffer first. Note the buffer is lock free since
+	// it's impossible to mutate the buffer before tagging the
+	// layer as stale.
+	n, err := dl.buffer.node(owner, path, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -141,50 +143,24 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	return nBlob, nil
 }
 
-// nodeByPath retrieves the trie node with the provided trie identifier and node
-// path. No error will be returned if the node is not found.
-func (dl *diskLayer) nodeByPath(owner common.Hash, path []byte) ([]byte, error) {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	if dl.stale {
-		return nil, errSnapshotStale
-	}
-	// Try to retrieve the trie node from the dirty memory cache.
-	// The map is lock free since it's impossible to mutate the
-	// disk layer before tagging it as stale.
-	n, find := dl.dirty.nodeByPath(owner, path)
-	if find {
-		return n, nil
-	}
-	// Try to retrieve the trie node from the disk.
-	var nBlob []byte
-	if owner == (common.Hash{}) {
-		nBlob, _ = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
-	} else {
-		nBlob, _ = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
-	}
-	return nBlob, nil
+// update returns a new diff layer on top with the given dirty node set.
+func (dl *diskLayer) update(blockHash common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.Node, states *triestate.Set) *diffLayer {
+	return newDiffLayer(dl, blockHash, id, nodes, states)
 }
 
-// Update returns a new diff layer on top with the given dirty node set.
-func (dl *diskLayer) update(blockHash common.Hash, id uint64, nodes map[common.Hash]map[string]*trienode.WithPrev) *diffLayer {
-	return newDiffLayer(dl, blockHash, id, nodes)
-}
-
-// commit merges the given bottom-most diff layer into the local cache
+// commit merges the given bottom-most diff layer into the node buffer
 // and returns a newly constructed disk layer. Note the current disk
 // layer must be tagged as stale first to prevent re-access.
 func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
-	// Construct and store the trie history first. If crash happens
-	// after storing the trie history but without flushing the
-	// corresponding states(journal), the stored trie history will be
-	// truncated in the next restart.
+	// Construct and store the state history first. If crash happens
+	// after storing the state history but without flushing the
+	// corresponding states(journal), the stored state history will
+	// be truncated in the next restart.
 	if dl.db.freezer != nil {
-		err := storeTrieHistory(dl.db.freezer, bottom, dl.db.config.StateLimit)
+		err := storeStateHistory(dl.db.freezer, bottom, dl.db.config.StateLimit)
 		if err != nil {
 			return nil, err
 		}
@@ -201,19 +177,9 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	}
 	rawdb.WriteStateID(dl.db.diskdb, bottom.root(), bottom.stateID())
 
-	// Drop the previous value to reduce memory usage.
-	slim := make(map[common.Hash]map[string]*trienode.Node)
-	for owner, nodes := range bottom.nodes {
-		subset := make(map[string]*trienode.Node)
-		for path, n := range nodes {
-			subset[path] = n.Unwrap()
-		}
-		slim[owner] = subset
-	}
-	ndl := newDiskLayer(bottom.rootHash, bottom.id, dl.db, dl.dirty.commit(slim))
-
 	// Persist the content in disk layer if there are too many nodes cached.
-	err := ndl.dirty.flush(ndl.db.diskdb, ndl.db.cleans, ndl.id, force)
+	ndl := newDiskLayer(bottom.rootHash, bottom.id, dl.db, dl.buffer.commit(bottom.nodes))
+	err := ndl.buffer.flush(ndl.db.diskdb, ndl.db.cleans, ndl.id, force)
 	if err != nil {
 		return nil, err
 	}
@@ -222,9 +188,9 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 
 // revert applies the given reverse diff by reverting the disk layer
 // and return a newly constructed disk layer.
-func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
-	if h.Root != dl.root() {
-		return nil, errUnexpectedTrieHistory
+func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer, error) {
+	if h.meta.root != dl.root() {
+		return nil, errUnexpectedHistory
 	}
 	if dl.id == 0 {
 		return nil, fmt.Errorf("%w: zero state id", errStateUnrecoverable)
@@ -235,20 +201,25 @@ func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
 
 	dl.stale = true
 
-	if !dl.dirty.empty() {
-		// Revert embedded states in the disk set first in case
-		// cache is not empty.
-		err := dl.dirty.revert(h)
+	// Apply the reverse state changes upon the current state, generate
+	// the corresponding trie nodes for reverting.
+	states := triestate.New(h.meta.parent, h.meta.root, h.accounts, h.storages)
+	nodes, err := states.Apply(loader)
+	if err != nil {
+		return nil, err
+	}
+	if !dl.buffer.empty() {
+		// Revert embedded states in the node buffer first in case
+		// it's not empty.
+		err := dl.buffer.revert(nodes)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		// The disk cache is empty, applies the state reverting
-		// on disk directly.
+		// The node buffer is empty, applies the state changes in
+		// disk state directly.
 		batch := dl.db.diskdb.NewBatch()
-		if err := h.apply(batch); err != nil {
-			return nil, err
-		}
+		writeNodes(batch, nodes, nil)
 		rawdb.WritePersistentStateID(batch, dl.id-1)
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write states", "err", err)
@@ -258,7 +229,7 @@ func (dl *diskLayer) revert(h *trieHistory) (*diskLayer, error) {
 			dl.db.cleans.Reset()
 		}
 	}
-	return newDiskLayer(h.Parent, dl.id-1, dl.db, dl.dirty), nil
+	return newDiskLayer(h.meta.parent, dl.id-1, dl.db, dl.buffer), nil
 }
 
 // setCacheSize sets the dirty cache size to the provided value.
@@ -269,7 +240,7 @@ func (dl *diskLayer) setCacheSize(size int) error {
 	if dl.stale {
 		return errSnapshotStale
 	}
-	return dl.dirty.setSize(size, dl.db.diskdb, dl.db.cleans, dl.id)
+	return dl.buffer.setSize(size, dl.db.diskdb, dl.db.cleans, dl.id)
 }
 
 // size returns the approximate size of cached nodes in the disk layer.
@@ -280,5 +251,5 @@ func (dl *diskLayer) size() common.StorageSize {
 	if dl.stale {
 		return 0
 	}
-	return common.StorageSize(dl.dirty.size)
+	return common.StorageSize(dl.buffer.size)
 }

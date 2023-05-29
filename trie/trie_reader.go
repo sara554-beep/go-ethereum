@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // Reader wraps the Node method of a backing trie store.
@@ -45,6 +46,9 @@ type trieReader struct {
 
 // newTrieReader initializes the trie reader with the given node reader.
 func newTrieReader(stateRoot, owner common.Hash, db *Database) (*trieReader, error) {
+	if stateRoot == types.EmptyRootHash {
+		return &trieReader{owner: owner}, nil
+	}
 	reader := db.Reader(stateRoot)
 	if reader == nil {
 		return nil, fmt.Errorf("state not found #%x", stateRoot)

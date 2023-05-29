@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // Config defines all necessary options for database.
@@ -38,7 +39,7 @@ type Config struct {
 	PathDB    *pathdb.Config // Configs for experimental path-based scheme, not used yet.
 
 	// Testing hooks
-	OnCommit func(accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte)
+	OnCommit func(set *triestate.Set)
 }
 
 // backend defines the methods needed to access/update trie nodes in different
@@ -58,7 +59,7 @@ type backend interface {
 	// Update performs a state transition by committing dirty nodes contained
 	// in the given set in order to update state from the specified parent to
 	// the specified root.
-	Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet) error
+	Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet, states *triestate.Set) error
 
 	// Commit writes all relevant trie nodes belonging to the specified state
 	// to disk. Report specifies whether logs will be displayed in info level.
@@ -133,18 +134,15 @@ func (db *Database) Reader(blockRoot common.Hash) Reader {
 // given set in order to update state from the specified parent to the specified
 // root. The held pre-images accumulated up to this point will be flushed in case
 // the size exceeds the threshold.
-func (db *Database) Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet) error {
-	// Invoke the hook at the end of function if it's registered.
-	defer func() {
-		if db.config == nil || db.config.OnCommit == nil {
-			return
-		}
-		db.config.OnCommit(nodes.Accounts, nodes.Storages)
-	}()
+func (db *Database) Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+	// Invoke the hook for provided state changes.
+	if db.config != nil && db.config.OnCommit != nil {
+		db.config.OnCommit(states)
+	}
 	if db.preimages != nil {
 		db.preimages.commit(false)
 	}
-	return db.backend.Update(root, parent, nodes)
+	return db.backend.Update(root, parent, nodes, states)
 }
 
 // Commit iterates over all the children of a particular node, writes them out

@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // A stateTest checks that the state changes are correctly captured. Instances
@@ -179,9 +180,9 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Hash][]byte
 		storageList []map[common.Hash]map[common.Hash][]byte
-		onCommit    = func(accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte) {
-			accountList = append(accountList, copyAccounts(accounts))
-			storageList = append(storageList, copyStorages(storages))
+		onCommit    = func(set *triestate.Set) {
+			accountList = append(accountList, copyAccounts(set.Accounts))
+			storageList = append(storageList, copyStorages(set.Storages))
 		}
 		disk      = rawdb.NewMemoryDatabase()
 		tdb       = trie.NewDatabaseWithConfig(disk, &trie.Config{OnCommit: onCommit})
