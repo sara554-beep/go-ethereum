@@ -76,20 +76,27 @@ func (set *Set) deleteAccount(loader TrieLoader, tr Trie, nodes *trienode.Merged
 	if err != nil {
 		return err
 	}
-	for key, val := range set.Storages[addrHash] {
-		if len(val) != 0 {
-			return errors.New("expect storage deletion")
+	if len(set.Storages[addrHash]) == 0 {
+		if account.Root != types.EmptyRootHash {
+			return errors.New("failed to clear storage trie 2")
 		}
-		if err := st.Delete(key.Bytes()); err != nil {
+	}
+	if len(set.Storages[addrHash]) > 0 {
+		for key, val := range set.Storages[addrHash] {
+			if len(val) != 0 {
+				return errors.New("expect storage deletion")
+			}
+			if err := st.Delete(key.Bytes()); err != nil {
+				return err
+			}
+		}
+		root, result := st.Commit(false)
+		if root != types.EmptyRootHash {
+			return errors.New("failed to clear storage trie")
+		}
+		if err := nodes.Merge(result); err != nil {
 			return err
 		}
-	}
-	root, result := st.Commit(false)
-	if root != types.EmptyRootHash {
-		return errors.New("failed to clear storage trie")
-	}
-	if err := nodes.Merge(result); err != nil {
-		return err
 	}
 	return tr.Delete(addrHash.Bytes())
 }
@@ -105,32 +112,37 @@ func (set *Set) updateAccount(loader TrieLoader, tr Trie, nodes *trienode.Merged
 			return err
 		}
 	}
-	st, err := loader.OpenStorageTrie(set.Root, addrHash, account.Root)
-	if err != nil {
-		return err
-	}
-	for key, val := range set.Storages[addrHash] {
-		var err error
-		if len(val) == 0 {
-			err = st.Delete(key.Bytes())
-		} else {
-			err = st.Update(key.Bytes(), val)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	root, result := st.Commit(false)
-
 	origin, err := types.FullAccount(set.Accounts[addrHash])
 	if err != nil {
 		return err
 	}
-	if root != origin.Root {
-		return errors.New("failed to reset storage trie")
+	st, err := loader.OpenStorageTrie(set.Root, addrHash, account.Root)
+	if err != nil {
+		return err
 	}
-	nodes.Merge(result)
-
+	if len(set.Storages[addrHash]) == 0 {
+		if account.Root != origin.Root {
+			return errors.New("failed to reset storage trie 2")
+		}
+	}
+	if len(set.Storages[addrHash]) > 0 {
+		for key, val := range set.Storages[addrHash] {
+			var err error
+			if len(val) == 0 {
+				err = st.Delete(key.Bytes())
+			} else {
+				err = st.Update(key.Bytes(), val)
+			}
+			if err != nil {
+				return err
+			}
+		}
+		root, result := st.Commit(false)
+		if root != origin.Root {
+			return errors.New("failed to reset storage trie")
+		}
+		nodes.Merge(result)
+	}
 	full, err := rlp.EncodeToBytes(origin)
 	if err != nil {
 		return err

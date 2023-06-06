@@ -430,7 +430,7 @@ func storeStateHistory(freezer *rawdb.ResettableFreezer, dl *diffLayer, limit ui
 	historyDataSizeMeter.Mark(int64(dataSize))
 	historyIndexSizeMeter.Mark(int64(indexSize))
 	historyBuildTimeMeter.UpdateSince(start)
-	log.Info("Stored state history", "id", dl.stateID(), "data", dataSize, "index", indexSize, "pruned", n, "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Debug("Stored state history", "id", dl.stateID(), "data", dataSize, "index", indexSize, "pruned", n, "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil
 }
 
