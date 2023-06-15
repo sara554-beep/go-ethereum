@@ -117,18 +117,24 @@ func readRuntimeStats(v *runtimeStats) {
 
 		switch s.Name {
 		case "/cpu/classes/total:cpu-seconds":
-			v.CPUTotal = s.Value.Uint64()
+			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
+			//v.CPUTotal = s.Value.Uint64()
 		case "/cpu/classes/user:cpu-seconds":
-			v.CPUUser = s.Value.Uint64()
+			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
+			//v.CPUUser = s.Value.Uint64()
 		case "/cpu/classes/idle:cpu-seconds":
-			v.CPUIdle = s.Value.Uint64()
+			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
+			//v.CPUIdle = s.Value.Uint64()
 		case "/cpu/classes/scavenge/total:cpu-seconds":
-			v.CPUScan = s.Value.Uint64()
+			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
+			//v.CPUScan = s.Value.Uint64()
 		case "/cpu/classes/gc/total:cpu-seconds":
-			v.CPUGC = s.Value.Uint64()
+			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
+			//v.CPUGC = s.Value.Uint64()
 
 		case "/gc/cycles/total:gc-cycles":
-			v.GCCycle = s.Value.Uint64()
+			//v.GCCycle = s.Value.Uint64()
+			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
 		case "/gc/pauses:seconds":
 			v.GCPauses = s.Value.Float64Histogram()
 		case "/gc/heap/allocs:bytes":
