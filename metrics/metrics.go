@@ -58,11 +58,11 @@ func init() {
 var threadCreateProfile = pprof.Lookup("threadcreate")
 
 type runtimeStats struct {
-	CPUTotal uint64
-	CPUUser  uint64
-	CPUIdle  uint64
-	CPUScan  uint64
-	CPUGC    uint64
+	CPUTotal float64
+	CPUUser  float64
+	CPUIdle  float64
+	CPUScan  float64
+	CPUGC    float64
 
 	GCCycle       uint64
 	GCPauses      *metrics.Float64Histogram
@@ -117,24 +117,18 @@ func readRuntimeStats(v *runtimeStats) {
 
 		switch s.Name {
 		case "/cpu/classes/total:cpu-seconds":
-			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
-			//v.CPUTotal = s.Value.Uint64()
+			v.CPUTotal = s.Value.Float64()
 		case "/cpu/classes/user:cpu-seconds":
-			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
-			//v.CPUUser = s.Value.Uint64()
+			v.CPUUser = s.Value.Float64()
 		case "/cpu/classes/idle:cpu-seconds":
-			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
-			//v.CPUIdle = s.Value.Uint64()
+			v.CPUIdle = s.Value.Float64()
 		case "/cpu/classes/scavenge/total:cpu-seconds":
-			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
-			//v.CPUScan = s.Value.Uint64()
+			v.CPUScan = s.Value.Float64()
 		case "/cpu/classes/gc/total:cpu-seconds":
-			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
-			//v.CPUGC = s.Value.Uint64()
+			v.CPUGC = s.Value.Float64()
 
 		case "/gc/cycles/total:gc-cycles":
-			//v.GCCycle = s.Value.Uint64()
-			log.Info("Metrics type", "item", s.Name, "type", s.Value.Kind())
+			v.GCCycle = s.Value.Uint64()
 		case "/gc/pauses:seconds":
 			v.GCPauses = s.Value.Float64Histogram()
 		case "/gc/heap/allocs:bytes":
@@ -188,11 +182,11 @@ func CollectProcessMetrics(refresh time.Duration) {
 		cpuSysLoadTotal       = GetOrRegisterCounterFloat64("system/cpu/sysload/total", DefaultRegistry)
 		cpuSysWaitTotal       = GetOrRegisterCounterFloat64("system/cpu/syswait/total", DefaultRegistry)
 		cpuProcLoadTotal      = GetOrRegisterCounterFloat64("system/cpu/procload/total", DefaultRegistry)
-		cpuTotal              = GetOrRegisterGauge("system/cpu/total", DefaultRegistry)
-		cpuUser               = GetOrRegisterGauge("system/cpu/user", DefaultRegistry)
-		cpuIdle               = GetOrRegisterGauge("system/cpu/idle", DefaultRegistry)
-		cpuGC                 = GetOrRegisterGauge("system/cpu/gc/time", DefaultRegistry)
-		cpuScan               = GetOrRegisterGauge("system/cpu/scan", DefaultRegistry)
+		cpuTotal              = GetOrRegisterCounterFloat64("system/cpu/total", DefaultRegistry)
+		cpuUser               = GetOrRegisterCounterFloat64("system/cpu/user", DefaultRegistry)
+		cpuIdle               = GetOrRegisterCounterFloat64("system/cpu/idle", DefaultRegistry)
+		cpuGC                 = GetOrRegisterCounterFloat64("system/cpu/gc/time", DefaultRegistry)
+		cpuScan               = GetOrRegisterCounterFloat64("system/cpu/scan", DefaultRegistry)
 		gcCycles              = GetOrRegisterMeter("system/cpu/gc/cycle", DefaultRegistry)
 		gcTarget              = GetOrRegisterGauge("system/cpu/gc/target", DefaultRegistry)
 		cpuThreads            = GetOrRegisterGauge("system/cpu/threads", DefaultRegistry)
@@ -242,12 +236,12 @@ func CollectProcessMetrics(refresh time.Duration) {
 		// Go runtime metrics
 		readRuntimeStats(&rstats[now])
 
-		cpuTotal.Update(int64(rstats[now].CPUTotal))
-		cpuIdle.Update(int64(rstats[now].CPUIdle))
-		cpuUser.Update(int64(rstats[now].CPUUser))
-		cpuGC.Update(int64(rstats[now].CPUGC))
-		cpuScan.Update(int64(rstats[now].CPUScan))
-		gcCycles.Mark(int64(rstats[now].GCCycle - rstats[prev].GCCycle))
+		cpuTotal.Inc(rstats[now].CPUTotal - rstats[prev].CPUTotal)
+		cpuIdle.Inc(rstats[now].CPUIdle - rstats[prev].CPUIdle)
+		cpuUser.Inc(rstats[now].CPUUser - rstats[prev].CPUUser)
+		cpuGC.Inc(rstats[now].CPUGC - rstats[prev].CPUGC)
+		cpuScan.Inc(rstats[now].CPUScan - rstats[prev].CPUScan)
+		gcCycles.Mark(int64(rstats[now].GCCycle))
 		gcTarget.Update(int64(rstats[now].GCTargetBytes))
 
 		cpuGoroutines.Update(int64(rstats[now].Goroutines))
