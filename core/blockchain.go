@@ -431,18 +431,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	bc.wg.Add(1)
 	go bc.updateFutureBlocks()
 
-	// If periodic cache journal is required, spin it up.
-	if bc.cacheConfig.TrieCleanRejournal > 0 {
-		if bc.cacheConfig.TrieCleanRejournal < time.Minute {
-			log.Warn("Sanitizing invalid trie cache journal time", "provided", bc.cacheConfig.TrieCleanRejournal, "updated", time.Minute)
-			bc.cacheConfig.TrieCleanRejournal = time.Minute
-		}
-		bc.wg.Add(1)
-		go func() {
-			defer bc.wg.Done()
-			bc.triedb.SaveCachePeriodically(bc.cacheConfig.TrieCleanJournal, bc.cacheConfig.TrieCleanRejournal, bc.quit)
-		}()
-	}
 	// Rewind the chain in case of an incompatible config upgrade.
 	if compat, ok := genesisErr.(*params.ConfigCompatError); ok {
 		log.Warn("Rewinding chain to upgrade configuration", "err", compat)
@@ -1030,11 +1018,6 @@ func (bc *BlockChain) Stop() {
 				log.Error("Dangling trie nodes after full cleanup")
 			}
 		}
-	}
-	// Ensure all live cached entries be saved into disk, so that we can skip
-	// cache warmup when node restarts.
-	if bc.cacheConfig.TrieCleanJournal != "" {
-		bc.triedb.SaveCache(bc.cacheConfig.TrieCleanJournal)
 	}
 	// Close the trie database, release all the held resources as the last step.
 	if err := bc.triedb.Close(); err != nil {
