@@ -532,10 +532,13 @@ func (b *batch) ValueSize() int {
 func (b *batch) Write() error {
 	b.db.quitLock.RLock()
 	defer b.db.quitLock.RUnlock()
+
 	if b.db.closed {
 		return pebble.ErrClosed
 	}
-	return b.b.Commit(pebble.NoSync)
+	// Write batch in sync mode, the call will be blocked until the WAL
+	// is fsync'd to disk.
+	return b.b.Commit(pebble.Sync)
 }
 
 // Reset resets the batch for reuse.
