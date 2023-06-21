@@ -620,6 +620,7 @@ func (hc *HeaderChain) setHead(headBlock uint64, headTime uint64, updateFn Updat
 		hc.currentHeader.Store(parent)
 		hc.currentHeaderHash = parentHash
 		headHeaderGauge.Update(parent.Number.Int64())
+		log.Warn("Rewound header", "head", parent.Number.Int64())
 
 		// If this is the first iteration, wipe any leftover data upwards too so
 		// we don't end up with dangling daps in the database

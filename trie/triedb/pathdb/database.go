@@ -343,7 +343,7 @@ func (db *Database) Recover(root common.Hash, loader triestate.TrieLoader) error
 	if err != nil {
 		return err
 	}
-	log.Debug("Recovered state", "root", root, "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Info("Recovered state", "root", root, "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil
 }
 

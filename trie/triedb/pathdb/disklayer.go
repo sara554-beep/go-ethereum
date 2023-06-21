@@ -219,6 +219,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 		if err != nil {
 			return nil, err
 		}
+		log.Info("Revert in buffer")
 	} else {
 		// The node buffer is empty, applies the state changes in
 		// disk state directly.
@@ -232,6 +233,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 		if dl.db.cleans != nil {
 			dl.db.cleans.Reset()
 		}
+		log.Info("Revert in disk")
 	}
 	return newDiskLayer(h.meta.parent, dl.id-1, dl.db, dl.buffer), nil
 }
