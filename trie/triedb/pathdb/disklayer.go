@@ -202,7 +202,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 	// Apply the reverse state changes upon the current state. This must
 	// be done before holding the lock in order to access state in "this"
 	// layer.
-	nodes, err := triestate.Apply(h.meta.parent, h.meta.root, h.accounts, h.storages, loader)
+	infos, nodes, err := triestate.Apply(h.meta.parent, h.meta.root, h.accounts, h.storages, loader)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 	// Revert embedded states in the node buffer first in case
 	// it's not empty.
 	if !dl.buffer.empty() {
-		err := dl.buffer.revert(nodes)
+		err := dl.buffer.revert(dl.db.diskdb, nodes)
 		if err != nil {
 			return nil, err
 		}
@@ -223,7 +223,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 		// The node buffer is empty, applies the state changes in
 		// disk state directly.
 		batch := dl.db.diskdb.NewBatch()
-		writeNodes(batch, nodes, nil)
+		writeNodes(dl.db.diskdb, batch, nodes, nil, true, infos)
 		rawdb.WritePersistentStateID(batch, dl.id-1)
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write states", "err", err)

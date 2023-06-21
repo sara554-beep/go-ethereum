@@ -17,6 +17,7 @@
 package pathdb
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -135,7 +136,7 @@ func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) *no
 // into the nodebuffer, but difference is it decrements the layers counter. The
 // provided nodes don't belong to any live layer but generated inflight, safe to
 // take the ownership if necessary.
-func (b *nodebuffer) revert(nodes map[common.Hash]map[string]*trienode.Node) error {
+func (b *nodebuffer) revert(db ethdb.Database, nodes map[common.Hash]map[string]*trienode.Node) error {
 	if b.layers == 0 {
 		return errStateUnrecoverable
 	}
@@ -153,7 +154,21 @@ func (b *nodebuffer) revert(nodes map[common.Hash]map[string]*trienode.Node) err
 		for path, n := range subset {
 			cur, ok := current[path]
 			if !ok {
-				panic(fmt.Sprintf("non-existent node (%x %v) blob: %v", owner, path, crypto.Keccak256Hash(n.Blob).Hex()))
+				var (
+					diskBlob  []byte
+					diskHash  common.Hash
+					matchDisk bool
+				)
+				if owner == (common.Hash{}) {
+					diskBlob, diskHash = rawdb.ReadAccountTrieNode(db, []byte(path))
+				} else {
+					diskBlob, diskHash = rawdb.ReadStorageTrieNode(db, owner, []byte(path))
+				}
+				if diskHash == n.Hash {
+					matchDisk = true
+				}
+				panic(fmt.Sprintf("non-existent node (%x %v) blob: %v, matchDisk: %t, diskBlob: %v",
+					owner, path, n.Blob, matchDisk, diskBlob))
 			}
 			if len(n.Blob) == 0 {
 				current[path] = trienode.NewDeleted()
@@ -214,7 +229,7 @@ func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id ui
 		start = time.Now()
 		batch = db.NewBatchWithSize(int(b.size))
 	)
-	writeNodes(batch, b.nodes, clean)
+	writeNodes(nil, batch, b.nodes, clean, false, nil)
 	rawdb.WritePersistentStateID(batch, id)
 	if err := batch.Write(); err != nil {
 		return err
@@ -228,7 +243,7 @@ func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id ui
 }
 
 // writeNodes writes the trie nodes into the provided database batch.
-func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.Node, clean *fastcache.Cache) {
+func writeNodes(db ethdb.Database, batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.Node, clean *fastcache.Cache, revert bool, infos map[common.Hash]string) {
 	for owner, subset := range nodes {
 		for path, n := range subset {
 			if n.IsDeleted() {
@@ -243,6 +258,13 @@ func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.No
 				rawdb.WriteAccountTrieNode(batch, []byte(path), n.Blob)
 			} else {
 				rawdb.WriteStorageTrieNode(batch, owner, []byte(path), n.Blob)
+				if revert {
+					diskBlob, diskHash := rawdb.ReadStorageTrieNode(db, owner, []byte(path))
+					if bytes.Equal(diskBlob, n.Blob) {
+						log.Error("Same storage detected", "owner", owner.Hex(), "path", path, "hash", diskHash.Hex())
+						log.Error("info", "value", infos[owner])
+					}
+				}
 			}
 			if clean != nil {
 				clean.Set(n.Hash.Bytes(), n.Blob)

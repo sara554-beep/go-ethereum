@@ -17,6 +17,7 @@
 package triestate
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 
@@ -41,6 +42,8 @@ type Trie interface {
 	// Commit the trie and returns a set of dirty nodes generated along with
 	// the new root hash.
 	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet)
+
+	GetNode(path []byte) ([]byte, int, error)
 }
 
 // TrieLoader wraps functions to load tries.
@@ -50,6 +53,34 @@ type TrieLoader interface {
 
 	// OpenStorageTrie opens the storage trie of an account.
 	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
+}
+
+func decodeNibbles(nibbles []byte, bytes []byte) {
+	for bi, ni := 0, 0; ni < len(nibbles); bi, ni = bi+1, ni+2 {
+		bytes[bi] = nibbles[ni]<<4 | nibbles[ni+1]
+	}
+}
+
+// hasTerm returns whether a hex key has the terminator flag.
+func hasTerm(s []byte) bool {
+	return len(s) > 0 && s[len(s)-1] == 16
+}
+
+func hexToCompact(hex []byte) []byte {
+	terminator := byte(0)
+	if hasTerm(hex) {
+		terminator = 1
+		hex = hex[:len(hex)-1]
+	}
+	buf := make([]byte, len(hex)/2+1)
+	buf[0] = terminator << 5 // the flag byte
+	if len(hex)&1 == 1 {
+		buf[0] |= 1 << 4 // odd flag
+		buf[0] |= hex[0] // first nibble is contained in the first byte
+		hex = hex[1:]
+	}
+	decodeNibbles(hex, buf[1:])
+	return buf
 }
 
 // Set represents a collection of mutated states during a state transition.
@@ -102,10 +133,10 @@ type context struct {
 // Apply traverses the provided state diffs, apply them in the associated
 // post-state and return the generated dirty trie nodes. The state can be
 // loaded via the provided trie loader.
-func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, loader TrieLoader) (map[common.Hash]map[string]*trienode.Node, error) {
+func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, loader TrieLoader) (map[common.Hash]string, map[common.Hash]map[string]*trienode.Node, error) {
 	tr, err := loader.OpenTrie(postRoot)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ctx := &context{
 		prevRoot:    prevRoot,
@@ -115,31 +146,32 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash]
 		accountTrie: tr,
 		nodes:       trienode.NewMergedNodeSet(),
 	}
+	info := make(map[common.Hash]string)
 	for addrHash, account := range accounts {
 		var err error
 		if len(account) == 0 {
-			err = deleteAccount(ctx, loader, addrHash)
+			err = deleteAccount(ctx, loader, addrHash, info)
 		} else {
-			err = updateAccount(ctx, loader, addrHash)
+			err = updateAccount(ctx, loader, addrHash, info)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("failed to revert state, err: %w", err)
+			return nil, nil, fmt.Errorf("failed to revert state, err: %w", err)
 		}
 	}
 	root, result := tr.Commit(false)
 	if root != prevRoot {
-		return nil, fmt.Errorf("failed to revert state, want %#x, got %#x", prevRoot, root)
+		return nil, nil, fmt.Errorf("failed to revert state, want %#x, got %#x", prevRoot, root)
 	}
 	if err := ctx.nodes.Merge(result); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return ctx.nodes.Flatten(), nil
+	return info, ctx.nodes.Flatten(), nil
 }
 
 // updateAccount the account was present in prev-state, and may or may not
 // existent in post-state. Apply the reverse diff and verify if the storage
 // root matches the one in prev-state account.
-func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error {
+func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos map[common.Hash]string) error {
 	// The account was present in prev-state, decode it from the
 	// 'slim-rlp' format bytes.
 	prev, err := types.FullAccount(ctx.accounts[addrHash])
@@ -163,12 +195,25 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 	if err != nil {
 		return err
 	}
+	var info string
+	info += fmt.Sprintf(">>>>>> Process storage %x\n", addrHash.Hex())
 	for key, val := range ctx.storages[addrHash] {
+		postSlot, e := st.Get(key.Bytes())
+		if e != nil {
+			return e
+		}
+		if bytes.Equal(postSlot, val) {
+			return fmt.Errorf("same slot value detected, v: %v, k: %v", postSlot, key.Bytes())
+		}
 		var err error
 		if len(val) == 0 {
 			err = st.Delete(key.Bytes())
+			info += fmt.Sprintf("[BEFORE-DEL] %x - %x\n", key.Bytes(), postSlot)
+			info += fmt.Sprintf("[DEL] %x\n", key.Bytes())
 		} else {
 			err = st.Update(key.Bytes(), val)
+			info += fmt.Sprintf("[BEFORE-Update] %x - %x\n", key.Bytes(), postSlot)
+			info += fmt.Sprintf("[Update] %x - %x\n", key.Bytes(), val)
 		}
 		if err != nil {
 			return err
@@ -178,6 +223,21 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 	if root != prev.Root {
 		return errors.New("failed to reset storage trie")
 	}
+	st2, err := loader.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
+	if err != nil {
+		return err
+	}
+	for path := range result.Nodes {
+		blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
+		if err != nil {
+			info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
+		} else {
+			info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
+		}
+	}
+	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
+	infos[addrHash] = info
+
 	// The returned set can be nil if storage trie is not changed
 	// at all.
 	if result != nil {
@@ -196,7 +256,7 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 // deleteAccount the account was not present in prev-state, and is expected
 // to be existent in post-state. Apply the reverse diff and verify if the
 // account and storage is wiped out correctly.
-func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error {
+func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos map[common.Hash]string) error {
 	// The account must be existent in post-state, load the account.
 	blob, err := ctx.accountTrie.Get(addrHash.Bytes())
 	if err != nil {
@@ -213,10 +273,21 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 	if err != nil {
 		return err
 	}
+	var info string
+	info += fmt.Sprintf(">>>>>> Process storage %x\n", addrHash.Hex())
 	for key, val := range ctx.storages[addrHash] {
 		if len(val) != 0 {
 			return errors.New("expect storage deletion")
 		}
+		postSlot, err := st.Get(key.Bytes())
+		if err != nil {
+			return err
+		}
+		if len(postSlot) == 0 {
+			return errors.New("storage is missing")
+		}
+		info += fmt.Sprintf("[BEFORE-DEL] %x - %x\n", key.Bytes(), postSlot)
+		info += fmt.Sprintf("[DEL] %x\n", key.Bytes())
 		if err := st.Delete(key.Bytes()); err != nil {
 			return err
 		}
@@ -225,6 +296,21 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash) error 
 	if root != types.EmptyRootHash {
 		return errors.New("failed to clear storage trie")
 	}
+	st2, err := loader.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
+	if err != nil {
+		return err
+	}
+	for path := range result.Nodes {
+		blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
+		if err != nil {
+			info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
+		} else {
+			info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
+		}
+	}
+	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
+	infos[addrHash] = info
+
 	// The returned set can be nil if storage trie is not changed
 	// at all.
 	if result != nil {

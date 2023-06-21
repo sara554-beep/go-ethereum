@@ -78,6 +78,10 @@ func (h *hasher) Delete(key []byte) error {
 	return nil
 }
 
+func (h *hasher) GetNode(path []byte) ([]byte, int, error) {
+	return nil, 0, nil
+}
+
 // Commit computes the new hash of the states and returns the set with all
 // state changes.
 func (h *hasher) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {

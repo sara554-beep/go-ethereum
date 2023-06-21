@@ -20,6 +20,7 @@ import (
 	"bytes"
 	crand "crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"math/rand"
 	"testing"
 )
@@ -137,5 +138,26 @@ func BenchmarkHexToKeybytes(b *testing.B) {
 	testBytes := []byte{7, 6, 6, 5, 7, 2, 6, 2, 16}
 	for i := 0; i < b.N; i++ {
 		hexToKeybytes(testBytes)
+	}
+}
+
+func TestFooBar(t *testing.T) {
+	d := []byte{
+		233, 160, 32, 90, 123,
+		184, 214, 53, 28, 28,
+		247, 12, 149, 163, 22,
+		204, 106, 146, 131, 156,
+		152, 102, 130, 217, 139,
+		195, 95, 149, 143, 72,
+		131, 249, 210, 168, 135,
+		134, 90, 243, 16, 122,
+		64, 0,
+	}
+	n := mustDecodeNode(nil, d)
+	switch nn := n.(type) {
+	case *shortNode:
+		fmt.Println("shortNode", "keyLen", len(nn.Key), "valLen", len(nn.Val.(valueNode)), nn.Key, nn.Val)
+	case *fullNode:
+		fmt.Println("fullNode", len(nn.Children))
 	}
 }
