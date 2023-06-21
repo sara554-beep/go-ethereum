@@ -223,28 +223,28 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 	if root != prev.Root {
 		return errors.New("failed to reset storage trie")
 	}
-	st2, err := loader.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
-	if err != nil {
-		return err
-	}
-	for path := range result.Nodes {
-		blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
-		if err != nil {
-			info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
-		} else {
-			info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
-		}
-	}
-	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
-	infos[addrHash] = info
-
 	// The returned set can be nil if storage trie is not changed
 	// at all.
 	if result != nil {
 		if err := ctx.nodes.Merge(result); err != nil {
 			return err
 		}
+		st2, err := loader.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
+		if err != nil {
+			return err
+		}
+		for path := range result.Nodes {
+			blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
+			if err != nil {
+				info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
+			} else {
+				info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
+			}
+		}
 	}
+	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
+	infos[addrHash] = info
+
 	// Write the prev-state account into the main trie
 	full, err := rlp.EncodeToBytes(prev)
 	if err != nil {
@@ -296,20 +296,6 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 	if root != types.EmptyRootHash {
 		return errors.New("failed to clear storage trie")
 	}
-	st2, err := loader.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
-	if err != nil {
-		return err
-	}
-	for path := range result.Nodes {
-		blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
-		if err != nil {
-			info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
-		} else {
-			info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
-		}
-	}
-	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
-	infos[addrHash] = info
 
 	// The returned set can be nil if storage trie is not changed
 	// at all.
@@ -317,7 +303,22 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 		if err := ctx.nodes.Merge(result); err != nil {
 			return err
 		}
+		st2, err := loader.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
+		if err != nil {
+			return err
+		}
+		for path := range result.Nodes {
+			blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
+			if err != nil {
+				info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
+			} else {
+				info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
+			}
+		}
 	}
+	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
+	infos[addrHash] = info
+
 	// Delete the post-state account from the main trie.
 	return ctx.accountTrie.Delete(addrHash.Bytes())
 }
