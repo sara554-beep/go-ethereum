@@ -196,7 +196,7 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 		return err
 	}
 	var info string
-	info += fmt.Sprintf(">>>>>> Process storage %x\n", addrHash.Hex())
+	info += fmt.Sprintf(">>>>>> Process storage %s\n", addrHash.Hex())
 	for key, val := range ctx.storages[addrHash] {
 		postSlot, e := st.Get(key.Bytes())
 		if e != nil {
@@ -233,16 +233,17 @@ func updateAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 		if err != nil {
 			return err
 		}
-		for path := range result.Nodes {
+		for path, n := range result.Nodes {
 			blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
 			if err != nil {
-				info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
+				info += fmt.Sprintf("Failed to get node %v, err %v, Prev-state %v\n", []byte(path), err, n.Blob)
 			} else {
-				info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
+				equal := bytes.Equal(blob, n.Blob)
+				info += fmt.Sprintf("Post-State node %v, equal %t, blob %v, Prev-state %v\n", []byte(path), equal, blob, n.Blob)
 			}
 		}
 	}
-	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
+	info += fmt.Sprintf("<<<<<<< Processed storage %s\n", addrHash.Hex())
 	infos[addrHash] = info
 
 	// Write the prev-state account into the main trie
@@ -274,7 +275,7 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 		return err
 	}
 	var info string
-	info += fmt.Sprintf(">>>>>> Process storage %x\n", addrHash.Hex())
+	info += fmt.Sprintf(">>>>>> Process storage %s\n", addrHash.Hex())
 	for key, val := range ctx.storages[addrHash] {
 		if len(val) != 0 {
 			return errors.New("expect storage deletion")
@@ -307,16 +308,17 @@ func deleteAccount(ctx *context, loader TrieLoader, addrHash common.Hash, infos 
 		if err != nil {
 			return err
 		}
-		for path := range result.Nodes {
+		for path, n := range result.Nodes {
 			blob, _, err := st2.GetNode(hexToCompact([]byte(path)))
 			if err != nil {
-				info += fmt.Sprintf("Failed to get node %v, err %v\n", path, err)
+				info += fmt.Sprintf("Failed to get node %v, err %v, Prev-state %v\n", path, err, n.Blob)
 			} else {
-				info += fmt.Sprintf("Post-State node %v, blob %v\n", path, blob)
+				equal := bytes.Equal(blob, n.Blob)
+				info += fmt.Sprintf("Post-State node %v, equal %t, blob %v, Prev-state %v\n", path, equal, blob, n.Blob)
 			}
 		}
 	}
-	info += fmt.Sprintf("<<<<<<< Processed storage %x\n", addrHash.Hex())
+	info += fmt.Sprintf("<<<<<<< Processed storage %s\n", addrHash.Hex())
 	infos[addrHash] = info
 
 	// Delete the post-state account from the main trie.

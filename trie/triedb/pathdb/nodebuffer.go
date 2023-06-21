@@ -261,7 +261,7 @@ func writeNodes(db ethdb.Database, batch ethdb.Batch, nodes map[common.Hash]map[
 				if revert {
 					diskBlob, diskHash := rawdb.ReadStorageTrieNode(db, owner, []byte(path))
 					if bytes.Equal(diskBlob, n.Blob) {
-						log.Error("Same storage detected", "owner", owner.Hex(), "path", path, "hash", diskHash.Hex())
+						log.Error("Same storage detected", "owner", owner.Hex(), "path", []byte(path), "hash", diskHash.Hex())
 						log.Error("info", "value", infos[owner])
 					}
 				}
