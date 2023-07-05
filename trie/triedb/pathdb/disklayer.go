@@ -133,7 +133,7 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 				return blob, nil
 			}
 			cleanFalseMeter.Mark(1)
-			log.Error("Unexpected trie node in clean cache", "owner", owner, "path", path, "expect", hash, "got", got)
+			log.Error("Unexpected trie node in clean cache", "addr", owner, "path", path, "expect", hash, "got", got)
 		}
 		cleanMissMeter.Mark(1)
 	}
@@ -149,7 +149,7 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	}
 	if nHash != hash {
 		diskFalseMeter.Mark(1)
-		log.Error("Unexpected trie node in disk", "owner", owner, "path", path, "expect", hash, "got", nHash)
+		log.Error("Unexpected trie node in disk", "addr", owner, "path", path, "expect", hash, "got", nHash)
 		return nil, newUnexpectedNodeError("disk", hash, nHash, owner, path)
 	}
 	if dl.cleans != nil && len(nBlob) > 0 {
@@ -177,7 +177,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// corresponding states(journal), the stored state history will
 	// be truncated in the next restart.
 	if dl.db.freezer != nil {
-		err := writeHistory(dl.db.diskdb, dl.db.freezer, bottom, dl.db.config.StateHistory)
+		err := writeHistory(dl.db.diskdb, dl.db.freezer, dl.db.indexer, bottom, dl.db.config.StateHistory)
 		if err != nil {
 			return nil, err
 		}

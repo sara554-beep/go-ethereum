@@ -467,6 +467,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		storageTries    stat
 		legacyTries     stat
 		stateLookups    stat
+		stateIndices    stat
 		codes           stat
 		txLookups       stat
 		accountSnaps    stat
@@ -523,6 +524,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			accountSnaps.Add(size)
 		case bytes.HasPrefix(key, SnapshotStoragePrefix) && len(key) == (len(SnapshotStoragePrefix)+2*common.HashLength):
 			storageSnaps.Add(size)
+		case isStateIndexKey(key):
+			stateIndices.Add(size)
 		case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
 			preimages.Add(size)
 		case bytes.HasPrefix(key, configPrefix) && len(key) == (len(configPrefix)+common.HashLength):
@@ -552,7 +555,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 				lastPivotKey, fastTrieProgressKey, snapshotDisabledKey, SnapshotRootKey, snapshotJournalKey,
 				snapshotGeneratorKey, snapshotRecoveryKey, txIndexTailKey, fastTxLookupLimitKey,
 				uncleanShutdownKey, badBlockKey, transitionStatusKey, skeletonSyncStatusKey,
-				persistentStateIDKey, trieJournalKey, snapshotSyncStatusKey,
+				persistentStateIDKey, trieJournalKey, snapshotSyncStatusKey, stateIndexHeadKey,
 			} {
 				if bytes.Equal(key, meta) {
 					metadata.Add(size)
@@ -585,6 +588,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Storage trie nodes", storageTries.Size(), storageTries.Count()},
 		{"Key-Value store", "Legacy trie nodes", legacyTries.Size(), legacyTries.Count()},
 		{"Key-Value store", "State lookups", stateLookups.Size(), stateLookups.Count()},
+		{"Key-Value store", "State indices", stateIndices.Size(), stateIndices.Count()},
 		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
 		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},
 		{"Key-Value store", "Storage snapshot", storageSnaps.Size(), storageSnaps.Count()},

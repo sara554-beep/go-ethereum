@@ -19,6 +19,8 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
+	"golang.org/x/exp/slices"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -255,6 +257,134 @@ func confirmAndRemoveDB(database string, kind string) {
 	}
 }
 
+type topHistory struct {
+	block    uint64
+	id       uint64
+	size     common.StorageSize
+	accountN int
+	slotN    int
+}
+
+type acctStats struct {
+	topN      int
+	histories []*topHistory
+
+	totalHistory int
+	totalSize    common.StorageSize
+
+	totalAccountN int
+	totalSlotN    int
+}
+
+func (t *acctStats) add(block uint64, id uint64, size common.StorageSize, accountN, slotN int) {
+	t.totalHistory += 1
+	t.totalSize += size
+	t.totalAccountN += accountN
+	t.totalSlotN += slotN
+
+	if len(t.histories) < t.topN {
+		t.histories = append(t.histories, &topHistory{
+			block:    block,
+			id:       id,
+			size:     size,
+			accountN: accountN,
+			slotN:    slotN,
+		})
+	} else {
+		if t.histories[len(t.histories)-1].size > size {
+			return
+		}
+		t.histories = t.histories[:len(t.histories)-1]
+		t.histories = append(t.histories, &topHistory{
+			block:    block,
+			id:       id,
+			size:     size,
+			accountN: accountN,
+			slotN:    slotN,
+		})
+	}
+	slices.SortFunc(t.histories, func(a, b *topHistory) bool {
+		return a.size >= b.size
+	})
+}
+
+func (t *acctStats) Report() {
+	for i := 0; i < len(t.histories); i++ {
+		log.Info("Top history", "i", i+1, "block", t.histories[i].block,
+			"id", t.histories[i].id, "accountN", t.histories[i].accountN, "slotN", t.histories[i].slotN, "size", t.histories[i].size)
+	}
+	log.Info("Total history", "number", t.totalHistory, "total-account", t.totalAccountN, "total-slot", t.totalSlotN, "average-size", common.StorageSize(float64(t.totalSize)/float64(t.totalHistory)))
+}
+
+func computeSize(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte) (common.StorageSize, common.StorageSize, int) {
+	var (
+		accountSize common.StorageSize
+		storageSize common.StorageSize
+		totalSlotN  int
+	)
+	for account, data := range accounts {
+		accountSize += common.StorageSize(common.AddressLength + len(data))
+
+		for _, slot := range storages[account] {
+			storageSize += common.StorageSize(common.AddressLength + len(slot))
+		}
+		totalSlotN += len(storages[account])
+	}
+	return accountSize, storageSize, totalSlotN
+}
+
+func inspectHistory(freezer *rawdb.ResettableFreezer, id uint64) {
+	log.Info("Inspecting history", "id", id)
+	block, accounts, storages, err := pathdb.ReadHistory(freezer, id)
+	if err != nil {
+		log.Error("Failed to read history", "err", err)
+	}
+	i := 1
+	for addr, account := range accounts {
+		slots := storages[addr]
+		if len(slots) == 0 {
+			log.Info("Account", "block", block, "i", i, "hash", addr.Hex(), "length", len(account))
+		} else {
+			var (
+				keysize common.StorageSize
+				valsize common.StorageSize
+			)
+			for _, slot := range slots {
+				keysize += common.StorageSize(common.HashLength)
+				valsize += common.StorageSize(len(slot))
+			}
+			log.Info("Account", "block", block, "i", i, "hash", addr.Hex(), "length", len(account), "slots", len(slots), "keysize", keysize, "valsize", valsize)
+		}
+		i += 1
+	}
+	log.Info("Inspected history", "id", id)
+}
+
+func scanHistory(freezer *rawdb.ResettableFreezer) {
+	tail, _ := freezer.Tail()
+	head, _ := freezer.Ancients()
+	stats := &acctStats{topN: 20}
+
+	start := time.Now()
+	logged := time.Now()
+	log.Info("Scanning history", "tail", tail, "head", head)
+
+	for current := tail; current < head; current += 1 {
+		block, accounts, storages, err := pathdb.ReadHistory(freezer, current+1)
+		if err != nil {
+			log.Error("Failed to read history", "err", err)
+		}
+		accountSize, storageSize, slotN := computeSize(accounts, storages)
+		stats.add(block, current, accountSize+storageSize, len(accounts), slotN)
+
+		if time.Since(logged) > 8*time.Second {
+			logged = time.Now()
+			log.Info("Scanning history", "tail", tail, "head", head, "current", current, "left", head-current, "elapsed", time.Since(start))
+		}
+	}
+	stats.Report()
+}
+
 func inspect(ctx *cli.Context) error {
 	var (
 		prefix []byte
@@ -282,6 +412,68 @@ func inspect(ctx *cli.Context) error {
 
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	defer db.Close()
+
+	ancientDir, _ := db.AncientDatadir()
+	freezer, _ := rawdb.NewStateHistoryFreezer(ancientDir, false)
+	head, _ := freezer.Ancients()
+
+	scanHistory(freezer)
+	//inspectHistory(freezer, 14_499_882)
+	//inspectHistory(freezer, 14_499_883)
+	//inspectHistory(freezer, 14_499_884)
+
+	var (
+		totalAccount common.StorageSize
+		totalStorage common.StorageSize
+
+		allAccounts []map[common.Address][]byte
+		allStorages []map[common.Address]map[common.Hash][]byte
+
+		aggregatedAccount = make(map[common.Address][]byte)
+		aggregatedStorage = make(map[common.Address]map[common.Hash][]byte)
+	)
+	for i := 0; i < 64; i++ {
+		_, accounts, storages, err := pathdb.ReadHistory(freezer, head-uint64(i)-1)
+		if err != nil {
+			log.Crit("failed to read history", "err", err)
+		}
+		allAccounts = append(allAccounts, accounts)
+		allStorages = append(allStorages, storages)
+
+		for accountHash, data := range accounts {
+			aggregatedAccount[accountHash] = common.CopyBytes(data)
+		}
+		for accountHash, slots := range storages {
+			if _, ok := aggregatedStorage[accountHash]; !ok {
+				aggregatedStorage[accountHash] = make(map[common.Hash][]byte)
+			}
+			for slotHash, slot := range slots {
+				aggregatedStorage[accountHash][slotHash] = common.CopyBytes(slot)
+			}
+		}
+		for accountHash, data := range accounts {
+			totalAccount += common.StorageSize(common.HashLength + len(data))
+
+			for _, slot := range storages[accountHash] {
+				totalStorage += common.StorageSize(common.HashLength + len(slot))
+			}
+		}
+	}
+	var (
+		aggrAccount common.StorageSize
+		aggrStorage common.StorageSize
+	)
+	for accountHash, data := range aggregatedAccount {
+		aggrAccount += common.StorageSize(common.HashLength + len(data))
+
+		for _, slot := range aggregatedStorage[accountHash] {
+			aggrStorage += common.StorageSize(common.HashLength + len(slot))
+		}
+	}
+	log.Info("State history stats", "number", 64, "account", totalAccount, "storage", totalStorage, "aggrAccount", aggrAccount, "aggrStorage", aggrStorage)
+
+	//
+	//pathdb.NewTraverser(db, freezer).Traverse()
 
 	return rawdb.InspectDatabase(db, prefix, start)
 }

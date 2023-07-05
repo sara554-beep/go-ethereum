@@ -278,6 +278,31 @@ func WriteTxIndexTail(db ethdb.KeyValueWriter, number uint64) {
 	}
 }
 
+// ReadStateIndexHead retrieves the number of latest indexed state.
+func ReadStateIndexHead(db ethdb.KeyValueReader) *uint64 {
+	data, _ := db.Get(stateIndexHeadKey)
+	if len(data) != 8 {
+		return nil
+	}
+	number := binary.BigEndian.Uint64(data)
+	return &number
+}
+
+// WriteStateIndexHead stores the number of latest indexed state
+// into database.
+func WriteStateIndexHead(db ethdb.KeyValueWriter, number uint64) {
+	if err := db.Put(stateIndexHeadKey, encodeBlockNumber(number)); err != nil {
+		log.Crit("Failed to store the state index tail", "err", err)
+	}
+}
+
+// DeleteStateIndexHead removes the number of latest indexed state.
+func DeleteStateIndexHead(db ethdb.KeyValueWriter) {
+	if err := db.Delete(stateIndexHeadKey); err != nil {
+		log.Crit("Failed to delete the state index tail", "err", err)
+	}
+}
+
 // ReadFastTxLookupLimit retrieves the tx lookup limit used in fast sync.
 func ReadFastTxLookupLimit(db ethdb.KeyValueReader) *uint64 {
 	data, _ := db.Get(fastTxLookupLimitKey)

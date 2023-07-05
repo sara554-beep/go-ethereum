@@ -512,10 +512,56 @@ func readHistory(freezer *rawdb.ResettableFreezer, id uint64) (*history, error) 
 	return &dec, nil
 }
 
+func ReadHistory(freezer *rawdb.ResettableFreezer, id uint64) (uint64, map[common.Address][]byte, map[common.Address]map[common.Hash][]byte, error) {
+	blob := rawdb.ReadStateHistoryMeta(freezer, id)
+	if len(blob) == 0 {
+		return 0, nil, nil, fmt.Errorf("state history not found %d", id)
+	}
+	var m meta
+	if err := m.decode(blob); err != nil {
+		return 0, nil, nil, err
+	}
+	var (
+		dec            = history{meta: &m}
+		accountData    = rawdb.ReadStateAccountHistory(freezer, id)
+		storageData    = rawdb.ReadStateStorageHistory(freezer, id)
+		accountIndexes = rawdb.ReadStateAccountIndex(freezer, id)
+		storageIndexes = rawdb.ReadStateStorageIndex(freezer, id)
+	)
+	if err := dec.decode(accountData, storageData, accountIndexes, storageIndexes); err != nil {
+		return 0, nil, nil, err
+	}
+	return m.block, dec.accounts, dec.storages, nil
+}
+
+func readHistories(freezer *rawdb.ResettableFreezer, start uint64, count uint64) ([]*history, error) {
+	metaList, aIndexList, sIndexList, aDataList, sDataList, err := rawdb.ReadStateHistoryList(freezer, start, count)
+	if err != nil {
+		return nil, err
+	}
+	number := len(metaList)
+	if number != len(aIndexList) || number != len(sIndexList) || number != len(aDataList) || number != len(sDataList) {
+		return nil, errors.New("corrupted state history")
+	}
+	var result []*history
+	for i := 0; i < number; i++ {
+		var m meta
+		if err := m.decode(metaList[i]); err != nil {
+			return nil, err
+		}
+		dec := history{meta: &m}
+		if err := dec.decode(aDataList[i], sDataList[i], aIndexList[i], sIndexList[i]); err != nil {
+			return nil, err
+		}
+		result = append(result, &dec)
+	}
+	return result, nil
+}
+
 // writeHistory writes the state history with provided state set. After
 // storing the corresponding state history, it will also prune the stale
 // histories from the disk with the given threshold.
-func writeHistory(db ethdb.KeyValueStore, freezer *rawdb.ResettableFreezer, dl *diffLayer, limit uint64) error {
+func writeHistory(db ethdb.KeyValueStore, freezer *rawdb.ResettableFreezer, indexer *indexer, dl *diffLayer, limit uint64) error {
 	// Short circuit if state set is not available.
 	if dl.states == nil {
 		return errors.New("state change set is not available")
@@ -539,6 +585,9 @@ func writeHistory(db ethdb.KeyValueStore, freezer *rawdb.ResettableFreezer, dl *
 		if err != nil {
 			return err
 		}
+	}
+	if indexer != nil {
+		indexer.notify(0, dl.stateID())
 	}
 	historyDataBytesMeter.Mark(int64(dataSize))
 	historyIndexBytesMeter.Mark(int64(indexSize))

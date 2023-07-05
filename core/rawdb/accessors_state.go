@@ -17,7 +17,9 @@
 package rawdb
 
 import (
+	"bytes"
 	"encoding/binary"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -137,8 +139,118 @@ func WritePersistentStateID(db ethdb.KeyValueWriter, number uint64) {
 	}
 }
 
-// ReadTrieJournal retrieves the serialized in-memory trie nodes of layers saved at
-// the last shutdown.
+// ReadStateIndex retrieves the state index with the provided owner and state hash.
+func ReadStateIndex(db ethdb.KeyValueReader, address common.Address, state common.Hash) []byte {
+	data, err := db.Get(stateIndexKey(address, state))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
+}
+
+func ReadAllStateIndex(db ethdb.Iteratee, start []byte) ([]common.Address, []common.Address, []common.Hash) {
+	var (
+		accounts      []common.Address
+		storageOwners []common.Address
+		storageSlots  []common.Hash
+	)
+	// Construct the key prefix of start point.
+	it := db.NewIterator(stateIndexPrefix, start)
+	defer it.Release()
+
+	for it.Next() {
+		if !bytes.HasPrefix(it.Key(), stateIndexPrefix) {
+			continue
+		}
+		if !isStateIndexKey(it.Key()) {
+			continue
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.AddressLength {
+			accounts = append(accounts, common.BytesToAddress(it.Key()[len(stateIndexPrefix):]))
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.AddressLength+common.HashLength {
+			owner := common.BytesToAddress(it.Key()[len(stateIndexPrefix):])
+			slot := common.BytesToHash(it.Key()[len(stateIndexPrefix)+common.AddressLength:])
+
+			storageOwners = append(storageOwners, owner)
+			storageSlots = append(storageSlots, slot)
+		}
+		if len(accounts)+len(storageOwners) > 1000_000 {
+			break
+		}
+	}
+	return accounts, storageOwners, storageSlots
+}
+
+func ReadAllAccountState(db ethdb.Iteratee, account common.Address) ([]byte, []uint32, [][]byte) {
+	var (
+		index  []byte
+		ids    []uint32
+		blocks [][]byte
+		logged = time.Now()
+	)
+	// Construct the key prefix of start point.
+	it := db.NewIterator(append(stateIndexPrefix, account.Bytes()...), nil)
+	defer it.Release()
+
+	for it.Next() {
+		if !bytes.HasPrefix(it.Key(), append(stateIndexPrefix, account.Bytes()...)) {
+			continue
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.AddressLength {
+			index = common.CopyBytes(it.Value())
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.AddressLength+4 {
+			ids = append(ids, binary.BigEndian.Uint32(it.Key()[len(stateIndexPrefix)+common.AddressLength:]))
+			blocks = append(blocks, common.CopyBytes(it.Value()))
+		}
+		if time.Since(logged) > time.Second*8 {
+			logged = time.Now()
+			log.Info("iterating account states", "blocks", len(blocks))
+		}
+	}
+	return index, ids, blocks
+}
+
+// WriteStateIndex writes the provided state lookup to database.
+func WriteStateIndex(db ethdb.KeyValueWriter, address common.Address, state common.Hash, data []byte) {
+	if err := db.Put(stateIndexKey(address, state), data); err != nil {
+		log.Crit("Failed to store state index", "err", err)
+	}
+}
+
+// DeleteStateIndex deletes the specified state lookup from the database.
+func DeleteStateIndex(db ethdb.KeyValueWriter, address common.Address, state common.Hash) {
+	if err := db.Delete(stateIndexKey(address, state)); err != nil {
+		log.Crit("Failed to delete state index", "err", err)
+	}
+}
+
+// ReadStateIndexBlock retrieves the state index with the provided owner and state hash.
+func ReadStateIndexBlock(db ethdb.KeyValueReader, address common.Address, state common.Hash, id uint32) []byte {
+	data, err := db.Get(stateIndexBlockKey(address, state, id))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
+}
+
+// WriteStateIndexBlock writes the provided state lookup to database.
+func WriteStateIndexBlock(db ethdb.KeyValueWriter, address common.Address, state common.Hash, id uint32, data []byte) {
+	if err := db.Put(stateIndexBlockKey(address, state, id), data); err != nil {
+		log.Crit("Failed to store state index", "err", err)
+	}
+}
+
+// DeleteStateIndexBlock deletes the specified state lookup from the database.
+func DeleteStateIndexBlock(db ethdb.KeyValueWriter, address common.Address, state common.Hash, id uint32) {
+	if err := db.Delete(stateIndexBlockKey(address, state, id)); err != nil {
+		log.Crit("Failed to delete state index", "err", err)
+	}
+}
+
+// ReadTrieJournal retrieves the serialized in-memory trie node diff layers saved at
+// the last shutdown. The blob is expected to be max a few 10s of megabytes.
 func ReadTrieJournal(db ethdb.KeyValueReader) []byte {
 	data, _ := db.Get(trieJournalKey)
 	return data
@@ -263,4 +375,28 @@ func WriteStateHistory(db ethdb.AncientWriter, id uint64, meta []byte, accountIn
 		op.AppendRaw(stateHistoryStorageData, id-1, storages)
 		return nil
 	})
+}
+
+func ReadStateHistoryList(db ethdb.AncientReaderOp, start uint64, count uint64) ([][]byte, [][]byte, [][]byte, [][]byte, [][]byte, error) {
+	metaList, err := db.AncientRange(stateHistoryMeta, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	aIndexList, err := db.AncientRange(stateHistoryAccountIndex, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	sIndexList, err := db.AncientRange(stateHistoryStorageIndex, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	aDataList, err := db.AncientRange(stateHistoryAccountData, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	sDataList, err := db.AncientRange(stateHistoryStorageData, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	return metaList, aIndexList, sIndexList, aDataList, sDataList, nil
 }

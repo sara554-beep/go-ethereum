@@ -171,13 +171,13 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		// Per-level options. Options for at least one level must be specified. The
 		// options for the last level are used for all subsequent levels.
 		Levels: []pebble.LevelOptions{
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
-			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10)},
+			{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10) /*FilterType: pebble.TableFilter*/},
+			//{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10), FilterType: pebble.TableFilter},
+			//{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10), FilterType: pebble.TableFilter},
+			//{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10), FilterType: pebble.TableFilter},
+			//{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10), FilterType: pebble.TableFilter},
+			//{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10), FilterType: pebble.TableFilter},
+			//{TargetFileSize: 2 * 1024 * 1024, FilterPolicy: bloom.FilterPolicy(10), FilterType: pebble.TableFilter},
 		},
 		ReadOnly: readonly,
 		EventListener: &pebble.EventListener{
@@ -214,6 +214,10 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 
 	// Start up the metrics gathering and return
 	go db.meter(metricsGatheringInterval)
+	m := innerDB.Metrics()
+	for ln, l := range m.Levels {
+		log.Info("Level metrics", "L", ln, "files", l.NumFiles, "size", common.StorageSize(l.Size))
+	}
 	return db, nil
 }
 

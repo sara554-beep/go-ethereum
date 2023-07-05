@@ -116,6 +116,7 @@ type Database struct {
 	diskdb     ethdb.Database           // Persistent storage for matured trie nodes
 	tree       *layerTree               // The group for all known layers
 	freezer    *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
+	indexer    *indexer                 // Indexer for creating state history indexes
 	lock       sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 
@@ -158,6 +159,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 		if pruned != 0 {
 			log.Info("Truncated extra state histories", "number", pruned)
 		}
+		db.indexer = newIndexer(diskdb, db.freezer, db.tree.bottom().stateID())
 	}
 	log.Warn("Path-based state scheme is an experimental feature")
 	return db
@@ -352,10 +354,13 @@ func (db *Database) Close() error {
 	defer db.lock.Unlock()
 
 	db.readOnly = true
-	if db.freezer == nil {
-		return nil
+	if db.indexer != nil {
+		db.indexer.close()
 	}
-	return db.freezer.Close()
+	if db.freezer != nil {
+		return db.freezer.Close()
+	}
+	return nil
 }
 
 // Size returns the current storage size of the memory cache in front of the
