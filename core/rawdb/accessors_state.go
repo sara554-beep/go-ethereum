@@ -136,6 +136,52 @@ func WritePersistentStateID(db ethdb.KeyValueWriter, number uint64) {
 	}
 }
 
+// ReadStateIndex retrieves the state index with the provided owner and state hash.
+func ReadStateIndex(db ethdb.KeyValueReader, owner common.Hash, state common.Hash) []byte {
+	data, err := db.Get(stateIndexKey(owner, state))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
+}
+
+// WriteStateIndex writes the provided state lookup to database.
+func WriteStateIndex(db ethdb.KeyValueWriter, owner common.Hash, state common.Hash, data []byte) {
+	if err := db.Put(stateIndexKey(owner, state), data); err != nil {
+		log.Crit("Failed to store state index", "err", err)
+	}
+}
+
+// DeleteStateIndex deletes the specified state lookup from the database.
+func DeleteStateIndex(db ethdb.KeyValueWriter, owner common.Hash, state common.Hash) {
+	if err := db.Delete(stateIndexKey(owner, state)); err != nil {
+		log.Crit("Failed to delete state index", "err", err)
+	}
+}
+
+// ReadStateIndexBlock retrieves the state index with the provided owner and state hash.
+func ReadStateIndexBlock(db ethdb.KeyValueReader, owner common.Hash, state common.Hash, id uint32) []byte {
+	data, err := db.Get(stateIndexBlockKey(owner, state, id))
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	return data
+}
+
+// WriteStateIndexBlock writes the provided state lookup to database.
+func WriteStateIndexBlock(db ethdb.KeyValueWriter, owner common.Hash, state common.Hash, id uint32, data []byte) {
+	if err := db.Put(stateIndexBlockKey(owner, state, id), data); err != nil {
+		log.Crit("Failed to store state index", "err", err)
+	}
+}
+
+// DeleteStateIndexBlock deletes the specified state lookup from the database.
+func DeleteStateIndexBlock(db ethdb.KeyValueWriter, owner common.Hash, state common.Hash, id uint32) {
+	if err := db.Delete(stateIndexBlockKey(owner, state, id)); err != nil {
+		log.Crit("Failed to delete state index", "err", err)
+	}
+}
+
 // ReadTrieJournal retrieves the serialized in-memory trie node diff layers saved at
 // the last shutdown. The blob is expected to be max a few 10s of megabytes.
 func ReadTrieJournal(db ethdb.KeyValueReader) []byte {
@@ -188,8 +234,8 @@ func ReadStateHistoryMeta(db ethdb.AncientReaderOp, id uint64) []byte {
 // start position and count. Calculate the real position of state history in freezer
 // by minus one since the first state history is started from one(zero for empty
 // state).
-func ReadStateHistoryMetaList(db ethdb.AncientReaderOp, start uint64, count uint64, limit uint64) ([][]byte, error) {
-	return db.AncientRange(stateHistoryMeta, start-1, count, limit)
+func ReadStateHistoryMetaList(db ethdb.AncientReaderOp, start uint64, count uint64) ([][]byte, error) {
+	return db.AncientRange(stateHistoryMeta, start-1, count, 0)
 }
 
 // ReadStateAccountIndex retrieves the state root corresponding to the specified
@@ -234,4 +280,28 @@ func ReadStateStorageHistory(db ethdb.AncientReaderOp, id uint64) []byte {
 		return nil
 	}
 	return blob
+}
+
+func ReadStateHistoryList(db ethdb.AncientReaderOp, start uint64, count uint64) ([][]byte, [][]byte, [][]byte, [][]byte, [][]byte, error) {
+	metaList, err := db.AncientRange(stateHistoryMeta, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	aIndexList, err := db.AncientRange(stateHistoryAccountIndex, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	sIndexList, err := db.AncientRange(stateHistoryStorageIndex, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	aDataList, err := db.AncientRange(stateHistoryAccountData, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	sDataList, err := db.AncientRange(stateHistoryStorageData, start-1, count, 0)
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	return metaList, aIndexList, sIndexList, aDataList, sDataList, nil
 }

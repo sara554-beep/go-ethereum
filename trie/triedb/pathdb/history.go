@@ -440,10 +440,34 @@ func readHistory(freezer *rawdb.ResettableFreezer, id uint64) (*history, error) 
 	return &dec, nil
 }
 
+func readHistories(freezer *rawdb.ResettableFreezer, start uint64, count uint64) ([]*history, error) {
+	metaList, aIndexList, sIndexList, aDataList, sDataList, err := rawdb.ReadStateHistoryList(freezer, start, count)
+	if err != nil {
+		return nil, err
+	}
+	number := len(metaList)
+	if number != len(aIndexList) || number != len(sIndexList) || number != len(aDataList) || number != len(sDataList) {
+		return nil, errors.New("corrupted state history")
+	}
+	var result []*history
+	for i := 0; i < number; i++ {
+		var m meta
+		if err := m.decode(metaList[i]); err != nil {
+			return nil, err
+		}
+		dec := history{meta: &m}
+		if err := dec.decode(aDataList[i], sDataList[i], aIndexList[i], sIndexList[i]); err != nil {
+			return nil, err
+		}
+		result = append(result, &dec)
+	}
+	return result, nil
+}
+
 // writeStateHistory writes the state history with provided state set. After
 // storing the corresponding state history, it will also prune the stale
 // histories from the disk with the given threshold.
-func writeStateHistory(freezer *rawdb.ResettableFreezer, dl *diffLayer, limit uint64) error {
+func writeStateHistory(freezer *rawdb.ResettableFreezer, indexer *indexer, dl *diffLayer, limit uint64) error {
 	// Short circuit if state set is not available.
 	if dl.states == nil {
 		return errors.New("state change set is not available")
@@ -468,6 +492,9 @@ func writeStateHistory(freezer *rawdb.ResettableFreezer, dl *diffLayer, limit ui
 			return err
 		}
 	}
+	if indexer != nil {
+		indexer.notify(0, dl.stateID())
+	}
 	historyDataSizeMeter.Mark(int64(dataSize))
 	historyIndexSizeMeter.Mark(int64(indexSize))
 	historyBuildTimeMeter.UpdateSince(start)
@@ -483,7 +510,7 @@ func checkHistories(freezer *rawdb.ResettableFreezer, start, count uint64, check
 		if number > 10000 {
 			number = 10000 // split the big read into small chunks
 		}
-		blobs, err := rawdb.ReadStateHistoryMetaList(freezer, start, number, number*metaFixedSize)
+		blobs, err := rawdb.ReadStateHistoryMetaList(freezer, start, number)
 		if err != nil {
 			return err
 		}

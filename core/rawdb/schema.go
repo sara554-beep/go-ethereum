@@ -76,6 +76,9 @@ var (
 	// trieJournalKey tracks the in-memory trie node layers across restarts.
 	trieJournalKey = []byte("TrieJournal")
 
+	// stateIndexHeadKey tracks the id of the latest state history has been indexed.
+	stateIndexHeadKey = []byte("StateIndexHead")
+
 	// txIndexTailKey tracks the oldest block whose transactions have been indexed.
 	txIndexTailKey = []byte("TransactionIndexTail")
 
@@ -111,6 +114,7 @@ var (
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
 	stateIDPrefix         = []byte("L") // stateIDPrefix + state root -> state id
+	stateIndexPrefix      = []byte("M") // stateIndexPrefix + accountHash or (accountHash + slotHash) -> index
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -250,6 +254,41 @@ func genesisStateSpecKey(hash common.Hash) []byte {
 // stateIDKey = stateIDPrefix + root (32 bytes)
 func stateIDKey(root common.Hash) []byte {
 	return append(stateIDPrefix, root.Bytes()...)
+}
+
+// stateIndexKey = stateIndexPrefix + owner + state
+func stateIndexKey(owner common.Hash, state common.Hash) []byte {
+	if owner == (common.Hash{}) {
+		return append(stateIndexPrefix, state.Bytes()...)
+	}
+	return append(append(stateIndexPrefix, owner.Bytes()...), state.Bytes()...)
+}
+
+// stateIndexBlockKey = stateIndexPrefix + owner + state + id
+func stateIndexBlockKey(owner common.Hash, state common.Hash, id uint32) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], id)
+	if owner == (common.Hash{}) {
+		return append(append(stateIndexPrefix, state.Bytes()...), buf[:]...)
+	}
+	return append(append(append(stateIndexPrefix, owner.Bytes()...), state.Bytes()...), buf[:]...)
+}
+
+// isStateIndexKey reports if the provided database key belongs to state index.
+func isStateIndexKey(key []byte) bool {
+	if !bytes.HasPrefix(key, stateIndexPrefix) {
+		return false
+	}
+	if len(key) == len(stateIndexPrefix)+common.HashLength {
+		return true
+	}
+	if len(key) == len(stateIndexPrefix)+common.HashLength+4 {
+		return true
+	}
+	if len(key) == len(stateIndexPrefix)+common.HashLength*2 {
+		return true
+	}
+	return len(key) == len(stateIndexPrefix)+common.HashLength*2+4
 }
 
 // accountTrieNodeKey = trieNodeAccountPrefix + nodePath.
