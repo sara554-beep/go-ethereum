@@ -61,11 +61,11 @@ func parseIndexBlock(blob []byte) ([]uint32, []byte, error) {
 		}
 		prev = restarts[i]
 	}
-	return restarts, blob[:tailLen], nil
+	return restarts, blob[:len(blob)-tailLen], nil
 }
 
-func newBlockReader(db ethdb.KeyValueReader, owner common.Hash, state common.Hash, id uint32) (*blockReader, error) {
-	blob := rawdb.ReadStateIndexBlock(db, owner, state, id)
+func newBlockReader(disk ethdb.KeyValueReader, owner common.Hash, state common.Hash, id uint32) (*blockReader, error) {
+	blob := rawdb.ReadStateIndexBlock(disk, owner, state, id)
 	if len(blob) == 0 {
 		return nil, errors.New("index block is not present")
 	}
@@ -124,7 +124,7 @@ func (br *blockReader) readLT(id uint64) (uint64, error) {
 }
 
 type indexReader struct {
-	db       *Database
+	disk     ethdb.KeyValueReader
 	descList []*indexBlockDesc
 	readers  map[uint32]*blockReader
 	owner    common.Hash
@@ -150,15 +150,15 @@ func parseIndex(blob []byte) ([]*indexBlockDesc, error) {
 	return descList, nil
 }
 
-func newIndexReader(db *Database, owner, state common.Hash) (*indexReader, error) {
-	descList, err := parseIndex(rawdb.ReadStateIndex(db.diskdb, owner, state))
+func newIndexReader(disk ethdb.KeyValueReader, owner, state common.Hash) (*indexReader, error) {
+	descList, err := parseIndex(rawdb.ReadStateIndex(disk, owner, state))
 	if err != nil {
 		return nil, err
 	}
 	return &indexReader{
 		descList: descList,
 		readers:  make(map[uint32]*blockReader),
-		db:       db,
+		disk:     disk,
 		owner:    owner,
 		state:    state,
 	}, nil
@@ -176,7 +176,7 @@ func (r *indexReader) readLT(id uint64) (uint64, error) {
 	br, ok := r.readers[desc.id]
 	if !ok {
 		var err error
-		br, err = newBlockReader(r.db.diskdb, r.owner, r.state, desc.id)
+		br, err = newBlockReader(r.disk, r.owner, r.state, desc.id)
 		if err != nil {
 			return 0, err
 		}
@@ -186,19 +186,21 @@ func (r *indexReader) readLT(id uint64) (uint64, error) {
 }
 
 type reader struct {
-	db      *Database
+	disk    ethdb.KeyValueReader
+	freezer *rawdb.ResettableFreezer
 	readers map[string]*indexReader
 }
 
-func newReader(db *Database) *reader {
+func newReader(disk ethdb.KeyValueReader, freezer *rawdb.ResettableFreezer) *reader {
 	return &reader{
-		db:      db,
+		disk:    disk,
+		freezer: freezer,
 		readers: make(map[string]*indexReader),
 	}
 }
 
 func (r *reader) findAccount(accountHash common.Hash, id uint64, resolve func([]byte)) error {
-	blob := rawdb.ReadStateAccountIndex(r.db.freezer, id)
+	blob := rawdb.ReadStateAccountIndex(r.freezer, id)
 	if len(blob)%accountIndexSize != 0 {
 		return errors.New("corrupted account index")
 	}
@@ -219,7 +221,7 @@ func (r *reader) findAccount(accountHash common.Hash, id uint64, resolve func([]
 }
 
 func (r *reader) findStorage(storageHash common.Hash, id uint64, slotOffset, slotLength int, resolve func([]byte)) error {
-	blob := rawdb.ReadStateStorageIndex(r.db.freezer, id)
+	blob := rawdb.ReadStateStorageIndex(r.freezer, id)
 	if len(blob)%storageIndexSize != 0 {
 		return errors.New("storage indices are not corrupted")
 	}
@@ -255,7 +257,7 @@ func (r *reader) resolveAccount(accountHash common.Hash, id uint64) ([]byte, err
 		return nil, err
 	}
 	// TODO(rj493456442) optimize it with partial read
-	data := rawdb.ReadStateAccountHistory(r.db.freezer, id)
+	data := rawdb.ReadStateAccountHistory(r.freezer, id)
 	if len(data) < offset+length {
 		return nil, errors.New("corrupted account data")
 	}
@@ -284,7 +286,7 @@ func (r *reader) resolveStorage(accountHash common.Hash, storageHash common.Hash
 		return nil, err
 	}
 	// TODO(rj493456442) optimize it with partial read
-	data := rawdb.ReadStateStorageHistory(r.db.freezer, id)
+	data := rawdb.ReadStateStorageHistory(r.freezer, id)
 	if len(data) < offset+length {
 		return nil, errors.New("corrupted storage data")
 	}
@@ -299,23 +301,20 @@ func (r *reader) resolve(owner common.Hash, state common.Hash, id uint64) ([]byt
 }
 
 func (r *reader) read(owner common.Hash, state common.Hash, id uint64) ([]byte, error) {
-	if r.db.freezer == nil {
-		return nil, errors.New("state history is not available")
-	}
-	tail, err := r.db.freezer.Tail()
+	tail, err := r.freezer.Tail()
 	if err != nil {
 		return nil, err
 	}
 	if id < tail {
 		return nil, errors.New("historic state is pruned")
 	}
-	head := rawdb.ReadStateIndexHead(r.db.diskdb)
+	head := rawdb.ReadStateIndexHead(r.disk)
 	if head == nil || *head <= id {
 		return nil, errors.New("state is not indexed")
 	}
 	ir, ok := r.readers[owner.Hex()+state.Hex()]
 	if !ok {
-		ir, err = newIndexReader(r.db, owner, state)
+		ir, err = newIndexReader(r.disk, owner, state)
 		if err != nil {
 			return nil, err
 		}
@@ -324,6 +323,9 @@ func (r *reader) read(owner common.Hash, state common.Hash, id uint64) ([]byte, 
 	id, err = ir.readLT(id)
 	if err != nil {
 		return nil, err
+	}
+	if id == math.MaxUint64 {
+		return nil, errors.New("undefined")
 	}
 	return r.resolve(owner, state, id)
 }

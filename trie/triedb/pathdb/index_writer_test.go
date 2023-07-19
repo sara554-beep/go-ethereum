@@ -17,56 +17,103 @@
 package pathdb
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie/testutil"
+	"os"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 )
 
-var (
-	testAccountIndex = map[common.Hash][]uint64{
-		common.Hash{0x1}: {1, 2},
-		common.Hash{0x2}: {2, 3},
+func TestWriteIndexXXX(t *testing.T) {
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+
+	var (
+		db, _ = rawdb.NewPebbleDBDatabase("pebble", 1024, 1024, "", false)
+	)
+	for i := 0; i < 10_000_000; i++ {
+		db.Put(testutil.RandBytes(30), testutil.RandBytes(30))
 	}
-	testStorageIndex = map[common.Hash]map[common.Hash][]uint64{
-		common.Hash{0x1}: {
-			common.Hash{0x1}: {1, 2},
-			common.Hash{0x2}: {1, 2},
-			common.Hash{0x3}: {1, 2},
-			common.Hash{0x4}: {1, 2},
-			common.Hash{0x1}: {2},
-			common.Hash{0x2}: {2},
-		},
-		common.Hash{0x2}: {
-			common.Hash{0x1}: {2},
-			common.Hash{0x2}: {2},
-			common.Hash{0x3}: {3},
-			common.Hash{0x4}: {3},
-		},
+	for i := 0; i < 100000; i++ {
+		db.Get(testutil.RandBytes(20))
 	}
-)
+}
 
 func TestWriteIndex(t *testing.T) {
+	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+
 	var (
-		w  = newWriter()
-		db = rawdb.NewMemoryDatabase()
+		w          = newWriter()
+		db, _      = rawdb.NewPebbleDBDatabase("pebble", 1024, 1024, "", false)
+		freezer, _ = openFreezer(t.TempDir(), false)
+		hs         = makeHistories(3)
 	)
-	for account, idList := range testAccountIndex {
-		for _, id := range idList {
-			w.addAccount(account, id)
-		}
+	for i := 0; i < 10_000_000; i++ {
+		db.Put(testutil.RandBytes(30), testutil.RandBytes(30))
 	}
-	for account, slots := range testStorageIndex {
-		for slot, idList := range slots {
-			for _, id := range idList {
-				w.addSlot(account, slot, id)
+	for i := 0; i < len(hs); i++ {
+		stateID := uint64(i + 1)
+		accountData, storageData, accountIndex, storageIndex := hs[i].encode()
+		rawdb.WriteStateHistory(freezer, stateID, hs[i].meta.encode(), accountIndex, storageIndex, accountData, storageData)
+
+		for _, account := range hs[i].accountList {
+			w.addAccount(account, stateID)
+
+			for _, slot := range hs[i].storageList[account] {
+				w.addSlot(account, slot, stateID)
 			}
 		}
 	}
-	if err := w.finish(db, true, 3); err != nil {
+	if err := w.finish(db, true, uint64(len(hs))); err != nil {
 		t.Fatalf("Failed to write state index, %v", err)
 	}
+	var (
+		accounts     = make(map[common.Hash][]byte)
+		accountsLast = make(map[common.Hash][]byte)
+		storages     = make(map[common.Hash]map[common.Hash][]byte)
+		storagesLast = make(map[common.Hash]map[common.Hash][]byte)
+	)
+	for _, h := range hs {
+		for acct, acctdata := range h.accounts {
+			if _, ok := accounts[acct]; !ok {
+				accounts[acct] = common.CopyBytes(acctdata)
+			}
+			accountsLast[acct] = common.CopyBytes(acctdata)
+		}
+		for acct, slots := range h.storages {
+			if storages[acct] == nil {
+				storages[acct] = make(map[common.Hash][]byte)
+			}
+			if storagesLast[acct] == nil {
+				storagesLast[acct] = make(map[common.Hash][]byte)
+			}
+			for slot, slotdata := range slots {
+				if _, ok := storages[acct][slot]; !ok {
+					storages[acct][slot] = common.CopyBytes(slotdata)
+				}
+				storagesLast[acct][slot] = common.CopyBytes(slotdata)
+			}
+		}
+	}
+
+	r := newReader(db, freezer)
+	for i, h := range hs {
+		stateID := uint64(i + 1)
+		for account, exp := range h.accounts {
+			data, err := r.read(common.Hash{}, account, stateID-1)
+			if err != nil {
+				fmt.Println("id", stateID, "accountHash", account.Hex(), "err", err)
+			} else {
+				if !bytes.Equal(data, exp) {
+					fmt.Println("id", stateID, "accountHash", account.Hex(), "data", data)
+				}
+			}
+		}
+	}
+	NewTraverser(db, freezer).Traverse()
 }
 
 func TestWriteIndex2(t *testing.T) {

@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -282,6 +283,10 @@ func inspect(ctx *cli.Context) error {
 
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	defer db.Close()
+
+	ancientDir, _ := db.AncientDatadir()
+	freezer, _ := rawdb.NewStateHistoryFreezer(ancientDir, false)
+	pathdb.NewTraverser(db, freezer).Traverse()
 
 	return rawdb.InspectDatabase(db, prefix, start)
 }

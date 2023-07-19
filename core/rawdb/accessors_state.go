@@ -17,7 +17,9 @@
 package rawdb
 
 import (
+	"bytes"
 	"encoding/binary"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -143,6 +145,67 @@ func ReadStateIndex(db ethdb.KeyValueReader, owner common.Hash, state common.Has
 		return nil
 	}
 	return data
+}
+
+func ReadAllStateIndex(db ethdb.Iteratee) ([]common.Hash, []common.Hash, []common.Hash) {
+	var (
+		accounts      []common.Hash
+		storageOwners []common.Hash
+		storageSlots  []common.Hash
+	)
+	// Construct the key prefix of start point.
+	it := db.NewIterator(stateIndexPrefix, nil)
+	defer it.Release()
+
+	for it.Next() {
+		if !bytes.HasPrefix(it.Key(), stateIndexPrefix) {
+			continue
+		}
+		if !isStateIndexKey(it.Key()) {
+			continue
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.HashLength {
+			accounts = append(accounts, common.BytesToHash(it.Key()[len(stateIndexPrefix):]))
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.HashLength*2 {
+			owner := common.BytesToHash(it.Key()[len(stateIndexPrefix):])
+			slot := common.BytesToHash(it.Key()[len(stateIndexPrefix)+common.HashLength:])
+
+			storageOwners = append(storageOwners, owner)
+			storageSlots = append(storageSlots, slot)
+		}
+	}
+	return accounts, storageOwners, storageSlots
+}
+
+func ReadAllAccountState(db ethdb.Iteratee, account common.Hash) ([]byte, []uint32, [][]byte) {
+	var (
+		index  []byte
+		ids    []uint32
+		blocks [][]byte
+		logged = time.Now()
+	)
+	// Construct the key prefix of start point.
+	it := db.NewIterator(append(stateIndexPrefix, account.Bytes()...), nil)
+	defer it.Release()
+
+	for it.Next() {
+		if !bytes.HasPrefix(it.Key(), append(stateIndexPrefix, account.Bytes()...)) {
+			continue
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.HashLength {
+			index = common.CopyBytes(it.Value())
+		}
+		if len(it.Key()) == len(stateIndexPrefix)+common.HashLength+4 {
+			ids = append(ids, binary.BigEndian.Uint32(it.Key()[len(stateIndexPrefix)+common.HashLength:]))
+			blocks = append(blocks, common.CopyBytes(it.Value()))
+		}
+		if time.Since(logged) > time.Second*8 {
+			logged = time.Now()
+			log.Info("iterating account states", "blocks", len(blocks))
+		}
+	}
+	return index, ids, blocks
 }
 
 // WriteStateIndex writes the provided state lookup to database.

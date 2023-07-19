@@ -159,7 +159,29 @@ type indexWriter struct {
 }
 
 func newIndexWriter(db ethdb.KeyValueStore, owner, state common.Hash) (*indexWriter, error) {
+	//ss := time.Now()
 	blob := rawdb.ReadStateIndex(db, owner, state)
+	//dd := time.Since(ss)
+	//
+	//if len(blob) == 0 {
+	//	totalIndexReadMissN += 1
+	//	totalIndexReadMiss += dd
+	//} else {
+	//	totalIndexReadHitN += 1
+	//	totalIndexReadHit += dd
+	//}
+	//if dd > time.Millisecond*30 {
+	//	indexReadMissAvg := float64(totalIndexReadMiss) / float64(totalIndexReadMissN)
+	//	indexReadHitAvg := float64(totalIndexReadHit) / float64(totalIndexReadHitN)
+	//
+	//	if len(blob) == 0 {
+	//		log.Info("Slow read for non-existent index meta",
+	//			"elapsed", common.PrettyDuration(dd), "missAvg", common.PrettyDuration(indexReadMissAvg), "hitAvg", common.PrettyDuration(indexReadHitAvg))
+	//	} else {
+	//		log.Info("Slow read for existent index meta",
+	//			"elapsed", common.PrettyDuration(dd), "missAvg", common.PrettyDuration(indexReadMissAvg), "hitAvg", common.PrettyDuration(indexReadHitAvg))
+	//	}
+	//}
 	if len(blob) == 0 {
 		desc := &indexBlockDesc{}
 		bw, _ := newBlockWriter(nil, desc)
@@ -185,7 +207,31 @@ func newIndexWriter(db ethdb.KeyValueStore, owner, state common.Hash) (*indexWri
 		descList = append(descList, &indexBlockDesc{id: lastDesc.id + 1})
 		lastDesc = descList[len(descList)-1]
 	}
-	bw, err := newBlockWriter(rawdb.ReadStateIndexBlock(db, owner, state, lastDesc.id), lastDesc)
+
+	//ss2 := time.Now()
+	indexBlock := rawdb.ReadStateIndexBlock(db, owner, state, lastDesc.id)
+	//dd2 := time.Since(ss2)
+
+	//if len(indexBlock) == 0 {
+	//	totalIndexBlockReadMissN += 1
+	//	totalIndexBlockReadMiss += dd2
+	//} else {
+	//	totalIndexBlockReadHitN += 1
+	//	totalIndexBlockReadHit += dd2
+	//}
+	//if dd2 > time.Millisecond*30 {
+	//	indexReadBlockMissAvg := float64(totalIndexBlockReadMiss) / float64(totalIndexBlockReadMissN)
+	//	indexReadBlockHitAvg := float64(totalIndexBlockReadHit) / float64(totalIndexBlockReadHitN)
+	//
+	//	if len(indexBlock) == 0 {
+	//		log.Info("Slow read for non-existent index block",
+	//			"elapsed", common.PrettyDuration(dd2), "missAvg", common.PrettyDuration(indexReadBlockMissAvg), "hitAvg", common.PrettyDuration(indexReadBlockHitAvg))
+	//	} else {
+	//		log.Info("Slow read for existent index block",
+	//			"elapsed", common.PrettyDuration(dd2), "missAvg", common.PrettyDuration(indexReadBlockMissAvg), "hitAvg", common.PrettyDuration(indexReadBlockHitAvg))
+	//	}
+	//}
+	bw, err := newBlockWriter(indexBlock, lastDesc)
 	if err != nil {
 		return nil, err
 	}
@@ -279,6 +325,18 @@ func (w *writer) addSlot(addrHash common.Hash, hash common.Hash, number uint64) 
 	}
 	w.storages[addrHash][hash] = append(w.storages[addrHash][hash], number)
 }
+
+var (
+	totalIndexReadHit   time.Duration
+	totalIndexReadHitN  int
+	totalIndexReadMiss  time.Duration
+	totalIndexReadMissN int
+
+	totalIndexBlockReadHit   time.Duration
+	totalIndexBlockReadHitN  int
+	totalIndexBlockReadMiss  time.Duration
+	totalIndexBlockReadMissN int
+)
 
 func (w *writer) finish(db ethdb.KeyValueStore, force bool, head uint64) error {
 	if !force && w.states < stateWriteBatch {
