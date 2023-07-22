@@ -147,14 +147,14 @@ func ReadStateIndex(db ethdb.KeyValueReader, owner common.Hash, state common.Has
 	return data
 }
 
-func ReadAllStateIndex(db ethdb.Iteratee) ([]common.Hash, []common.Hash, []common.Hash) {
+func ReadAllStateIndex(db ethdb.Iteratee, start []byte) ([]common.Hash, []common.Hash, []common.Hash) {
 	var (
 		accounts      []common.Hash
 		storageOwners []common.Hash
 		storageSlots  []common.Hash
 	)
 	// Construct the key prefix of start point.
-	it := db.NewIterator(stateIndexPrefix, nil)
+	it := db.NewIterator(stateIndexPrefix, start)
 	defer it.Release()
 
 	for it.Next() {
@@ -173,6 +173,9 @@ func ReadAllStateIndex(db ethdb.Iteratee) ([]common.Hash, []common.Hash, []commo
 
 			storageOwners = append(storageOwners, owner)
 			storageSlots = append(storageSlots, slot)
+		}
+		if len(accounts)+len(storageOwners) > 1000_000 {
+			break
 		}
 	}
 	return accounts, storageOwners, storageSlots
