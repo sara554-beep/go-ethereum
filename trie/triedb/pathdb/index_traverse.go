@@ -45,7 +45,12 @@ func (t *acctStats) addAccount(hash common.Hash, modify uint64, descSize, dataSi
 			return
 		}
 		t.accounts = t.accounts[:len(t.accounts)-1]
-		t.accounts = append(t.accounts, &topAccount{hash: hash, modify: modify})
+		t.accounts = append(t.accounts, &topAccount{
+			hash:     hash,
+			modify:   modify,
+			descSize: descSize,
+			dataSize: dataSize,
+		})
 	}
 	slices.SortFunc(t.accounts, func(a, b *topAccount) bool {
 		return a.modify >= b.modify
