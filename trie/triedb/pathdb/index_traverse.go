@@ -34,7 +34,12 @@ func (t *acctStats) addAccount(hash common.Hash, modify uint64, descSize, dataSi
 	t.totalSize += descSize + dataSize
 
 	if len(t.accounts) < t.topN {
-		t.accounts = append(t.accounts, topAccount{hash: hash, modify: modify, descSize: descSize, dataSize: dataSize})
+		t.accounts = append(t.accounts, topAccount{
+			hash:     hash,
+			modify:   modify,
+			descSize: descSize,
+			dataSize: dataSize,
+		})
 	} else {
 		if t.accounts[len(t.accounts)-1].modify > modify {
 			return
@@ -47,16 +52,15 @@ func (t *acctStats) addAccount(hash common.Hash, modify uint64, descSize, dataSi
 	})
 }
 
-func (t *acctStats) String() string {
-	var ret string
+func (t *acctStats) Report() {
 	for i := 0; i < len(t.accounts); i++ {
-		ret += fmt.Sprintf("TOP-%d: account: %s, modifies: %d, desc-size: %v, data-size: %v\n",
-			i+1, t.accounts[i].hash.Hex(), t.accounts[i].modify, t.accounts[i].descSize, t.accounts[i].dataSize)
+		log.Info("Top account",
+			"i", i+1, "account", t.accounts[i].hash.Hex(), "modify", t.accounts[i].modify,
+			"descsize", t.accounts[i].descSize, "datasize", t.accounts[i].dataSize)
 	}
-	ret += fmt.Sprintf("Total accounts: %d, average-modify: %d, average-size: %v\n",
-		t.totalAccounts, int(float64(t.totalModifies)/float64(t.totalAccounts)),
-		t.totalSize/common.StorageSize(t.totalAccounts))
-	return ret
+	log.Info("Total accounts", "number", t.totalAccounts,
+		"average-modify", int(float64(t.totalModifies)/float64(t.totalAccounts)),
+		"average-size", t.totalSize/common.StorageSize(t.totalAccounts))
 }
 
 type Traverser struct {
@@ -180,5 +184,5 @@ func (t *Traverser) Traverse() {
 			t.processAccount(top, account)
 		}
 	}
-	log.Info("Iterated state history index", "account", top.String())
+	top.Report()
 }
