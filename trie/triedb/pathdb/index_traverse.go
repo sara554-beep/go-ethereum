@@ -21,7 +21,7 @@ type topAccount struct {
 
 type acctStats struct {
 	topN     int
-	accounts []topAccount
+	accounts []*topAccount
 
 	totalAccounts int
 	totalModifies uint64
@@ -34,7 +34,7 @@ func (t *acctStats) addAccount(hash common.Hash, modify uint64, descSize, dataSi
 	t.totalSize += descSize + dataSize
 
 	if len(t.accounts) < t.topN {
-		t.accounts = append(t.accounts, topAccount{
+		t.accounts = append(t.accounts, &topAccount{
 			hash:     hash,
 			modify:   modify,
 			descSize: descSize,
@@ -45,9 +45,9 @@ func (t *acctStats) addAccount(hash common.Hash, modify uint64, descSize, dataSi
 			return
 		}
 		t.accounts = t.accounts[:len(t.accounts)-1]
-		t.accounts = append(t.accounts, topAccount{hash: hash, modify: modify})
+		t.accounts = append(t.accounts, &topAccount{hash: hash, modify: modify})
 	}
-	slices.SortFunc(t.accounts, func(a, b topAccount) bool {
+	slices.SortFunc(t.accounts, func(a, b *topAccount) bool {
 		return a.modify >= b.modify
 	})
 }
