@@ -180,5 +180,5 @@ func (t *Traverser) Traverse() {
 			t.processAccount(top, account)
 		}
 	}
-	log.Info("Iterated state history index", "account", top.topN)
+	log.Info("Iterated state history index", "account", top.String())
 }
