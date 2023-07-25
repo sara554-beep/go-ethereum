@@ -440,6 +440,28 @@ func readHistory(freezer *rawdb.ResettableFreezer, id uint64) (*history, error) 
 	return &dec, nil
 }
 
+func ReadHistory(freezer *rawdb.ResettableFreezer, id uint64) (map[common.Hash][]byte, map[common.Hash]map[common.Hash][]byte, error) {
+	blob := rawdb.ReadStateHistoryMeta(freezer, id)
+	if len(blob) == 0 {
+		return nil, nil, fmt.Errorf("state history not found %d", id)
+	}
+	var m meta
+	if err := m.decode(blob); err != nil {
+		return nil, nil, err
+	}
+	var (
+		dec            = history{meta: &m}
+		accountData    = rawdb.ReadStateAccountHistory(freezer, id)
+		storageData    = rawdb.ReadStateStorageHistory(freezer, id)
+		accountIndexes = rawdb.ReadStateAccountIndex(freezer, id)
+		storageIndexes = rawdb.ReadStateStorageIndex(freezer, id)
+	)
+	if err := dec.decode(accountData, storageData, accountIndexes, storageIndexes); err != nil {
+		return nil, nil, err
+	}
+	return dec.accounts, dec.storages, nil
+}
+
 func readHistories(freezer *rawdb.ResettableFreezer, start uint64, count uint64) ([]*history, error) {
 	metaList, aIndexList, sIndexList, aDataList, sDataList, err := rawdb.ReadStateHistoryList(freezer, start, count)
 	if err != nil {

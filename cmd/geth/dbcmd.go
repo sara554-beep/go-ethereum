@@ -286,9 +286,64 @@ func inspect(ctx *cli.Context) error {
 
 	ancientDir, _ := db.AncientDatadir()
 	freezer, _ := rawdb.NewStateHistoryFreezer(ancientDir, false)
-	pathdb.NewTraverser(db, freezer).Traverse()
+	head, _ := freezer.Ancients()
 
-	return rawdb.InspectDatabase(db, prefix, start)
+	var (
+		totalAccount common.StorageSize
+		totalStorage common.StorageSize
+
+		allAccounts []map[common.Hash][]byte
+		allStorages []map[common.Hash]map[common.Hash][]byte
+
+		aggregatedAccount = make(map[common.Hash][]byte)
+		aggregatedStorage = make(map[common.Hash]map[common.Hash][]byte)
+	)
+	for i := 0; i < 64; i++ {
+		accounts, storages, err := pathdb.ReadHistory(freezer, head-uint64(i)-1)
+		if err != nil {
+			log.Crit("failed to read history", "err", err)
+		}
+		allAccounts = append(allAccounts, accounts)
+		allStorages = append(allStorages, storages)
+
+		for accountHash, data := range accounts {
+			aggregatedAccount[accountHash] = common.CopyBytes(data)
+		}
+		for accountHash, slots := range storages {
+			if _, ok := aggregatedStorage[accountHash]; !ok {
+				aggregatedStorage[accountHash] = make(map[common.Hash][]byte)
+			}
+			for slotHash, slot := range slots {
+				aggregatedStorage[accountHash][slotHash] = common.CopyBytes(slot)
+			}
+		}
+		for accountHash, data := range accounts {
+			totalAccount += common.StorageSize(common.HashLength + len(data))
+
+			for _, slot := range storages[accountHash] {
+				totalStorage += common.StorageSize(common.HashLength + len(slot))
+			}
+		}
+	}
+	var (
+		aggrAccount common.StorageSize
+		aggrStorage common.StorageSize
+	)
+	for accountHash, data := range aggregatedAccount {
+		aggrAccount += common.StorageSize(common.HashLength + len(data))
+
+		for _, slot := range aggregatedStorage[accountHash] {
+			aggrStorage += common.StorageSize(common.HashLength + len(slot))
+		}
+	}
+	log.Info("State history stats", "number", 64, "account", totalAccount, "storage", totalStorage, "aggrAccount", aggrAccount, "aggrStorage", aggrStorage)
+
+	//
+	//pathdb.NewTraverser(db, freezer).Traverse()
+
+	//return rawdb.InspectDatabase(db, prefix, start)
+
+	return nil
 }
 
 func checkStateContent(ctx *cli.Context) error {
