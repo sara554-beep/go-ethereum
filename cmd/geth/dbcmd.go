@@ -341,9 +341,7 @@ func inspect(ctx *cli.Context) error {
 	//
 	//pathdb.NewTraverser(db, freezer).Traverse()
 
-	//return rawdb.InspectDatabase(db, prefix, start)
-
-	return nil
+	return rawdb.InspectDatabase(db, prefix, start)
 }
 
 func checkStateContent(ctx *cli.Context) error {
