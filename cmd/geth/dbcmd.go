@@ -325,6 +325,29 @@ func computeSize(accounts map[common.Hash][]byte, storages map[common.Hash]map[c
 	return accountSize, storageSize, totalSlotN
 }
 
+func inspectHistory(freezer *rawdb.ResettableFreezer, id uint64) {
+	accounts, storages, err := pathdb.ReadHistory(freezer, id)
+	if err != nil {
+		log.Error("Failed to read history", "err", err)
+	}
+	for accountHash, account := range accounts {
+		slots := storages[accountHash]
+		if len(slots) == 0 {
+			log.Info("Account", "hash", accountHash.Hex(), "length", len(account))
+		} else {
+			var (
+				keysize common.StorageSize
+				valsize common.StorageSize
+			)
+			for _, slot := range slots {
+				keysize += common.StorageSize(common.HashLength)
+				valsize += common.StorageSize(len(slot))
+			}
+			log.Info("Account", "hash", accountHash.Hex(), "length", len(account), "slots", len(slots), "keysize", keysize, "valsize", valsize)
+		}
+	}
+}
+
 func scanHistory(freezer *rawdb.ResettableFreezer) {
 	tail, _ := freezer.Tail()
 	head, _ := freezer.Ancients()
@@ -382,7 +405,8 @@ func inspect(ctx *cli.Context) error {
 	freezer, _ := rawdb.NewStateHistoryFreezer(ancientDir, false)
 	head, _ := freezer.Ancients()
 
-	scanHistory(freezer)
+	//scanHistory(freezer)
+	inspectHistory(freezer, 14_499_883)
 
 	var (
 		totalAccount common.StorageSize
