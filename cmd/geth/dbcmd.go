@@ -335,7 +335,7 @@ func scanHistory(freezer *rawdb.ResettableFreezer) {
 	log.Info("Scanning history", "tail", tail, "head", head)
 
 	for current := tail; current < head; current += 1 {
-		accounts, storages, err := pathdb.ReadHistory(freezer, current)
+		accounts, storages, err := pathdb.ReadHistory(freezer, current+1)
 		if err != nil {
 			log.Error("Failed to read history", "err", err)
 		}
