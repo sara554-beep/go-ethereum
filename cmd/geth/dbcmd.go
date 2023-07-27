@@ -328,7 +328,7 @@ func computeSize(accounts map[common.Hash][]byte, storages map[common.Hash]map[c
 func scanHistory(freezer *rawdb.ResettableFreezer) {
 	tail, _ := freezer.Tail()
 	head, _ := freezer.Ancients()
-	stats := new(acctStats)
+	stats := &acctStats{topN: 20}
 
 	start := time.Now()
 	logged := time.Now()
