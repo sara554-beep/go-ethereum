@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
+	"golang.org/x/exp/slices"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -256,6 +257,99 @@ func confirmAndRemoveDB(database string, kind string) {
 	}
 }
 
+type topHistory struct {
+	id       uint64
+	size     common.StorageSize
+	accountN int
+	slotN    int
+}
+
+type acctStats struct {
+	topN      int
+	histories []*topHistory
+
+	totalHistory int
+	totalSize    common.StorageSize
+}
+
+func (t *acctStats) add(id uint64, size common.StorageSize, accountN, slotN int) {
+	t.totalHistory += 1
+	t.totalSize += size
+
+	if len(t.histories) < t.topN {
+		t.histories = append(t.histories, &topHistory{
+			id:       id,
+			size:     size,
+			accountN: accountN,
+			slotN:    slotN,
+		})
+	} else {
+		if t.histories[len(t.histories)-1].size > size {
+			return
+		}
+		t.histories = t.histories[:len(t.histories)-1]
+		t.histories = append(t.histories, &topHistory{
+			id:       id,
+			size:     size,
+			accountN: accountN,
+			slotN:    slotN,
+		})
+	}
+	slices.SortFunc(t.histories, func(a, b *topHistory) bool {
+		return a.size >= b.size
+	})
+}
+
+func (t *acctStats) Report() {
+	for i := 0; i < len(t.histories); i++ {
+		log.Info("Top history", "i", i+1,
+			"id", t.histories[i].id, "accountN", t.histories[i].accountN, "slotN", t.histories[i].slotN, "size", t.histories[i].size)
+	}
+	log.Info("Total history", "number", t.totalHistory, "average-size", common.StorageSize(float64(t.totalSize)/float64(t.totalHistory)))
+}
+
+func computeSize(accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte) (common.StorageSize, common.StorageSize, int) {
+	var (
+		accountSize common.StorageSize
+		storageSize common.StorageSize
+		totalSlotN  int
+	)
+	for accountHash, data := range accounts {
+		accountSize += common.StorageSize(common.HashLength + len(data))
+
+		for _, slot := range storages[accountHash] {
+			storageSize += common.StorageSize(common.HashLength + len(slot))
+		}
+		totalSlotN += len(storages[accountHash])
+	}
+	return accountSize, storageSize, totalSlotN
+}
+
+func scanHistory(freezer *rawdb.ResettableFreezer) {
+	tail, _ := freezer.Tail()
+	head, _ := freezer.Ancients()
+	stats := new(acctStats)
+
+	start := time.Now()
+	logged := time.Now()
+	log.Info("Scanning history", "tail", tail, "head", head)
+
+	for current := tail; current < head; current += 1 {
+		accounts, storages, err := pathdb.ReadHistory(freezer, current)
+		if err != nil {
+			log.Error("Failed to read history", "err", err)
+		}
+		accountSize, storageSize, slotN := computeSize(accounts, storages)
+		stats.add(current, accountSize+storageSize, len(accounts), slotN)
+
+		if time.Since(logged) > 8*time.Second {
+			logged = time.Now()
+			log.Info("Scanning history", "tail", tail, "head", head, "current", current, "left", head-current, "elapsed", time.Since(start))
+		}
+	}
+	stats.Report()
+}
+
 func inspect(ctx *cli.Context) error {
 	var (
 		prefix []byte
@@ -287,6 +381,8 @@ func inspect(ctx *cli.Context) error {
 	ancientDir, _ := db.AncientDatadir()
 	freezer, _ := rawdb.NewStateHistoryFreezer(ancientDir, false)
 	head, _ := freezer.Ancients()
+
+	scanHistory(freezer)
 
 	var (
 		totalAccount common.StorageSize
