@@ -414,10 +414,10 @@ func inspect(ctx *cli.Context) error {
 	freezer, _ := rawdb.NewStateHistoryFreezer(ancientDir, false)
 	head, _ := freezer.Ancients()
 
-	//scanHistory(freezer)
-	inspectHistory(freezer, 14_499_882)
-	inspectHistory(freezer, 14_499_883)
-	inspectHistory(freezer, 14_499_884)
+	scanHistory(freezer)
+	//inspectHistory(freezer, 14_499_882)
+	//inspectHistory(freezer, 14_499_883)
+	//inspectHistory(freezer, 14_499_884)
 
 	var (
 		totalAccount common.StorageSize
