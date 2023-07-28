@@ -270,11 +270,16 @@ type acctStats struct {
 
 	totalHistory int
 	totalSize    common.StorageSize
+
+	totalAccountN int
+	totalSlotN    int
 }
 
 func (t *acctStats) add(id uint64, size common.StorageSize, accountN, slotN int) {
 	t.totalHistory += 1
 	t.totalSize += size
+	t.totalAccountN += accountN
+	t.totalSlotN += slotN
 
 	if len(t.histories) < t.topN {
 		t.histories = append(t.histories, &topHistory{
@@ -305,7 +310,7 @@ func (t *acctStats) Report() {
 		log.Info("Top history", "i", i+1,
 			"id", t.histories[i].id, "accountN", t.histories[i].accountN, "slotN", t.histories[i].slotN, "size", t.histories[i].size)
 	}
-	log.Info("Total history", "number", t.totalHistory, "average-size", common.StorageSize(float64(t.totalSize)/float64(t.totalHistory)))
+	log.Info("Total history", "number", t.totalHistory, "total-account", t.totalAccountN, "total-slot", t.totalSlotN, "average-size", common.StorageSize(float64(t.totalSize)/float64(t.totalHistory)))
 }
 
 func computeSize(accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte) (common.StorageSize, common.StorageSize, int) {
