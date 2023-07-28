@@ -544,3 +544,19 @@ func copyStorages(set map[common.Hash]map[common.Hash][]byte) map[common.Hash]ma
 	}
 	return copied
 }
+
+func TestFoo(t *testing.T) {
+	d, _ := rlp.EncodeToBytes(testutil.RandomHash().Bytes())
+	fmt.Println(common.StorageSize(len(d) * 2_150_408))
+
+	fmt.Println(crypto.Keccak256Hash(common.HexToAddress("0xD1CEeeeee83F8bCF3BEDad437202b6154E9F5405").Bytes()).Hex())
+
+	slot := common.HexToHash("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000")
+	fmt.Println(slot)
+	trimmedVal := common.TrimLeftZeroes(slot[:])
+	fmt.Println(trimmedVal)
+	// Encoding []byte cannot fail, ok to ignore the error.
+	v, _ := rlp.EncodeToBytes(trimmedVal)
+	fmt.Println(v)
+	fmt.Println(len(v))
+}
