@@ -418,9 +418,9 @@ func inspect(ctx *cli.Context) error {
 	head, _ := freezer.Ancients()
 
 	scanHistory(freezer)
-	inspectHistory(freezer, 14_499_882)
-	inspectHistory(freezer, 14_499_883)
-	inspectHistory(freezer, 14_499_884)
+	inspectHistory(freezer, 3_049_756)
+	inspectHistory(freezer, 3_049_757)
+	inspectHistory(freezer, 3_049_758)
 
 	var (
 		totalAccount common.StorageSize
