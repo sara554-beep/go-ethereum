@@ -349,9 +349,10 @@ func inspectHistory(freezer *rawdb.ResettableFreezer, id uint64) {
 				keysize common.StorageSize
 				valsize common.StorageSize
 			)
-			for _, slot := range slots {
+			for slot, data := range slots {
 				keysize += common.StorageSize(common.HashLength)
 				valsize += common.StorageSize(len(slot))
+				log.Info("Slot", "block", block, "account", addr.Hex(), "slot", slot.Hex(), "data", data)
 			}
 			log.Info("Account", "block", block, "i", i, "address", addr.Hex(), "length", len(account), "slots", len(slots), "keysize", keysize, "valsize", valsize)
 		}
