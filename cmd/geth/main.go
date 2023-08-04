@@ -210,7 +210,6 @@ func init() {
 		exportCommand,
 		importPreimagesCommand,
 		exportPreimagesCommand,
-		exportOverlayPreimagesCommand,
 		removedbCommand,
 		dumpCommand,
 		dumpGenesisCommand,

@@ -109,10 +109,6 @@ func (db *odrDatabase) EndVerkleTransition() {
 	panic("not implemented") // TODO: Implement
 }
 
-func (db *odrDatabase) InTransition() bool {
-	panic("not implemented") // TODO: Implement
-}
-
 func (db *odrDatabase) Transitioned() bool {
 	panic("not implemented") // TODO: Implement
 }
@@ -154,6 +150,10 @@ func (db *odrDatabase) SetCurrentPreimageOffset(_ int64) {
 }
 
 func (db *odrDatabase) AddRootTranslation(originalRoot common.Hash, translatedRoot common.Hash) {
+	panic("not implemented") // TODO: Implement
+}
+
+func (db *odrDatabase) SetLastMerkleRoot(root common.Hash) {
 	panic("not implemented") // TODO: Implement
 }
 

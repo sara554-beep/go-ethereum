@@ -18,7 +18,6 @@
 package state
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/big"
@@ -35,9 +34,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
-	"github.com/ethereum/go-ethereum/trie/utils"
-	"github.com/gballet/go-verkle"
-	"github.com/holiman/uint256"
 )
 
 type revision struct {
@@ -177,19 +173,6 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 	}
 	if tr.IsVerkle() {
 		sdb.witness = NewAccessWitness(sdb)
-		if sdb.snaps == nil {
-			snapconfig := snapshot.Config{
-				CacheSize:  256,
-				Recovery:   false,
-				NoBuild:    false,
-				AsyncBuild: false,
-				Verkle:     true,
-			}
-			sdb.snaps, err = snapshot.New(snapconfig, db.DiskDB(), db.TrieDB(), root)
-			if err != nil {
-				return nil, err
-			}
-		}
 	}
 	if sdb.snaps != nil {
 		if sdb.snap = sdb.snaps.Snapshot(root); sdb.snap == nil {
@@ -589,40 +572,8 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	if err := s.trie.UpdateAccount(addr, &obj.data); err != nil {
 		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
-	if s.trie.IsVerkle() && obj.dirtyCode {
-		var (
-			chunks = trie.ChunkifyCode(obj.code)
-			values [][]byte
-			key    []byte
-			err    error
-		)
-		for i, chunknr := 0, uint64(0); i < len(chunks); i, chunknr = i+32, chunknr+1 {
-			groupOffset := (chunknr + 128) % 256
-			if groupOffset == 0 /* start of new group */ || chunknr == 0 /* first chunk in header group */ {
-				values = make([][]byte, verkle.NodeWidth)
-				key = utils.GetTreeKeyCodeChunkWithEvaluatedAddress(obj.db.db.(*cachingDB).GetTreeKeyHeader(obj.address[:]), uint256.NewInt(chunknr))
-			}
-			values[groupOffset] = chunks[i : i+32]
-
-			// Reuse the calculated key to also update the code size.
-			if i == 0 {
-				cs := make([]byte, 32)
-				binary.LittleEndian.PutUint64(cs, uint64(len(obj.code)))
-				values[utils.CodeSizeLeafKey] = cs
-			}
-
-			if groupOffset == 255 || len(chunks)-i <= 32 {
-				switch t := s.trie.(type) {
-				case *trie.VerkleTrie:
-					err = t.UpdateStem(key[:31], values)
-				case *trie.TransitionTrie:
-					err = t.UpdateStem(key[:31], values)
-				}
-				if err != nil {
-					s.setError(fmt.Errorf("updateStateObject (%x) error: %w", addr[:], err))
-				}
-			}
-		}
+	if obj.dirtyCode {
+		s.trie.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
 	}
 	// Cache the data until commit. Note, this update mechanism is not symmetric
 	// to the deletion, because whereas it is enough to track account updates
@@ -1070,6 +1021,10 @@ func (s *StateDB) clearJournalAndRefund() {
 // deleteStorage iterates the storage trie belongs to the account and mark all
 // slots inside as deleted.
 func (s *StateDB) deleteStorage(addr common.Address, addrHash common.Hash, root common.Hash) (bool, map[common.Hash][]byte, *trienode.NodeSet, error) {
+	// verkle: a deletion is akin to overwriting with 0s
+	if s.GetTrie().IsVerkle() {
+		return false, nil, trienode.NewNodeSet(addrHash), nil
+	}
 	start := time.Now()
 	tr, err := s.db.OpenStorageTrie(s.originalRoot, addr, root, s.trie)
 	// XXX NOTE: it might just be possible to use an empty trie here, as verkle will not
@@ -1203,16 +1158,6 @@ func (s *StateDB) handleDestruction(nodes *trienode.MergedNodeSet) (map[common.A
 // GetTrie returns the account trie.
 func (s *StateDB) GetTrie() Trie {
 	return s.trie
-}
-
-// XXX check it's still needed
-func (s *StateDB) Cap(root common.Hash) error {
-	if s.snaps != nil {
-		return s.snaps.Cap(root, 0)
-	}
-	// pre-verkle path: noop if s.snaps hasn't been
-	// initialized.
-	return nil
 }
 
 // Commit writes the state to the underlying in-memory trie database.

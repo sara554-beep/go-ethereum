@@ -121,13 +121,13 @@ func (ga *GenesisAlloc) UnmarshalJSON(data []byte) error {
 }
 
 // deriveHash computes the state root according to the genesis specification.
-func (ga *GenesisAlloc) deriveHash(cfg *params.ChainConfig) (common.Hash, error) {
+func (ga *GenesisAlloc) deriveHash(cfg *params.ChainConfig, timestamp uint64) (common.Hash, error) {
 	// Create an ephemeral in-memory database for computing hash,
 	// all the derived states will be discarded to not pollute disk.
 	db := state.NewDatabase(rawdb.NewMemoryDatabase())
 	// XXX check this is the case
 	// TODO remove the nil config check once we have rebased, it should never be nil
-	if cfg != nil && cfg.IsCancun(big.NewInt(int64(0)), 0 /* XXX */) {
+	if cfg != nil && cfg.IsVerkle(big.NewInt(int64(0)), timestamp) {
 		db.EndVerkleTransition()
 	}
 	statedb, err := state.New(types.EmptyRootHash, db, nil)
@@ -155,7 +155,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database, triedb *trie.Database, blockhas
 	}
 
 	// End the verkle conversion at genesis if the fork block is 0
-	if cfg != nil && cfg.IsCancun(big.NewInt(int64(0)), 0 /* XXX */) {
+	if triedb.Verkle() {
 		statedb.Database().EndVerkleTransition()
 	}
 
@@ -182,9 +182,8 @@ func (ga *GenesisAlloc) flush(db ethdb.Database, triedb *trie.Database, blockhas
 	if err != nil {
 		return err
 	}
-
 	rawdb.WriteGenesisStateSpec(db, blockhash, blob)
-	return statedb.Cap(root) // XXX check this is still necessary
+	return nil
 }
 
 // CommitGenesisState loads the stored genesis state with the given block
@@ -458,7 +457,7 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
-	root, err := g.Alloc.deriveHash(g.Config)
+	root, err := g.Alloc.deriveHash(g.Config, g.Timestamp)
 	if err != nil {
 		panic(err)
 	}
