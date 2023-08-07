@@ -132,3 +132,6 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/cockroachdb/pebble  v0.0.0-20230209160836-829675f94811 => github.com/rjl493456442/pebble go-alloc
+
