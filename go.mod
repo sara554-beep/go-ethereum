@@ -90,6 +90,7 @@ require (
 	github.com/cockroachdb/errors v1.9.1 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
 	github.com/cockroachdb/redact v1.1.3 // indirect
+	github.com/cockroachdb/tokenbucket v0.0.0-20230613231145-182959a1fad6 // indirect
 	github.com/consensys/bavard v0.1.13 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/crate-crypto/go-ipa v0.0.0-20230601170251-1830d0757c80 // indirect
@@ -133,5 +134,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/cockroachdb/pebble  v0.0.0-20230209160836-829675f94811 => github.com/rjl493456442/pebble go-alloc
-
+replace github.com/cockroachdb/pebble v0.0.0-20230209160836-829675f94811 => github.com/rjl493456442/pebble v0.0.0-20230807114228-b43199327732
