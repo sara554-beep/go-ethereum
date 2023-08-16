@@ -31,6 +31,7 @@ import (
 // Config defines all necessary options for database.
 type Config struct {
 	Preimages bool           // Flag whether the preimage of node key is recorded
+	Verkle    bool           // Flag whether the database is intended for a Verkle tree or a Merkle tree.
 	HashDB    *hashdb.Config // Configs for hash-based scheme
 	PathDB    *pathdb.Config // Configs for experimental path-based scheme
 
@@ -312,4 +313,9 @@ func (db *Database) SetBufferSize(size int) error {
 		return errors.New("not supported")
 	}
 	return pdb.SetBufferSize(size)
+}
+
+// Config returns the configuration used by database.
+func (db *Database) Config() *Config {
+	return db.config
 }

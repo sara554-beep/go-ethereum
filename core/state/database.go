@@ -71,17 +71,16 @@ func NewDatabase(db ethdb.Database) Database {
 // is safe for concurrent use and retains a lot of collapsed RLP trie nodes in a
 // large memory cache.
 func NewDatabaseWithConfig(db ethdb.Database, config *trie.Config) Database {
-	return &cachingDB{
-		disk:          db,
-		codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
-		codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
-		triedb:        trie.NewDatabase(db, config),
+	triedb := trie.NewDatabase(db, config)
+	if config != nil && config.Verkle {
+		return &verkleDB{
+			disk:          db,
+			codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+			codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+			triedb:        triedb,
+		}
 	}
-}
-
-// NewDatabaseWithNodeDB creates a state database with an already initialized node database.
-func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
-	return &cachingDB{
+	return &merkleDB{
 		disk:          db,
 		codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
 		codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
@@ -89,7 +88,26 @@ func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
 	}
 }
 
-type cachingDB struct {
+// NewDatabaseWithNodeDB creates a state database with an already initialized node database.
+func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
+	if triedb.Config().Verkle {
+		return &verkleDB{
+			disk:          db,
+			codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+			codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+			triedb:        triedb,
+		}
+	} else {
+		return &merkleDB{
+			disk:          db,
+			codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+			codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+			triedb:        triedb,
+		}
+	}
+}
+
+type merkleDB struct {
 	disk          ethdb.KeyValueStore
 	codeSizeCache *lru.Cache[common.Hash, int]
 	codeCache     *lru.SizeConstrainedCache[common.Hash, []byte]
@@ -97,7 +115,7 @@ type cachingDB struct {
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
-func (db *cachingDB) OpenTrie(root common.Hash) (trie.Trie, error) {
+func (db *merkleDB) OpenTrie(root common.Hash) (trie.Trie, error) {
 	tr, err := trie.NewStateTrie(trie.StateTrieID(root), db.triedb)
 	if err != nil {
 		return nil, err
@@ -106,7 +124,7 @@ func (db *cachingDB) OpenTrie(root common.Hash) (trie.Trie, error) {
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (db *cachingDB) OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (trie.Trie, error) {
+func (db *merkleDB) OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (trie.Trie, error) {
 	tr, err := trie.NewStateTrie(trie.StorageTrieID(stateRoot, crypto.Keccak256Hash(address.Bytes()), root), db.triedb)
 	if err != nil {
 		return nil, err
@@ -115,7 +133,7 @@ func (db *cachingDB) OpenStorageTrie(stateRoot common.Hash, address common.Addre
 }
 
 // CopyTrie returns an independent copy of the given trie.
-func (db *cachingDB) CopyTrie(t trie.Trie) trie.Trie {
+func (db *merkleDB) CopyTrie(t trie.Trie) trie.Trie {
 	switch t := t.(type) {
 	case *trie.StateTrie:
 		return t.Copy()
@@ -125,7 +143,7 @@ func (db *cachingDB) CopyTrie(t trie.Trie) trie.Trie {
 }
 
 // ContractCode retrieves a particular contract's code.
-func (db *cachingDB) ContractCode(address common.Address, codeHash common.Hash) ([]byte, error) {
+func (db *merkleDB) ContractCode(address common.Address, codeHash common.Hash) ([]byte, error) {
 	code, _ := db.codeCache.Get(codeHash)
 	if len(code) > 0 {
 		return code, nil
@@ -142,7 +160,7 @@ func (db *cachingDB) ContractCode(address common.Address, codeHash common.Hash) 
 // ContractCodeWithPrefix retrieves a particular contract's code. If the
 // code can't be found in the cache, then check the existence with **new**
 // db scheme.
-func (db *cachingDB) ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error) {
+func (db *merkleDB) ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error) {
 	code, _ := db.codeCache.Get(codeHash)
 	if len(code) > 0 {
 		return code, nil
@@ -157,7 +175,7 @@ func (db *cachingDB) ContractCodeWithPrefix(address common.Address, codeHash com
 }
 
 // ContractCodeSize retrieves a particular contracts code's size.
-func (db *cachingDB) ContractCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
+func (db *merkleDB) ContractCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
 	if cached, ok := db.codeSizeCache.Get(codeHash); ok {
 		return cached, nil
 	}
@@ -166,11 +184,97 @@ func (db *cachingDB) ContractCodeSize(addr common.Address, codeHash common.Hash)
 }
 
 // DiskDB returns the underlying key-value disk database.
-func (db *cachingDB) DiskDB() ethdb.KeyValueStore {
+func (db *merkleDB) DiskDB() ethdb.KeyValueStore {
 	return db.disk
 }
 
 // TrieDB retrieves any intermediate trie-node caching layer.
-func (db *cachingDB) TrieDB() *trie.Database {
+func (db *merkleDB) TrieDB() *trie.Database {
 	return db.triedb
+}
+
+type verkleDB struct {
+	disk          ethdb.KeyValueStore
+	codeSizeCache *lru.Cache[common.Hash, int]
+	codeCache     *lru.SizeConstrainedCache[common.Hash, []byte]
+	triedb        *trie.Database
+}
+
+// OpenTrie opens the main account trie at a specific root hash.
+func (db *verkleDB) OpenTrie(root common.Hash) (trie.Trie, error) {
+	panic("not implemented")
+}
+
+// OpenStorageTrie opens the storage trie of an account.
+func (db *verkleDB) OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (trie.Trie, error) {
+	panic("not implemented")
+}
+
+// CopyTrie returns an independent copy of the given trie.
+func (db *verkleDB) CopyTrie(t trie.Trie) trie.Trie {
+	panic("not implemented")
+}
+
+// ContractCode retrieves a particular contract's code.
+func (db *verkleDB) ContractCode(address common.Address, codeHash common.Hash) ([]byte, error) {
+	panic("not implemented")
+}
+
+// ContractCodeWithPrefix retrieves a particular contract's code. If the
+// code can't be found in the cache, then check the existence with **new**
+// db scheme.
+func (db *verkleDB) ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error) {
+	panic("not implemented")
+}
+
+// ContractCodeSize retrieves a particular contracts code's size.
+func (db *verkleDB) ContractCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
+	panic("not implemented")
+}
+
+// DiskDB returns the underlying key-value disk database.
+func (db *verkleDB) DiskDB() ethdb.KeyValueStore {
+	return db.disk
+}
+
+// TrieDB retrieves any intermediate trie-node caching layer.
+func (db *verkleDB) TrieDB() *trie.Database {
+	return db.triedb
+}
+
+type transDB struct {
+	mdb *merkleDB
+	vdb *verkleDB
+}
+
+// OpenTrie opens the main account trie at a specific root hash.
+func (db *transDB) OpenTrie(root common.Hash) (trie.Trie, error) {
+	panic("not implemented")
+}
+
+// OpenStorageTrie opens the storage trie of an account.
+func (db *transDB) OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (trie.Trie, error) {
+	panic("not implemented")
+}
+
+// CopyTrie returns an independent copy of the given trie.
+func (db *transDB) CopyTrie(t trie.Trie) trie.Trie {
+	panic("not implemented")
+}
+
+// ContractCode retrieves a particular contract's code.
+func (db *transDB) ContractCode(address common.Address, codeHash common.Hash) ([]byte, error) {
+	panic("not implemented")
+}
+
+// ContractCodeWithPrefix retrieves a particular contract's code. If the
+// code can't be found in the cache, then check the existence with **new**
+// db scheme.
+func (db *transDB) ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error) {
+	panic("not implemented")
+}
+
+// ContractCodeSize retrieves a particular contracts code's size.
+func (db *transDB) ContractCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
+	panic("not implemented")
 }
