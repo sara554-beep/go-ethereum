@@ -105,6 +105,27 @@ func NewDatabaseWithNodeDB(db ethdb.Database, triedb *trie.Database) Database {
 			triedb:        triedb,
 		}
 	}
+	/*
+			in case of verkle transition period, create the transDb with
+		    both verkleDB and merkleDB inrolled.
+	*/
+}
+
+func NewTransitionDB(db ethdb.Database, merkleTrieDB, verkleTrieDB *trie.Database) Database {
+	return &transDB{
+		vdb: &verkleDB{
+			disk:          db,
+			codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+			codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+			triedb:        verkleTrieDB,
+		},
+		mdb: &merkleDB{
+			disk:          db,
+			codeSizeCache: lru.NewCache[common.Hash, int](codeSizeCacheSize),
+			codeCache:     lru.NewSizeConstrainedCache[common.Hash, []byte](codeCacheSize),
+			triedb:        merkleTrieDB,
+		},
+	}
 }
 
 type merkleDB struct {
@@ -245,16 +266,24 @@ func (db *verkleDB) TrieDB() *trie.Database {
 type transDB struct {
 	mdb *merkleDB
 	vdb *verkleDB
+
+	isVerkle bool
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
 func (db *transDB) OpenTrie(root common.Hash) (trie.Trie, error) {
-	panic("not implemented")
+	if !db.isVerkle {
+		return db.mdb.OpenTrie(root)
+	}
+	return db.vdb.OpenTrie(root)
 }
 
 // OpenStorageTrie opens the storage trie of an account.
 func (db *transDB) OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (trie.Trie, error) {
-	panic("not implemented")
+	if !db.isVerkle {
+		return db.mdb.OpenStorageTrie(stateRoot, address, root)
+	}
+	return db.vdb.OpenStorageTrie(stateRoot, address, root)
 }
 
 // CopyTrie returns an independent copy of the given trie.
@@ -264,17 +293,42 @@ func (db *transDB) CopyTrie(t trie.Trie) trie.Trie {
 
 // ContractCode retrieves a particular contract's code.
 func (db *transDB) ContractCode(address common.Address, codeHash common.Hash) ([]byte, error) {
-	panic("not implemented")
+	if !db.isVerkle {
+		return db.mdb.ContractCode(address, codeHash)
+	}
+	return db.vdb.ContractCode(address, codeHash)
 }
 
 // ContractCodeWithPrefix retrieves a particular contract's code. If the
 // code can't be found in the cache, then check the existence with **new**
 // db scheme.
 func (db *transDB) ContractCodeWithPrefix(address common.Address, codeHash common.Hash) ([]byte, error) {
-	panic("not implemented")
+	if !db.isVerkle {
+		return db.mdb.ContractCodeWithPrefix(address, codeHash)
+	}
+	return db.vdb.ContractCodeWithPrefix(address, codeHash)
 }
 
 // ContractCodeSize retrieves a particular contracts code's size.
 func (db *transDB) ContractCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
+	if !db.isVerkle {
+		return db.mdb.ContractCodeSize(addr, codeHash)
+	}
+	return db.vdb.ContractCodeSize(addr, codeHash)
+}
+
+// DiskDB returns the underlying key-value disk database.
+func (db *transDB) DiskDB() ethdb.KeyValueStore {
 	panic("not implemented")
+}
+
+// TrieDB retrieves any intermediate trie-node caching layer.
+func (db *transDB) TrieDB() *trie.Database {
+	panic("not implemented")
+}
+
+// EnableVerkle is invoked only when the verkle is activated. The whole verkle
+// transition is supposed to be finished in advance.
+func (db *transDB) EnableVerkle() {
+	db.isVerkle = true
 }

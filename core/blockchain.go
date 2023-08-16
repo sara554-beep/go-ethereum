@@ -147,8 +147,8 @@ type CacheConfig struct {
 }
 
 // triedbConfig derives the configures for trie database.
-func (c *CacheConfig) triedbConfig() *trie.Config {
-	config := &trie.Config{Preimages: c.Preimages}
+func (c *CacheConfig) triedbConfig(verkle bool) *trie.Config {
+	config := &trie.Config{Preimages: c.Preimages, Verkle: verkle}
 	if c.StateScheme == rawdb.HashScheme {
 		config.HashDB = &hashdb.Config{
 			CleanCacheSize: c.TrieCleanLimit * 1024 * 1024,
@@ -266,7 +266,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		cacheConfig = defaultCacheConfig
 	}
 	// Open trie database with provided config
-	triedb := trie.NewDatabase(db, cacheConfig.triedbConfig())
+	triedb := trie.NewDatabase(db, cacheConfig.triedbConfig(genesis.IsVerkle()))
 
 	// Setup the genesis block, commit the provided genesis specification
 	// to database if the genesis block is not present yet, or load the
@@ -302,7 +302,16 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	}
 	bc.flushInterval.Store(int64(cacheConfig.TrieTimeLimit))
 	bc.forker = NewForkChoice(bc, shouldPreserve)
+
+	// If we are in the period of verkle transition, create
+	// the transDB with both merkleDB and verkleDB inrolled.
+	// TODO need the transition flag.
+	//
+	// if inTransition {
+	//     bc.stateCache = state.NewTransitionDB(bc.db, bc.mpt, bc.verkle)
+	// }
 	bc.stateCache = state.NewDatabaseWithNodeDB(bc.db, bc.triedb)
+
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.prefetcher = newStatePrefetcher(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)

@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
 )
 
 //go:generate go run github.com/fjl/gencodec -type Genesis -field-override genesisSpecMarshaling -out gen_genesis.go
@@ -65,6 +66,11 @@ type Genesis struct {
 	BaseFee       *big.Int    `json:"baseFeePerGas"` // EIP-1559
 	ExcessBlobGas *uint64     `json:"excessBlobGas"` // EIP-4844
 	BlobGasUsed   *uint64     `json:"blobGasUsed"`   // EIP-4844
+}
+
+// IsVerkle returns the indicator if the verkle is enabled since genesis.
+func (g *Genesis) IsVerkle() bool {
+	return g.Config.IsVerkle(new(big.Int), g.Timestamp)
 }
 
 func ReadGenesis(db ethdb.Database) (*Genesis, error) {
@@ -121,10 +127,15 @@ func (ga *GenesisAlloc) UnmarshalJSON(data []byte) error {
 }
 
 // deriveHash computes the state root according to the genesis specification.
-func (ga *GenesisAlloc) deriveHash() (common.Hash, error) {
+func (ga *GenesisAlloc) deriveHash(verkle bool) (common.Hash, error) {
 	// Create an ephemeral in-memory database for computing hash,
 	// all the derived states will be discarded to not pollute disk.
-	db := state.NewDatabase(rawdb.NewMemoryDatabase())
+	memorydb := rawdb.NewMemoryDatabase()
+	triedb := trie.NewDatabase(memorydb, &trie.Config{
+		Verkle: verkle,
+		HashDB: hashdb.Defaults,
+	})
+	db := state.NewDatabaseWithNodeDB(memorydb, triedb)
 	statedb, err := state.New(types.EmptyRootHash, db, nil)
 	if err != nil {
 		return common.Hash{}, err
@@ -440,7 +451,7 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
-	root, err := g.Alloc.deriveHash()
+	root, err := g.Alloc.deriveHash(g.IsVerkle())
 	if err != nil {
 		panic(err)
 	}
@@ -495,6 +506,9 @@ func (g *Genesis) ToBlock() *types.Block {
 // Commit writes the block and state of a genesis specification to the database.
 // The block is committed as the canonical head block.
 func (g *Genesis) Commit(db ethdb.Database, triedb *trie.Database) (*types.Block, error) {
+	if triedb.Config().Verkle != g.IsVerkle() {
+		return nil, errors.New("incompatible verkle config")
+	}
 	block := g.ToBlock()
 	if block.Number().Sign() != 0 {
 		return nil, errors.New("can't commit genesis block with number > 0")
