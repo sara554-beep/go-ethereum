@@ -165,7 +165,7 @@ func (t *pathTrie) write(path []byte, blob []byte) {
 // delete commits the node deletion to provided database batch in path mode.
 func (t *pathTrie) delete(path []byte, inner bool) {
 	if t.owner == (common.Hash{}) {
-		if rawdb.ExistsAccountTrieNode(t.db, path) {
+		if rawdb.HasAccountTrieNode(t.db, path) {
 			rawdb.DeleteAccountTrieNode(t.batch, path)
 			if inner {
 				accountInnerDeleteGauge.Inc(1)
@@ -180,7 +180,7 @@ func (t *pathTrie) delete(path []byte, inner bool) {
 		}
 		return
 	}
-	if rawdb.ExistsStorageTrieNode(t.db, t.owner, path) {
+	if rawdb.HasStorageTrieNode(t.db, t.owner, path) {
 		rawdb.DeleteStorageTrieNode(t.batch, t.owner, path)
 		if inner {
 			storageInnerDeleteGauge.Inc(1)
