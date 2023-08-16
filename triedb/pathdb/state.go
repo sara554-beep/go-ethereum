@@ -39,7 +39,7 @@ type context struct {
 
 // apply traverses the provided state diffs, applying them in the associated
 // post-state and return the produced trie changes.
-func apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, opener trie.Opener) (map[common.Hash]map[string]*trienode.Node, error) {
+func apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, opener trie.Opener) (map[common.Hash]map[string][]byte, error) {
 	tr, err := opener.Open(trie.StateTrieID(postRoot))
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash]
 	if err := ctx.nodes.Merge(result); err != nil {
 		return nil, err
 	}
-	return ctx.nodes.Flatten(), nil
+	return ctx.nodes.Slim(), nil
 }
 
 // updateAccount the account was present in prev-state, and may or may not

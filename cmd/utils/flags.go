@@ -71,6 +71,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	pcsclite "github.com/gballet/go-libpcsclite"
@@ -2172,6 +2173,7 @@ func MakeTrieDatabase(ctx *cli.Context, disk ethdb.Database, preimage bool, read
 		CleanCacheSize: pathdb.DefaultCleanSize,
 		DirtyCacheSize: pathdb.DefaultBufferSize,
 		TrieOpener:     merkle.NewOpener,
+		Hasher:         dbconfig.HashNode,
 	}
 	if readOnly {
 		config.PathDB.ReadOnly = true

@@ -32,6 +32,7 @@ type Config struct {
 	DirtyCacheSize int                                        // Maximum memory allowance (in bytes) for caching dirty nodes
 	ReadOnly       bool                                       // Flag whether the database is opened in read only mode.
 	TrieOpener     func(db database.NodeDatabase) trie.Opener // Function to create trie opener
+	Hasher         func([]byte) common.Hash                   // Function to compute the hash of node
 }
 
 // sanitize checks the provided user configurations and changes anything that's
@@ -42,6 +43,9 @@ func (c *Config) sanitize() (*Config, error) {
 	}
 	if c.TrieOpener == nil {
 		return nil, errors.New("trie opener is not configured")
+	}
+	if c.Hasher == nil {
+		return nil, errors.New("data hasher is not configured")
 	}
 	conf := *c
 	if conf.DirtyCacheSize > maxBufferSize {

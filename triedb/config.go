@@ -42,6 +42,9 @@ func (config *Config) sanitize() error {
 	if config.HashDB == nil && config.PathDB == nil {
 		return errors.New("neither 'hash' nor 'path' mode is configured")
 	}
+	if config.HashDB != nil && config.IsVerkle {
+		return errors.New("verkle is incompatible with hash mode")
+	}
 	return nil
 }
 

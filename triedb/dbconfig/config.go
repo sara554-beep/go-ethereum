@@ -56,5 +56,6 @@ var PathDefaults = triedb.Config{
 
 		// Merkle trie loader is used as the default trie loader.
 		TrieOpener: merkle.NewOpener,
+		Hasher:     HashNode,
 	},
 }

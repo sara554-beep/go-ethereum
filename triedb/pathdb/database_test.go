@@ -110,7 +110,10 @@ func newTester(t *testing.T, historyLimit uint64) *tester {
 			TrieOpener: func(db database.NodeDatabase) trie.Opener {
 				return newHashOpener(snapAccounts, snapStorages)
 			},
-		})
+			Hasher: func(blob []byte) common.Hash {
+				return crypto.Keccak256Hash(blob)
+			},
+		}, false)
 		obj = &tester{
 			db:           db,
 			preimages:    make(map[common.Hash]common.Address),
@@ -464,7 +467,7 @@ func TestDisable(t *testing.T) {
 	tester := newTester(t, 0)
 	defer tester.release()
 
-	_, stored := rawdb.ReadAccountTrieNode(tester.db.diskdb, nil)
+	stored := crypto.Keccak256Hash(rawdb.ReadAccountTrieNode(tester.db.diskdb, nil))
 	if err := tester.db.Disable(); err != nil {
 		t.Fatal("Failed to deactivate database")
 	}
@@ -536,7 +539,7 @@ func TestJournal(t *testing.T) {
 		t.Errorf("Failed to journal, err: %v", err)
 	}
 	tester.db.Close()
-	tester.db = New(tester.db.diskdb, tester.db.config)
+	tester.db = New(tester.db.diskdb, tester.db.config, false)
 
 	// Verify states including disk layer and all diff on top.
 	for i := 0; i < len(tester.roots); i++ {
@@ -564,7 +567,9 @@ func TestCorruptedJournal(t *testing.T) {
 		t.Errorf("Failed to journal, err: %v", err)
 	}
 	tester.db.Close()
-	_, root := rawdb.ReadAccountTrieNode(tester.db.diskdb, nil)
+
+	rootBlob := rawdb.ReadAccountTrieNode(tester.db.diskdb, nil)
+	root := crypto.Keccak256Hash(rootBlob)
 
 	// Mutate the journal in disk, it should be regarded as invalid
 	blob := rawdb.ReadTrieJournal(tester.db.diskdb)
@@ -572,7 +577,7 @@ func TestCorruptedJournal(t *testing.T) {
 	rawdb.WriteTrieJournal(tester.db.diskdb, blob)
 
 	// Verify states, all not-yet-written states should be discarded
-	tester.db = New(tester.db.diskdb, tester.db.config)
+	tester.db = New(tester.db.diskdb, tester.db.config, false)
 	for i := 0; i < len(tester.roots); i++ {
 		if tester.roots[i] == root {
 			if err := tester.verifyState(root); err != nil {
@@ -607,7 +612,13 @@ func TestTailTruncateHistory(t *testing.T) {
 	defer tester.release()
 
 	tester.db.Close()
-	tester.db = New(tester.db.diskdb, &Config{StateHistory: 10, TrieOpener: func(db database.NodeDatabase) trie.Opener { return nil }})
+	tester.db = New(tester.db.diskdb, &Config{
+		StateHistory: 10,
+		TrieOpener:   func(db database.NodeDatabase) trie.Opener { return nil },
+		Hasher: func(blob []byte) common.Hash {
+			return crypto.Keccak256Hash(blob)
+		},
+	}, false)
 
 	head, err := tester.db.freezer.Ancients()
 	if err != nil {
