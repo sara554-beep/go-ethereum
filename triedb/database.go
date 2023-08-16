@@ -20,6 +20,7 @@ import (
 	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/trienode"
@@ -48,15 +49,15 @@ func (config *Config) sanitize() error {
 	if config.HashDB == nil && config.PathDB == nil {
 		return errors.New("neither 'hash' nor 'path' mode is configured")
 	}
+	if config.HashDB != nil && config.IsVerkle {
+		return errors.New("verkle is incompatible with hash mode")
+	}
 	return nil
 }
 
 // backend defines the methods needed to access/update trie nodes in different
 // state scheme.
 type backend interface {
-	// Scheme returns the identifier of used storage scheme.
-	Scheme() string
-
 	// Initialized returns an indicator if the state data is already initialized
 	// according to the state scheme.
 	Initialized(genesisRoot common.Hash) bool
@@ -110,7 +111,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		preimages: preimages,
 	}
 	if config.PathDB != nil {
-		db.backend = pathdb.New(diskdb, config.PathDB)
+		db.backend = pathdb.New(diskdb, config.PathDB, config.IsVerkle)
 	} else {
 		db.backend = hashdb.New(diskdb, config.HashDB)
 	}
@@ -176,7 +177,10 @@ func (db *Database) Initialized(genesisRoot common.Hash) bool {
 
 // Scheme returns the node scheme used in the database.
 func (db *Database) Scheme() string {
-	return db.backend.Scheme()
+	if db.config.PathDB != nil {
+		return rawdb.PathScheme
+	}
+	return rawdb.HashScheme
 }
 
 // Close flushes the dangling preimages to disk and closes the trie database.

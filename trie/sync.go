@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -691,13 +692,12 @@ func (s *Sync) hasNode(owner common.Hash, path []byte, hash common.Hash) (exists
 	}
 	// If node is running with path scheme, check the presence with node path.
 	var blob []byte
-	var dbHash common.Hash
 	if owner == (common.Hash{}) {
-		blob, dbHash = rawdb.ReadAccountTrieNode(s.database, path)
+		blob = rawdb.ReadAccountTrieNode(s.database, path)
 	} else {
-		blob, dbHash = rawdb.ReadStorageTrieNode(s.database, owner, path)
+		blob = rawdb.ReadStorageTrieNode(s.database, owner, path)
 	}
-	exists = hash == dbHash
+	exists = hash == crypto.Keccak256Hash(blob)
 	inconsistent = !exists && len(blob) != 0
 	return exists, inconsistent
 }
