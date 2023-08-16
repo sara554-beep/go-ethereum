@@ -87,21 +87,18 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 			}
 			infos = append(infos, info)
 
-		case stateFreezerName:
-			if ReadStateScheme(db) != PathScheme {
-				continue
-			}
+		case merkleStateFreezerName, verkleStateFreezerName:
 			datadir, err := db.AncientDatadir()
 			if err != nil {
 				return nil, err
 			}
-			f, err := NewStateFreezer(datadir, true)
+			f, err := NewStateFreezer(datadir, freezer == verkleStateFreezerName, true)
 			if err != nil {
-				return nil, err
+				continue // might be possible the state freezer is not existent
 			}
 			defer f.Close()
 
-			info, err := inspect(stateFreezerName, stateFreezerNoSnappy, f)
+			info, err := inspect(freezer, stateFreezerNoSnappy, f)
 			if err != nil {
 				return nil, err
 			}

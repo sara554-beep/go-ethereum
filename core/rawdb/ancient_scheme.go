@@ -68,14 +68,21 @@ var stateFreezerNoSnappy = map[string]bool{
 
 // The list of identifiers of ancient stores.
 var (
-	chainFreezerName = "chain" // the folder name of chain segment ancient store.
-	stateFreezerName = "state" // the folder name of reverse diff ancient store.
+	chainFreezerName       = "chain"        // the folder name of chain segment ancient store.
+	merkleStateFreezerName = "state"        // the folder name of merkle tree state history
+	verkleStateFreezerName = "state_verkle" // the folder name of verkle tree state history
 )
 
 // freezers the collections of all builtin freezers.
-var freezers = []string{chainFreezerName, stateFreezerName}
+var freezers = []string{chainFreezerName, merkleStateFreezerName, verkleStateFreezerName}
 
 // NewStateFreezer initializes the freezer for state history.
-func NewStateFreezer(ancientDir string, readOnly bool) (*ResettableFreezer, error) {
-	return NewResettableFreezer(filepath.Join(ancientDir, stateFreezerName), "eth/db/state", readOnly, stateHistoryTableSize, stateFreezerNoSnappy)
+func NewStateFreezer(ancientDir string, verkle bool, readOnly bool) (*ResettableFreezer, error) {
+	var name string
+	if verkle {
+		name = filepath.Join(ancientDir, verkleStateFreezerName)
+	} else {
+		name = filepath.Join(ancientDir, merkleStateFreezerName)
+	}
+	return NewResettableFreezer(name, "eth/db/state", readOnly, stateHistoryTableSize, stateFreezerNoSnappy)
 }
