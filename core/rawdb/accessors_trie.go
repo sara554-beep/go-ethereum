@@ -65,16 +65,10 @@ func (h *hasher) release() {
 	hasherPool.Put(h)
 }
 
-// ReadAccountTrieNode retrieves the account trie node and the associated node
-// hash with the specified node path.
-func ReadAccountTrieNode(db ethdb.KeyValueReader, path []byte) ([]byte, common.Hash) {
-	data, err := db.Get(accountTrieNodeKey(path))
-	if err != nil {
-		return nil, common.Hash{}
-	}
-	h := newHasher()
-	defer h.release()
-	return data, h.hash(data)
+// ReadAccountTrieNode retrieves the account trie node with the specified node path.
+func ReadAccountTrieNode(db ethdb.KeyValueReader, path []byte) []byte {
+	data, _ := db.Get(accountTrieNodeKey(path))
+	return data
 }
 
 // HasAccountTrieNode checks the account trie node presence with the specified
@@ -103,16 +97,10 @@ func DeleteAccountTrieNode(db ethdb.KeyValueWriter, path []byte) {
 	}
 }
 
-// ReadStorageTrieNode retrieves the storage trie node and the associated node
-// hash with the specified node path.
-func ReadStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path []byte) ([]byte, common.Hash) {
-	data, err := db.Get(storageTrieNodeKey(accountHash, path))
-	if err != nil {
-		return nil, common.Hash{}
-	}
-	h := newHasher()
-	defer h.release()
-	return data, h.hash(data)
+// ReadStorageTrieNode retrieves the storage trie node with the specified node path.
+func ReadStorageTrieNode(db ethdb.KeyValueReader, accountHash common.Hash, path []byte) []byte {
+	data, _ := db.Get(storageTrieNodeKey(accountHash, path))
+	return data
 }
 
 // HasStorageTrieNode checks the storage trie node presence with the provided
@@ -200,16 +188,15 @@ func ReadTrieNode(db ethdb.KeyValueReader, owner common.Hash, path []byte, hash 
 	case HashScheme:
 		return ReadLegacyTrieNode(db, hash)
 	case PathScheme:
-		var (
-			blob  []byte
-			nHash common.Hash
-		)
+		var blob []byte
 		if owner == (common.Hash{}) {
-			blob, nHash = ReadAccountTrieNode(db, path)
+			blob = ReadAccountTrieNode(db, path)
 		} else {
-			blob, nHash = ReadStorageTrieNode(db, owner, path)
+			blob = ReadStorageTrieNode(db, owner, path)
 		}
-		if nHash != hash {
+		h := newHasher()
+		defer h.release()
+		if h.hash(blob) != hash {
 			return nil
 		}
 		return blob
@@ -268,7 +255,7 @@ func DeleteTrieNode(db ethdb.KeyValueWriter, owner common.Hash, path []byte, has
 // if the state is not present in database.
 func ReadStateScheme(db ethdb.Reader) string {
 	// Check if state in path-based scheme is present
-	blob, _ := ReadAccountTrieNode(db, nil)
+	blob := ReadAccountTrieNode(db, nil)
 	if len(blob) != 0 {
 		return PathScheme
 	}

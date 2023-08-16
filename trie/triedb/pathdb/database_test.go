@@ -530,7 +530,9 @@ func TestCorruptedJournal(t *testing.T) {
 		t.Errorf("Failed to journal, err: %v", err)
 	}
 	tester.db.Close()
-	_, root := rawdb.ReadAccountTrieNode(tester.db.diskdb, nil)
+
+	rootBlob := rawdb.ReadAccountTrieNode(tester.db.diskdb, nil)
+	root := crypto.Keccak256Hash(rootBlob)
 
 	// Mutate the journal in disk, it should be regarded as invalid
 	blob := rawdb.ReadTrieJournal(tester.db.diskdb)
