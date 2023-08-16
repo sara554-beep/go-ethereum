@@ -26,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
 	"golang.org/x/crypto/sha3"
 )
@@ -97,7 +96,7 @@ func (dl *diskLayer) markStale() {
 
 // Node implements the layer interface, retrieving the trie node with the
 // provided node info. No error will be returned if the node is not found.
-func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+func (dl *diskLayer) Node(owner common.Hash, path []byte) ([]byte, error) {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
@@ -108,14 +107,11 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	// node buffer first. Note the buffer is lock free since
 	// it's impossible to mutate the buffer before tagging the
 	// layer as stale.
-	n, err := dl.buffer.node(owner, path, hash)
-	if err != nil {
-		return nil, err
-	}
-	if n != nil {
+	n, found := dl.buffer.node(owner, path)
+	if found {
 		dirtyHitMeter.Mark(1)
-		dirtyReadMeter.Mark(int64(len(n.Blob)))
-		return n.Blob, nil
+		dirtyReadMeter.Mark(int64(len(n)))
+		return n, nil
 	}
 	dirtyMissMeter.Mark(1)
 
@@ -123,34 +119,18 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	key := cacheKey(owner, path)
 	if dl.cleans != nil {
 		if blob := dl.cleans.Get(nil, key); len(blob) > 0 {
-			h := newHasher()
-			defer h.release()
-
-			got := h.hash(blob)
-			if got == hash {
-				cleanHitMeter.Mark(1)
-				cleanReadMeter.Mark(int64(len(blob)))
-				return blob, nil
-			}
-			cleanFalseMeter.Mark(1)
-			log.Error("Unexpected trie node in clean cache", "owner", owner, "path", path, "expect", hash, "got", got)
+			cleanHitMeter.Mark(1)
+			cleanReadMeter.Mark(int64(len(blob)))
+			return blob, nil
 		}
 		cleanMissMeter.Mark(1)
 	}
 	// Try to retrieve the trie node from the disk.
-	var (
-		nBlob []byte
-		nHash common.Hash
-	)
+	var nBlob []byte
 	if owner == (common.Hash{}) {
-		nBlob, nHash = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
+		nBlob = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
 	} else {
-		nBlob, nHash = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
-	}
-	if nHash != hash {
-		diskFalseMeter.Mark(1)
-		log.Error("Unexpected trie node in disk", "owner", owner, "path", path, "expect", hash, "got", nHash)
-		return nil, newUnexpectedNodeError("disk", hash, nHash, owner, path)
+		nBlob = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
 	}
 	if dl.cleans != nil && len(nBlob) > 0 {
 		dl.cleans.Set(key, nBlob)
@@ -161,7 +141,7 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 
 // update implements the layer interface, returning a new diff layer on top
 // with the given state set.
-func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *triestate.Set) *diffLayer {
+func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *triestate.Set) *diffLayer {
 	return newDiffLayer(dl, root, id, block, nodes, states)
 }
 

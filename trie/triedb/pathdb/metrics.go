@@ -30,10 +30,6 @@ var (
 	dirtyWriteMeter       = metrics.NewRegisteredMeter("pathdb/dirty/write", nil)
 	dirtyNodeHitDepthHist = metrics.NewRegisteredHistogram("pathdb/dirty/depth", nil, metrics.NewExpDecaySample(1028, 0.015))
 
-	cleanFalseMeter = metrics.NewRegisteredMeter("pathdb/clean/false", nil)
-	dirtyFalseMeter = metrics.NewRegisteredMeter("pathdb/dirty/false", nil)
-	diskFalseMeter  = metrics.NewRegisteredMeter("pathdb/disk/false", nil)
-
 	commitTimeTimer  = metrics.NewRegisteredTimer("pathdb/commit/time", nil)
 	commitNodesMeter = metrics.NewRegisteredMeter("pathdb/commit/nodes", nil)
 	commitBytesMeter = metrics.NewRegisteredMeter("pathdb/commit/bytes", nil)

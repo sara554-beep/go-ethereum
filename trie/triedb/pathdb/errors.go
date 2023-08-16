@@ -18,9 +18,6 @@ package pathdb
 
 import (
 	"errors"
-	"fmt"
-
-	"github.com/ethereum/go-ethereum/common"
 )
 
 var (
@@ -40,12 +37,4 @@ var (
 	// errStateUnrecoverable is returned if state is required to be reverted to
 	// a destination without associated state history available.
 	errStateUnrecoverable = errors.New("state is unrecoverable")
-
-	// errUnexpectedNode is returned if the requested node with specified path is
-	// not hash matched with expectation.
-	errUnexpectedNode = errors.New("unexpected node")
 )
-
-func newUnexpectedNodeError(loc string, expHash common.Hash, gotHash common.Hash, owner common.Hash, path []byte) error {
-	return fmt.Errorf("%w, loc: %s, node: (%x %v), %x!=%x", errUnexpectedNode, loc, owner, path, expHash, gotHash)
-}
