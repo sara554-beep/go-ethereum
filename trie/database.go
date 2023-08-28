@@ -44,6 +44,7 @@ type Reader interface {
 // Config defines all necessary options for database.
 type Config struct {
 	Preimages bool           // Flag whether the preimage of node key is recorded
+	Verkle    bool           // Flag whether the database is opened in verkle mode
 	HashDB    *hashdb.Config // Configs for hash-based scheme
 	PathDB    *pathdb.Config // Configs for experimental path-based scheme
 
@@ -55,7 +56,16 @@ type Config struct {
 // default settings.
 var HashDefaults = &Config{
 	Preimages: false,
+	Verkle:    false,
 	HashDB:    hashdb.Defaults,
+}
+
+// PathDefaults represents a config for using path-based scheme with
+// default settings.
+var PathDefaults = &Config{
+	Preimages: false,
+	Verkle:    false,
+	PathDB:    pathdb.Defaults,
 }
 
 // backend defines the methods needed to access/update trie nodes in different
@@ -101,20 +111,6 @@ type Database struct {
 	backend   backend        // The backend for managing trie nodes
 }
 
-// prepare initializes the database with provided configs, but the
-// database backend is still left as nil.
-func prepare(diskdb ethdb.Database, config *Config) *Database {
-	var preimages *preimageStore
-	if config != nil && config.Preimages {
-		preimages = newPreimageStore(diskdb)
-	}
-	return &Database{
-		config:    config,
-		diskdb:    diskdb,
-		preimages: preimages,
-	}
-}
-
 // NewDatabase initializes the trie database with default settings, note
 // the legacy hash-based scheme is used by default.
 func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
@@ -135,7 +131,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		log.Crit("Both 'hash' and 'path' mode are configured")
 	}
 	if config.PathDB != nil {
-		db.backend = pathdb.New(diskdb, config.PathDB)
+		db.backend = pathdb.New(diskdb, config.Verkle, config.PathDB)
 	} else {
 		db.backend = hashdb.New(diskdb, config.HashDB, mptResolver{})
 	}
@@ -220,6 +216,11 @@ func (db *Database) WritePreimages() {
 	if db.preimages != nil {
 		db.preimages.commit(true)
 	}
+}
+
+// Verkle returns if database is opened in verkle mode.
+func (db *Database) Verkle() bool {
+	return db.config.Verkle
 }
 
 // Cap iteratively flushes old but still referenced trie nodes until the total

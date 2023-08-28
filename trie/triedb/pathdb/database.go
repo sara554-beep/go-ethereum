@@ -130,6 +130,7 @@ type Database struct {
 	// It will be set automatically when the database is journaled during
 	// the shutdown to reject all following unexpected mutations.
 	readOnly   bool                     // Indicator if database is opened in read only mode
+	verkle     bool                     // Indicator if database is opened in verkle mode
 	bufferSize int                      // Memory allowance (in bytes) for caching dirty nodes
 	config     *Config                  // Configuration for database
 	diskdb     ethdb.Database           // Persistent storage for matured trie nodes
@@ -141,14 +142,23 @@ type Database struct {
 // New attempts to load an already existing layer from a persistent key-value
 // store (with a number of memory layers from a journal). If the journal is not
 // matched with the base persistent layer, all the recorded diff layers are discarded.
-func New(diskdb ethdb.Database, config *Config) *Database {
+func New(diskdb ethdb.Database, verkle bool, config *Config) *Database {
 	if config == nil {
 		config = Defaults
 	}
 	config = config.sanitize()
 
+	// Establish a dedicated database namespace tailored for Verkle-specific
+	// data, ensuring the isolation of both Verkle and MPT tree data. It's
+	// important to note that the introduction of a prefix won't lead to
+	// substantial storage overhead, as the underlying database will efficiently
+	// compress the shared key prefix.
+	if verkle {
+		diskdb = rawdb.NewTable(diskdb, rawdb.VerklePrefix)
+	}
 	db := &Database{
 		readOnly:   config.ReadOnly,
+		verkle:     verkle,
 		bufferSize: config.DirtyCacheSize,
 		config:     config,
 		diskdb:     diskdb,
@@ -164,7 +174,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 	// mechanism also ensures that at most one **non-readOnly** database
 	// is opened at the same time to prevent accidental mutation.
 	if ancient, err := diskdb.AncientDatadir(); err == nil && ancient != "" && !db.readOnly {
-		freezer, err := rawdb.NewStateFreezer(ancient, false)
+		freezer, err := rawdb.NewStateFreezer(ancient, verkle, false)
 		if err != nil {
 			log.Crit("Failed to open state history freezer", "err", err)
 		}
@@ -180,13 +190,18 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 			log.Warn("Truncated extra state histories", "number", pruned)
 		}
 	}
-	log.Warn("Path-based state scheme is an experimental feature")
+	var contexts []interface{}
+	if verkle {
+		contexts = append(contexts, "verkle", true)
+	}
+	log.Warn("Path-based state scheme is an experimental feature", contexts...)
 	return db
 }
 
 // reader is a state reader of Database which implements the Reader interface.
 type reader struct {
-	l layer
+	l      layer
+	verkle bool
 }
 
 func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
@@ -197,6 +212,9 @@ func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte,
 	// Note, in verkle tree, the hash checking can be ignored/skipped
 	// if slim node format is used. TODO(rjl493456442) remove it for
 	// verkle branch.
+	if r.verkle {
+		return blob, nil
+	}
 	h := newHasher()
 	defer h.release()
 
@@ -212,7 +230,7 @@ func (db *Database) Reader(root common.Hash) (*reader, error) {
 	if l == nil {
 		return nil, fmt.Errorf("state %#x is not available", root)
 	}
-	return &reader{l: l}, nil
+	return &reader{l: l, verkle: db.verkle}, nil
 }
 
 // Update adds a new layer into the tree, if that can be linked to an existing

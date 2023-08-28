@@ -126,17 +126,17 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte) ([]byte, error) {
 		cleanMissMeter.Mark(1)
 	}
 	// Try to retrieve the trie node from the disk.
-	var nBlob []byte
+	var blob []byte
 	if owner == (common.Hash{}) {
-		nBlob = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
+		blob = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
 	} else {
-		nBlob = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
+		blob = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
 	}
-	if dl.cleans != nil && len(nBlob) > 0 {
-		dl.cleans.Set(key, nBlob)
-		cleanWriteMeter.Mark(int64(len(nBlob)))
+	if dl.cleans != nil && len(blob) > 0 {
+		dl.cleans.Set(key, blob)
+		cleanWriteMeter.Mark(int64(len(blob)))
 	}
-	return nBlob, nil
+	return blob, nil
 }
 
 // update implements the layer interface, returning a new diff layer on top

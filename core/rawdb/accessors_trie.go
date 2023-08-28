@@ -256,6 +256,9 @@ func DeleteTrieNode(db ethdb.KeyValueWriter, owner common.Hash, path []byte, has
 func ReadStateScheme(db ethdb.Reader) string {
 	// Check if state in path-based scheme is present
 	blob := ReadAccountTrieNode(db, nil)
+	if len(blob) == 0 {
+		blob = ReadAccountTrieNode(db, []byte(VerklePrefix))
+	}
 	if len(blob) != 0 {
 		return PathScheme
 	}

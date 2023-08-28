@@ -87,12 +87,13 @@ func inspectFreezers(db ethdb.Database) ([]freezerInfo, error) {
 			}
 			infos = append(infos, info)
 
-		case stateFreezerName:
+		case stateFreezerName, verkleFreezerName:
 			datadir, err := db.AncientDatadir()
 			if err != nil {
 				return nil, err
 			}
-			f, err := NewStateFreezer(datadir, true)
+			verkle := freezer == verkleFreezerName
+			f, err := NewStateFreezer(datadir, verkle, true)
 			if err != nil {
 				return nil, err
 			}

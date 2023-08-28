@@ -110,7 +110,11 @@ var (
 	// Path-based storage scheme of merkle patricia trie.
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
-	stateIDPrefix         = []byte("L") // stateIDPrefix + state root -> state id
+	stateIDPrefix         = []byte("L") // stateIDPrefix + state root + (verkle suffix) -> state id
+
+	// VerklePrefix is the prefix of verkle states(verkle trie nodes,
+	// trie journal, persistent state id, state id lookups).
+	VerklePrefix = "Verkle"
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
