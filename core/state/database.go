@@ -223,21 +223,20 @@ func (db *cachingDB) openMPTTrie(root common.Hash) (Trie, error) {
 }
 
 func (db *cachingDB) openVKTrie(root common.Hash) (Trie, error) {
+	// TODO translation from mpt root to verkle root?
 	payload, err := db.DiskDB().Get(trie.FlatDBVerkleNodeKeyPrefix)
 	if err != nil {
-		return trie.NewVerkleTrie(verkle.New(), db.triedb, db.addrToPoint, db.ended), nil
+		return trie.NewVerkleTrie(verkle.New(), db.triedb, db.addrToPoint, db.ended)
 	}
-
 	r, err := verkle.ParseNode(payload, 0)
 	if err != nil {
 		panic(err)
 	}
-	return trie.NewVerkleTrie(r, db.triedb, db.addrToPoint, db.ended), err
+	return trie.NewVerkleTrie(r, db.triedb, db.addrToPoint, db.ended)
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
 func (db *cachingDB) OpenTrie(root common.Hash) (Trie, error) {
-
 	if db.ended {
 		vkt, err := db.openVKTrie(root)
 		if err != nil {

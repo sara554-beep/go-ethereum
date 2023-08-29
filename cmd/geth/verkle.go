@@ -21,6 +21,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -28,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/gballet/go-verkle"
 	cli "github.com/urfave/cli/v2"
-	"os"
 )
 
 var (

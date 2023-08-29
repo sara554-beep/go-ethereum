@@ -17,10 +17,10 @@
 package utils
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"math/big"
-	"math/rand"
 	"testing"
 
 	"github.com/gballet/go-verkle"

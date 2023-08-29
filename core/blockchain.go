@@ -2424,8 +2424,6 @@ func (bc *BlockChain) skipBlock(err error, it *insertIterator) bool {
 	return false
 }
 
-var emptyVerkleRoot common.Hash
-
 // indexBlocks reindexes or unindexes transactions depending on user configuration
 func (bc *BlockChain) indexBlocks(tail *uint64, head uint64, done chan struct{}) {
 	defer func() { close(done) }()

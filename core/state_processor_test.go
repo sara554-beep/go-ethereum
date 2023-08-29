@@ -476,13 +476,18 @@ func TestProcessVerkle(t *testing.T) {
 	)
 	// Verkle trees use the snapshot, which must be enabled before the
 	// data is saved into the tree+database.
-	genesis := gspec.MustCommit(bcdb)
+	triedb := trie.NewDatabase(bcdb, trie.PathDefaults)
+	genesis := gspec.MustCommit(bcdb, triedb)
+	triedb.Close()
+
 	blockchain, _ := NewBlockChain(bcdb, nil, gspec, nil, beacon.New(ethash.NewFaker()), vm.Config{}, nil, nil)
 	defer blockchain.Stop()
 
 	// Commit the genesis block to the block-generation database as it
 	// is now independent of the blockchain database.
-	gspec.MustCommit(gendb)
+	triedb = trie.NewDatabase(gendb, trie.PathDefaults)
+	gspec.MustCommit(gendb, triedb)
+	triedb.Close()
 
 	txCost1 := params.WitnessBranchWriteCost*2 + params.WitnessBranchReadCost*2 + params.WitnessChunkWriteCost*3 + params.WitnessChunkReadCost*10 + params.TxGas
 	txCost2 := params.WitnessBranchWriteCost + params.WitnessBranchReadCost*2 + params.WitnessChunkWriteCost*2 + params.WitnessChunkReadCost*10 + params.TxGas
