@@ -1057,8 +1057,12 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	s.IntermediateRoot(deleteEmptyObjects)
 
 	var (
-		result     = newCommitResult()
-		codeWriter = s.db.DiskDB().NewBatch()
+		result = newCommitResult()
+
+		// Un-flushed contract codes
+		addresses  []common.Address
+		codeHashes []common.Hash
+		codes      [][]byte
 	)
 	// Handle all state deletions first
 	if err := s.handleDestruction(result); err != nil {
@@ -1073,18 +1077,20 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 
 		// Write any contract code associated with the state object
 		if obj.code != nil && obj.dirtyCode {
-			rawdb.WriteCode(codeWriter, common.BytesToHash(obj.CodeHash()), obj.code)
 			obj.dirtyCode = false
+
+			// Collect dirty contract codes for later write in a single batch.
+			addresses = append(addresses, addr)
+			codeHashes = append(codeHashes, common.BytesToHash(obj.CodeHash()))
+			codes = append(codes, obj.code)
 		}
 		// Write any storage changes in the state object to its storage trie
 		if err := obj.commit(result); err != nil {
 			return common.Hash{}, err
 		}
 	}
-	if codeWriter.ValueSize() > 0 {
-		if err := codeWriter.Write(); err != nil {
-			log.Crit("Failed to commit dirty codes", "error", err)
-		}
+	if err := s.db.WriteCodes(addresses, codeHashes, codes); err != nil {
+		return common.Hash{}, err
 	}
 	// Write the account trie changes, measuring the amount of wasted time
 	var start time.Time

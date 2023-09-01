@@ -499,7 +499,7 @@ func TestOpenDrops(t *testing.T) {
 	store.Close()
 
 	// Create a blob pool out of the pre-seeded data
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting(rawdb.NewDatabase(memorydb.New())), nil)
 	statedb.AddBalance(crypto.PubkeyToAddress(gapper.PublicKey), uint256.NewInt(1000000))
 	statedb.AddBalance(crypto.PubkeyToAddress(dangler.PublicKey), uint256.NewInt(1000000))
 	statedb.AddBalance(crypto.PubkeyToAddress(filler.PublicKey), uint256.NewInt(1000000))
@@ -624,7 +624,7 @@ func TestOpenIndex(t *testing.T) {
 	store.Close()
 
 	// Create a blob pool out of the pre-seeded data
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting(rawdb.NewDatabase(memorydb.New())), nil)
 	statedb.AddBalance(addr, uint256.NewInt(1_000_000_000))
 	statedb.Commit(0, true)
 
@@ -724,7 +724,7 @@ func TestOpenHeap(t *testing.T) {
 	store.Close()
 
 	// Create a blob pool out of the pre-seeded data
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting(rawdb.NewDatabase(memorydb.New())), nil)
 	statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000))
 	statedb.AddBalance(addr2, uint256.NewInt(1_000_000_000))
 	statedb.AddBalance(addr3, uint256.NewInt(1_000_000_000))
@@ -804,7 +804,7 @@ func TestOpenCap(t *testing.T) {
 	// with a high cap to ensure everything was persisted previously
 	for _, datacap := range []uint64{2 * (txAvgSize + blobSize), 100 * (txAvgSize + blobSize)} {
 		// Create a blob pool out of the pre-seeded data, but cap it to 2 blob transaction
-		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting(rawdb.NewDatabase(memorydb.New())), nil)
 		statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000))
 		statedb.AddBalance(addr2, uint256.NewInt(1_000_000_000))
 		statedb.AddBalance(addr3, uint256.NewInt(1_000_000_000))
@@ -1191,7 +1191,7 @@ func TestAdd(t *testing.T) {
 			keys  = make(map[string]*ecdsa.PrivateKey)
 			addrs = make(map[string]common.Address)
 		)
-		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewDatabase(memorydb.New())), nil)
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting(rawdb.NewDatabase(memorydb.New())), nil)
 		for acc, seed := range tt.seeds {
 			// Generate a new random key/address for the seed account
 			keys[acc], _ = crypto.GenerateKey()
