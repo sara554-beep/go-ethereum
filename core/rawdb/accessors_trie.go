@@ -46,6 +46,13 @@ const HashScheme = "hash"
 // on extra state diffs to survive deep reorg.
 const PathScheme = "path"
 
+// MerkleTree is the legacy tree type used in ethereum.
+const MerkleTree = "merkle"
+
+// VerkleTree is the experimental tree type by utilizing the polynomial commitment
+// to achieve the minimal proof size.
+const VerkleTree = "verkle"
+
 // hasher is used to compute the sha256 hash of the provided data.
 type hasher struct{ sha crypto.KeccakState }
 

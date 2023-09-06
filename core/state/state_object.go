@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -141,19 +142,27 @@ func (s *stateObject) touch() {
 // be loaded.
 func (s *stateObject) storageTrie() (Trie, error) {
 	if s.trie == nil {
-		// Attempt to load the storage trie from the prefetcher if enabled,
-		// benefiting from cached hot data.
-		if s.data.Root != types.EmptyRootHash && s.db.prefetcher != nil {
-			s.trie = s.db.prefetcher.trie(s.addrHash, s.data.Root)
-		}
-		// Load the storage trie from database as the fallback if it's not
-		// available in prefetcher.
-		if s.trie == nil {
-			t, err := s.db.db.OpenStorageTrie(s.db.originalRoot, s.address, s.data.Root)
+		if s.db.db.TreeScheme() == rawdb.VerkleTree {
+			t, err := s.db.accountTrie()
 			if err != nil {
 				return nil, err
 			}
 			s.trie = t
+		} else {
+			// Attempt to load the storage trie from the prefetcher if enabled,
+			// benefiting from cached hot data.
+			if s.data.Root != types.EmptyRootHash && s.db.prefetcher != nil {
+				s.trie = s.db.prefetcher.trie(s.addrHash, s.data.Root)
+			}
+			// Load the storage trie from database as the fallback if it's not
+			// available in prefetcher.
+			if s.trie == nil {
+				t, err := s.db.db.OpenStorageTrie(s.db.originalRoot, s.address, s.data.Root)
+				if err != nil {
+					return nil, err
+				}
+				s.trie = t
+			}
 		}
 	}
 	return s.trie, nil
@@ -329,13 +338,16 @@ func (s *stateObject) updateTrie() (Trie, error) {
 	return tr, nil
 }
 
-// updateRoot flushes all cached storage mutations to trie, recalculating the
+// flushTrie flushes all cached storage mutations to trie, recalculating the
 // new storage trie root.
-func (s *stateObject) updateRoot() {
+func (s *stateObject) flushTrie() {
 	// Flush cached storage mutations into trie, short circuit if any error
 	// is occurred or there is not change in the trie.
 	tr, err := s.updateTrie()
 	if err != nil || tr == nil {
+		return
+	}
+	if s.db.db.TreeScheme() == rawdb.VerkleTree {
 		return
 	}
 	// Track the amount of time wasted on hashing the storage trie
@@ -347,8 +359,12 @@ func (s *stateObject) updateRoot() {
 
 // commit obtains a set of dirty storage trie nodes and updates the account data.
 // The returned set can be nil if nothing to commit. This function assumes all
-// storage mutations have already been flushed into trie by updateRoot.
+// storage mutations have already been flushed into trie by updateMerkleTrie.
 func (s *stateObject) commit() (*trienode.NodeSet, error) {
+	if s.db.db.TreeScheme() == rawdb.VerkleTree {
+		s.origin, s.trie = s.data.Copy(), nil
+		return nil, nil
+	}
 	// Short circuit if trie is not even loaded, don't bother with committing anything
 	if s.trie == nil {
 		s.origin = s.data.Copy()

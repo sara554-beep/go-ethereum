@@ -64,6 +64,12 @@ type StateReader interface {
 type Database interface {
 	CodeStore
 
+	// StateScheme returns the state scheme used by the database.
+	StateScheme() string
+
+	// TreeScheme returns the tree scheme used by the database.
+	TreeScheme() string
+
 	// StateReader returns a state reader interface with the specified state root.
 	StateReader(stateRoot common.Hash) (StateReader, error)
 

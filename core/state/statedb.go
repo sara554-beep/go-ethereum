@@ -889,7 +889,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// to pull useful data from disk.
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; !obj.deleted {
-			obj.updateRoot()
+			obj.flushTrie()
 		}
 	}
 	usedAddrs := make([][]byte, 0, len(s.stateObjectsPending))
@@ -1092,7 +1092,7 @@ func (s *StateDB) handleDestruction(nodes *trienode.MergedNodeSet) (map[common.A
 	// considerable time and storage deletion isn't supported in hash mode, thus
 	// preemptively avoiding unnecessary expenses.
 	incomplete := make(map[common.Address]struct{})
-	if s.db.TrieDB().Scheme() == rawdb.HashScheme {
+	if s.db.StateScheme() == rawdb.HashScheme {
 		return incomplete, nil
 	}
 	for addr, prev := range s.stateObjectsDestruct {

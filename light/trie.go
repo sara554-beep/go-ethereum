@@ -120,6 +120,16 @@ type odrDatabase struct {
 	backend OdrBackend
 }
 
+// StateScheme returns the state scheme used by the database.
+func (db *odrDatabase) StateScheme() string {
+	return rawdb.HashScheme
+}
+
+// TreeScheme returns the tree scheme used by the database.
+func (db *odrDatabase) TreeScheme() string {
+	return rawdb.MerkleTree
+}
+
 // StateReader constructs a reader for the specific state.
 func (db *odrDatabase) StateReader(root common.Hash) (state.StateReader, error) {
 	return newOdrStateReader(root, db), nil
