@@ -515,7 +515,7 @@ func (b testBackend) StateAndHeaderByNumber(ctx context.Context, number rpc.Bloc
 	stateDb, err := b.chain.StateAt(header.Root)
 	return stateDb, header, err
 }
-func (b testBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
+func (b testBackend) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash, overrides *state.Overrides) (*state.StateDB, *types.Header, error) {
 	if blockNr, ok := blockNrOrHash.Number(); ok {
 		return b.StateAndHeaderByNumber(ctx, blockNr)
 	}
@@ -624,7 +624,7 @@ func TestEstimateGas(t *testing.T) {
 	var testSuite = []struct {
 		blockNumber rpc.BlockNumber
 		call        TransactionArgs
-		overrides   StateOverride
+		overrides   state.Overrides
 		expectErr   error
 		want        uint64
 	}{
@@ -660,8 +660,8 @@ func TestEstimateGas(t *testing.T) {
 		{
 			blockNumber: rpc.LatestBlockNumber,
 			call:        TransactionArgs{},
-			overrides: StateOverride{
-				randomAccounts[0].addr: OverrideAccount{Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether)))},
+			overrides: state.Overrides{
+				randomAccounts[0].addr: state.OverrideAccount{Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether)))},
 			},
 			expectErr: nil,
 			want:      53000,
@@ -673,8 +673,8 @@ func TestEstimateGas(t *testing.T) {
 				To:    &randomAccounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
 			},
-			overrides: StateOverride{
-				randomAccounts[0].addr: OverrideAccount{Balance: newRPCBalance(big.NewInt(0))},
+			overrides: state.Overrides{
+				randomAccounts[0].addr: state.OverrideAccount{Balance: newRPCBalance(big.NewInt(0))},
 			},
 			expectErr: core.ErrInsufficientFunds,
 		},
@@ -727,7 +727,7 @@ func TestCall(t *testing.T) {
 	randomAccounts := newAccounts(3)
 	var testSuite = []struct {
 		blockNumber    rpc.BlockNumber
-		overrides      StateOverride
+		overrides      state.Overrides
 		call           TransactionArgs
 		blockOverrides BlockOverrides
 		expectErr      error
@@ -784,8 +784,8 @@ func TestCall(t *testing.T) {
 				To:    &randomAccounts[1].addr,
 				Value: (*hexutil.Big)(big.NewInt(1000)),
 			},
-			overrides: StateOverride{
-				randomAccounts[0].addr: OverrideAccount{Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether)))},
+			overrides: state.Overrides{
+				randomAccounts[0].addr: state.OverrideAccount{Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether)))},
 			},
 			want: "0x",
 		},
@@ -822,8 +822,8 @@ func TestCall(t *testing.T) {
 				To:   &randomAccounts[2].addr,
 				Data: hex2Bytes("8381f58a"), // call number()
 			},
-			overrides: StateOverride{
-				randomAccounts[2].addr: OverrideAccount{
+			overrides: state.Overrides{
+				randomAccounts[2].addr: state.OverrideAccount{
 					Code:      hex2Bytes("6080604052348015600f57600080fd5b506004361060285760003560e01c80638381f58a14602d575b600080fd5b60336049565b6040518082815260200191505060405180910390f35b6000548156fea2646970667358221220eab35ffa6ab2adfe380772a48b8ba78e82a1b820a18fcb6f59aa4efb20a5f60064736f6c63430007040033"),
 					StateDiff: &map[common.Hash]common.Hash{{}: common.BigToHash(big.NewInt(123))},
 				},

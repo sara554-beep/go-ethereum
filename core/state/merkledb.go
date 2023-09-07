@@ -185,13 +185,9 @@ func (r *merkleReader) Storage(addr common.Address, key common.Hash) (common.Has
 	return slot, nil
 }
 
-// NewDatabase creates a merkleDB instance with provided components.
+// NewDatabase creates a state database with provided components.
 func NewDatabase(codeDB CodeStore, trieDB *trie.Database, snaps *snapshot.Tree) Database {
-	return &merkleDB{
-		codeDB: codeDB,
-		trieDB: trieDB,
-		snaps:  snaps,
-	}
+	return newMerkleDB(codeDB, trieDB, snaps)
 }
 
 // NewDatabaseForTesting is similar to NewDatabase, but it sets up a local code
@@ -199,6 +195,15 @@ func NewDatabase(codeDB CodeStore, trieDB *trie.Database, snaps *snapshot.Tree) 
 // specifically intended for testing.
 func NewDatabaseForTesting(db ethdb.Database) Database {
 	return NewDatabase(NewCodeDB(db), trie.NewDatabase(db, nil), nil)
+}
+
+// newMerkleDB creates a merkleDB with provided components.
+func newMerkleDB(codeDB CodeStore, trieDB *trie.Database, snaps *snapshot.Tree) *merkleDB {
+	return &merkleDB{
+		codeDB: codeDB,
+		trieDB: trieDB,
+		snaps:  snaps,
+	}
 }
 
 // merkleDB is the implementation of Database interface, designed for providing
