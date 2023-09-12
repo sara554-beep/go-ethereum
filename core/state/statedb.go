@@ -84,6 +84,7 @@ type StateDB struct {
 	stateObjectsPending  map[common.Address]struct{}            // State objects finalized but not yet written to the trie
 	stateObjectsDirty    map[common.Address]struct{}            // State objects modified in the current execution
 	stateObjectsDestruct map[common.Address]*types.StateAccount // State objects destructed in the block along with its previous value
+	stateObjectsReset    map[common.Address]*types.StateAccount // State objects destructed in the block along with its previous value
 
 	// DB error.
 	// State objects are used by the consensus core and VM which are
@@ -159,6 +160,7 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 		stateObjectsPending:  make(map[common.Address]struct{}),
 		stateObjectsDirty:    make(map[common.Address]struct{}),
 		stateObjectsDestruct: make(map[common.Address]*types.StateAccount),
+		stateObjectsReset:    make(map[common.Address]*types.StateAccount),
 		logs:                 make(map[common.Hash][]*types.Log),
 		preimages:            make(map[common.Hash][]byte),
 		journal:              newJournal(),
@@ -604,30 +606,19 @@ func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) 
 		// account and storage data should be cleared as well. Note, it must
 		// be done here, otherwise the destruction event of "original account"
 		// will be lost.
-		_, prevdestruct := s.stateObjectsDestruct[prev.address]
-		if !prevdestruct {
-			s.stateObjectsDestruct[prev.address] = prev.origin
+		_, prevReset := s.stateObjectsReset[prev.address]
+		if !prevReset {
+			s.stateObjectsReset[prev.address] = prev.origin
 		}
 		// There may be some cached account/storage data already since IntermediateRoot
 		// will be called for each transaction before byzantium fork which will always
 		// cache the latest account/storage data.
-		prevAccount, ok := s.accountsOrigin[prev.address]
 		s.journal.append(resetObjectChange{
-			account:                &addr,
-			prev:                   prev,
-			prevdestruct:           prevdestruct,
-			prevAccount:            s.accounts[prev.addrHash],
-			prevStorage:            s.storages[prev.addrHash],
-			prevAccountOriginExist: ok,
-			prevAccountOrigin:      prevAccount,
-			prevStorageOrigin:      s.storagesOrigin[prev.address],
+			account:   &addr,
+			prev:      prev,
+			prevReset: prevReset,
 		})
-		delete(s.accounts, prev.addrHash)
-		delete(s.storages, prev.addrHash)
-		delete(s.accountsOrigin, prev.address)
-		delete(s.storagesOrigin, prev.address)
 	}
-
 	newobj.created = true
 
 	s.setStateObject(newobj)
@@ -669,6 +660,7 @@ func (s *StateDB) Copy() *StateDB {
 		stateObjectsPending:  make(map[common.Address]struct{}, len(s.stateObjectsPending)),
 		stateObjectsDirty:    make(map[common.Address]struct{}, len(s.journal.dirties)),
 		stateObjectsDestruct: make(map[common.Address]*types.StateAccount, len(s.stateObjectsDestruct)),
+		stateObjectsReset:    make(map[common.Address]*types.StateAccount, len(s.stateObjectsDestruct)),
 		refund:               s.refund,
 		logs:                 make(map[common.Hash][]*types.Log, len(s.logs)),
 		logSize:              s.logSize,
@@ -696,6 +688,9 @@ func (s *StateDB) Copy() *StateDB {
 	// Deep copy the destruction markers.
 	for addr, value := range s.stateObjectsDestruct {
 		state.stateObjectsDestruct[addr] = value
+	}
+	for addr, value := range s.stateObjectsReset {
+		state.stateObjectsReset[addr] = value
 	}
 	// Deep copy the state changes made in the scope of block
 	// along with their original values.
@@ -786,16 +781,9 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			// We need to maintain account deletions explicitly (will remain
 			// set indefinitely). Note only the first occurred self-destruct
 			// event is tracked.
-			if _, ok := s.stateObjectsDestruct[obj.address]; !ok {
-				s.stateObjectsDestruct[obj.address] = obj.origin
+			if _, ok := s.stateObjectsReset[obj.address]; !ok {
+				s.stateObjectsReset[obj.address] = obj.origin
 			}
-			// Note, we can't do this only at the end of a block because multiple
-			// transactions within the same block might self destruct and then
-			// resurrect an account; but the snapshotter needs both events.
-			delete(s.accounts, obj.addrHash)      // Clear out any previously updated account data (may be recreated via a resurrect)
-			delete(s.storages, obj.addrHash)      // Clear out any previously updated storage data (may be recreated via a resurrect)
-			delete(s.accountsOrigin, obj.address) // Clear out any previously updated account data (may be recreated via a resurrect)
-			delete(s.storagesOrigin, obj.address) // Clear out any previously updated storage data (may be recreated via a resurrect)
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
 		}
@@ -858,6 +846,21 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 			s.prefetcher = nil
 		}()
 	}
+	for addr := range s.stateObjectsReset {
+		if _, ok := s.stateObjectsDestruct[addr]; !ok {
+			s.stateObjectsDestruct[addr] = s.stateObjectsReset[addr]
+		}
+		// Note, we can't do this only at the end of a block because multiple
+		// transactions within the same block might self destruct and then
+		// resurrect an account; but the snapshotter needs both events.
+		addrHash := crypto.Keccak256Hash(addr.Bytes())
+		delete(s.accounts, addrHash)   // Clear out any previously updated account data (may be recreated via a resurrect)
+		delete(s.storages, addrHash)   // Clear out any previously updated storage data (may be recreated via a resurrect)
+		delete(s.accountsOrigin, addr) // Clear out any previously updated account data (may be recreated via a resurrect)
+		delete(s.storagesOrigin, addr) // Clear out any previously updated storage data (may be recreated via a resurrect)
+	}
+	s.stateObjectsReset = make(map[common.Address]*types.StateAccount)
+
 	// Although naively it makes sense to retrieve the account trie and then do
 	// the contract storage and account updates sequentially, that short circuits
 	// the account prefetcher. Instead, let's process all the storage updates

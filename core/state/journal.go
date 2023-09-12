@@ -109,15 +109,9 @@ type (
 		account *common.Address
 	}
 	resetObjectChange struct {
-		account      *common.Address
-		prev         *stateObject
-		prevdestruct bool
-		prevAccount  []byte
-		prevStorage  map[common.Hash][]byte
-
-		prevAccountOriginExist bool
-		prevAccountOrigin      []byte
-		prevStorageOrigin      map[common.Hash][]byte
+		account   *common.Address
+		prev      *stateObject
+		prevReset bool
 	}
 	selfDestructChange struct {
 		account     *common.Address
@@ -189,20 +183,8 @@ func (ch createObjectChange) copy() journalEntry {
 
 func (ch resetObjectChange) revert(s *StateDB) {
 	s.setStateObject(ch.prev)
-	if !ch.prevdestruct {
-		delete(s.stateObjectsDestruct, ch.prev.address)
-	}
-	if ch.prevAccount != nil {
-		s.accounts[ch.prev.addrHash] = ch.prevAccount
-	}
-	if ch.prevStorage != nil {
-		s.storages[ch.prev.addrHash] = ch.prevStorage
-	}
-	if ch.prevAccountOriginExist {
-		s.accountsOrigin[ch.prev.address] = ch.prevAccountOrigin
-	}
-	if ch.prevStorageOrigin != nil {
-		s.storagesOrigin[ch.prev.address] = ch.prevStorageOrigin
+	if !ch.prevReset {
+		delete(s.stateObjectsReset, ch.prev.address)
 	}
 }
 
@@ -211,23 +193,10 @@ func (ch resetObjectChange) dirtied() *common.Address {
 }
 
 func (ch resetObjectChange) copy() journalEntry {
-	prevStorage := make(map[common.Hash][]byte)
-	for key, slot := range ch.prevStorage {
-		prevStorage[key] = common.CopyBytes(slot)
-	}
-	prevStorageOrigin := make(map[common.Hash][]byte)
-	for key, slot := range ch.prevStorageOrigin {
-		prevStorageOrigin[key] = common.CopyBytes(slot)
-	}
 	return resetObjectChange{
-		account:                ch.account,
-		prev:                   ch.prev.deepCopy(),
-		prevdestruct:           ch.prevdestruct,
-		prevAccount:            common.CopyBytes(ch.prevAccount),
-		prevStorage:            prevStorage,
-		prevAccountOriginExist: ch.prevAccountOriginExist,
-		prevAccountOrigin:      common.CopyBytes(ch.prevAccountOrigin),
-		prevStorageOrigin:      prevStorageOrigin,
+		account:   ch.account,
+		prev:      ch.prev.deepCopy(),
+		prevReset: ch.prevReset,
 	}
 }
 
