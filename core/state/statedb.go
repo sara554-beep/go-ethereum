@@ -461,7 +461,6 @@ func (s *StateDB) Selfdestruct6780(addr common.Address) {
 	if stateObject == nil {
 		return
 	}
-
 	if stateObject.created {
 		s.SelfDestruct(addr)
 	}
