@@ -19,7 +19,6 @@ package state
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -221,6 +220,49 @@ func TestCopy(t *testing.T) {
 		if want := big.NewInt(5 * int64(i)); ccopyObj.Balance().Cmp(want) != 0 {
 			t.Errorf("copy obj %d: balance mismatch: have %v, want %v", i, ccopyObj.Balance(), want)
 		}
+	}
+}
+
+// TestCopyWithDirtyJournal tests if Copy can correct create a equal copied
+// stateDB with dirty journal present.
+func TestCopyWithDirtyJournal(t *testing.T) {
+	db := NewDatabase(rawdb.NewMemoryDatabase())
+	orig, _ := New(types.EmptyRootHash, db, nil)
+
+	// Fill up the initial states
+	for i := byte(0); i < 255; i++ {
+		obj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
+		obj.AddBalance(big.NewInt(int64(i)))
+		obj.data.Root = common.HexToHash("0xdeadbeef")
+		orig.updateStateObject(obj)
+	}
+	root, _ := orig.Commit(0, true)
+	orig, _ = New(root, db, nil)
+
+	// modify all in memory without finalizing
+	for i := byte(0); i < 255; i++ {
+		obj := orig.GetOrNewStateObject(common.BytesToAddress([]byte{i}))
+		obj.SubBalance(big.NewInt(int64(i)))
+		orig.updateStateObject(obj)
+	}
+	cpy := orig.Copy()
+
+	orig.Finalise(true)
+	for i := byte(0); i < 255; i++ {
+		root := orig.GetStorageRoot(common.BytesToAddress([]byte{i}))
+		if root != (common.Hash{}) {
+			t.Errorf("Unexpected storage root %x", root)
+		}
+	}
+	cpy.Finalise(true)
+	for i := byte(0); i < 255; i++ {
+		root := cpy.GetStorageRoot(common.BytesToAddress([]byte{i}))
+		if root != (common.Hash{}) {
+			t.Errorf("Unexpected storage root %x", root)
+		}
+	}
+	if cpy.IntermediateRoot(true) != orig.IntermediateRoot(true) {
+		t.Error("State is not equal after copy")
 	}
 }
 
@@ -738,20 +780,17 @@ func TestCommitCopy(t *testing.T) {
 	// Copy the committed state database, the copied one is not functional.
 	state.Commit(0, true)
 	copied := state.Copy()
-	if balance := copied.GetBalance(addr); balance.Cmp(big.NewInt(0)) != 0 {
+	if balance := copied.GetBalance(addr); balance.Cmp(big.NewInt(42)) != 0 {
 		t.Fatalf("unexpected balance: have %v", balance)
 	}
-	if code := copied.GetCode(addr); code != nil {
+	if code := copied.GetCode(addr); !bytes.Equal(code, []byte("hello")) {
 		t.Fatalf("unexpected code: have %x", code)
 	}
-	if val := copied.GetState(addr, skey); val != (common.Hash{}) {
-		t.Fatalf("unexpected storage slot: have %x", val)
+	if val := copied.GetState(addr, skey); val != sval {
+		t.Fatalf("unexpected storage slot: have %x", sval)
 	}
-	if val := copied.GetCommittedState(addr, skey); val != (common.Hash{}) {
+	if val := copied.GetCommittedState(addr, skey); val != sval {
 		t.Fatalf("unexpected storage slot: have %x", val)
-	}
-	if !errors.Is(copied.Error(), trie.ErrCommitted) {
-		t.Fatalf("unexpected state error, %v", copied.Error())
 	}
 }
 
