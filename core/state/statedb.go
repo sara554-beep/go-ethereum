@@ -530,7 +530,7 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 }
 
 // deleteStateObject removes the given object from the state trie.
-func (s *StateDB) deleteStateObject(obj *stateObject) {
+func (s *StateDB) deleteStateObject(addr common.Address) {
 	// Track the amount of time wasted on deleting the account from the trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.AccountUpdates += time.Since(start) }(time.Now())
@@ -538,11 +538,11 @@ func (s *StateDB) deleteStateObject(obj *stateObject) {
 	// Delete the account from the trie
 	tr, err := s.accountTrie()
 	if err != nil {
-		s.setError(fmt.Errorf("failed to load account trie (%x) error: %v", obj.Address(), err))
+		s.setError(fmt.Errorf("failed to load account trie (%x) error: %v", addr, err))
 		return
 	}
-	if err := tr.DeleteAccount(obj.Address()); err != nil {
-		s.setError(fmt.Errorf("deleteStateObject (%x) error: %v", obj.Address(), err))
+	if err := tr.DeleteAccount(addr); err != nil {
+		s.setError(fmt.Errorf("deleteStateObject (%x) error: %v", addr, err))
 	}
 }
 
@@ -550,20 +550,15 @@ func (s *StateDB) deleteStateObject(obj *stateObject) {
 // the object is not found or was deleted in this execution context. If you need
 // to differentiate between non-existent/just-deleted, use getDeletedStateObject.
 func (s *StateDB) getStateObject(addr common.Address) *stateObject {
-	if obj := s.getDeletedStateObject(addr); obj != nil && !obj.deleted {
-		return obj
-	}
-	return nil
-}
-
-// getDeletedStateObject is similar to getStateObject, but instead of returning
-// nil for a deleted state object, it returns the actual object with the deleted
-// flag set. This is needed by the state journal to revert to the correct s-
-// destructed object instead of wiping all knowledge about the state object.
-func (s *StateDB) getDeletedStateObject(addr common.Address) *stateObject {
 	// Prefer live objects if any is available
 	if obj := s.stateObjects[addr]; obj != nil {
 		return obj
+	}
+	if _, ok := s.stateObjectsReset[addr]; ok {
+		return nil
+	}
+	if _, ok := s.stateObjectsDestruct[addr]; ok {
+		return nil
 	}
 	// If no live objects are available, attempt to load it from database
 	acct, err := s.reader.Account(addr)
@@ -597,7 +592,7 @@ func (s *StateDB) GetOrNewStateObject(addr common.Address) *stateObject {
 // createObject creates a new state object. If there is an existing account with
 // the given address, it is overwritten and returned as the second return value.
 func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) {
-	prev = s.getDeletedStateObject(addr) // Note, prev might have been deleted, we need that!
+	prev = s.getStateObject(addr) // Note, prev might have been deleted, we need that!
 	newobj = newObject(s, addr, nil)
 	if prev == nil {
 		s.journal.append(createObjectChange{account: &addr})
@@ -622,10 +617,7 @@ func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) 
 	newobj.created = true
 
 	s.setStateObject(newobj)
-	if prev != nil && !prev.deleted {
-		return newobj, prev
-	}
-	return newobj, nil
+	return newobj, prev
 }
 
 // CreateAccount explicitly creates a state object. If a state object with the address
@@ -776,7 +768,9 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			continue
 		}
 		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
-			obj.deleted = true
+			delete(s.stateObjects, addr)
+			delete(s.stateObjectsPending, addr)
+			delete(s.stateObjectsDirty, addr)
 
 			// We need to maintain account deletions explicitly (will remain
 			// set indefinitely). Note only the first occurred self-destruct
@@ -784,6 +778,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			if _, ok := s.stateObjectsReset[obj.address]; !ok {
 				s.stateObjectsReset[obj.address] = obj.origin
 			}
+			continue
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
 		}
@@ -858,6 +853,9 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 		delete(s.storages, addrHash)   // Clear out any previously updated storage data (may be recreated via a resurrect)
 		delete(s.accountsOrigin, addr) // Clear out any previously updated account data (may be recreated via a resurrect)
 		delete(s.storagesOrigin, addr) // Clear out any previously updated storage data (may be recreated via a resurrect)
+
+		s.deleteStateObject(addr)
+		s.AccountDeleted += 1
 	}
 	s.stateObjectsReset = make(map[common.Address]*types.StateAccount)
 
@@ -866,20 +864,12 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// the account prefetcher. Instead, let's process all the storage updates
 	// first, giving the account prefetches just a few more milliseconds of time
 	// to pull useful data from disk.
-	for addr := range s.stateObjectsPending {
-		if obj := s.stateObjects[addr]; !obj.deleted {
-			obj.updateRoot()
-		}
-	}
 	usedAddrs := make([][]byte, 0, len(s.stateObjectsPending))
 	for addr := range s.stateObjectsPending {
-		if obj := s.stateObjects[addr]; obj.deleted {
-			s.deleteStateObject(obj)
-			s.AccountDeleted += 1
-		} else {
-			s.updateStateObject(obj)
-			s.AccountUpdated += 1
-		}
+		obj := s.stateObjects[addr]
+		obj.updateRoot()
+		s.updateStateObject(obj)
+		s.AccountUpdated += 1
 		usedAddrs = append(usedAddrs, common.CopyBytes(addr[:])) // Copy needed for closure
 	}
 	if prefetcher != nil {
@@ -1164,9 +1154,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	// Handle all state updates afterwards
 	for addr := range s.stateObjectsDirty {
 		obj := s.stateObjects[addr]
-		if obj.deleted {
-			continue
-		}
+
 		// Write any contract code associated with the state object
 		if obj.code != nil && obj.dirtyCode {
 			obj.dirtyCode = false
