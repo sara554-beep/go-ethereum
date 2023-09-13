@@ -163,8 +163,6 @@ func benchmarkEVM_Create(bench *testing.B, code string) {
 		sender     = common.BytesToAddress([]byte("sender"))
 		receiver   = common.BytesToAddress([]byte("receiver"))
 	)
-
-	statedb.CreateAccount(sender)
 	statedb.SetCode(receiver, common.FromHex(code))
 	runtimeConfig := Config{
 		Origin:      sender,
@@ -343,15 +341,12 @@ func benchmarkNonModifyingCode(gas uint64, code []byte, name string, tracerCode 
 		vmenv       = NewEnv(cfg)
 		sender      = vm.AccountRef(cfg.Origin)
 	)
-	cfg.State.CreateAccount(destination)
-	eoa := common.HexToAddress("E0")
 	{
-		cfg.State.CreateAccount(eoa)
+		eoa := common.HexToAddress("E0")
 		cfg.State.SetNonce(eoa, 100)
 	}
-	reverting := common.HexToAddress("EE")
 	{
-		cfg.State.CreateAccount(reverting)
+		reverting := common.HexToAddress("EE")
 		cfg.State.SetCode(reverting, []byte{
 			byte(vm.PUSH1), 0x00,
 			byte(vm.PUSH1), 0x00,

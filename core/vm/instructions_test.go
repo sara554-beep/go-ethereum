@@ -594,11 +594,6 @@ func TestOpTstore(t *testing.T) {
 		scopeContext   = ScopeContext{mem, stack, contract}
 		value          = common.Hex2Bytes("abcdef00000000000000abba000000000deaf000000c0de00100000000133700")
 	)
-
-	// Add a stateObject for the caller and the contract being called
-	statedb.CreateAccount(caller)
-	statedb.CreateAccount(to)
-
 	env.interpreter = evmInterpreter
 	pc := uint64(0)
 	// push the value to the stack

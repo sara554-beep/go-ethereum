@@ -135,8 +135,6 @@ func TestIterativeDump(t *testing.T) {
 func TestNull(t *testing.T) {
 	s := newStateEnv()
 	address := common.HexToAddress("0x823140710bf13990e4500136726d8b55")
-	s.state.CreateAccount(address)
-	//value := common.FromHex("0x823140710bf13990e4500136726d8b55")
 	var value common.Hash
 
 	s.state.SetState(address, common.Hash{}, value)

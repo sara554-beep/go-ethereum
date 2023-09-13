@@ -305,12 +305,6 @@ func newTestAction(addr common.Address, r *rand.Rand) testAction {
 			args: make([]int64, 2),
 		},
 		{
-			name: "CreateAccount",
-			fn: func(a testAction, s *StateDB) {
-				s.CreateAccount(addr)
-			},
-		},
-		{
 			name: "SelfDestruct",
 			fn: func(a testAction, s *StateDB) {
 				s.SelfDestruct(addr)
@@ -1040,7 +1034,6 @@ func TestFlushOrderDataLoss(t *testing.T) {
 		state, _ = New(types.EmptyRootHash, statedb, nil)
 	)
 	for a := byte(0); a < 10; a++ {
-		state.CreateAccount(common.Address{a})
 		for s := byte(0); s < 10; s++ {
 			state.SetState(common.Address{a}, common.Hash{a, s}, common.Hash{a, s})
 		}
@@ -1104,40 +1097,6 @@ func TestStateDBTransientStorage(t *testing.T) {
 	}
 }
 
-func TestResetObject(t *testing.T) {
-	var (
-		disk     = rawdb.NewMemoryDatabase()
-		tdb      = trie.NewDatabase(disk, nil)
-		db       = NewDatabaseWithNodeDB(disk, tdb)
-		snaps, _ = snapshot.New(snapshot.Config{CacheSize: 10}, disk, tdb, types.EmptyRootHash)
-		state, _ = New(types.EmptyRootHash, db, snaps)
-		addr     = common.HexToAddress("0x1")
-		slotA    = common.HexToHash("0x1")
-		slotB    = common.HexToHash("0x2")
-	)
-	// Initialize account with balance and storage in first transaction.
-	state.SetBalance(addr, big.NewInt(1))
-	state.SetState(addr, slotA, common.BytesToHash([]byte{0x1}))
-	state.IntermediateRoot(true)
-
-	// Reset account and mutate balance and storages
-	state.CreateAccount(addr)
-	state.SetBalance(addr, big.NewInt(2))
-	state.SetState(addr, slotB, common.BytesToHash([]byte{0x2}))
-	root, _ := state.Commit(0, true)
-
-	// Ensure the original account is wiped properly
-	snap := snaps.Snapshot(root)
-	slot, _ := snap.Storage(crypto.Keccak256Hash(addr.Bytes()), crypto.Keccak256Hash(slotA.Bytes()))
-	if len(slot) != 0 {
-		t.Fatalf("Unexpected storage slot")
-	}
-	slot, _ = snap.Storage(crypto.Keccak256Hash(addr.Bytes()), crypto.Keccak256Hash(slotB.Bytes()))
-	if !bytes.Equal(slot, []byte{0x2}) {
-		t.Fatalf("Unexpected storage slot value %v", slot)
-	}
-}
-
 func TestDeleteStorage(t *testing.T) {
 	var (
 		disk     = rawdb.NewMemoryDatabase()
@@ -1149,7 +1108,6 @@ func TestDeleteStorage(t *testing.T) {
 	)
 	// Initialize account and populate storage
 	state.SetBalance(addr, big.NewInt(1))
-	state.CreateAccount(addr)
 	for i := 0; i < 1000; i++ {
 		slot := common.Hash(uint256.NewInt(uint64(i)).Bytes32())
 		value := common.Hash(uint256.NewInt(uint64(10 * i)).Bytes32())

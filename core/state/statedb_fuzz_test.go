@@ -92,12 +92,6 @@ func newStateTestAction(addr common.Address, r *rand.Rand, index int) testAction
 			args: make([]int64, 2),
 		},
 		{
-			name: "CreateAccount",
-			fn: func(a testAction, s *StateDB) {
-				s.CreateAccount(addr)
-			},
-		},
-		{
 			name: "Selfdestruct",
 			fn: func(a testAction, s *StateDB) {
 				s.SelfDestruct(addr)
