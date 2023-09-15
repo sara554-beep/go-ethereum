@@ -92,6 +92,7 @@ func New(id *ID, db *Database) (*Trie, error) {
 	if id.Root != (common.Hash{}) && id.Root != types.EmptyRootHash {
 		rootnode, err := trie.resolveAndTrack(id.Root[:], nil)
 		if err != nil {
+			log.Info("Failed to resolve node", "rood", id.Root.Hex(), "owner", id.Owner.Hex())
 			return nil, err
 		}
 		trie.root = rootnode

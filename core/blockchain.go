@@ -339,7 +339,9 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	}
 	// Make sure the state associated with the block is available
 	head := bc.CurrentBlock()
+	log.Info("Check state existence")
 	if !bc.HasState(head.Root) {
+		log.Info("Checked state existence, missing", "root", head.Root.Hex())
 		// Head state is missing, before the state recovery, find out the
 		// disk layer point of snapshot(if it's enabled). Make sure the
 		// rewound point is lower than disk layer.
@@ -390,7 +392,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			}
 		}
 		if needRewind {
-			log.Error("Truncating ancient chain", "from", bc.CurrentHeader().Number.Uint64(), "to", low)
+			log.Error("Truncating ancient chain", "from", bc.CurrentHeader().Number.Uint64(), "to", low, "frozen", frozen)
 			if err := bc.SetHead(low); err != nil {
 				return nil, err
 			}
@@ -775,12 +777,14 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 			}
 			// Remove the hash <-> number mapping from the active store.
 			rawdb.DeleteHeaderNumber(db, hash)
+			log.Info("Deleted from ancient", "number", num)
 		} else {
 			// Remove relative body and receipts from the active store.
 			// The header, total difficulty and canonical hash will be
 			// removed in the hc.SetHead function.
 			rawdb.DeleteBody(db, hash, num)
 			rawdb.DeleteReceipts(db, hash, num)
+			log.Info("Deleted from live", "number", num)
 		}
 		// Todo(rjl493456442) txlookup, bloombits, etc
 	}

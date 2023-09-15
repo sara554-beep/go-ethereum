@@ -50,10 +50,12 @@ func newTrieReader(stateRoot, owner common.Hash, db *Database) (*trieReader, err
 		if stateRoot == (common.Hash{}) {
 			log.Error("Zero state root hash!")
 		}
+		log.Info("create empty reader", "root", stateRoot.Hex())
 		return &trieReader{owner: owner}, nil
 	}
 	reader, err := db.Reader(stateRoot)
 	if err != nil {
+		log.Info("state is missing", "root", stateRoot.Hex())
 		return nil, &MissingNodeError{Owner: owner, NodeHash: stateRoot, err: err}
 	}
 	return &trieReader{owner: owner, reader: reader}, nil
