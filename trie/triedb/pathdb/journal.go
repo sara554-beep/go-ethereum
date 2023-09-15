@@ -130,6 +130,7 @@ func (db *Database) loadLayers() layer {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Return single layer with persistent state.
+	log.Info("Loaded persistent layer", "id", rawdb.ReadPersistentStateID(db.diskdb), "root", root.Hex())
 	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, newNodeBuffer(db.bufferSize, nil, 0))
 }
 

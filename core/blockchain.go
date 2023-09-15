@@ -648,6 +648,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 
 	// resetState resets the persistent state to genesis if it's not available.
 	resetState := func() {
+		log.Info("Trying to reset genesis state")
 		// Short circuit if the genesis state is already present.
 		if bc.HasState(bc.genesisBlock.Root()) {
 			return
@@ -659,11 +660,13 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 			if err := bc.triedb.Reset(types.EmptyRootHash); err != nil {
 				log.Crit("Failed to clean state", "err", err) // Shouldn't happen
 			}
+			log.Info("Reset triedb to empty")
 		}
 		// Write genesis state into database.
 		if err := CommitGenesisState(bc.db, bc.triedb, bc.genesisBlock.Hash()); err != nil {
 			log.Crit("Failed to commit genesis state", "err", err)
 		}
+		log.Info("Commit genesis state", "root", bc.genesisBlock.Root())
 	}
 	updateFn := func(db ethdb.KeyValueWriter, header *types.Header) (*types.Header, bool) {
 		// Rewind the blockchain, ensuring we don't end up with a stateless head
@@ -676,6 +679,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 				newHeadBlock = bc.genesisBlock
 				resetState()
 			} else {
+				log.Info("Resolved target block", "number", newHeadBlock.Number())
 				// Block exists, keep rewinding until we find one with state,
 				// keeping rewinding until we exceed the optional threshold
 				// root hash
@@ -687,17 +691,17 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 						beyondRoot, rootNumber = true, newHeadBlock.NumberU64()
 					}
 					if !bc.HasState(newHeadBlock.Root()) && !bc.stateRecoverable(newHeadBlock.Root()) {
-						log.Trace("Block state missing, rewinding further", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash())
+						log.Info("Block state missing, rewinding further", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash())
 						if pivot == nil || newHeadBlock.NumberU64() > *pivot {
 							parent := bc.GetBlock(newHeadBlock.ParentHash(), newHeadBlock.NumberU64()-1)
 							if parent != nil {
 								newHeadBlock = parent
 								continue
 							}
-							log.Error("Missing block in the middle, aiming genesis", "number", newHeadBlock.NumberU64()-1, "hash", newHeadBlock.ParentHash())
+							log.Info("Missing block in the middle, aiming genesis", "number", newHeadBlock.NumberU64()-1, "hash", newHeadBlock.ParentHash())
 							newHeadBlock = bc.genesisBlock
 						} else {
-							log.Trace("Rewind passed pivot, aiming genesis", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash(), "pivot", *pivot)
+							log.Info("Rewind passed pivot, aiming genesis", "number", newHeadBlock.NumberU64(), "hash", newHeadBlock.Hash(), "pivot", *pivot)
 							newHeadBlock = bc.genesisBlock
 						}
 					}
@@ -734,6 +738,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 			if newHeadSnapBlock == nil {
 				newHeadSnapBlock = bc.genesisBlock
 			}
+			log.Info("Reset head snap block", "old", currentSnapBlock.Number, "new", newHeadSnapBlock.Number())
 			rawdb.WriteHeadFastBlockHash(db, newHeadSnapBlock.Hash())
 
 			// Degrade the chain markers if they are explicitly reverted.
@@ -754,6 +759,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 		if headNumber+1 < frozen {
 			wipe = pivot == nil || headNumber >= *pivot
 		}
+		log.Info("New Head header", "number", headHeader.Number, "wipe", wipe)
 		return headHeader, wipe // Only force wipe if full synced
 	}
 	// Rewind the header chain, deleting all block bodies until then
@@ -780,8 +786,12 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 	// If SetHead was only called as a chain reparation method, try to skip
 	// touching the header chain altogether, unless the freezer is broken
 	if repair {
+		log.Info("Trying to repair blockchain", "currentBlock", bc.currentBlock.Load().Number)
 		if target, force := updateFn(bc.db, bc.CurrentBlock()); force {
+			log.Info("Repaired chain", "target", target.Number, "force", force)
 			bc.hc.SetHead(target.Number.Uint64(), updateFn, delFn)
+		} else {
+			log.Info("Repaired chain", "force", force)
 		}
 	} else {
 		// Rewind the chain to the requested head and keep going backwards until a
