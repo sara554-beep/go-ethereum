@@ -588,6 +588,7 @@ func (hc *HeaderChain) setHead(headBlock uint64, headTime uint64, updateFn Updat
 		log.Info("checking indicator", "current head", header.Number, "target", headBlock, "done", header.Number.Uint64() <= headBlock)
 		return header.Number.Uint64() <= headBlock
 	}
+	log.Info("Initial chain header", "number", hc.CurrentHeader().Number, "target", headBlock)
 	for hdr := hc.CurrentHeader(); hdr != nil && !done(hdr); hdr = hc.CurrentHeader() {
 		num := hdr.Number.Uint64()
 

@@ -394,6 +394,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			if err := bc.SetHead(low); err != nil {
 				return nil, err
 			}
+			log.Error("Truncated ancient chain", "from", bc.CurrentHeader().Number.Uint64(), "to", low)
 		}
 	}
 	// The first thing the node will do is reconstruct the verification data for
@@ -802,6 +803,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 		} else {
 			log.Warn("Rewinding blockchain to block", "target", head)
 			bc.hc.SetHead(head, updateFn, delFn)
+			log.Warn("Rewinded blockchain to block", "target", head)
 		}
 	}
 	// Clear out any stale content from the caches
