@@ -169,6 +169,7 @@ func (ga *GenesisAlloc) flush(db ethdb.Database, triedb *trie.Database, blockhas
 		if err := triedb.Commit(root, true); err != nil {
 			return err
 		}
+		log.Info("Committed genesis state", "root", root)
 	}
 	// Marshal the genesis state specification and persist.
 	blob, err := json.Marshal(ga)

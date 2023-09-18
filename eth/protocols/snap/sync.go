@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	gomath "math"
 	"math/big"
 	"math/rand"
@@ -826,6 +827,7 @@ func (s *Syncer) saveSyncStatus() {
 		if err := task.genBatch.Write(); err != nil {
 			log.Error("Failed to persist account slots", "err", err)
 		}
+		log.Info("Flushed account batch in defer")
 		for _, subtasks := range task.SubTasks {
 			for _, subtask := range subtasks {
 				if err := subtask.genBatch.Write(); err != nil {
@@ -2216,7 +2218,8 @@ func (s *Syncer) commitHealer(force bool) {
 		return
 	}
 	batch := s.db.NewBatch()
-	if err := s.healer.scheduler.Commit(batch); err != nil {
+	err := s.healer.scheduler.Commit2(batch)
+	if err != nil {
 		log.Error("Failed to commit healing data", "err", err)
 	}
 	if err := batch.Write(); err != nil {
@@ -2322,9 +2325,36 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 		if err := task.genBatch.Write(); err != nil {
 			log.Error("Failed to persist stack account", "err", err)
 		}
+		task.genBatch.Replay(&replayer{})
+		log.Info("Flushed account batch")
 		task.genBatch.Reset()
 	}
 	log.Debug("Persisted range of accounts", "accounts", len(res.accounts), "bytes", s.accountBytes-oldAccountBytes)
+}
+
+// KeyValueWriter wraps the Put method of a backing data store.
+type replayer struct {
+}
+
+// Put inserts the given value into the key-value data store.
+func (r *replayer) Put(key []byte, value []byte) error {
+	ok, path := rawdb.ResolveAccountTrieNodeKey(key)
+	if !ok {
+		return nil
+	}
+	hash := crypto.Keccak256Hash(value)
+	ret := pathdb.Genesis.Contains(string(path), hash)
+	if ret == 2 {
+		log.Info("Overwriten genesis state", "path", path, "hash", hash.Hex())
+	} else if ret == 3 {
+		log.Info("Same genesis state", "path", path, "hash", hash.Hex())
+	}
+	return nil
+}
+
+// Delete removes the key from the key-value data store.
+func (r *replayer) Delete(key []byte) error {
+	return nil
 }
 
 // OnAccounts is a callback method to invoke when a range of accounts are

@@ -199,7 +199,10 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// many nodes cached. The clean cache is inherited from the original
 	// disk layer for reusing.
 	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes))
-	err := ndl.buffer.flush(ndl.db.diskdb, ndl.cleans, ndl.id, force)
+
+	record := bottom.root == common.HexToHash("0xd7f8974fb5ac78d9ac099b9ad5018bedc2ce0a72dad1827a1709da30580f0544")
+
+	err := ndl.buffer.flush(ndl.db.diskdb, ndl.cleans, ndl.id, force, record)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +248,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 		}
 	} else {
 		batch := dl.db.diskdb.NewBatch()
-		writeNodes(batch, nodes, dl.cleans)
+		writeNodes(batch, nodes, dl.cleans, false)
 		rawdb.WritePersistentStateID(batch, dl.id-1)
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write states", "err", err)

@@ -19,6 +19,7 @@ package trie
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -350,6 +351,30 @@ func (s *Sync) Commit(dbw ethdb.Batch) error {
 	// Dump the membatch into a database dbw
 	for path, value := range s.membatch.nodes {
 		owner, inner := ResolvePath([]byte(path))
+		rawdb.WriteTrieNode(dbw, owner, inner, s.membatch.hashes[path], value, s.scheme)
+	}
+	for hash, value := range s.membatch.codes {
+		rawdb.WriteCode(dbw, hash, value)
+	}
+	// Drop the membatch data and return
+	s.membatch = newSyncMemBatch()
+	return nil
+}
+
+// Commit flushes the data stored in the internal membatch out to persistent
+// storage, returning any occurred error.
+func (s *Sync) Commit2(dbw ethdb.Batch) error {
+	// Dump the membatch into a database dbw
+	for path, value := range s.membatch.nodes {
+		owner, inner := ResolvePath([]byte(path))
+		if owner == (common.Hash{}) {
+			ret := pathdb.Genesis.Contains(string(inner), s.membatch.hashes[path])
+			if ret == 2 {
+				log.Info("Overwriten genesis state", "path", inner, "hash", s.membatch.hashes[path].Hex())
+			} else if ret == 3 {
+				log.Info("Same genesis state", "path", inner, "hash", s.membatch.hashes[path].Hex())
+			}
+		}
 		rawdb.WriteTrieNode(dbw, owner, inner, s.membatch.hashes[path], value, s.scheme)
 	}
 	for hash, value := range s.membatch.codes {
