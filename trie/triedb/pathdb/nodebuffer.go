@@ -254,6 +254,8 @@ func (t *GenesisTrie) Write(nodes map[string]*trienode.Node) {
 		t.accounts[path] = n.Hash
 	}
 	t.inited = true
+	root := nodes[""].Hash
+	log.Info("Initialized genesis set", "nodes", len(nodes), "root", root.Hex())
 }
 
 func (t *GenesisTrie) Contains(path string, hash common.Hash) int {
