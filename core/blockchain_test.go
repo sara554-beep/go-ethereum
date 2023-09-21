@@ -4716,3 +4716,11 @@ func TestEIP3651(t *testing.T) {
 		t.Fatalf("sender balance incorrect: expected %d, got %d", expected, actual)
 	}
 }
+
+func TestFooBar(t *testing.T) {
+	fmt.Println(crypto.Keccak256Hash(common.HexToAddress("0x09fE5f0236F0Ea5D930197DCE254d77B04128075").Bytes()))
+	fmt.Println(crypto.Keccak256Hash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000002").Bytes()))
+	fmt.Println(crypto.Keccak256Hash(common.HexToHash("0x0000000000000000000000000000000000000000000000000000000000000003").Bytes()))
+	fmt.Println(crypto.Keccak256Hash(common.HexToHash("0x1f58023ebfd96b9e89ba2052383a4b2f4a29ef77bd089665cfa8259dee8e1557").Bytes()))
+	fmt.Println(crypto.Keccak256Hash(common.HexToHash("0xfd6122b6e86d72b53e3ca56d2a02d6d0513dda1713588077505437f187b09b3e").Bytes()))
+}

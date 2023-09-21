@@ -178,6 +178,23 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 		if pruned != 0 {
 			log.Warn("Truncated extra state histories", "number", pruned)
 		}
+		tail, _ := db.freezer.Tail()
+		target := common.HexToAddress("0x09fE5f0236F0Ea5D930197DCE254d77B04128075")
+		for i := tail; i < db.tree.bottom().stateID(); i++ {
+			h, err := readHistory(db.freezer, i)
+			if err != nil {
+				log.Warn("failed to read history", "err", err)
+				continue
+			}
+			slots, ok := h.storages[target]
+			if !ok {
+				continue
+			}
+			for slot, prev := range slots {
+				log.Info("Find storage change", "address", target.Hex(), "slot", slot.Hex(), "prev", prev, "block", h.meta.block)
+			}
+		}
+		log.Info("Iterated done")
 	}
 	log.Warn("Path-based state scheme is an experimental feature")
 	return db
