@@ -39,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/syncx"
@@ -469,6 +470,19 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 
 		bc.wg.Add(1)
 		go bc.maintainTxIndex()
+	}
+findLoop:
+	for i := uint64(18160615); i < bc.CurrentHeader().Number.Uint64(); i++ {
+		block := bc.GetBlockByNumber(i)
+		for _, tx := range block.Transactions() {
+			addr := tx.To()
+			if addr != nil {
+				if crypto.Keccak256Hash((*addr).Bytes()) == common.HexToHash("900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") {
+					log.Info("Found target address", "addr", (*addr).Hex())
+					break findLoop
+				}
+			}
+		}
 	}
 	return bc, nil
 }
