@@ -18,6 +18,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -493,7 +494,10 @@ findLoop:
 		} else {
 			var count int
 			for storageIt.Next() {
-				log.Info("Dumping storage", "hash", storageIt.Hash().Hex())
+				//log.Info("Dumping storage", "hash", storageIt.Hash().Hex())
+				if bytes.HasPrefix(storageIt.Hash().Bytes(), []byte{0xff}) {
+					log.Info("Dumping storage", "hash", storageIt.Hash().Hex())
+				}
 				count += 1
 			}
 			storageIt.Release()

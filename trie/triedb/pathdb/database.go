@@ -186,7 +186,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 				log.Warn("failed to read history", "err", err)
 				continue
 			}
-			log.Info("Checking history", "number", h.meta.block)
+			//log.Info("Checking history", "number", h.meta.block)
 			slots, ok := h.storages[target]
 			if !ok {
 				continue
