@@ -484,6 +484,22 @@ findLoop:
 			}
 		}
 	}
+	if bc.snaps != nil {
+		//account := common.HexToAddress("0x09fE5f0236F0Ea5D930197DCE254d77B04128075")
+		accountHash := common.HexToHash("900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213")
+		storageIt, err := bc.snaps.StorageIterator(bc.CurrentBlock().Root, accountHash, common.Hash{})
+		if err != nil {
+			log.Info("Failed to create storage iterator", "err", err)
+		} else {
+			var count int
+			for storageIt.Next() {
+				log.Info("Dumping storage", "hash", storageIt.Hash().Hex())
+				count += 1
+			}
+			storageIt.Release()
+			log.Info("Dumped storage", "total", count)
+		}
+	}
 	return bc, nil
 }
 
