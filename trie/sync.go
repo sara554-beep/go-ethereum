@@ -474,7 +474,7 @@ func (s *Sync) children(req *nodeRequest, object node) ([]*nodeRequest, error) {
 				if exists {
 					req.deletes = append(req.deletes, key[:i])
 					deletionGauge.Inc(1)
-					log.Debug("Detected dangling node", "owner", owner, "path", append(inner, key[:i]...))
+					log.Info("Detected dangling node in state healer", "owner", owner, "path", append(inner, key[:i]...))
 				}
 			}
 			lookupGauge.Inc(int64(len(key) - 1))

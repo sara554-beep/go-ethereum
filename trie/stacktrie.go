@@ -444,13 +444,18 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
 	case extNode:
 		st.children[0].hashRec(hasher, append(path, st.key...))
 
-		n := shortNode{Key: hexToCompactInPlace(st.key)}
+		n := shortNode{Key: hexToCompact(st.key)}
 		if len(st.children[0].val) < 32 {
 			n.Val = rawNode(st.children[0].val)
 		} else {
 			n.Val = hashNode(st.children[0].val)
-		}
 
+			if st.writeFn != nil {
+				for i := 1; i < len(st.key); i++ {
+					st.writeFn(st.owner, append(path, st.key[:i]...), common.Hash{}, nil)
+				}
+			}
+		}
 		n.encode(hasher.encbuf)
 		encodedNode = hasher.encodedBytes()
 
@@ -460,7 +465,7 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
 
 	case leafNode:
 		st.key = append(st.key, byte(16))
-		n := shortNode{Key: hexToCompactInPlace(st.key), Val: valueNode(st.val)}
+		n := shortNode{Key: hexToCompact(st.key), Val: valueNode(st.val)}
 
 		n.encode(hasher.encbuf)
 		encodedNode = hasher.encodedBytes()

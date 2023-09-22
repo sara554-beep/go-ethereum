@@ -365,6 +365,9 @@ func stackTrieGenerate(db ethdb.KeyValueWriter, scheme string, owner common.Hash
 	var nodeWriter trie.NodeWriteFunc
 	if db != nil {
 		nodeWriter = func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
+			if len(blob) == 0 {
+				return
+			}
 			rawdb.WriteTrieNode(db, owner, path, hash, blob, scheme)
 		}
 	}
