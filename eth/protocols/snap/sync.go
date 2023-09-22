@@ -745,6 +745,10 @@ func (s *Syncer) loadSyncStatus() {
 					for _, subtask := range subtasks {
 						subtask := subtask // closure for subtask.genBatch in the stacktrie writer callback
 
+						printDebug(accountHash, "loadsubTask", []interface{}{
+							"next", subtask.Next.Hex(),
+							"last", subtask.Last.Hex(),
+						})
 						subtask.genBatch = ethdb.HookedBatch{
 							Batch: s.db.NewBatch(),
 							OnPut: func(key []byte, value []byte) {
@@ -900,6 +904,7 @@ func (s *Syncer) cleanStorageTasks() {
 			// Remove storage range retrieval tasks that completed
 			for j := 0; j < len(subtasks); j++ {
 				if subtasks[j].done {
+					printDebug(account, "complete subtask", []interface{}{"last", subtasks[j].Last.Hex()})
 					subtasks = append(subtasks[:j], subtasks[j+1:]...)
 					j--
 				}
@@ -914,6 +919,7 @@ func (s *Syncer) cleanStorageTasks() {
 					task.needState[j] = false
 				}
 			}
+			printDebug(account, "complete all subtask", nil)
 			delete(task.SubTasks, account)
 			task.pend--
 
@@ -1210,6 +1216,10 @@ func (s *Syncer) assignStorageTasks(success chan *storageResponse, fail chan *st
 				accounts = append(accounts, account)
 				roots = append(roots, st.root)
 				subtask = st
+
+				printDebug(account, "assign subtask", []interface{}{
+					"root", st.root.Hex(), "next", subtask.Next.Hex(), "last", subtask.Last.Hex(),
+				})
 				break // Large contract chunks are downloaded individually
 			}
 			if subtask != nil {
@@ -1367,6 +1377,9 @@ func (s *Syncer) assignTrienodeHealTasks(success chan *trienodeHealResponse, fai
 		)
 		for path, hash := range s.healer.trieTasks {
 			delete(s.healer.trieTasks, path)
+
+			owner, inner := trie.ResolvePath([]byte(path))
+			printDebug(owner, "assign healing task", []interface{}{"path", inner, "hash", hash.Hex()})
 
 			paths = append(paths, path)
 			hashes = append(hashes, hash)
@@ -1834,6 +1847,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 				res.task.needCode[i] = true
 				res.task.pend++
 			}
+			printDebug(res.hashes[i], "processAccount", []interface{}{"operation", "syncode"})
 		}
 		// Check if the account is a contract with an unknown storage trie
 		if account.Root != types.EmptyRootHash {
@@ -1843,14 +1857,20 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 				// is interrupted and resumed later. However, *do* update the
 				// previous root hash.
 				if subtasks, ok := res.task.SubTasks[res.hashes[i]]; ok {
-					log.Debug("Resuming large storage retrieval", "account", res.hashes[i], "root", account.Root)
+					log.Info("Resuming large storage retrieval", "account", res.hashes[i], "root", account.Root)
+					var oldRoot common.Hash
 					for _, subtask := range subtasks {
+						if oldRoot == (common.Hash{}) {
+							oldRoot = subtask.root
+						}
 						subtask.root = account.Root
 					}
 					res.task.needHeal[i] = true
 					resumed[res.hashes[i]] = struct{}{}
+					printDebug(res.hashes[i], "processAccount", []interface{}{"operation", "resume storage", "newRoot", account.Root.Hex(), "oldRoot", oldRoot.Hex()})
 				} else {
 					res.task.stateTasks[res.hashes[i]] = account.Root
+					printDebug(res.hashes[i], "processAccount", []interface{}{"operation", "sync storage", "root", account.Root.Hex()})
 				}
 				res.task.needState[i] = true
 				res.task.pend++
@@ -1864,6 +1884,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 		if _, ok := resumed[hash]; !ok {
 			log.Debug("Aborting suspended storage retrieval", "account", hash)
 			delete(res.task.SubTasks, hash)
+			printDebug(hash, "drop subtask", []interface{}{"addrHash", hash.Hex()})
 		}
 	}
 	// If the account range contained no contracts, or all have been fully filled
@@ -1945,6 +1966,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 		// If the account was not delivered, reschedule it
 		if i >= len(res.hashes) {
 			res.mainTask.stateTasks[account] = res.roots[i]
+			printDebug(account, "reschedule", nil)
 			continue
 		}
 		// State was delivered, if complete mark as not needed any more, otherwise
@@ -1966,12 +1988,14 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 			// to avoid writing it out to disk prematurely.
 			if res.subTask == nil && !res.mainTask.needHeal[j] && i == len(res.hashes)-1 && res.cont {
 				res.mainTask.needHeal[j] = true
+				printDebug(account, "mark needHeal as true", nil)
 			}
 			// If the last contract was chunked, we need to switch to large
 			// contract handling mode
 			if res.subTask == nil && i == len(res.hashes)-1 && res.cont {
 				// If we haven't yet started a large-contract retrieval, create
 				// the subtasks for it within the main account task
+				printDebug(account, "switch to large contract retrieval", nil)
 				if tasks, ok := res.mainTask.SubTasks[account]; !ok {
 					var (
 						keys    = res.hashes[i]
@@ -2013,6 +2037,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 							rawdb.WriteTrieNode(batch, owner, path, hash, val, s.scheme)
 						}, account),
 					})
+					printDebug(account, "add subtask", []interface{}{"next", tasks[len(tasks)-1].Next.Hex(), "last", tasks[len(tasks)-1].Last.Hex()})
 					for r.Next() {
 						batch := ethdb.HookedBatch{
 							Batch: s.db.NewBatch(),
@@ -2029,6 +2054,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 								rawdb.WriteTrieNode(batch, owner, path, hash, val, s.scheme)
 							}, account),
 						})
+						printDebug(account, "add subtask", []interface{}{"next", tasks[len(tasks)-1].Next.Hex(), "last", tasks[len(tasks)-1].Last.Hex()})
 					}
 					for _, task := range tasks {
 						log.Debug("Created storage sync task", "account", account, "root", acc.Root, "from", task.Next, "last", task.Last)
@@ -2061,8 +2087,14 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 				// Forward the relevant storage chunk (even if created just now)
 				if res.cont {
 					res.subTask.Next = incHash(res.hashes[i][len(res.hashes[i])-1])
+					printDebug(account, "forward subtask", []interface{}{
+						"old", res.hashes[i][len(res.hashes[i])-1].Hex(),
+						"next", res.subTask.Next.Hex(),
+						"last", res.subTask.Last.Hex(),
+					})
 				} else {
 					res.subTask.done = true
+					printDebug(account, "complete subtask", []interface{}{"last", res.subTask.Last.Hex()})
 				}
 			}
 		}
@@ -2091,6 +2123,12 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 			if i == len(res.hashes)-1 && res.subTask != nil {
 				res.subTask.genTrie.Update(res.hashes[i][j][:], res.slots[i][j])
 			}
+		}
+		if len(res.hashes[i]) > 0 {
+			printDebug(account, "commit slot", []interface{}{
+				"first", res.hashes[i][0].Hex(),
+				"last", res.hashes[i][len(res.hashes[i])-1].Hex(),
+			})
 		}
 	}
 	// Large contracts could have generated new trie nodes, flush them to disk
@@ -2145,6 +2183,12 @@ func (s *Syncer) processTrienodeHealResponse(res *trienodeHealResponse) {
 		// If the trie node was not delivered, reschedule it
 		if node == nil {
 			res.task.trieTasks[res.paths[i]] = res.hashes[i]
+
+			owner, inner := trie.ResolvePath([]byte(res.paths[i]))
+			printDebug(owner, "reschedule slot", []interface{}{
+				"path", inner,
+				"hash", res.hashes[i].Hex(),
+			})
 			continue
 		}
 		fills++
@@ -2291,6 +2335,7 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 				panic(err) // Really shouldn't ever happen
 			}
 			task.genTrie.Update(hash[:], full)
+			printDebug(hash, "write account", nil)
 		}
 	}
 	// Flush anything written just now and update the stats
@@ -2305,6 +2350,7 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 		if task.needCode[i] || task.needState[i] {
 			return
 		}
+		printDebug(hash, "complete account", nil)
 		task.Next = incHash(hash)
 	}
 	// All accounts marked as complete, track if the entire task is done
@@ -3109,4 +3155,11 @@ func sortByAccountPath(paths []string, hashes []common.Hash) ([]string, []common
 	sort.Sort(n)
 	pathsets := n.Merge()
 	return n.paths, n.hashes, n.syncPaths, pathsets
+}
+
+func printDebug(addrHash common.Hash, msg string, ctx []interface{}) {
+	if addrHash != common.HexToHash("0x900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") {
+		return
+	}
+	log.Info("SNAP-DEBUG "+msg, ctx...)
 }
