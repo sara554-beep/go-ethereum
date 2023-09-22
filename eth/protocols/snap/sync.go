@@ -1854,6 +1854,12 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 
 	res.task.pend = 0
 	for i, account := range res.accounts {
+		if res.hashes[i] == common.HexToHash("0x900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") {
+			if InterruptedSync.Load() == 0 {
+				InterruptedSync.Store(1)
+			}
+			log.Info("SNAP-DEBUG", "Set the interruption")
+		}
 		// Check if the account is a contract with an unknown code
 		if !bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes()) {
 			if !rawdb.HasCodeWithPrefix(s.db, common.BytesToHash(account.CodeHash)) {
@@ -2109,15 +2115,6 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 				} else {
 					res.subTask.done = true
 					printDebug(account, "complete subtask", []interface{}{"last", res.subTask.Last.Hex()})
-					if account == common.HexToHash("0x900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") {
-						if res.subTask.Last == common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff") {
-							if InterruptedSync.Load() == 0 {
-								InterruptedSync.Store(1)
-							}
-							log.Info("SNAP-DEBUG", "Set the interruption, sleep 30s")
-							time.Sleep(30 * time.Second)
-						}
-					}
 				}
 			}
 		}
