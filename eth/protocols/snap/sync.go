@@ -104,6 +104,8 @@ var (
 	// storageConcurrency is the number of chunks to split the a large contract
 	// storage trie into to allow concurrent retrievals.
 	storageConcurrency = 16
+
+	InterruptedSync atomic.Uint32
 )
 
 // ErrCancelled is returned from snap syncing if the operation was prematurely
@@ -409,7 +411,8 @@ type SyncPeer interface {
 //   - The peer delivers a refusal to serve the requested state
 type Syncer struct {
 	db     ethdb.KeyValueStore // Database to store the trie nodes into (and dedup)
-	scheme string              // Node scheme used in node database
+	triedb *trie.Database
+	scheme string // Node scheme used in node database
 
 	root    common.Hash    // Current state trie root being synced
 	tasks   []*accountTask // Current account task set being synced
@@ -477,9 +480,10 @@ type Syncer struct {
 
 // NewSyncer creates a new snapshot syncer to download the Ethereum state over the
 // snap protocol.
-func NewSyncer(db ethdb.KeyValueStore, scheme string) *Syncer {
+func NewSyncer(db ethdb.KeyValueStore, scheme string, triedb *trie.Database) *Syncer {
 	return &Syncer{
 		db:     db,
+		triedb: triedb,
 		scheme: scheme,
 
 		peers:    make(map[string]SyncPeer),
@@ -658,11 +662,12 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 		s.assignBytecodeTasks(bytecodeResps, bytecodeReqFails, cancel)
 		s.assignStorageTasks(storageResps, storageReqFails, cancel)
 
-		if len(s.tasks) == 0 {
-			// Sync phase done, run heal phase
-			s.assignTrienodeHealTasks(trienodeHealResps, trienodeHealReqFails, cancel)
-			s.assignBytecodeHealTasks(bytecodeHealResps, bytecodeHealReqFails, cancel)
-		}
+		// Sync phase done, run heal phase
+		s.assignTrienodeHealTasks(trienodeHealResps, trienodeHealReqFails, cancel)
+		s.assignBytecodeHealTasks(bytecodeHealResps, bytecodeHealReqFails, cancel)
+
+		//if len(s.tasks) == 0 {
+		//}
 		// Update sync progress
 		s.lock.Lock()
 		s.extProgress = &SyncProgress{
@@ -922,6 +927,15 @@ func (s *Syncer) cleanStorageTasks() {
 			printDebug(account, "complete all subtask", nil)
 			delete(task.SubTasks, account)
 			task.pend--
+
+			for i, hash := range task.res.hashes {
+				if hash == common.HexToHash("0x900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") {
+					acct := task.res.accounts[i]
+
+					s.healer.scheduler.AddSubTrie(acct.Root, nil, common.Hash{}, nil, nil)
+					log.Info("SNAP-DEBUG", "start contract healing")
+				}
+			}
 
 			// If this was the last pending task, forward the account task
 			if task.pend == 0 {
@@ -2095,6 +2109,15 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 				} else {
 					res.subTask.done = true
 					printDebug(account, "complete subtask", []interface{}{"last", res.subTask.Last.Hex()})
+					if account == common.HexToHash("0x900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") {
+						if res.subTask.Last == common.HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff") {
+							if InterruptedSync.Load() == 0 {
+								InterruptedSync.Store(1)
+							}
+							log.Info("SNAP-DEBUG", "Set the interruption, sleep 30s")
+							time.Sleep(30 * time.Second)
+						}
+					}
 				}
 			}
 		}
@@ -2208,7 +2231,30 @@ func (s *Syncer) processTrienodeHealResponse(res *trienodeHealResponse) {
 			log.Error("Invalid trienode processed", "hash", hash, "err", err)
 		}
 	}
-	s.commitHealer(false)
+	force := trie.ForceCommit.Load()
+	if force {
+		trie.ForceCommit.Store(false)
+	}
+	s.commitHealer(force)
+
+	if force {
+		log.Info("SNAP-DEBUG", "contract is healed, start to check")
+		tr, err := trie.New(trie.TrieID(trie.StateRoot), &trie.DebugReaderConstructor{DB: s.db})
+		if err != nil {
+			log.Error("SNAP-DEBUG, failed to open trie", "err", err)
+		}
+		it, err := tr.NodeIterator(nil)
+		if err != nil {
+			log.Error("SNAP-DEBUG, failed to open trie iterator", "err", err)
+		}
+		for it.Next(true) {
+		}
+		if it.Error() != nil {
+			log.Error("SNAP-DEBUG, failed to iterate iterator", "err", err)
+		} else {
+			log.Info("SNAP-DEBUG, trie is complete")
+		}
+	}
 
 	// Calculate the processing rate of one filled trie node
 	rate := float64(fills) / (float64(time.Since(start)) / float64(time.Second))

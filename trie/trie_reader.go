@@ -18,7 +18,9 @@ package trie
 
 import (
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/triestate"
 )
@@ -36,6 +38,10 @@ type Reader interface {
 	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
 }
 
+type ReaderConstructor interface {
+	Reader(root common.Hash) (Reader, error)
+}
+
 // trieReader is a wrapper of the underlying node reader. It's not safe
 // for concurrent usage.
 type trieReader struct {
@@ -45,7 +51,7 @@ type trieReader struct {
 }
 
 // newTrieReader initializes the trie reader with the given node reader.
-func newTrieReader(stateRoot, owner common.Hash, db *Database) (*trieReader, error) {
+func newTrieReader(stateRoot, owner common.Hash, db ReaderConstructor) (*trieReader, error) {
 	if stateRoot == (common.Hash{}) || stateRoot == types.EmptyRootHash {
 		if stateRoot == (common.Hash{}) {
 			log.Error("Zero state root hash!")
@@ -98,4 +104,20 @@ func (l *trieLoader) OpenTrie(root common.Hash) (triestate.Trie, error) {
 // OpenStorageTrie opens the storage trie of an account.
 func (l *trieLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (triestate.Trie, error) {
 	return New(StorageTrieID(stateRoot, addrHash, root), l.db)
+}
+
+type DebugReader struct {
+	db ethdb.KeyValueStore
+}
+
+type DebugReaderConstructor struct {
+	DB ethdb.KeyValueStore
+}
+
+func (d *DebugReaderConstructor) Reader(root common.Hash) (Reader, error) {
+	return &DebugReader{db: d.DB}, nil
+}
+
+func (r *DebugReader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+	return rawdb.ReadTrieNode(r.db, owner, path, hash, rawdb.PathScheme), nil
 }

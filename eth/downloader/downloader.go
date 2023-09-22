@@ -230,7 +230,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 		dropPeer:       dropPeer,
 		headerProcCh:   make(chan *headerTask, 1),
 		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme()),
+		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), chain.TrieDB()),
 		stateSyncStart: make(chan *stateSync),
 		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
 	}
@@ -1722,6 +1722,20 @@ func (d *Downloader) processSnapSyncContent() error {
 				oldTail = afterP
 				continue
 			}
+		}
+
+		if snap.InterruptedSync.Load() == 1 {
+			snap.InterruptedSync.Store(2)
+
+			d.pivotLock.RLock()
+			pivot := d.pivotHeader
+			d.pivotLock.RUnlock()
+
+			sync.Cancel()
+			sync = d.syncState(pivot.Root)
+			log.Info("SNAP-DEBUG", "restart state")
+
+			go closeOnErr(sync)
 		}
 		// Fast sync done, pivot commit done, full import
 		if err := d.importBlockResults(afterP); err != nil {

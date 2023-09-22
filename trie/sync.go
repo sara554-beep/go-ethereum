@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/prque"
@@ -556,6 +557,11 @@ func (s *Sync) children(req *nodeRequest, object node) ([]*nodeRequest, error) {
 	return requests, nil
 }
 
+var (
+	StateRoot   common.Hash
+	ForceCommit atomic.Bool
+)
+
 // commit finalizes a retrieval request and stores it into the membatch. If any
 // of the referencing parent requests complete due to this commit, they are also
 // committed themselves.
@@ -564,6 +570,11 @@ func (s *Sync) commitNodeRequest(req *nodeRequest) error {
 	s.membatch.nodes[string(req.path)] = req.data
 	s.membatch.hashes[string(req.path)] = req.hash
 
+	owner, inner := ResolvePath([]byte(req.path))
+	if owner == common.HexToHash("0x900e6b08f87337874273387d4f3cb3f59cd83bff7385645561c1f933e524c213") && len(inner) == 0 {
+		StateRoot = req.hash
+		ForceCommit.Store(true)
+	}
 	// The size tracking refers to the db-batch, not the in-memory data.
 	if s.scheme == rawdb.PathScheme {
 		s.membatch.size += uint64(len(req.path) + len(req.data))
