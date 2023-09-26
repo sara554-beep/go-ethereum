@@ -902,15 +902,21 @@ func TestCommitSequenceRandomBlobs(t *testing.T) {
 func TestCommitSequenceStackTrie(t *testing.T) {
 	for count := 1; count < 200; count++ {
 		prng := rand.New(rand.NewSource(int64(count)))
+
 		// This spongeDb is used to check the sequence of disk-db-writes
 		s := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "a"}
 		db := NewDatabase(rawdb.NewDatabase(s), nil)
 		trie := NewEmpty(db)
+
 		// Another sponge is used for the stacktrie commits
 		stackTrieSponge := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "b"}
-		stTrie := NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
+
+		options := NewStackTrieOptions()
+		options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 			rawdb.WriteTrieNode(stackTrieSponge, owner, path, hash, blob, db.Scheme())
 		})
+		stTrie := NewStackTrie(options)
+
 		// Fill the trie with elements
 		for i := 0; i < count; i++ {
 			// For the stack trie, we need to do inserts in proper order
@@ -965,11 +971,16 @@ func TestCommitSequenceSmallRoot(t *testing.T) {
 	s := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "a"}
 	db := NewDatabase(rawdb.NewDatabase(s), nil)
 	trie := NewEmpty(db)
+
 	// Another sponge is used for the stacktrie commits
 	stackTrieSponge := &spongeDb{sponge: sha3.NewLegacyKeccak256(), id: "b"}
-	stTrie := NewStackTrie(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
+
+	options := NewStackTrieOptions()
+	options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 		rawdb.WriteTrieNode(stackTrieSponge, owner, path, hash, blob, db.Scheme())
 	})
+	stTrie := NewStackTrie(options)
+
 	// Add a single small-element to the trie(s)
 	key := make([]byte, 5)
 	key[0] = 1
