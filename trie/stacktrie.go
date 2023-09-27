@@ -46,8 +46,9 @@ type (
 
 // StackTrieOptions contains the configured options for manipulating the stackTrie.
 type StackTrieOptions struct {
-	Owner  common.Hash   // The associated account hash serves as the trie namespace, empty for non-storage trie
-	Writer NodeWriteFunc // The function to commit the dirty nodes
+	Owner        common.Hash   // The associated account hash serves as the trie namespace, empty for non-storage trie
+	Writer       NodeWriteFunc // The function to commit the dirty nodes
+	SkipBoundary bool          // Flag if boundary trie nodes are ignored for committing
 }
 
 // NewStackTrieOptions initializes an empty options for stackTrie.
@@ -62,6 +63,12 @@ func (o *StackTrieOptions) WithOwner(owner common.Hash) *StackTrieOptions {
 // WithWriter configures trie node writer within the options.
 func (o *StackTrieOptions) WithWriter(writer NodeWriteFunc) *StackTrieOptions {
 	o.Writer = writer
+	return o
+}
+
+// WithSkipBoundary sets the skipBoundary flag.
+func (o *StackTrieOptions) WithSkipBoundary() *StackTrieOptions {
+	o.SkipBoundary = true
 	return o
 }
 
@@ -89,12 +96,12 @@ func returnToPool(st *StackTrie) {
 // in order. Once it determines that a subtree will no longer be inserted
 // into, it will hash it and free up the memory it uses.
 type StackTrie struct {
-	nodeType uint8          // node type (as in branch, ext, leaf)
-	key      []byte         // key chunk covered by this (leaf|ext) node
-	val      []byte         // value contained by this node if it's a leaf
-	children [16]*StackTrie // list of children (for branch and exts)
-
-	options *StackTrieOptions // configured options
+	nodeType     uint8             // node type (as in branch, ext, leaf)
+	key          []byte            // key chunk covered by this (leaf|ext) node
+	val          []byte            // value contained by this node if it's a leaf
+	children     [16]*StackTrie    // list of children (for branch and exts)
+	leftBoundary bool              // flag whether the node is on the left boundary of trie
+	options      *StackTrieOptions // a set of options to configure stackTrie
 }
 
 // NewStackTrie allocates and initializes an empty trie.
@@ -108,7 +115,7 @@ func NewStackTrie(options *StackTrieOptions) *StackTrie {
 	}
 }
 
-// NewFromBinary initialises a serialized stacktrie with the given db.
+// NewFromBinary initialises a serialized stacktrie with the given options.
 func NewFromBinary(data []byte, options *StackTrieOptions) (*StackTrie, error) {
 	var st StackTrie
 	if err := st.UnmarshalBinary(data); err != nil {
@@ -131,10 +138,12 @@ func (st *StackTrie) MarshalBinary() (data []byte, err error) {
 		NodeType uint8
 		Val      []byte
 		Key      []byte
+		Left     bool
 	}{
 		st.nodeType,
 		st.val,
 		st.key,
+		st.leftBoundary,
 	}); err != nil {
 		return nil, err
 	}
@@ -165,6 +174,7 @@ func (st *StackTrie) unmarshalBinary(r io.Reader) error {
 		NodeType uint8
 		Val      []byte
 		Key      []byte
+		Left     bool
 	}
 	if err := gob.NewDecoder(r).Decode(&dec); err != nil {
 		return err
@@ -172,6 +182,7 @@ func (st *StackTrie) unmarshalBinary(r io.Reader) error {
 	st.nodeType = dec.NodeType
 	st.val = dec.Val
 	st.key = dec.Key
+	st.leftBoundary = dec.Left
 
 	var hasChild = make([]byte, 1)
 	for i := range st.children {
@@ -198,19 +209,21 @@ func (st *StackTrie) setOptions(options *StackTrieOptions) {
 	}
 }
 
-func newLeaf(key, val []byte, options *StackTrieOptions) *StackTrie {
+func newLeaf(key, val []byte, leftBoundary bool, options *StackTrieOptions) *StackTrie {
 	st := stackTrieFromPool(options)
 	st.nodeType = leafNode
 	st.key = append(st.key, key...)
 	st.val = val
+	st.leftBoundary = leftBoundary
 	return st
 }
 
-func newExt(key []byte, child *StackTrie, options *StackTrieOptions) *StackTrie {
+func newExt(key []byte, child *StackTrie, leftBoundary bool, options *StackTrieOptions) *StackTrie {
 	st := stackTrieFromPool(options)
 	st.nodeType = extNode
 	st.key = append(st.key, key...)
 	st.children[0] = child
+	st.leftBoundary = leftBoundary
 	return st
 }
 
@@ -226,10 +239,11 @@ const (
 // Update inserts a (key, value) pair into the stack trie.
 func (st *StackTrie) Update(key, value []byte) error {
 	k := keybytesToHex(key)
+	k = k[:len(k)-1] // chop the terminal flag
 	if len(value) == 0 {
 		panic("deletion not supported")
 	}
-	st.insert(k[:len(k)-1], value, nil)
+	st.insert(k, value, nil, st.nodeType == emptyNode)
 	return nil
 }
 
@@ -241,14 +255,16 @@ func (st *StackTrie) MustUpdate(key, value []byte) {
 	}
 }
 
+// Reset clears the cached fields of stackTrie node, but options is still left
+// serving as a global config.
 func (st *StackTrie) Reset() {
+	st.nodeType = emptyNode
 	st.key = st.key[:0]
 	st.val = nil
 	for i := range st.children {
 		st.children[i] = nil
 	}
-	st.nodeType = emptyNode
-	st.options = NewStackTrieOptions()
+	st.leftBoundary = false
 }
 
 // Helper function that, given a full key, determines the index
@@ -263,15 +279,44 @@ func (st *StackTrie) getDiffIndex(key []byte) int {
 	return len(st.key)
 }
 
+// linkChildren links two children within the stackTrie node based on the provided
+// shared key prefix, child indexes, and children.
+func (st *StackTrie) linkChildren(diffIndex int, sharedKey []byte, oldIndex byte, oldChild *StackTrie, newIndex byte, newChild *StackTrie) {
+	// Reset the current stackTrie as the first step.
+	st.Reset()
+
+	// Check if the split occurs at the first nibble of the chunk. In that
+	// case, no prefix external node is necessary; otherwise, create that.
+	if diffIndex == 0 {
+		st.nodeType = branchNode
+		st.children[oldIndex] = oldChild
+		st.children[newIndex] = newChild
+		st.leftBoundary = oldChild.leftBoundary // mark parent as boundary if child is
+		return
+	}
+	// Construct an internal branch node as the parent of two leaves.
+	branch := NewStackTrie(st.options)
+	branch.nodeType = branchNode
+	branch.children[oldIndex] = oldChild
+	branch.children[newIndex] = newChild
+	branch.leftBoundary = oldChild.leftBoundary // mark parent as boundary if child is
+
+	// Convert current node into an extension, and link the branch node as child.
+	st.nodeType = extNode
+	st.key = sharedKey
+	st.children[0] = branch
+	st.leftBoundary = branch.leftBoundary // mark parent as boundary if child is
+}
+
 // Helper function to that inserts a (key, value) pair into
 // the trie.
-func (st *StackTrie) insert(key, value []byte, prefix []byte) {
+func (st *StackTrie) insert(key, value []byte, prefix []byte, leftBoundary bool) {
 	switch st.nodeType {
 	case branchNode: /* Branch */
-		idx := int(key[0])
+		index := int(key[0])
 
-		// Unresolve elder siblings
-		for i := idx - 1; i >= 0; i-- {
+		// Un-resolve elder siblings
+		for i := index - 1; i >= 0; i-- {
 			if st.children[i] != nil {
 				if st.children[i].nodeType != hashedNode {
 					st.children[i].hash(append(prefix, byte(i)))
@@ -279,125 +324,98 @@ func (st *StackTrie) insert(key, value []byte, prefix []byte) {
 				break
 			}
 		}
-
-		// Add new child
-		if st.children[idx] == nil {
-			st.children[idx] = newLeaf(key[1:], value, st.options)
+		// New sibling must be non-left boundary node
+		if st.children[index] == nil {
+			st.children[index] = newLeaf(key[1:], value, false, st.options)
 		} else {
-			st.children[idx].insert(key[1:], value, append(prefix, key[0]))
+			st.children[index].insert(key[1:], value, append(prefix, key[0]), false)
 		}
 
 	case extNode: /* Ext */
 		// Compare both key chunks and see where they differ
-		diffidx := st.getDiffIndex(key)
+		diffIndex := st.getDiffIndex(key)
 
-		// Check if chunks are identical. If so, recurse into
-		// the child node. Otherwise, the key has to be split
-		// into 1) an optional common prefix, 2) the fullnode
-		// representing the two differing path, and 3) a leaf
+		// Check if chunks are identical. If so, recurse into the child node.
+		// Otherwise, the key has to be split into 1) an optional common prefix,
+		// 2) the full node representing the two differing path, and 3) a leaf
 		// for each of the differentiated subtrees.
-		if diffidx == len(st.key) {
-			// Ext key and key segment are identical, recurse into
-			// the child node.
-			st.children[0].insert(key[diffidx:], value, append(prefix, key[:diffidx]...))
+		if diffIndex == len(st.key) {
+			// Ext key and key segment are identical, recurse into the child
+			// node. The new node is surely not on the left boundary because
+			// of existent nodes.
+			st.children[0].insert(key[diffIndex:], value, append(prefix, key[:diffIndex]...), false)
 			return
 		}
-		// Save the original part. Depending if the break is
-		// at the extension's last byte or not, create an
-		// intermediate extension or use the extension's child
-		// node directly.
-		var n *StackTrie
-		if diffidx < len(st.key)-1 {
-			// Break on the non-last byte, insert an intermediate
-			// extension. The path prefix of the newly-inserted
-			// extension should also contain the different byte.
-			n = newExt(st.key[diffidx+1:], st.children[0], st.options)
-			n.hash(append(prefix, st.key[:diffidx+1]...))
+		// Hash the original child to free up memory. Depending on whether the
+		// break is at the extension's last byte or not, create an intermediate
+		// extension or use the extension's child node directly.
+		var (
+			oldChild  *StackTrie
+			sharedKey = st.key[:diffIndex]
+			oldIndex  = st.key[diffIndex]
+		)
+		if diffIndex < len(st.key)-1 {
+			// Break on the non-last byte, insert an intermediate extension. The
+			// path prefix of the newly-inserted extension should also contain the
+			// different byte and should be marked as left-boundary if child is.
+			child := st.children[0]
+			oldChild = newExt(st.key[diffIndex+1:], child, child.leftBoundary, st.options)
+			oldChild.hash(append(prefix, st.key[:diffIndex+1]...))
 		} else {
-			// Break on the last byte, no need to insert
-			// an extension node: reuse the current node.
-			// The path prefix of the original part should
-			// still be same.
-			n = st.children[0]
-			n.hash(append(prefix, st.key...))
+			// Break on the last byte, no need to insert an extension node: reuse
+			// the current node. The path prefix of the original part should still
+			// be same.
+			oldChild = st.children[0]
+			oldChild.hash(append(prefix, st.key...))
 		}
-		var p *StackTrie
-		if diffidx == 0 {
-			// the break is on the first byte, so
-			// the current node is converted into
-			// a branch node.
-			st.children[0] = nil
-			p = st
-			st.nodeType = branchNode
-		} else {
-			// the common prefix is at least one byte
-			// long, insert a new intermediate branch
-			// node.
-			st.children[0] = stackTrieFromPool(st.options)
-			st.children[0].nodeType = branchNode
-			p = st.children[0]
-		}
-		// Create a leaf for the inserted part
-		o := newLeaf(key[diffidx+1:], value, st.options)
+		// Create the new leaf node for newly inserted value
+		var (
+			newIndex = key[diffIndex]
+			newKey   = key[diffIndex+1:]
+		)
+		newChild := newLeaf(newKey, value, false, st.options) // new sibling must be non-left boundary node
 
-		// Insert both child leaves where they belong:
-		origIdx := st.key[diffidx]
-		newIdx := key[diffidx]
-		p.children[origIdx] = n
-		p.children[newIdx] = o
-		st.key = st.key[:diffidx]
+		// Link two children into the existent stackTrie.
+		st.linkChildren(diffIndex, sharedKey, oldIndex, oldChild, newIndex, newChild)
 
 	case leafNode: /* Leaf */
 		// Compare both key chunks and see where they differ
-		diffidx := st.getDiffIndex(key)
+		diffIndex := st.getDiffIndex(key)
 
-		// Overwriting a key isn't supported, which means that
-		// the current leaf is expected to be split into 1) an
-		// optional extension for the common prefix of these 2
-		// keys, 2) a fullnode selecting the path on which the
-		// keys differ, and 3) one leaf for the differentiated
-		// component of each key.
-		if diffidx >= len(st.key) {
+		// Overwriting a key isn't supported, which means that the current leaf
+		// is expected to be split into 1) an optional extension for the common
+		// prefix of these 2 keys, 2) a fullnode selecting the path on which the
+		// keys differ, and 3) one leaf for the differentiated component of each key.
+		if diffIndex >= len(st.key) {
 			panic("Trying to insert into existing key")
 		}
+		// Hash the original leaf node to free up memory
+		var (
+			sharedKey = st.key[:diffIndex]
+			oldIndex  = st.key[diffIndex]
+			oldKey    = st.key[diffIndex+1:]
+			oldVal    = st.val
+			oldLeft   = st.leftBoundary
+			oldPath   = append(prefix, st.key[:diffIndex+1]...) // include the pos byte in branch
+		)
+		oldChild := newLeaf(oldKey, oldVal, oldLeft, st.options)
+		oldChild.hash(oldPath)
 
-		// Check if the split occurs at the first nibble of the
-		// chunk. In that case, no prefix extnode is necessary.
-		// Otherwise, create that
-		var p *StackTrie
-		if diffidx == 0 {
-			// Convert current leaf into a branch
-			st.nodeType = branchNode
-			p = st
-			st.children[0] = nil
-		} else {
-			// Convert current node into an ext,
-			// and insert a child branch node.
-			st.nodeType = extNode
-			st.children[0] = NewStackTrie(st.options)
-			st.children[0].nodeType = branchNode
-			p = st.children[0]
-		}
+		// Create the new leaf node for newly inserted value
+		var (
+			newIndex = key[diffIndex]
+			newKey   = key[diffIndex+1:]
+		)
+		newChild := newLeaf(newKey, value, false, st.options) // new sibling must be non-left boundary node
 
-		// Create the two child leaves: one containing the original
-		// value and another containing the new value. The child leaf
-		// is hashed directly in order to free up some memory.
-		origIdx := st.key[diffidx]
-		p.children[origIdx] = newLeaf(st.key[diffidx+1:], st.val, st.options)
-		p.children[origIdx].hash(append(prefix, st.key[:diffidx+1]...))
-
-		newIdx := key[diffidx]
-		p.children[newIdx] = newLeaf(key[diffidx+1:], value, st.options)
-
-		// Finally, cut off the key part that has been passed
-		// over to the children.
-		st.key = st.key[:diffidx]
-		st.val = nil
+		// Link two children into the existent stackTrie.
+		st.linkChildren(diffIndex, sharedKey, oldIndex, oldChild, newIndex, newChild)
 
 	case emptyNode: /* Empty */
 		st.nodeType = leafNode
 		st.key = key
 		st.val = value
+		st.leftBoundary = leftBoundary // set boundary flag for first inserted node
 
 	case hashedNode:
 		panic("trying to insert into hash")
@@ -422,12 +440,12 @@ func (st *StackTrie) hash(path []byte) {
 	h := newHasher(false)
 	defer returnHasherToPool(h)
 
-	st.hashRec(h, path)
+	st.hashRec(h, path, false)
 }
 
-func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
+func (st *StackTrie) hashRec(hasher *hasher, path []byte, rightBoundary bool) {
 	// The switch below sets this to the RLP-encoding of this node.
-	var encodedNode []byte
+	var encoded []byte
 
 	switch st.nodeType {
 	case hashedNode:
@@ -446,23 +464,27 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
 				nodes.Children[i] = nilValueNode
 				continue
 			}
-			child.hashRec(hasher, append(path, byte(i)))
+			// Recursively hashing child, all the children except the last one
+			// should already be hashed and freed up, thus the last child is
+			// regarded as on right boundary if parent is.
+			child.hashRec(hasher, append(path, byte(i)), rightBoundary)
+
 			if len(child.val) < 32 {
 				nodes.Children[i] = rawNode(child.val)
 			} else {
 				nodes.Children[i] = hashNode(child.val)
 			}
-
 			// Release child back to pool.
 			st.children[i] = nil
 			returnToPool(child)
 		}
-
 		nodes.encode(hasher.encbuf)
-		encodedNode = hasher.encodedBytes()
+		encoded = hasher.encodedBytes()
 
 	case extNode:
-		st.children[0].hashRec(hasher, append(path, st.key...))
+		// Recursively hashing child, the child is regarded as on the right
+		// boundary if the parent is.
+		st.children[0].hashRec(hasher, append(path, st.key...), rightBoundary)
 
 		n := shortNode{Key: hexToCompactInPlace(st.key)}
 		if len(st.children[0].val) < 32 {
@@ -470,9 +492,8 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
 		} else {
 			n.Val = hashNode(st.children[0].val)
 		}
-
 		n.encode(hasher.encbuf)
-		encodedNode = hasher.encodedBytes()
+		encoded = hasher.encodedBytes()
 
 		// Release child back to pool.
 		returnToPool(st.children[0])
@@ -483,7 +504,7 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
 		n := shortNode{Key: hexToCompactInPlace(st.key), Val: valueNode(st.val)}
 
 		n.encode(hasher.encbuf)
-		encodedNode = hasher.encodedBytes()
+		encoded = hasher.encodedBytes()
 
 	default:
 		panic("invalid node type")
@@ -491,15 +512,19 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte) {
 
 	st.nodeType = hashedNode
 	st.key = st.key[:0]
-	if len(encodedNode) < 32 {
-		st.val = common.CopyBytes(encodedNode)
+	if len(encoded) < 32 {
+		st.val = common.CopyBytes(encoded)
 		return
 	}
-
 	// Write the hash to the 'val'. We allocate a new val here to not mutate
 	// input values
-	st.val = hasher.hashData(encodedNode)
-	st.options.commit(path, common.BytesToHash(st.val), encodedNode)
+	st.val = hasher.hashData(encoded)
+
+	// Skip boundary nodes if they are requested to not commit
+	if (st.leftBoundary || rightBoundary) && st.options.SkipBoundary {
+		return
+	}
+	st.options.commit(path, common.BytesToHash(st.val), encoded)
 }
 
 // Hash returns the hash of the current node.
@@ -507,7 +532,7 @@ func (st *StackTrie) Hash() (h common.Hash) {
 	hasher := newHasher(false)
 	defer returnHasherToPool(hasher)
 
-	st.hashRec(hasher, nil)
+	st.hashRec(hasher, nil, true)
 	if len(st.val) == 32 {
 		copy(h[:], st.val)
 		return h
@@ -535,7 +560,7 @@ func (st *StackTrie) Commit() (h common.Hash, err error) {
 	hasher := newHasher(false)
 	defer returnHasherToPool(hasher)
 
-	st.hashRec(hasher, nil)
+	st.hashRec(hasher, nil, true)
 	if len(st.val) == 32 {
 		copy(h[:], st.val)
 		return h, nil
