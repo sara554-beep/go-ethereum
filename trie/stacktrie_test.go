@@ -18,6 +18,12 @@ package trie
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/trie/testutil"
+	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
+	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
+	"github.com/ethereum/go-ethereum/trie/trienode"
+	"golang.org/x/exp/slices"
 	"math/big"
 	"testing"
 
@@ -420,5 +426,179 @@ func TestStacktrieSerialization(t *testing.T) {
 	}
 	if have, want := st.Hash(), nt.Hash(); have != want {
 		t.Fatalf("have %#x want %#x", have, want)
+	}
+}
+
+func TestStackTrieSkipBoundary(t *testing.T) {
+	var standard []*kv
+	for i := 0; i < 255; i++ {
+		standard = append(standard, &kv{
+			k: testutil.RandBytes(32),
+			v: testutil.RandBytes(32),
+		})
+	}
+	slices.SortFunc(standard, (*kv).cmp)
+	testStackTrieSkipBoundary(t, standard, rawdb.PathScheme)
+	testStackTrieSkipBoundary(t, standard, rawdb.HashScheme)
+
+	var tiny []*kv
+	for i := 0; i < 255; i++ {
+		tiny = append(standard, &kv{
+			k: testutil.RandBytes(32),
+			v: testutil.RandBytes(1),
+		})
+	}
+	slices.SortFunc(tiny, (*kv).cmp)
+	testStackTrieSkipBoundary(t, tiny, rawdb.PathScheme)
+	testStackTrieSkipBoundary(t, tiny, rawdb.HashScheme)
+}
+
+func testStackTrieSkipBoundary(t *testing.T, entries []*kv, scheme string) {
+	var (
+		stackDisk  = rawdb.NewMemoryDatabase()
+		merkleDisk = rawdb.NewMemoryDatabase()
+		options    = NewStackTrieOptions().WithSkipBoundary().WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
+			rawdb.WriteTrieNode(stackDisk, owner, path, hash, blob, scheme)
+		})
+		stackTr = NewStackTrie(options)
+	)
+
+	// Construct merkle trie for comparison
+	var config *Config
+	if scheme == rawdb.HashScheme {
+		config = &Config{HashDB: hashdb.Defaults}
+	} else {
+		config = &Config{PathDB: pathdb.Defaults}
+	}
+	database := NewDatabase(merkleDisk, config)
+	merkleTr, _ := New(TrieID(types.EmptyRootHash), database)
+
+	// Insert entries into trie
+	for _, entry := range entries {
+		if err := stackTr.Update(entry.k, entry.v); err != nil {
+			t.Fatalf("Failed to insert entry, %v", err)
+		}
+		if err := merkleTr.Update(entry.k, entry.v); err != nil {
+			t.Fatalf("Failed to insert entry, %v", err)
+		}
+	}
+	stackHash, err := stackTr.Commit()
+	if err != nil {
+		t.Fatalf("Failed to commit stack trie, %v", err)
+	}
+	merkleHash, nodes, err := merkleTr.Commit(false)
+
+	if stackHash != merkleHash {
+		t.Fatalf("Hash mismatch, stack: %x, merkle: %x", stackHash, merkleHash)
+	}
+	database.Update(merkleHash, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes), nil)
+	database.Commit(merkleHash, true)
+
+	// Verify the node presence
+	var (
+		prev     []byte
+		last     []byte
+		leftDone bool
+
+		left  = make(map[string]struct{})
+		right = make(map[string]struct{})
+		all   = make(map[string]struct{})
+
+		leftHash  = make(map[common.Hash]struct{})
+		rightHash = make(map[common.Hash]struct{})
+		allHash   = make(map[common.Hash]string)
+	)
+	merkleTr, _ = New(TrieID(merkleHash), database)
+	merkleIt, _ := merkleTr.NodeIterator(nil)
+	for merkleIt.Next(true) {
+		if merkleIt.Hash() == (common.Hash{}) {
+			continue
+		}
+		path := common.CopyBytes(merkleIt.Path())
+
+		// Collect left boundary
+		if !leftDone {
+			if len(path) < len(prev) || !bytes.Equal(path[:len(prev)], prev) {
+				leftDone = true
+			} else {
+				prev = path
+				left[string(path)] = struct{}{}
+				leftHash[merkleIt.Hash()] = struct{}{}
+			}
+		}
+		last = path
+		all[string(path)] = struct{}{}
+		allHash[merkleIt.Hash()] = string(path)
+	}
+
+	// Collect right boundary
+	for i := 1; i <= len(last); i++ {
+		_, ok := all[string(last[:i])]
+		if ok {
+			right[string(last[:i])] = struct{}{}
+
+			for h, p := range allHash {
+				if p == string(last[:i]) {
+					rightHash[h] = struct{}{}
+					break
+				}
+			}
+		}
+	}
+
+	// Ensure how many non-boundary nodes we have
+	var total int
+	for path := range all {
+		if _, ok := left[path]; ok {
+			continue
+		}
+		if _, ok := right[path]; ok {
+			continue
+		}
+		total += 1
+	}
+
+	// Verify node presence
+	iter := stackDisk.NewIterator(nil, nil)
+	defer iter.Release()
+
+	var visited int
+	if scheme == rawdb.PathScheme {
+		for iter.Next() {
+			if !rawdb.IsAccountTrieNode(iter.Key()) {
+				continue
+			}
+			_, path := rawdb.ResolveAccountTrieNodeKey(iter.Key())
+			if _, ok := left[string(path)]; ok {
+				t.Fatalf("Unexpected left boundary path, %v", path)
+			}
+			if _, ok := right[string(path)]; ok {
+				t.Fatalf("Unexpected right boundary path, %v", path)
+			}
+			if _, ok := all[string(path)]; !ok {
+				t.Fatalf("Unexpected node entry, %v", path)
+			}
+			visited += 1
+		}
+	} else {
+		for iter.Next() {
+			if !rawdb.IsLegacyTrieNode(iter.Key(), iter.Value()) {
+				continue
+			}
+			hash := crypto.Keccak256Hash(iter.Value())
+			if _, ok := leftHash[hash]; ok {
+				t.Fatalf("Unexpected left boundary path, %x", hash)
+			}
+			if _, ok := rightHash[hash]; ok {
+				t.Fatalf("Unexpected right boundary path, %x", hash)
+			}
+			if _, ok := allHash[hash]; !ok {
+				t.Fatalf("Unexpected node entry, %x", hash)
+			}
+			visited += 1
+		}
+	}
+	if visited != total {
+		t.Fatalf("Total node mismatch, want %d, got %d", total, visited)
 	}
 }

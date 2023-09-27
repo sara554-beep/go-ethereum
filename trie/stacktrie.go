@@ -209,6 +209,9 @@ func (st *StackTrie) setOptions(options *StackTrieOptions) {
 	}
 }
 
+// newLeaf constructs a leaf node using the provided node information. The node
+// key passed will be deep-copied, ensuring that it is safe to modify the argument
+// after the function call.
 func newLeaf(key, val []byte, leftBoundary bool, options *StackTrieOptions) *StackTrie {
 	st := stackTrieFromPool(options)
 	st.nodeType = leafNode
@@ -218,6 +221,9 @@ func newLeaf(key, val []byte, leftBoundary bool, options *StackTrieOptions) *Sta
 	return st
 }
 
+// newExt constructs an extension node using the provided node information. The node
+// key passed will be deep-copied, ensuring that it is safe to modify the argument
+// after the function call.
 func newExt(key []byte, child *StackTrie, leftBoundary bool, options *StackTrieOptions) *StackTrie {
 	st := stackTrieFromPool(options)
 	st.nodeType = extNode
@@ -308,8 +314,7 @@ func (st *StackTrie) linkChildren(diffIndex int, sharedKey []byte, oldIndex byte
 	st.leftBoundary = branch.leftBoundary // mark parent as boundary if child is
 }
 
-// Helper function to that inserts a (key, value) pair into
-// the trie.
+// Helper function to that inserts a (key, value) pair into the trie.
 func (st *StackTrie) insert(key, value []byte, prefix []byte, leftBoundary bool) {
 	switch st.nodeType {
 	case branchNode: /* Branch */
@@ -355,17 +360,19 @@ func (st *StackTrie) insert(key, value []byte, prefix []byte, leftBoundary bool)
 			oldIndex  = st.key[diffIndex]
 		)
 		if diffIndex < len(st.key)-1 {
-			// Break on the non-last byte, insert an intermediate extension. The
-			// path prefix of the newly-inserted extension should also contain the
-			// different byte and should be marked as left-boundary if child is.
+			// Break on the non-last byte, insert an intermediate extension.
 			child := st.children[0]
-			oldChild = newExt(st.key[diffIndex+1:], child, child.leftBoundary, st.options)
+			oldChild = newExt(st.key[diffIndex+1:], child, child.leftBoundary, st.options) // // mark parent as boundary if child is
+
+			// The path prefix of the newly-inserted extension should also
+			// contain the different byte in the parent branch node.
 			oldChild.hash(append(prefix, st.key[:diffIndex+1]...))
 		} else {
-			// Break on the last byte, no need to insert an extension node: reuse
-			// the current node. The path prefix of the original part should still
-			// be same.
+			// Break on the last byte, no need to insert an extension node,
+			// reuse the current node.
 			oldChild = st.children[0]
+
+			// The path prefix of the original child should still be same.
 			oldChild.hash(append(prefix, st.key...))
 		}
 		// Create the new leaf node for newly inserted value
@@ -396,7 +403,10 @@ func (st *StackTrie) insert(key, value []byte, prefix []byte, leftBoundary bool)
 			oldKey    = st.key[diffIndex+1:]
 			oldVal    = st.val
 			oldLeft   = st.leftBoundary
-			oldPath   = append(prefix, st.key[:diffIndex+1]...) // include the pos byte in branch
+
+			// The path prefix of the original leaf node should also contain
+			// the different byte in the parent branch node.
+			oldPath = append(prefix, st.key[:diffIndex+1]...)
 		)
 		oldChild := newLeaf(oldKey, oldVal, oldLeft, st.options)
 		oldChild.hash(oldPath)
@@ -509,7 +519,7 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte, rightBoundary bool) {
 	default:
 		panic("invalid node type")
 	}
-
+	// Mark the node as hashedNode to prevent double hashing
 	st.nodeType = hashedNode
 	st.key = st.key[:0]
 	if len(encoded) < 32 {
@@ -524,6 +534,8 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte, rightBoundary bool) {
 	if (st.leftBoundary || rightBoundary) && st.options.SkipBoundary {
 		return
 	}
+	// Node writer should deep-copy the passed path, otherwise the byte
+	// slice might be mutated later.
 	st.options.commit(path, common.BytesToHash(st.val), encoded)
 }
 
