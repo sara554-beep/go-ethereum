@@ -738,7 +738,7 @@ func (s *Syncer) loadSyncStatus() {
 						s.accountBytes += common.StorageSize(len(key) + len(value))
 					},
 				}
-				options := trie.NewStackTrieOptions()
+				options := trie.NewStackTrieOptions().WithSkipBoundary()
 				options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 					rawdb.WriteTrieNode(task.genBatch, owner, path, hash, blob, s.scheme)
 				})
@@ -754,7 +754,7 @@ func (s *Syncer) loadSyncStatus() {
 								s.storageBytes += common.StorageSize(len(key) + len(value))
 							},
 						}
-						options := trie.NewStackTrieOptions().WithOwner(accountHash)
+						options := trie.NewStackTrieOptions().WithOwner(accountHash).WithSkipBoundary()
 						options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 							rawdb.WriteTrieNode(subtask.genBatch, owner, path, hash, blob, s.scheme)
 						})
@@ -810,7 +810,7 @@ func (s *Syncer) loadSyncStatus() {
 				s.accountBytes += common.StorageSize(len(key) + len(value))
 			},
 		}
-		options := trie.NewStackTrieOptions()
+		options := trie.NewStackTrieOptions().WithSkipBoundary()
 		options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 			rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
 		})
@@ -2011,7 +2011,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 							s.storageBytes += common.StorageSize(len(key) + len(value))
 						},
 					}
-					options := trie.NewStackTrieOptions().WithOwner(account)
+					options := trie.NewStackTrieOptions().WithOwner(account).WithSkipBoundary()
 					options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 						rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
 					})
@@ -2029,7 +2029,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 								s.storageBytes += common.StorageSize(len(key) + len(value))
 							},
 						}
-						options := trie.NewStackTrieOptions().WithOwner(account)
+						options := trie.NewStackTrieOptions().WithOwner(account).WithSkipBoundary()
 						options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 							rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
 						})
@@ -2109,15 +2109,8 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 	// Large contracts could have generated new trie nodes, flush them to disk
 	if res.subTask != nil {
 		if res.subTask.done {
-			if root, err := res.subTask.genTrie.Commit(); err != nil {
+			if _, err := res.subTask.genTrie.Commit(); err != nil {
 				log.Error("Failed to commit stack slots", "err", err)
-			} else if root == res.subTask.root {
-				// If the chunk's root is an overflown but full delivery, clear the heal request
-				for i, account := range res.mainTask.res.hashes {
-					if account == res.accounts[len(res.accounts)-1] {
-						res.mainTask.needHeal[i] = false
-					}
-				}
 			}
 		}
 		if res.subTask.genBatch.ValueSize() > ethdb.IdealBatchSize || res.subTask.done {

@@ -1803,6 +1803,8 @@ func TestSyncAccountPerformance(t *testing.T) {
 }
 
 func testSyncAccountPerformance(t *testing.T, scheme string) {
+	t.SkipNow()
+
 	// Set the account concurrency to 1. This _should_ result in the
 	// range root to become correct, and there should be no healing needed
 	defer func(old int) { accountConcurrency = old }(accountConcurrency)
