@@ -42,13 +42,17 @@ type (
 	// for committing, allowing callers to flush nodes into the database using
 	// their desired scheme.
 	NodeWriteFunc = func(owner common.Hash, path []byte, hash common.Hash, blob []byte)
+
+	// NodeDeleteFunc is used to delete the internal nodes. TESTING!
+	NodeDeleteFunc = func(owner common.Hash, path []byte)
 )
 
 // StackTrieOptions contains the configured options for manipulating the stackTrie.
 type StackTrieOptions struct {
-	Owner        common.Hash   // The associated account hash serves as the trie namespace, empty for non-storage trie
-	Writer       NodeWriteFunc // The function to commit the dirty nodes
-	SkipBoundary bool          // Flag if boundary trie nodes are ignored for committing
+	Owner        common.Hash    // The associated account hash serves as the trie namespace, empty for non-storage trie
+	Writer       NodeWriteFunc  // The function to commit the dirty nodes
+	SkipBoundary bool           // Flag if boundary trie nodes are ignored for committing
+	Deleter      NodeDeleteFunc // The function to delete nodes
 }
 
 // NewStackTrieOptions initializes an empty options for stackTrie.
@@ -69,6 +73,12 @@ func (o *StackTrieOptions) WithWriter(writer NodeWriteFunc) *StackTrieOptions {
 // WithSkipBoundary sets the skipBoundary flag.
 func (o *StackTrieOptions) WithSkipBoundary() *StackTrieOptions {
 	o.SkipBoundary = true
+	return o
+}
+
+// WithDeleter configures trie node deleter within the options.
+func (o *StackTrieOptions) WithDeleter(deleter NodeDeleteFunc) *StackTrieOptions {
+	o.Deleter = deleter
 	return o
 }
 
@@ -496,7 +506,7 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte, rightBoundary bool) {
 		// boundary if the parent is.
 		st.children[0].hashRec(hasher, append(path, st.key...), rightBoundary)
 
-		n := shortNode{Key: hexToCompactInPlace(st.key)}
+		n := shortNode{Key: hexToCompact(st.key)}
 		if len(st.children[0].val) < 32 {
 			n.Val = rawNode(st.children[0].val)
 		} else {
@@ -504,6 +514,12 @@ func (st *StackTrie) hashRec(hasher *hasher, path []byte, rightBoundary bool) {
 		}
 		n.encode(hasher.encbuf)
 		encoded = hasher.encodedBytes()
+
+		if st.options.Deleter != nil {
+			for i := 1; i < len(st.key); i++ {
+				st.options.Deleter(st.options.Owner, append(path, st.key[:i]...))
+			}
+		}
 
 		// Release child back to pool.
 		returnToPool(st.children[0])

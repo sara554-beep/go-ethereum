@@ -742,6 +742,14 @@ func (s *Syncer) loadSyncStatus() {
 				options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 					rawdb.WriteTrieNode(task.genBatch, owner, path, hash, blob, s.scheme)
 				})
+				options = options.WithDeleter(func(owner common.Hash, path []byte) {
+					if s.scheme == rawdb.HashScheme {
+						return
+					}
+					if rawdb.HasTrieNode(s.db, owner, path, common.Hash{}, rawdb.PathScheme) {
+						log.Error("Detected dangling nodes", "owner", owner, "path", path)
+					}
+				})
 				task.genTrie = trie.NewStackTrie(options)
 
 				for accountHash, subtasks := range task.SubTasks {
@@ -757,6 +765,14 @@ func (s *Syncer) loadSyncStatus() {
 						options := trie.NewStackTrieOptions().WithOwner(accountHash).WithSkipBoundary()
 						options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 							rawdb.WriteTrieNode(subtask.genBatch, owner, path, hash, blob, s.scheme)
+						})
+						options = options.WithDeleter(func(owner common.Hash, path []byte) {
+							if s.scheme == rawdb.HashScheme {
+								return
+							}
+							if rawdb.HasTrieNode(s.db, owner, path, common.Hash{}, rawdb.PathScheme) {
+								log.Error("Detected dangling nodes", "owner", owner, "path", path)
+							}
 						})
 						subtask.genTrie = trie.NewStackTrie(options)
 					}
@@ -813,6 +829,14 @@ func (s *Syncer) loadSyncStatus() {
 		options := trie.NewStackTrieOptions().WithSkipBoundary()
 		options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 			rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
+		})
+		options = options.WithDeleter(func(owner common.Hash, path []byte) {
+			if s.scheme == rawdb.HashScheme {
+				return
+			}
+			if rawdb.HasTrieNode(s.db, owner, path, common.Hash{}, rawdb.PathScheme) {
+				log.Error("Detected dangling nodes", "owner", owner, "path", path)
+			}
 		})
 		s.tasks = append(s.tasks, &accountTask{
 			Next:     next,
@@ -2015,6 +2039,14 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 					options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 						rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
 					})
+					options = options.WithDeleter(func(owner common.Hash, path []byte) {
+						if s.scheme == rawdb.HashScheme {
+							return
+						}
+						if rawdb.HasTrieNode(s.db, owner, path, common.Hash{}, rawdb.PathScheme) {
+							log.Error("Detected dangling nodes", "owner", owner, "path", path)
+						}
+					})
 					tasks = append(tasks, &storageTask{
 						Next:     common.Hash{},
 						Last:     r.End(),
@@ -2032,6 +2064,14 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 						options := trie.NewStackTrieOptions().WithOwner(account).WithSkipBoundary()
 						options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 							rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
+						})
+						options = options.WithDeleter(func(owner common.Hash, path []byte) {
+							if s.scheme == rawdb.HashScheme {
+								return
+							}
+							if rawdb.HasTrieNode(s.db, owner, path, common.Hash{}, rawdb.PathScheme) {
+								log.Error("Detected dangling nodes", "owner", owner, "path", path)
+							}
 						})
 						tasks = append(tasks, &storageTask{
 							Next:     r.Start(),
@@ -2086,6 +2126,14 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 			options := trie.NewStackTrieOptions().WithOwner(account)
 			options = options.WithWriter(func(owner common.Hash, path []byte, hash common.Hash, blob []byte) {
 				rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
+			})
+			options = options.WithDeleter(func(owner common.Hash, path []byte) {
+				if s.scheme == rawdb.HashScheme {
+					return
+				}
+				if rawdb.HasTrieNode(s.db, owner, path, common.Hash{}, rawdb.PathScheme) {
+					log.Error("Detected dangling nodes", "owner", owner, "path", path)
+				}
 			})
 			tr := trie.NewStackTrie(options)
 			for j := 0; j < len(res.hashes[i]); j++ {
