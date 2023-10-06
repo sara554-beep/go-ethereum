@@ -49,7 +49,7 @@ type Reader interface {
 // Config defines all necessary options for database.
 type Config struct {
 	Preimages bool           // Flag whether the preimage of node key is recorded
-	Verkle    bool           // Flag whether the database is opened in verkle mode
+	IsVerkle  bool           // Flag whether the db is holding a verkle tree
 	HashDB    *hashdb.Config // Configs for hash-based scheme
 	PathDB    *pathdb.Config // Configs for experimental path-based scheme
 }
@@ -58,7 +58,7 @@ type Config struct {
 // default settings.
 var HashDefaults = &Config{
 	Preimages: false,
-	Verkle:    false,
+	IsVerkle:  false,
 	HashDB:    hashdb.Defaults,
 }
 
@@ -66,7 +66,7 @@ var HashDefaults = &Config{
 // default settings.
 var PathDefaults = &Config{
 	Preimages: false,
-	Verkle:    false,
+	IsVerkle:  false,
 	PathDB:    pathdb.Defaults,
 }
 
@@ -130,7 +130,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		log.Crit("Both 'hash' and 'path' mode are configured")
 	}
 	if config.PathDB != nil {
-		db.backend = pathdb.New(diskdb, config.PathDB, config.Verkle)
+		db.backend = pathdb.New(diskdb, config.PathDB, config.IsVerkle)
 	} else {
 		db.backend = hashdb.New(diskdb, config.HashDB, mptResolver{})
 	}
@@ -228,7 +228,7 @@ func (db *Database) Preimage(hash common.Hash) []byte {
 
 // IsVerkle returns if database is opened in verkle mode.
 func (db *Database) IsVerkle() bool {
-	return db.config.Verkle
+	return db.config.IsVerkle
 }
 
 // Cap iteratively flushes old but still referenced trie nodes until the total
