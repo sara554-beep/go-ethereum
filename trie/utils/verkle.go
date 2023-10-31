@@ -276,6 +276,7 @@ func CodeChunkKeyWithEvaluatedAddress(addressPoint *verkle.Point, chunk *uint256
 
 func StorageSlotKeyWithEvaluatedAddress(evaluated *verkle.Point, storageKey []byte) []byte {
 	treeIndex, subIndex := storageIndex(storageKey)
+	//fmt.Println("treeIndex", treeIndex, "sub", subIndex)
 	return GetTreeKeyWithEvaluatedAddress(evaluated, treeIndex, subIndex)
 }
 
