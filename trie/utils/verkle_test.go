@@ -18,9 +18,9 @@ package utils
 
 import (
 	"bytes"
-	"github.com/gballet/go-verkle"
 	"testing"
 
+	"github.com/gballet/go-verkle"
 	"github.com/holiman/uint256"
 )
 
