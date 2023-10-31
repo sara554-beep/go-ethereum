@@ -88,7 +88,7 @@ func (t *VerkleTrie) GetAccount(addr common.Address) (*types.StateAccount, error
 	)
 	switch n := t.root.(type) {
 	case *verkle.InternalNode:
-		values, err = n.GetStem(t.cache.DeriveStem(addr[:]), t.nodeResolver)
+		values, err = n.GetValuesAtStem(t.cache.GetStem(addr[:]), t.nodeResolver)
 		if err != nil {
 			return nil, fmt.Errorf("GetAccount (%x) error: %v", addr, err)
 		}
@@ -155,7 +155,7 @@ func (t *VerkleTrie) UpdateAccount(addr common.Address, acc *types.StateAccount)
 
 	switch n := t.root.(type) {
 	case *verkle.InternalNode:
-		err = n.InsertStem(t.cache.DeriveStem(addr[:]), values, t.nodeResolver)
+		err = n.InsertValuesAtStem(t.cache.GetStem(addr[:]), values, t.nodeResolver)
 		if err != nil {
 			return fmt.Errorf("UpdateAccount (%x) error: %v", addr, err)
 		}
@@ -193,7 +193,7 @@ func (t *VerkleTrie) DeleteAccount(addr common.Address) error {
 	}
 	switch n := t.root.(type) {
 	case *verkle.InternalNode:
-		err = n.InsertStem(t.cache.DeriveStem(addr.Bytes()), values, t.nodeResolver)
+		err = n.InsertValuesAtStem(t.cache.GetStem(addr.Bytes()), values, t.nodeResolver)
 		if err != nil {
 			return fmt.Errorf("DeleteAccount (%x) error: %v", addr, err)
 		}
@@ -354,7 +354,7 @@ func (t *VerkleTrie) UpdateContractCode(addr common.Address, codeHash common.Has
 		if groupOffset == 255 || len(chunks)-i <= 32 {
 			switch root := t.root.(type) {
 			case *verkle.InternalNode:
-				err = root.InsertStem(key[:31], values, t.nodeResolver)
+				err = root.InsertValuesAtStem(key[:31], values, t.nodeResolver)
 				if err != nil {
 					return fmt.Errorf("UpdateContractCode (addr=%x) error: %w", addr[:], err)
 				}

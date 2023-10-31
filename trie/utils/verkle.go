@@ -109,9 +109,9 @@ func (c *PointCache) Get(addr []byte) *verkle.Point {
 	return p
 }
 
-// DeriveStem returns the first 31 bytes of the tree key as the tree stem. It only
+// GetStem returns the first 31 bytes of the tree key as the tree stem. It only
 // works for the account metadata whose treeIndex is 0.
-func (c *PointCache) DeriveStem(addr []byte) []byte {
+func (c *PointCache) GetStem(addr []byte) []byte {
 	p := c.Get(addr)
 	return pointToHash(p, 0)[:31]
 }
