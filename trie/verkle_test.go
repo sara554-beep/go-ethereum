@@ -26,7 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
-	"github.com/ethereum/go-ethereum/trie/verkle"
+	"github.com/ethereum/go-ethereum/trie/utils"
 )
 
 var (
@@ -63,7 +63,7 @@ func TestVerkleTreeReadWrite(t *testing.T) {
 	})
 	defer db.Close()
 
-	tr, _ := NewVerkleTrie(types.EmptyVerkleHash, db, verkle.NewCache(100))
+	tr, _ := NewVerkleTrie(types.EmptyVerkleHash, db, utils.NewPointCache(100))
 
 	for addr, acct := range accounts {
 		if err := tr.UpdateAccount(addr, acct); err != nil {

@@ -26,7 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	utils "github.com/ethereum/go-ethereum/trie/verkle"
+	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/gballet/go-verkle"
 	"github.com/holiman/uint256"
 )
@@ -41,12 +41,12 @@ var (
 type VerkleTrie struct {
 	root   verkle.VerkleNode
 	db     *Database
-	cache  *utils.Cache
+	cache  *utils.PointCache
 	reader *trieReader
 }
 
 // NewVerkleTrie constructs a verkle tree based on the specified root hash.
-func NewVerkleTrie(root common.Hash, db *Database, cache *utils.Cache) (*VerkleTrie, error) {
+func NewVerkleTrie(root common.Hash, db *Database, cache *utils.PointCache) (*VerkleTrie, error) {
 	reader, err := newTrieReader(root, common.Hash{}, db)
 	if err != nil {
 		return nil, err
@@ -82,13 +82,13 @@ func (t *VerkleTrie) GetKey(key []byte) []byte {
 // be returned. If the tree is corrupted, an error will be returned.
 func (t *VerkleTrie) GetAccount(addr common.Address) (*types.StateAccount, error) {
 	var (
-		acct   = &types.StateAccount{}
+		acc    = &types.StateAccount{}
 		values [][]byte
 		err    error
 	)
 	switch n := t.root.(type) {
 	case *verkle.InternalNode:
-		values, err = n.GetStem(t.cache.GetStem(addr[:]), t.nodeResolver)
+		values, err = n.GetStem(t.cache.DeriveStem(addr[:]), t.nodeResolver)
 		if err != nil {
 			return nil, fmt.Errorf("GetAccount (%x) error: %v", addr, err)
 		}
@@ -100,7 +100,7 @@ func (t *VerkleTrie) GetAccount(addr common.Address) (*types.StateAccount, error
 	}
 	// Decode nonce in little-endian
 	if len(values[utils.NonceLeafKey]) > 0 {
-		acct.Nonce = binary.LittleEndian.Uint64(values[utils.NonceLeafKey])
+		acc.Nonce = binary.LittleEndian.Uint64(values[utils.NonceLeafKey])
 	}
 	// Decode balance in little-endian
 	var balance [32]byte
@@ -108,13 +108,13 @@ func (t *VerkleTrie) GetAccount(addr common.Address) (*types.StateAccount, error
 	for i := 0; i < len(balance)/2; i++ {
 		balance[len(balance)-i-1], balance[i] = balance[i], balance[len(balance)-i-1]
 	}
-	acct.Balance = new(big.Int).SetBytes(balance[:])
+	acc.Balance = new(big.Int).SetBytes(balance[:])
 
 	// Decode codehash
-	acct.CodeHash = values[utils.CodeKeccakLeafKey]
+	acc.CodeHash = values[utils.CodeKeccakLeafKey]
 
 	// TODO account.Root is leave as empty. How should we handle the legacy account?
-	return acct, nil
+	return acc, nil
 }
 
 // GetStorage implements state.Trie, retrieving the storage slot with the specified
@@ -131,21 +131,21 @@ func (t *VerkleTrie) GetStorage(addr common.Address, key []byte) ([]byte, error)
 
 // UpdateAccount implements state.Trie, writing the provided account into the tree.
 // If the tree is corrupted, an error will be returned.
-func (t *VerkleTrie) UpdateAccount(addr common.Address, acct *types.StateAccount) error {
+func (t *VerkleTrie) UpdateAccount(addr common.Address, acc *types.StateAccount) error {
 	var (
 		err            error
 		nonce, balance [32]byte
 		values         = make([][]byte, verkle.NodeWidth)
 	)
 	values[utils.VersionLeafKey] = zero[:]
-	values[utils.CodeKeccakLeafKey] = acct.CodeHash[:]
+	values[utils.CodeKeccakLeafKey] = acc.CodeHash[:]
 
 	// Encode nonce in little-endian
-	binary.LittleEndian.PutUint64(nonce[:], acct.Nonce)
+	binary.LittleEndian.PutUint64(nonce[:], acc.Nonce)
 	values[utils.NonceLeafKey] = nonce[:]
 
 	// Encode balance in little-endian
-	bytes := acct.Balance.Bytes()
+	bytes := acc.Balance.Bytes()
 	if len(bytes) > 0 {
 		for i, b := range bytes {
 			balance[len(bytes)-i-1] = b
@@ -155,7 +155,7 @@ func (t *VerkleTrie) UpdateAccount(addr common.Address, acct *types.StateAccount
 
 	switch n := t.root.(type) {
 	case *verkle.InternalNode:
-		err = n.InsertStem(t.cache.GetStem(addr[:]), values, t.nodeResolver)
+		err = n.InsertStem(t.cache.DeriveStem(addr[:]), values, t.nodeResolver)
 		if err != nil {
 			return fmt.Errorf("UpdateAccount (%x) error: %v", addr, err)
 		}
@@ -169,7 +169,7 @@ func (t *VerkleTrie) UpdateAccount(addr common.Address, acct *types.StateAccount
 // UpdateStorage implements state.Trie, writing the provided storage slot into
 // the tree. If the tree is corrupted, an error will be returned.
 func (t *VerkleTrie) UpdateStorage(address common.Address, key, value []byte) error {
-	// Right padding the slot value to 32 bytes.
+	// Left padding the slot value to 32 bytes.
 	var v [32]byte
 	if len(value) >= 32 {
 		copy(v[:], value[:32])
@@ -193,7 +193,7 @@ func (t *VerkleTrie) DeleteAccount(addr common.Address) error {
 	}
 	switch n := t.root.(type) {
 	case *verkle.InternalNode:
-		err = n.InsertStem(t.cache.GetStem(addr.Bytes()), values, t.nodeResolver)
+		err = n.InsertStem(t.cache.DeriveStem(addr.Bytes()), values, t.nodeResolver)
 		if err != nil {
 			return fmt.Errorf("DeleteAccount (%x) error: %v", addr, err)
 		}
@@ -239,6 +239,8 @@ func (t *VerkleTrie) Commit(_ bool) (common.Hash, *trienode.NodeSet, error) {
 
 // NodeIterator implements state.Trie, returning an iterator that returns
 // nodes of the trie. Iteration starts at the key after the given start key.
+//
+// TODO(gballet, rjl493456442) implement it.
 func (t *VerkleTrie) NodeIterator(startKey []byte) (NodeIterator, error) {
 	panic("not implemented")
 }
@@ -250,6 +252,8 @@ func (t *VerkleTrie) NodeIterator(startKey []byte) (NodeIterator, error) {
 // If the trie does not contain a value for key, the returned proof contains all
 // nodes of the longest existing prefix of the key (at least the root), ending
 // with the node that proves the absence of the key.
+//
+// TODO(gballet, rjl493456442) implement it.
 func (t *VerkleTrie) Prove(key []byte, proofDb ethdb.KeyValueWriter) error {
 	panic("not implemented")
 }

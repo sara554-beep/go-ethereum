@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package verkle
+package utils
 
 import (
 	"encoding/binary"
@@ -44,7 +44,7 @@ var (
 	verkleNodeWidth                     = uint256.NewInt(256)
 	codeStorageDelta                    = uint256.NewInt(0).Sub(codeOffset, headerStorageOffset)
 
-	index0Point *verkle.Point // pre-computed commitment of polynomial [2+256*64, 0, 0, 0, 0]
+	index0Point *verkle.Point // pre-computed commitment of polynomial [2+256*64]
 
 	// cacheHitGauge is the metric to track how many cache hit occurred.
 	cacheHitGauge = metrics.NewRegisteredGauge("trie/verkle/cache/hit", nil)
@@ -69,21 +69,21 @@ func init() {
 	}
 }
 
-// Cache is the LRU cache for storing evaluated address commitment.
-type Cache struct {
+// PointCache is the LRU cache for storing evaluated address commitment.
+type PointCache struct {
 	lru  lru.BasicLRU[string, *verkle.Point]
 	lock sync.RWMutex
 }
 
-// NewCache returns the cache with specified size.
-func NewCache(maxItems int) *Cache {
-	return &Cache{
+// NewPointCache returns the cache with specified size.
+func NewPointCache(maxItems int) *PointCache {
+	return &PointCache{
 		lru: lru.NewBasicLRU[string, *verkle.Point](maxItems),
 	}
 }
 
 // get loads the cached commitment, or nil if it's not existent.
-func (c *Cache) get(addr string) (*verkle.Point, bool) {
+func (c *PointCache) get(addr string) (*verkle.Point, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -92,7 +92,7 @@ func (c *Cache) get(addr string) (*verkle.Point, bool) {
 
 // Get returns the cached commitment for the specified address, or computing
 // it on the flight.
-func (c *Cache) Get(addr []byte) *verkle.Point {
+func (c *PointCache) Get(addr []byte) *verkle.Point {
 	p, ok := c.get(string(addr))
 	if ok {
 		cacheHitGauge.Inc(1)
@@ -107,19 +107,19 @@ func (c *Cache) Get(addr []byte) *verkle.Point {
 	return p
 }
 
-// GetStem returns the first 31 bytes of the tree key as the tree stem. It only
+// DeriveStem returns the first 31 bytes of the tree key as the tree stem. It only
 // works for the account metadata whose treeIndex is 0.
-func (c *Cache) GetStem(addr []byte) []byte {
+func (c *PointCache) DeriveStem(addr []byte) []byte {
 	p := c.Get(addr)
 	return pointToHash(p, 0)[:31]
 }
 
-// treeKey performs both the work of the spec's get_tree_key function, and that
+// GetTreeKey performs both the work of the spec's get_tree_key function, and that
 // of pedersen_hash: it builds the polynomial in pedersen_hash without having to
 // create a mostly zero-filled buffer and "type cast" it to a 128-long 16-byte
 // array. Since at most the first 5 coefficients of the polynomial will be non-zero,
 // these 5 coefficients are created directly.
-func treeKey(address []byte, treeIndex *uint256.Int, subIndex byte) []byte {
+func GetTreeKey(address []byte, treeIndex *uint256.Int, subIndex byte) []byte {
 	if len(address) < 32 {
 		var aligned [32]byte
 		address = append(aligned[:32-len(address)], address...)
@@ -154,12 +154,12 @@ func treeKey(address []byte, treeIndex *uint256.Int, subIndex byte) []byte {
 	return pointToHash(ret, subIndex)
 }
 
-// treeKeyWithEvaluatedAddress is basically identical to treeKey, the only
+// GetTreeKeyWithEvaluatedAddress is basically identical to GetTreeKey, the only
 // difference is a part of polynomial is already evaluated.
 //
 // Specifically, poly = [2+256*64, address_le_low, address_le_high] is already
 // evaluated.
-func treeKeyWithEvaluatedAddress(evaluated *verkle.Point, treeIndex *uint256.Int, subIndex byte) []byte {
+func GetTreeKeyWithEvaluatedAddress(evaluated *verkle.Point, treeIndex *uint256.Int, subIndex byte) []byte {
 	var poly [5]fr.Element
 
 	poly[0].SetZero()
@@ -184,23 +184,23 @@ func treeKeyWithEvaluatedAddress(evaluated *verkle.Point, treeIndex *uint256.Int
 }
 
 func VersionKey(address []byte) []byte {
-	return treeKey(address, zero, VersionLeafKey)
+	return GetTreeKey(address, zero, VersionLeafKey)
 }
 
 func BalanceKey(address []byte) []byte {
-	return treeKey(address, zero, BalanceLeafKey)
+	return GetTreeKey(address, zero, BalanceLeafKey)
 }
 
 func NonceKey(address []byte) []byte {
-	return treeKey(address, zero, NonceLeafKey)
+	return GetTreeKey(address, zero, NonceLeafKey)
 }
 
 func CodeKeccakKey(address []byte) []byte {
-	return treeKey(address, zero, CodeKeccakLeafKey)
+	return GetTreeKey(address, zero, CodeKeccakLeafKey)
 }
 
 func CodeSizeKey(address []byte) []byte {
-	return treeKey(address, zero, CodeSizeLeafKey)
+	return GetTreeKey(address, zero, CodeSizeLeafKey)
 }
 
 func codeChunkIndex(chunk *uint256.Int) (*uint256.Int, byte) {
@@ -218,7 +218,7 @@ func codeChunkIndex(chunk *uint256.Int) (*uint256.Int, byte) {
 
 func CodeChunkKey(address []byte, chunk *uint256.Int) []byte {
 	treeIndex, subIndex := codeChunkIndex(chunk)
-	return treeKey(address, treeIndex, subIndex)
+	return GetTreeKey(address, treeIndex, subIndex)
 }
 
 func storageIndex(bytes []byte) (*uint256.Int, byte) {
@@ -246,37 +246,37 @@ func storageIndex(bytes []byte) (*uint256.Int, byte) {
 
 func StorageSlotKey(address []byte, storageKey []byte) []byte {
 	treeIndex, subIndex := storageIndex(storageKey)
-	return treeKey(address, treeIndex, subIndex)
+	return GetTreeKey(address, treeIndex, subIndex)
 }
 
 func VersionKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
-	return treeKeyWithEvaluatedAddress(evaluated, zero, VersionLeafKey)
+	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, VersionLeafKey)
 }
 
 func BalanceKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
-	return treeKeyWithEvaluatedAddress(evaluated, zero, BalanceLeafKey)
+	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, BalanceLeafKey)
 }
 
 func NonceKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
-	return treeKeyWithEvaluatedAddress(evaluated, zero, NonceLeafKey)
+	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, NonceLeafKey)
 }
 
 func CodeKeccakKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
-	return treeKeyWithEvaluatedAddress(evaluated, zero, CodeKeccakLeafKey)
+	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, CodeKeccakLeafKey)
 }
 
 func CodeSizeKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
-	return treeKeyWithEvaluatedAddress(evaluated, zero, CodeSizeLeafKey)
+	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, CodeSizeLeafKey)
 }
 
 func CodeChunkKeyWithEvaluatedAddress(addressPoint *verkle.Point, chunk *uint256.Int) []byte {
 	treeIndex, subIndex := codeChunkIndex(chunk)
-	return treeKeyWithEvaluatedAddress(addressPoint, treeIndex, subIndex)
+	return GetTreeKeyWithEvaluatedAddress(addressPoint, treeIndex, subIndex)
 }
 
 func StorageSlotKeyWithEvaluatedAddress(evaluated *verkle.Point, storageKey []byte) []byte {
 	treeIndex, subIndex := storageIndex(storageKey)
-	return treeKeyWithEvaluatedAddress(evaluated, treeIndex, subIndex)
+	return GetTreeKeyWithEvaluatedAddress(evaluated, treeIndex, subIndex)
 }
 
 func pointToHash(evaluated *verkle.Point, suffix byte) []byte {
