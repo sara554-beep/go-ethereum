@@ -28,6 +28,8 @@ import (
 )
 
 const (
+	// The spec of verkle key encoding can be found here.
+	// https://notes.ethereum.org/@vbuterin/verkle_tree_eip#Tree-embedding
 	VersionLeafKey    = 0
 	BalanceLeafKey    = 1
 	NonceLeafKey      = 2
@@ -183,22 +185,29 @@ func GetTreeKeyWithEvaluatedAddress(evaluated *verkle.Point, treeIndex *uint256.
 	return pointToHash(ret, subIndex)
 }
 
+// VersionKey returns the verkle tree key of the version field for the specified account.
 func VersionKey(address []byte) []byte {
 	return GetTreeKey(address, zero, VersionLeafKey)
 }
 
+// BalanceKey returns the verkle tree key of the balance field for the specified account.
 func BalanceKey(address []byte) []byte {
 	return GetTreeKey(address, zero, BalanceLeafKey)
 }
 
+// NonceKey returns the verkle tree key of the nonce field for the specified account.
 func NonceKey(address []byte) []byte {
 	return GetTreeKey(address, zero, NonceLeafKey)
 }
 
+// CodeKeccakKey returns the verkle tree key of the code keccak field for
+// the specified account.
 func CodeKeccakKey(address []byte) []byte {
 	return GetTreeKey(address, zero, CodeKeccakLeafKey)
 }
 
+// CodeSizeKey returns the verkle tree key of the code size field for the
+// specified account.
 func CodeSizeKey(address []byte) []byte {
 	return GetTreeKey(address, zero, CodeSizeLeafKey)
 }
@@ -216,6 +225,8 @@ func codeChunkIndex(chunk *uint256.Int) (*uint256.Int, byte) {
 	return treeIndex, subIndex
 }
 
+// CodeChunkKey returns the verkle tree key of the code chunk for the
+// specified account.
 func CodeChunkKey(address []byte, chunk *uint256.Int) []byte {
 	treeIndex, subIndex := codeChunkIndex(chunk)
 	return GetTreeKey(address, treeIndex, subIndex)
@@ -244,39 +255,61 @@ func storageIndex(bytes []byte) (*uint256.Int, byte) {
 	return &key, byte(key[0] & 0xFF)
 }
 
+// StorageSlotKey returns the verkle tree key of the storage slot for the
+// specified account.
 func StorageSlotKey(address []byte, storageKey []byte) []byte {
 	treeIndex, subIndex := storageIndex(storageKey)
 	return GetTreeKey(address, treeIndex, subIndex)
 }
 
+// VersionKeyWithEvaluatedAddress returns the verkle tree key of the version
+// field for the specified account. The difference between VersionKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func VersionKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
 	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, VersionLeafKey)
 }
 
+// BalanceKeyWithEvaluatedAddress returns the verkle tree key of the balance
+// field for the specified account. The difference between BalanceKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func BalanceKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
 	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, BalanceLeafKey)
 }
 
+// NonceKeyWithEvaluatedAddress returns the verkle tree key of the nonce
+// field for the specified account. The difference between NonceKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func NonceKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
 	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, NonceLeafKey)
 }
 
+// CodeKeccakKeyWithEvaluatedAddress returns the verkle tree key of the code
+// keccak for the specified account. The difference between CodeKeccakKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func CodeKeccakKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
 	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, CodeKeccakLeafKey)
 }
 
+// CodeSizeKeyWithEvaluatedAddress returns the verkle tree key of the code
+// size for the specified account. The difference between CodeSizeKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func CodeSizeKeyWithEvaluatedAddress(evaluated *verkle.Point) []byte {
 	return GetTreeKeyWithEvaluatedAddress(evaluated, zero, CodeSizeLeafKey)
 }
 
+// CodeChunkKeyWithEvaluatedAddress returns the verkle tree key of the code
+// chunk for the specified account. The difference between CodeChunkKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func CodeChunkKeyWithEvaluatedAddress(addressPoint *verkle.Point, chunk *uint256.Int) []byte {
 	treeIndex, subIndex := codeChunkIndex(chunk)
 	return GetTreeKeyWithEvaluatedAddress(addressPoint, treeIndex, subIndex)
 }
 
+// StorageSlotKeyWithEvaluatedAddress returns the verkle tree key of the storage
+// slot for the specified account. The difference between StorageSlotKey is the
+// address evaluation is already computed to minimize the computational overhead.
 func StorageSlotKeyWithEvaluatedAddress(evaluated *verkle.Point, storageKey []byte) []byte {
 	treeIndex, subIndex := storageIndex(storageKey)
-	//fmt.Println("treeIndex", treeIndex, "sub", subIndex)
 	return GetTreeKeyWithEvaluatedAddress(evaluated, treeIndex, subIndex)
 }
 
