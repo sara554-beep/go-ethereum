@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/gballet/go-verkle"
 )
 
 const (
@@ -132,6 +133,20 @@ var Defaults = &Config{
 	StateHistory:   params.FullImmutabilityThreshold,
 	CleanCacheSize: defaultCleanSize,
 	DirtyCacheSize: DefaultBufferSize,
+}
+
+// Verkles contains default settings for verkle tree database.
+var Verkles = &Config{
+	StateHistory:   params.FullImmutabilityThreshold,
+	CleanCacheSize: defaultCleanSize,
+	DirtyCacheSize: DefaultBufferSize,
+	Hasher: func(blob []byte) common.Hash {
+		n, err := verkle.ParseNode(blob, 0)
+		if err != nil {
+			return common.Hash{}
+		}
+		return n.Commit().Bytes()
+	},
 }
 
 // ReadOnly is the config in order to open database in read only mode.

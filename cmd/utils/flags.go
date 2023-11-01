@@ -2229,6 +2229,10 @@ func MakeTrieDatabase(ctx *cli.Context, disk ethdb.Database, preimage bool, read
 		config.HashDB = hashdb.Defaults
 		return trie.NewDatabase(disk, config)
 	}
+	if isVerkle {
+		config.PathDB = pathdb.Verkles
+		return trie.NewDatabase(disk, config)
+	}
 	if readOnly {
 		config.PathDB = pathdb.ReadOnly
 	} else {
