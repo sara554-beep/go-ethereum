@@ -176,9 +176,9 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *triestate.Set) {
-			accountList = append(accountList, copySet(states.Accounts))
-			storageList = append(storageList, copy2DSet(states.Storages))
+		onCommit    = func(states *triestate.StateUpdate) {
+			accountList = append(accountList, copySet(states.AccountOrigin))
+			storageList = append(storageList, copy2DSet(states.StorageOrigin))
 		}
 		disk      = rawdb.NewMemoryDatabase()
 		tdb       = trie.NewDatabase(disk, &trie.Config{PathDB: pathdb.Defaults})

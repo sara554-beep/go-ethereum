@@ -34,13 +34,13 @@ type diskLayer struct {
 	id     uint64           // Immutable, corresponding state id
 	db     *Database        // Path-based trie database
 	cleans *fastcache.Cache // GC friendly memory cache of clean node RLPs
-	buffer *nodebuffer      // Node buffer to aggregate writes
+	buffer *buffer          // Node buffer to aggregate writes
 	stale  bool             // Signals that the layer became stale (state progressed)
 	lock   sync.RWMutex     // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, id uint64, db *Database, cleans *fastcache.Cache, buffer *nodebuffer) *diskLayer {
+func newDiskLayer(root common.Hash, id uint64, db *Database, cleans *fastcache.Cache, buffer *buffer) *diskLayer {
 	// Initialize a clean cache if the memory allowance is not zero
 	// or reuse the provided cache if it is not nil (inherited from
 	// the original disk layer).
@@ -140,9 +140,52 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, depth int) ([]byte, *n
 	return blob, &nodeLoc{loc: locDisk, depth: depth}, nil
 }
 
+// account directly retrieves the account RLP associated with a particular
+// hash in the slim data format.
+//
+// Note the returned account is not a copy, please don't modify it.
+func (dl *diskLayer) account(hash common.Hash, depth int) ([]byte, error) {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if dl.stale {
+		return nil, errSnapshotStale
+	}
+	// Try to retrieve the trie node from the not-yet-written
+	// node buffer first. Note the buffer is lock free since
+	// it's impossible to mutate the buffer before tagging the
+	// layer as stale.
+	blob, found := dl.buffer.account(hash)
+	if found {
+		return blob, nil
+	}
+	// Try to retrieve the account from the disk.
+	return rawdb.ReadAccountSnapshot(dl.db.diskdb, hash), nil
+}
+
+// storage directly retrieves the storage data associated with a particular hash,
+// within a particular account.
+//
+// Note the returned account is not a copy, please don't modify it.
+func (dl *diskLayer) storage(accountHash, storageHash common.Hash, depth int) ([]byte, error) {
+	// Hold the lock, ensure the parent won't be changed during the
+	// state accessing.
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if dl.stale {
+		return nil, errSnapshotStale
+	}
+	if blob, found := dl.buffer.storage(accountHash, storageHash); found {
+		return blob, nil
+	}
+	// Try to retrieve the account from the disk.
+	return rawdb.ReadStorageSnapshot(dl.db.diskdb, accountHash, storageHash), nil
+}
+
 // update implements the layer interface, returning a new diff layer on top
 // with the given state set.
-func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *triestate.Set) *diffLayer {
+func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *stateSetWithOrigin) *diffLayer {
 	return newDiffLayer(dl, root, id, block, nodes, states)
 }
 
@@ -191,7 +234,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct a new disk layer by merging the nodes from the provided diff
 	// layer, and flush the content in disk layer if there are too many nodes
 	// cached. The clean cache is inherited from the original disk layer.
-	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes))
+	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes, bottom.states.stateSet))
 
 	// In a unique scenario where the ID of the oldest history object (after tail
 	// truncation) surpasses the persisted state ID, we take the necessary action
@@ -248,7 +291,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 	// needs to be reverted is not yet flushed and cached in node
 	// buffer, otherwise, manipulate persistent state directly.
 	if !dl.buffer.empty() {
-		err := dl.buffer.revert(dl.db.diskdb, nodes)
+		err := dl.buffer.revert(dl.db.diskdb, nodes, nil, nil)
 		if err != nil {
 			return nil, err
 		}
