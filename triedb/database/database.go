@@ -35,6 +35,19 @@ type NodeDatabase interface {
 	NodeReader(stateRoot common.Hash) (NodeReader, error)
 }
 
+// StateReader wraps the Account and Storage method of a backing state reader.
+type StateReader interface {
+	Account(hash common.Hash) ([]byte, error)
+	Storage(accountHash, storageHash common.Hash) ([]byte, error)
+}
+
+// StateDatabase warps the methods of a backing trie store.
+type StateDatabase interface {
+	// StateReader returns a state reader associated with the specific state.
+	// An error will be returned if the specified state is not available.
+	StateReader(stateRoot common.Hash) (StateReader, error)
+}
+
 // PreimageStore wraps the methods of a backing store for reading and writing
 // trie node preimages.
 type PreimageStore interface {

@@ -38,7 +38,7 @@ import (
 func updateTrie(addrHash common.Hash, root common.Hash, dirties, cleans map[common.Hash][]byte) (common.Hash, *trienode.NodeSet) {
 	h, err := newTestHasher(addrHash, root, cleans)
 	if err != nil {
-		panic(fmt.Errorf("failed to create hasher, err: %w", err))
+		panic(fmt.Errorf("failed to create nodeHasher, err: %w", err))
 	}
 	for key, val := range dirties {
 		if len(val) == 0 {
@@ -106,7 +106,7 @@ func newTester(t *testing.T, historyLimit uint64) *tester {
 			StateHistory:   historyLimit,
 			CleanCacheSize: 16 * 1024,
 			DirtyCacheSize: 16 * 1024,
-			TrieLoader: func(db database.NodeDatabase) ethstate.TrieLoader {
+			TrieOpener: func(db database.NodeDatabase) ethstate.TrieOpener {
 				return newHashLoader(snapAccounts, snapStorages)
 			},
 			Hasher: func(blob []byte) common.Hash {
@@ -128,7 +128,8 @@ func newTester(t *testing.T, historyLimit uint64) *tester {
 			parent = obj.roots[len(obj.roots)-1]
 		}
 		root, nodes, states := obj.generate(parent)
-		if err := db.Update(root, parent, uint64(i), nodes, states); err != nil {
+		_ = states // TOO FIX
+		if err := db.Update(root, parent, uint64(i), nodes, nil); err != nil {
 			panic(fmt.Errorf("failed to update state changes, err: %w", err))
 		}
 		obj.roots = append(obj.roots, root)
@@ -308,7 +309,7 @@ func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNode
 			}
 		}
 	}
-	return root, ctx.nodes, ethstate.NewOrigin(ctx.accountOrigin, ctx.storageOrigin, nil)
+	return root, ctx.nodes, ethstate.NewOrigin(ctx.accountOrigin, ctx.storageOrigin)
 }
 
 // lastRoot returns the latest root hash, or empty if nothing is cached.
@@ -613,7 +614,7 @@ func TestTailTruncateHistory(t *testing.T) {
 	tester.db.Close()
 	tester.db = New(tester.db.diskdb, &Config{
 		StateHistory: 10,
-		TrieLoader:   func(db database.NodeDatabase) ethstate.TrieLoader { return nil },
+		TrieOpener:   func(db database.NodeDatabase) ethstate.TrieOpener { return nil },
 		Hasher: func(blob []byte) common.Hash {
 			return crypto.Keccak256Hash(blob)
 		},

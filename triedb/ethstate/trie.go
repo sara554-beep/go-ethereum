@@ -46,8 +46,8 @@ type Trie interface {
 	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error)
 }
 
-// TrieLoader wraps functions to load tries.
-type TrieLoader interface {
+// TrieOpener wraps functions to load tries.
+type TrieOpener interface {
 	// OpenTrie opens the main account trie.
 	OpenTrie(root common.Hash) (Trie, error)
 
@@ -68,7 +68,7 @@ type context struct {
 // Apply traverses the provided state diffs, apply them in the associated
 // post-state and return the generated dirty trie nodes. The state can be
 // loaded via the provided trie loader.
-func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, loader TrieLoader) (map[common.Hash]map[string][]byte, error) {
+func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, loader TrieOpener) (map[common.Hash]map[string][]byte, error) {
 	tr, err := loader.OpenTrie(postRoot)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Addre
 // updateAccount the account was present in prev-state, and may or may not
 // existent in post-state. Apply the reverse diff and verify if the storage
 // root matches the one in prev-state account.
-func updateAccount(ctx *context, loader TrieLoader, addr common.Address) error {
+func updateAccount(ctx *context, loader TrieOpener, addr common.Address) error {
 	// The account was present in prev-state, decode it from the
 	// 'slim-rlp' format bytes.
 	h := newHasher()
@@ -172,7 +172,7 @@ func updateAccount(ctx *context, loader TrieLoader, addr common.Address) error {
 // deleteAccount the account was not present in prev-state, and is expected
 // to be existent in post-state. Apply the reverse diff and verify if the
 // account and storage is wiped out correctly.
-func deleteAccount(ctx *context, loader TrieLoader, addr common.Address) error {
+func deleteAccount(ctx *context, loader TrieOpener, addr common.Address) error {
 	// The account must be existent in post-state, load the account.
 	h := newHasher()
 	defer h.release()

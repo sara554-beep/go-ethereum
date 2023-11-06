@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
 
 var (
@@ -39,7 +38,13 @@ var (
 	errUnmatchedJournal  = errors.New("unmatched journal")
 )
 
-const journalVersion uint64 = 0
+// journalVersion ensures that an incompatible journal is detected and discarded.
+//
+// Changelog:
+//
+// - Version 0: initial version
+// - Version 1: add post-state journal
+const journalVersion uint64 = 1
 
 // journalNode represents a trie node persisted in the journal.
 type journalNode struct {
@@ -62,10 +67,9 @@ type journalAccounts struct {
 
 // journalStorage represents a list of storage slots belong to an account.
 type journalStorage struct {
-	Incomplete bool
-	Account    common.Address
-	Hashes     []common.Hash
-	Slots      [][]byte
+	Account common.Address
+	Hashes  []common.Hash
+	Slots   [][]byte
 }
 
 // loadJournal tries to parse the layer journal from the disk.
@@ -129,7 +133,7 @@ func (db *Database) loadLayers() layer {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Return single layer with persistent state.
-	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, newNodeBuffer(db.bufferSize, nil, 0))
+	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, newBuffer(db.config.DirtyCacheSize, nil, nil, 0))
 }
 
 // loadDiskLayer reads the binary blob from the layer journal, reconstructing
@@ -169,7 +173,7 @@ func (db *Database) loadDiskLayer(r *rlp.Stream) (layer, error) {
 		nodes[entry.Owner] = subset
 	}
 	// Calculate the internal state transitions by id difference.
-	base := newDiskLayer(root, id, db, nil, newNodeBuffer(db.bufferSize, nodes, id-stored))
+	base := newDiskLayer(root, id, db, nil, newBuffer(db.config.DirtyCacheSize, nodes, nil, id-stored))
 	return base, nil
 }
 
@@ -208,11 +212,10 @@ func (db *Database) loadDiffLayer(parent layer, r *rlp.Stream) (layer, error) {
 	}
 	// Read state changes from journal
 	var (
-		jaccounts  journalAccounts
-		jstorages  []journalStorage
-		accounts   = make(map[common.Address][]byte)
-		storages   = make(map[common.Address]map[common.Hash][]byte)
-		incomplete = make(map[common.Address]struct{})
+		jaccounts journalAccounts
+		jstorages []journalStorage
+		accounts  = make(map[common.Address][]byte)
+		storages  = make(map[common.Address]map[common.Hash][]byte)
 	)
 	if err := r.Decode(&jaccounts); err != nil {
 		return nil, fmt.Errorf("load diff accounts: %v", err)
@@ -232,12 +235,10 @@ func (db *Database) loadDiffLayer(parent layer, r *rlp.Stream) (layer, error) {
 				set[h] = nil
 			}
 		}
-		if entry.Incomplete {
-			incomplete[entry.Account] = struct{}{}
-		}
 		storages[entry.Account] = set
 	}
-	return db.loadDiffLayer(newDiffLayer(parent, root, parent.stateID()+1, block, nodes, ethstate.NewOrigin(accounts, storages, incomplete)), r)
+	// TODO resolve state
+	return db.loadDiffLayer(newDiffLayer(parent, root, parent.stateID()+1, block, nodes, nil), r)
 }
 
 // journal implements the layer interface, marshaling the un-flushed trie nodes
@@ -305,19 +306,16 @@ func (dl *diffLayer) journal(w io.Writer) error {
 	}
 	// Write the accumulated state changes into buffer
 	var jacct journalAccounts
-	for addr, account := range dl.states.Accounts {
+	for addr, account := range dl.states.accountOrigin {
 		jacct.Addresses = append(jacct.Addresses, addr)
 		jacct.Accounts = append(jacct.Accounts, account)
 	}
 	if err := rlp.Encode(w, jacct); err != nil {
 		return err
 	}
-	storage := make([]journalStorage, 0, len(dl.states.Storages))
-	for addr, slots := range dl.states.Storages {
+	storage := make([]journalStorage, 0, len(dl.states.storageOrigin))
+	for addr, slots := range dl.states.storageOrigin {
 		entry := journalStorage{Account: addr}
-		if _, ok := dl.states.Incomplete[addr]; ok {
-			entry.Incomplete = true
-		}
 		for slotHash, slot := range slots {
 			entry.Hashes = append(entry.Hashes, slotHash)
 			entry.Slots = append(entry.Slots, slot)
@@ -378,7 +376,7 @@ func (db *Database) Journal(root common.Hash) error {
 	// Store the journal into the database and return
 	rawdb.WriteTrieJournal(db.diskdb, journal.Bytes())
 
-	// Set the db in read only mode to reject all following mutations
+	// PrevState the db in read only mode to reject all following mutations
 	db.readOnly = true
 	log.Info("Persisted dirty state to disk", "size", common.StorageSize(journal.Len()), "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil

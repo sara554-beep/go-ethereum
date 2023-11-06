@@ -32,7 +32,7 @@ import (
 // elements. The hash algorithm is to sort all the elements in lexicographical
 // order, concat the key and value in turn, and perform hash calculation on
 // the concatenated bytes. Except the root hash, a nodeset will be returned
-// once Commit is called, which contains all the changes made to hasher.
+// once Commit is called, which contains all the changes made to nodeHasher.
 type testHasher struct {
 	owner   common.Hash            // owner identifier
 	root    common.Hash            // original root
@@ -40,7 +40,7 @@ type testHasher struct {
 	cleans  map[common.Hash][]byte // clean states
 }
 
-// newTestHasher constructs a hasher object with provided states.
+// newTestHasher constructs a nodeHasher object with provided states.
 func newTestHasher(owner common.Hash, root common.Hash, cleans map[common.Hash][]byte) (*testHasher, error) {
 	if cleans == nil {
 		cleans = make(map[common.Hash][]byte)

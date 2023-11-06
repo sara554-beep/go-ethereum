@@ -54,7 +54,7 @@ var PathDefaults = triedb.Config{
 		StateHistory:   params.FullImmutabilityThreshold,
 
 		// Merkle trie loader is used as the default trie loader.
-		TrieLoader: trie.NewMerkleLoader,
+		TrieOpener: trie.NewMerkleOpener,
 		Hasher:     HashNode,
 	},
 }

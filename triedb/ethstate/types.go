@@ -20,6 +20,8 @@ import "github.com/ethereum/go-ethereum/common"
 
 // Origin represents the prev-state for a state transition.
 type Origin struct {
+	size common.StorageSize // Approximate size of set
+
 	// Accounts represents the account data before the state transition, keyed
 	// by the account address. The nil value means the account was not present
 	// before.
@@ -29,23 +31,13 @@ type Origin struct {
 	// by the account address and slot key hash. The nil value means the slot
 	// was not present.
 	Storages map[common.Address]map[common.Hash][]byte
-
-	// Incomplete set indicates whether the original storage data is incomplete
-	// due to a large deletion. Geth is not capable of handling large storage
-	// deletions to prevent out-of-memory panics. Consequently, such large
-	// deletions are skipped and marked here. This set can be removed once self
-	// destruction is disabled in the following hard fork.
-	Incomplete map[common.Address]struct{}
-
-	size common.StorageSize // Approximate size of set
 }
 
 // NewOrigin constructs the state set with provided data.
-func NewOrigin(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, incomplete map[common.Address]struct{}) *Origin {
+func NewOrigin(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte) *Origin {
 	return &Origin{
-		Accounts:   accounts,
-		Storages:   storages,
-		Incomplete: incomplete,
+		Accounts: accounts,
+		Storages: storages,
 	}
 }
 
@@ -63,6 +55,14 @@ func (s *Origin) Size() common.StorageSize {
 		}
 		s.size += common.StorageSize(common.AddressLength)
 	}
-	s.size += common.StorageSize(common.AddressLength * len(s.Incomplete))
 	return s.size
+}
+
+// Update encapsulates information about state mutations, including both the changes
+// made and their original values, within the context of a state transition.
+type Update struct {
+	Origin      *Origin                                // Associated original value before state transition
+	DestructSet map[common.Hash]struct{}               // Keyed markers for deleted (and potentially) recreated accounts
+	AccountData map[common.Hash][]byte                 // Keyed accounts for direct retrieval (nil is not expected)
+	StorageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
 }

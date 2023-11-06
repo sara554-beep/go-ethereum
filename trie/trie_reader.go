@@ -73,22 +73,22 @@ func (r *trieReader) node(path []byte, hash common.Hash) ([]byte, error) {
 	return blob, nil
 }
 
-// MerkleLoader implements triestate.TrieLoader for constructing tries.
-type MerkleLoader struct {
+// MerkleOpener implements ethstate.TrieOpener for constructing tries.
+type MerkleOpener struct {
 	db database.NodeDatabase
 }
 
-// NewMerkleLoader creates the merkle trie loader.
-func NewMerkleLoader(db database.NodeDatabase) ethstate.TrieLoader {
-	return &MerkleLoader{db: db}
+// NewMerkleOpener creates the merkle trie opener.
+func NewMerkleOpener(db database.NodeDatabase) ethstate.TrieOpener {
+	return &MerkleOpener{db: db}
 }
 
 // OpenTrie opens the main account trie.
-func (l *MerkleLoader) OpenTrie(root common.Hash) (ethstate.Trie, error) {
-	return New(TrieID(root), l.db)
+func (o *MerkleOpener) OpenTrie(root common.Hash) (ethstate.Trie, error) {
+	return New(TrieID(root), o.db)
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (l *MerkleLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (ethstate.Trie, error) {
-	return New(StorageTrieID(stateRoot, addrHash, root), l.db)
+func (o *MerkleOpener) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (ethstate.Trie, error) {
+	return New(StorageTrieID(stateRoot, addrHash, root), o.db)
 }

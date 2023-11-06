@@ -2171,7 +2171,7 @@ func MakeTrieDatabase(ctx *cli.Context, disk ethdb.Database, preimage bool, read
 		StateHistory:   params.FullImmutabilityThreshold,
 		CleanCacheSize: pathdb.DefaultCleanSize,
 		DirtyCacheSize: pathdb.DefaultBufferSize,
-		TrieLoader:     trie.NewMerkleLoader,
+		TrieOpener:     trie.NewMerkleOpener,
 		Hasher:         dbconfig.HashNode,
 	}
 	if readOnly {

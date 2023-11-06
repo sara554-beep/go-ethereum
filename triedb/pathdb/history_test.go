@@ -32,6 +32,7 @@ import (
 )
 
 // randomStateSet generates a random state change set.
+// nolint
 func randomStateSet(n int) *ethstate.Origin {
 	var (
 		accounts = make(map[common.Address][]byte)
@@ -47,11 +48,11 @@ func randomStateSet(n int) *ethstate.Origin {
 		account := generateAccount(types.EmptyRootHash)
 		accounts[addr] = types.SlimAccountRLP(account)
 	}
-	return ethstate.NewOrigin(accounts, storages, nil)
+	return ethstate.NewOrigin(accounts, storages)
 }
 
 func makeHistory() *history {
-	return newHistory(testutil.RandomHash(), types.EmptyRootHash, 0, randomStateSet(3))
+	return newHistory(testutil.RandomHash(), types.EmptyRootHash, 0, nil, nil)
 }
 
 func makeHistories(n int) []*history {
@@ -61,7 +62,7 @@ func makeHistories(n int) []*history {
 	)
 	for i := 0; i < n; i++ {
 		root := testutil.RandomHash()
-		h := newHistory(root, parent, uint64(i), randomStateSet(3))
+		h := newHistory(root, parent, uint64(i), nil, nil)
 		parent = root
 		result = append(result, h)
 	}

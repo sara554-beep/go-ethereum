@@ -17,7 +17,6 @@
 package pathdb
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 
@@ -34,13 +33,13 @@ type diskLayer struct {
 	id     uint64           // Immutable, corresponding state id
 	db     *Database        // Path-based trie database
 	cleans *fastcache.Cache // GC friendly memory cache of clean node RLPs
-	buffer *nodebuffer      // Node buffer to aggregate writes
+	buffer *buffer          // Node buffer to aggregate writes
 	stale  bool             // Signals that the layer became stale (state progressed)
 	lock   sync.RWMutex     // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, id uint64, db *Database, cleans *fastcache.Cache, buffer *nodebuffer) *diskLayer {
+func newDiskLayer(root common.Hash, id uint64, db *Database, cleans *fastcache.Cache, buffer *buffer) *diskLayer {
 	// Initialize a clean cache if the memory allowance is not zero
 	// or reuse the provided cache if it is not nil (inherited from
 	// the original disk layer).
@@ -140,9 +139,52 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, depth int) ([]byte, *n
 	return blob, &nodeLoc{loc: locDisk, depth: depth}, nil
 }
 
+// account directly retrieves the account RLP associated with a particular
+// hash in the slim data format.
+//
+// Note the returned account is not a copy, please don't modify it.
+func (dl *diskLayer) account(hash common.Hash, depth int) ([]byte, error) {
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if dl.stale {
+		return nil, errSnapshotStale
+	}
+	// Try to retrieve the trie node from the not-yet-written
+	// node buffer first. Note the buffer is lock free since
+	// it's impossible to mutate the buffer before tagging the
+	// layer as stale.
+	blob, found := dl.buffer.account(hash)
+	if found {
+		return blob, nil
+	}
+	// Try to retrieve the account from the disk.
+	return rawdb.ReadAccountSnapshot(dl.db.diskdb, hash), nil
+}
+
+// storage directly retrieves the storage data associated with a particular hash,
+// within a particular account.
+//
+// Note the returned account is not a copy, please don't modify it.
+func (dl *diskLayer) storage(accountHash, storageHash common.Hash, depth int) ([]byte, error) {
+	// Hold the lock, ensure the parent won't be changed during the
+	// state accessing.
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if dl.stale {
+		return nil, errSnapshotStale
+	}
+	if blob, found := dl.buffer.storage(accountHash, storageHash); found {
+		return blob, nil
+	}
+	// Try to retrieve the account from the disk.
+	return rawdb.ReadStorageSnapshot(dl.db.diskdb, accountHash, storageHash), nil
+}
+
 // update implements the layer interface, returning a new diff layer on top
 // with the given state set.
-func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *ethstate.Origin) *diffLayer {
+func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *stateSetWithOrigin) *diffLayer {
 	return newDiffLayer(dl, root, id, block, nodes, states)
 }
 
@@ -191,7 +233,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct a new disk layer by merging the nodes from the provided diff
 	// layer, and flush the content in disk layer if there are too many nodes
 	// cached. The clean cache is inherited from the original disk layer.
-	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes))
+	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes, bottom.states.stateSet))
 
 	// In a unique scenario where the ID of the oldest history object (after tail
 	// truncation) surpasses the persisted state ID, we take the necessary action
@@ -216,15 +258,9 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 }
 
 // revert applies the given state history and return a reverted disk layer.
-func (dl *diskLayer) revert(h *history, loader ethstate.TrieLoader) (*diskLayer, error) {
+func (dl *diskLayer) revert(h *history) (*diskLayer, error) {
 	if h.meta.root != dl.rootHash() {
 		return nil, errUnexpectedHistory
-	}
-	// Reject if the provided state history is incomplete. It's due to
-	// a large construct SELF-DESTRUCT which can't be handled because
-	// of memory limitation.
-	if len(h.meta.incomplete) > 0 {
-		return nil, errors.New("incomplete state history")
 	}
 	if dl.id == 0 {
 		return nil, fmt.Errorf("%w: zero state id", errStateUnrecoverable)
@@ -232,7 +268,7 @@ func (dl *diskLayer) revert(h *history, loader ethstate.TrieLoader) (*diskLayer,
 	// Apply the reverse state changes upon the current state. This must
 	// be done before holding the lock in order to access state in "this"
 	// layer.
-	nodes, err := ethstate.Apply(h.meta.parent, h.meta.root, h.accounts, h.storages, loader)
+	nodes, err := ethstate.Apply(h.meta.parent, h.meta.root, h.accounts, h.storages, dl.db.trieOpener)
 	if err != nil {
 		return nil, err
 	}
@@ -247,8 +283,10 @@ func (dl *diskLayer) revert(h *history, loader ethstate.TrieLoader) (*diskLayer,
 	// buffer is not empty, it means that the state transition that
 	// needs to be reverted is not yet flushed and cached in node
 	// buffer, otherwise, manipulate persistent state directly.
+	//
+	// TODO persistent states should be reverted too.
 	if !dl.buffer.empty() {
-		err := dl.buffer.revert(dl.db.diskdb, nodes)
+		err := dl.buffer.revert(dl.db.diskdb, nodes, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -263,15 +301,15 @@ func (dl *diskLayer) revert(h *history, loader ethstate.TrieLoader) (*diskLayer,
 	return newDiskLayer(h.meta.parent, dl.id-1, dl.db, dl.cleans, dl.buffer), nil
 }
 
-// setBufferSize sets the node buffer size to the provided value.
-func (dl *diskLayer) setBufferSize(size int) error {
+// refreshBufferSize sets the node buffer size to the provided value.
+func (dl *diskLayer) refreshBufferSize() error {
 	dl.lock.RLock()
 	defer dl.lock.RUnlock()
 
 	if dl.stale {
 		return errSnapshotStale
 	}
-	return dl.buffer.setSize(size, dl.db.diskdb, dl.cleans, dl.id)
+	return dl.buffer.setSize(dl.db.config.DirtyCacheSize, dl.db.diskdb, dl.cleans, dl.id)
 }
 
 // size returns the approximate size of cached nodes in the disk layer.

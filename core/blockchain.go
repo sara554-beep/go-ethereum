@@ -164,7 +164,7 @@ func (c *CacheConfig) triedbConfig() *triedb.Config {
 			StateHistory:   c.StateHistory,
 			CleanCacheSize: c.TrieCleanLimit * 1024 * 1024,
 			DirtyCacheSize: c.TrieDirtyLimit * 1024 * 1024,
-			TrieLoader:     trie.NewMerkleLoader,
+			TrieOpener:     trie.NewMerkleOpener,
 			Hasher:         dbconfig.HashNode,
 		}
 	}

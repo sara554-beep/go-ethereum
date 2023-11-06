@@ -28,37 +28,52 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// nodebuffer is a collection of modified trie nodes to aggregate the disk
-// write. The content of the nodebuffer must be checked before diving into
-// disk (since it basically is not-yet-written data).
-type nodebuffer struct {
+// buffer is a collection of modified states and associated trie nodes to
+// aggregate the disk write. The content of the buffer must be checked before
+// diving into disk (since it basically is not-yet-written data).
+type buffer struct {
 	layers uint64                            // The number of diff layers aggregated inside
 	size   uint64                            // The size of aggregated writes
 	limit  uint64                            // The maximum memory allowance in bytes
-	nodes  map[common.Hash]map[string][]byte // The dirty node set, mapped by owner and path
+	nodes  map[common.Hash]map[string][]byte // Aggregated nodes set, mapped by owner and path
+	states *stateSet                         // Associated state mutations
 }
 
-// newNodeBuffer initializes the node buffer with the provided nodes.
-func newNodeBuffer(limit int, nodes map[common.Hash]map[string][]byte, layers uint64) *nodebuffer {
+// newBuffer initializes the buffer with the provided data.
+func newBuffer(limit int, nodes map[common.Hash]map[string][]byte, states *stateSet, layers uint64) *buffer {
+	var size uint64
 	if nodes == nil {
 		nodes = make(map[common.Hash]map[string][]byte)
 	}
-	var size uint64
+	if states == nil {
+		states = newStates(nil, nil, nil)
+	}
 	for _, subset := range nodes {
 		for path, n := range subset {
 			size += uint64(len(n) + len(path))
 		}
 	}
-	return &nodebuffer{
+	return &buffer{
 		layers: layers,
-		nodes:  nodes,
 		size:   size,
 		limit:  uint64(limit),
+		nodes:  nodes,
+		states: states,
 	}
 }
 
+// account retrieves the account blob with account address hash.
+func (b *buffer) account(hash common.Hash) ([]byte, bool) {
+	return b.states.account(hash)
+}
+
+// storage retrieves the storage sot with account address hash and slot key.
+func (b *buffer) storage(addrHash common.Hash, storageHash common.Hash) ([]byte, bool) {
+	return b.states.storage(addrHash, storageHash)
+}
+
 // node retrieves the trie node with given node info.
-func (b *nodebuffer) node(owner common.Hash, path []byte) ([]byte, bool) {
+func (b *buffer) node(owner common.Hash, path []byte) ([]byte, bool) {
 	subset, ok := b.nodes[owner]
 	if !ok {
 		return nil, false
@@ -73,7 +88,7 @@ func (b *nodebuffer) node(owner common.Hash, path []byte) ([]byte, bool) {
 // commit merges the dirty nodes into the nodebuffer. This operation won't take
 // the ownership of the nodes map which belongs to the bottom-most diff layer.
 // It will hold the node references from the given map which are safe to copy.
-func (b *nodebuffer) commit(nodes map[common.Hash]map[string][]byte) *nodebuffer {
+func (b *buffer) commit(nodes map[common.Hash]map[string][]byte, states *stateSet) *buffer {
 	var (
 		delta         int64
 		overwrite     int64
@@ -108,16 +123,18 @@ func (b *nodebuffer) commit(nodes map[common.Hash]map[string][]byte) *nodebuffer
 		b.nodes[owner] = current
 	}
 	b.updateSize(delta)
+	b.states.merge(states)
+
+	nodeGCCountMeter.Mark(overwrite)
+	nodeGCBytesMeter.Mark(overwriteSize)
 	b.layers++
-	gcNodesMeter.Mark(overwrite)
-	gcBytesMeter.Mark(overwriteSize)
 	return b
 }
 
 // revert is the reverse operation of commit. It also merges the provided nodes
 // into the nodebuffer, the difference is that the provided node set should
 // revert the changes made by the last state transition.
-func (b *nodebuffer) revert(db ethdb.KeyValueReader, nodes map[common.Hash]map[string][]byte) error {
+func (b *buffer) revert(db ethdb.KeyValueReader, nodes map[common.Hash]map[string][]byte, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte) error {
 	// Short circuit if no embedded state transition to revert.
 	if b.layers == 0 {
 		return errStateUnrecoverable
@@ -128,6 +145,9 @@ func (b *nodebuffer) revert(db ethdb.KeyValueReader, nodes map[common.Hash]map[s
 	if b.layers == 0 {
 		b.reset()
 		return nil
+	}
+	if err := b.states.revert(accounts, storages); err != nil {
+		return err
 	}
 	var delta int64
 	for owner, subset := range nodes {
@@ -167,7 +187,7 @@ func (b *nodebuffer) revert(db ethdb.KeyValueReader, nodes map[common.Hash]map[s
 }
 
 // updateSize updates the total cache size by the given delta.
-func (b *nodebuffer) updateSize(delta int64) {
+func (b *buffer) updateSize(delta int64) {
 	size := int64(b.size) + delta
 	if size >= 0 {
 		b.size = uint64(size)
@@ -179,27 +199,28 @@ func (b *nodebuffer) updateSize(delta int64) {
 }
 
 // reset cleans up the disk cache.
-func (b *nodebuffer) reset() {
+func (b *buffer) reset() {
 	b.layers = 0
 	b.size = 0
 	b.nodes = make(map[common.Hash]map[string][]byte)
+	b.states.reset()
 }
 
 // empty returns an indicator if nodebuffer contains any state transition inside.
-func (b *nodebuffer) empty() bool {
+func (b *buffer) empty() bool {
 	return b.layers == 0
 }
 
 // setSize sets the buffer size to the provided number, and invokes a flush
 // operation if the current memory usage exceeds the new limit.
-func (b *nodebuffer) setSize(size int, db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64) error {
+func (b *buffer) setSize(size int, db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64) error {
 	b.limit = uint64(size)
 	return b.flush(db, clean, id, false)
 }
 
 // flush persists the in-memory dirty trie node into the disk if the configured
 // memory threshold is reached. Note, all data must be written atomically.
-func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64, force bool) error {
+func (b *buffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64, force bool) error {
 	if b.size <= b.limit && !force {
 		return nil
 	}
@@ -213,6 +234,7 @@ func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id ui
 		batch = db.NewBatchWithSize(int(b.size))
 	)
 	nodes := writeNodes(batch, b.nodes, clean)
+	b.states.write(db, batch)
 	rawdb.WritePersistentStateID(batch, id)
 
 	// Flush all mutations in a single batch
