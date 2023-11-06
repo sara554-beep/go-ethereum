@@ -29,6 +29,17 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
+// StateUpdate encapsulates information about state mutations, including both the
+// changes made and their original values, within the context of a state transition.
+type StateUpdate struct {
+	DestructSet       map[common.Hash]struct{}                  // Keyed markers for deleted (and potentially) recreated accounts
+	AccountData       map[common.Hash][]byte                    // Keyed accounts for direct retrieval (nil is not expected)
+	AccountOrigin     map[common.Address][]byte                 // Original account value before transition (nil means not existent)
+	StorageData       map[common.Hash]map[common.Hash][]byte    // Keyed storage slots for direct retrieval. one per account (nil means deleted)
+	StorageOrigin     map[common.Address]map[common.Hash][]byte // Original storage value before transition (nil means not existent)
+	StorageIncomplete map[common.Address]struct{}               // Marker that StorageOrigin is incomplete due to a large deletion
+}
+
 // Trie is an Ethereum state trie, can be implemented by Ethereum Merkle Patricia
 // tree or Verkle tree.
 type Trie interface {
@@ -53,43 +64,6 @@ type TrieLoader interface {
 
 	// OpenStorageTrie opens the storage trie of an account.
 	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
-}
-
-// Set represents a collection of mutated states during a state transition.
-// The value refers to the original content of state before the transition
-// is made. Nil means that the state was not present previously.
-type Set struct {
-	Accounts   map[common.Address][]byte                 // Mutated account set, nil means the account was not present
-	Storages   map[common.Address]map[common.Hash][]byte // Mutated storage set, nil means the slot was not present
-	Incomplete map[common.Address]struct{}               // Indicator whether the storage is incomplete due to large deletion
-	size       common.StorageSize                        // Approximate size of set
-}
-
-// New constructs the state set with provided data.
-func New(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, incomplete map[common.Address]struct{}) *Set {
-	return &Set{
-		Accounts:   accounts,
-		Storages:   storages,
-		Incomplete: incomplete,
-	}
-}
-
-// Size returns the approximate memory size occupied by the set.
-func (s *Set) Size() common.StorageSize {
-	if s.size != 0 {
-		return s.size
-	}
-	for _, account := range s.Accounts {
-		s.size += common.StorageSize(common.AddressLength + len(account))
-	}
-	for _, slots := range s.Storages {
-		for _, val := range slots {
-			s.size += common.StorageSize(common.HashLength + len(val))
-		}
-		s.size += common.StorageSize(common.AddressLength)
-	}
-	s.size += common.StorageSize(common.AddressLength * len(s.Incomplete))
-	return s.size
 }
 
 // context wraps all fields for executing state diffs.

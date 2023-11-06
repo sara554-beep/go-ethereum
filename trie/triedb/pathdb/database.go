@@ -76,12 +76,32 @@ func (loc *nodeLoc) string() string {
 // layer is the interface implemented by all state layers which includes some
 // public methods and some additional methods for internal usage.
 type layer interface {
-	// Node retrieves the trie node with the node info. An error will be returned
+	// node retrieves the trie node with the node info. An error will be returned
 	// if the read operation exits abnormally. Specifically, if the layer is
 	// already stale.
 	//
-	// Note, no error will be returned if the requested node is not found in database.
+	// Note:
+	// - the returned node is not a copy, please don't modify it.
+	// - no error will be returned if the requested node is not found in database.
 	node(owner common.Hash, path []byte, depth int) ([]byte, *nodeLoc, error)
+
+	// account directly retrieves the account RLP associated with a particular
+	// hash in the slim data format. An error will be returned if the read
+	// operation exits abnormally. Specifically, if the layer is already stale.
+	//
+	// Note:
+	// - the returned account is not a copy, please don't modify it.
+	// - no error will be returned if the requested account is not found in database.
+	account(hash common.Hash, depth int) ([]byte, error)
+
+	// storage directly retrieves the storage data associated with a particular hash,
+	// within a particular account. An error will be returned if the read operation
+	// exits abnormally. Specifically, if the layer is already stale.
+	//
+	// Note:
+	// - the returned storage data is not a copy, please don't modify it.
+	// - no error will be returned if the requested slot is not found in database.
+	storage(accountHash, storageHash common.Hash, depth int) ([]byte, error)
 
 	// rootHash returns the root hash for which this layer was made.
 	rootHash() common.Hash
@@ -96,7 +116,7 @@ type layer interface {
 	// the provided dirty trie nodes along with the state change set.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *triestate.Set) *diffLayer
+	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *stateSetWithOrigin) *diffLayer
 
 	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
@@ -179,7 +199,7 @@ func New(diskdb ethdb.Database, config *Config, verkle bool) *Database {
 	config = config.sanitize()
 
 	// Establish a dedicated database namespace tailored for verkle-specific
-	// data, ensuring the isolation of both verkle and mpt tree data. It's
+	// data, ensuring the isolation of both verkle and merkle tree data. It's
 	// important to note that the introduction of a prefix won't lead to
 	// substantial storage overhead, as the underlying database will efficiently
 	// compress the shared key prefix.
@@ -284,6 +304,28 @@ func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte,
 	return blob, nil
 }
 
+// Account directly retrieves the account RLP associated with a particular
+// hash in the slim data format. An error will be returned if the read
+// operation exits abnormally. Specifically, if the layer is already stale.
+//
+// Note:
+// - the returned account is not a copy, please don't modify it.
+// - no error will be returned if the requested account is not found in database.
+func (r *reader) Account(hash common.Hash) ([]byte, error) {
+	return r.layer.account(hash, 0)
+}
+
+// Storage directly retrieves the storage data associated with a particular hash,
+// within a particular account. An error will be returned if the read operation
+// exits abnormally. Specifically, if the layer is already stale.
+//
+// Note:
+// - the returned storage data is not a copy, please don't modify it.
+// - no error will be returned if the requested slot is not found in database.
+func (r *reader) Storage(accountHash, storageHash common.Hash) ([]byte, error) {
+	return r.layer.storage(accountHash, storageHash, 0)
+}
+
 // Reader retrieves a layer belonging to the given state root.
 func (db *Database) Reader(root common.Hash) (*reader, error) {
 	layer := db.tree.get(root)
@@ -300,7 +342,7 @@ func (db *Database) Reader(root common.Hash) (*reader, error) {
 //
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.StateUpdate) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -397,7 +439,7 @@ func (db *Database) Enable(root common.Hash) error {
 	}
 	// Re-construct a new disk layer backed by persistent state
 	// with **empty clean cache and node buffer**.
-	db.tree.reset(newDiskLayer(root, 0, db, nil, newNodeBuffer(db.bufferSize, nil, 0)))
+	db.tree.reset(newDiskLayer(root, 0, db, nil, newBuffer(db.bufferSize, nil, nil, 0)))
 
 	// Re-enable the database as the final step.
 	db.waitSync = false
@@ -488,7 +530,7 @@ func (db *Database) Close() error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	// Set the database to read-only mode to prevent all
+	// PrevState the database to read-only mode to prevent all
 	// following mutations.
 	db.readOnly = true
 

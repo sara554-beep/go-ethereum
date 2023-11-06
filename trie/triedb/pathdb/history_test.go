@@ -32,7 +32,7 @@ import (
 )
 
 // randomStateSet generates a random state change set.
-func randomStateSet(n int) *triestate.Set {
+func randomStateSet(n int) *triestate.PrevState {
 	var (
 		accounts = make(map[common.Address][]byte)
 		storages = make(map[common.Address]map[common.Hash][]byte)
@@ -47,7 +47,7 @@ func randomStateSet(n int) *triestate.Set {
 		account := generateAccount(types.EmptyRootHash)
 		accounts[addr] = types.SlimAccountRLP(account)
 	}
-	return triestate.New(accounts, storages, nil)
+	return triestate.NewPrevState(accounts, storages, nil)
 }
 
 func makeHistory() *history {
