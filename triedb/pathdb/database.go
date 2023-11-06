@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/triedb/database"
 	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
@@ -55,34 +54,35 @@ const (
 // maxDiffLayers is the maximum diff layers allowed in the layer tree.
 var maxDiffLayers = 128
 
-const (
-	locDirtyCache = "dirty"
-	locCleanCache = "clean"
-	locDisk       = "disk"
-	locDiffLayer  = "diff"
-)
-
-// nodeLoc is a helpful structure that contains the location where the node
-// is found, as it's useful for debugging purposes.
-type nodeLoc struct {
-	loc   string
-	depth int
-}
-
-// string returns the string representation of node location.
-func (loc *nodeLoc) string() string {
-	return fmt.Sprintf("loc: %s, depth: %d", loc.loc, loc.depth)
-}
-
 // layer is the interface implemented by all state layers which includes some
 // public methods and some additional methods for internal usage.
 type layer interface {
-	// Node retrieves the trie node with the node info. An error will be returned
+	// node retrieves the trie node with the node info. An error will be returned
 	// if the read operation exits abnormally. Specifically, if the layer is
 	// already stale.
 	//
-	// Note, no error will be returned if the requested node is not found in database.
+	// Note:
+	// - the returned node is not a copy, please don't modify it.
+	// - no error will be returned if the requested node is not found in database.
 	node(owner common.Hash, path []byte, depth int) ([]byte, *nodeLoc, error)
+
+	// account directly retrieves the account RLP associated with a particular
+	// hash in the slim data format. An error will be returned if the read
+	// operation exits abnormally. Specifically, if the layer is already stale.
+	//
+	// Note:
+	// - the returned account is not a copy, please don't modify it.
+	// - no error will be returned if the requested account is not found in database.
+	account(hash common.Hash, depth int) ([]byte, error)
+
+	// storage directly retrieves the storage data associated with a particular hash,
+	// within a particular account. An error will be returned if the read operation
+	// exits abnormally. Specifically, if the layer is already stale.
+	//
+	// Note:
+	// - the returned storage data is not a copy, please don't modify it.
+	// - no error will be returned if the requested slot is not found in database.
+	storage(accountHash, storageHash common.Hash, depth int) ([]byte, error)
 
 	// rootHash returns the root hash for which this layer was made.
 	rootHash() common.Hash
@@ -97,18 +97,12 @@ type layer interface {
 	// the provided dirty trie nodes along with the state change set.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *state.Origin) *diffLayer
+	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *stateSetWithOrigin) *diffLayer
 
 	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
 	// flattening everything down (bad for reorgs).
 	journal(w io.Writer) error
-}
-
-// readOption contains the configurations for reader.
-type readOption struct {
-	checkHash bool
-	hasher    func([]byte) common.Hash
 }
 
 // Database is a multiple-layered structure for maintaining in-memory trie nodes.
@@ -148,7 +142,7 @@ func New(diskdb ethdb.Database, config *Config, verkle bool) *Database {
 		log.Crit("Path database config is invalid", "err", err)
 	}
 	// Establish a dedicated database namespace tailored for verkle-specific
-	// data, ensuring the isolation of both verkle and mpt tree data. It's
+	// data, ensuring the isolation of both verkle and merkle tree data. It's
 	// important to note that the introduction of a prefix won't lead to
 	// substantial storage overhead, as the underlying database will efficiently
 	// compress the shared key prefix.
@@ -217,52 +211,6 @@ func New(diskdb ethdb.Database, config *Config, verkle bool) *Database {
 	return db
 }
 
-// reader implements the Reader interface, providing the functionalities to
-// retrieve trie nodes by wrapping the internal state layer.
-type reader struct {
-	layer  layer
-	option *readOption
-}
-
-// Node implements trie.Reader interface, retrieving the node with specified
-// node info. Don't modify the returned byte slice since it's not deep-copied
-// and still be referenced by database.
-func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
-	blob, loc, err := r.layer.node(owner, path, 0)
-	if err != nil {
-		return nil, err
-	}
-	// Skip the hash comparison if it's disabled. Normally it will be configured
-	// in the verkle context because slim format is used in verkle which doesn't
-	// store the node hash at all to reduce read/write amplification.
-	if !r.option.checkHash {
-		return blob, nil
-	}
-	if got := r.option.hasher(blob); got != hash {
-		switch loc.loc {
-		case locCleanCache:
-			cleanFalseMeter.Mark(1)
-		case locDirtyCache:
-			dirtyFalseMeter.Mark(1)
-		case locDiffLayer:
-			diffFalseMeter.Mark(1)
-		case locDisk:
-			diskFalseMeter.Mark(1)
-		}
-		return nil, fmt.Errorf("unexpected node: (%x %v), %x!=%x, %s", owner, path, hash, got, loc.string())
-	}
-	return blob, nil
-}
-
-// NodeReader retrieves a layer belonging to the given state root.
-func (db *Database) NodeReader(root common.Hash) (database.NodeReader, error) {
-	layer := db.tree.get(root)
-	if layer == nil {
-		return nil, fmt.Errorf("state %#x is not available", root)
-	}
-	return &reader{layer: layer, option: db.readOption}, nil
-}
-
 // Update adds a new layer into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all). Apart
 // from that this function will flatten the extra diff layers at bottom into disk
@@ -270,7 +218,7 @@ func (db *Database) NodeReader(root common.Hash) (database.NodeReader, error) {
 //
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *state.Origin) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *state.Update) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -367,7 +315,7 @@ func (db *Database) Enable(root common.Hash) error {
 	}
 	// Re-construct a new disk layer backed by persistent state
 	// with **empty clean cache and node buffer**.
-	db.tree.reset(newDiskLayer(root, 0, db, nil, newNodeBuffer(db.bufferSize, nil, 0)))
+	db.tree.reset(newDiskLayer(root, 0, db, nil, newBuffer(db.bufferSize, nil, nil, 0)))
 
 	// Re-enable the database as the final step.
 	db.waitSync = false
@@ -439,16 +387,12 @@ func (db *Database) Recoverable(root common.Hash) bool {
 		return false
 	}
 	// Ensure the requested state is a canonical state and all state
-	// histories in range [id+1, disklayer.ID] are present and complete.
-	parent := root
+	// histories in range [id+1, disklayer.ID] are reachable.
 	return checkHistories(db.freezer, *id+1, dl.stateID()-*id, func(m *meta) error {
-		if m.parent != parent {
+		if m.parent != root {
 			return errors.New("unexpected state history")
 		}
-		if len(m.incomplete) > 0 {
-			return errors.New("incomplete state history")
-		}
-		parent = m.root
+		root = m.root
 		return nil
 	}) == nil
 }
@@ -458,7 +402,7 @@ func (db *Database) Close() error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
-	// Set the database to read-only mode to prevent all
+	// PrevState the database to read-only mode to prevent all
 	// following mutations.
 	db.readOnly = true
 

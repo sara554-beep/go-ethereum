@@ -64,6 +64,9 @@ var (
 	// snapshotGeneratorKey tracks the snapshot generation marker across restarts.
 	snapshotGeneratorKey = []byte("SnapshotGenerator")
 
+	// stateGeneratorKey tracks the snapshot generation marker across restarts.
+	stateGeneratorKey = []byte("StateGenerator")
+
 	// snapshotRecoveryKey tracks the snapshot recovery marker across restarts.
 	snapshotRecoveryKey = []byte("SnapshotRecovery")
 
@@ -115,6 +118,8 @@ var (
 	// Path-based storage scheme of merkle patricia trie.
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
+	stateAccountPrefix    = []byte("W") // stateAccountPrefix + account hash -> account value
+	stateStoragePrefix    = []byte("Y") // stateStoragePrefix + account hash + storage hash -> storage value
 	stateIDPrefix         = []byte("L") // stateIDPrefix + state root -> state id
 
 	// VerklePrefix is the prefix of verkle states(verkle trie nodes,
@@ -218,6 +223,25 @@ func storageSnapshotKey(accountHash, storageHash common.Hash) []byte {
 // storageSnapshotsKey = SnapshotStoragePrefix + account hash + storage hash
 func storageSnapshotsKey(accountHash common.Hash) []byte {
 	return append(SnapshotStoragePrefix, accountHash.Bytes()...)
+}
+
+// accountStateKey = stateAccountPrefix + hash
+func accountStateKey(hash common.Hash) []byte {
+	return append(stateAccountPrefix, hash.Bytes()...)
+}
+
+// storageStateKey = stateStoragePrefix + account hash + storage hash
+func storageStateKey(accountHash, storageHash common.Hash) []byte {
+	buf := make([]byte, len(stateStoragePrefix)+common.HashLength+common.HashLength)
+	n := copy(buf, stateStoragePrefix)
+	n += copy(buf[n:], accountHash.Bytes())
+	copy(buf[n:], storageHash.Bytes())
+	return buf
+}
+
+// storageStatesKey = stateStoragePrefix + account hash + storage hash
+func storageStatesKey(accountHash common.Hash) []byte {
+	return append(stateStoragePrefix, accountHash.Bytes()...)
 }
 
 // bloomBitsKey = bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash

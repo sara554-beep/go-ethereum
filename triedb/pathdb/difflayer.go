@@ -22,7 +22,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 // diffLayer represents a collection of modifications made to the in-memory tries
@@ -32,45 +31,30 @@ import (
 // made to the state, that have not yet graduated into a semi-immutable state.
 type diffLayer struct {
 	// Immutables
-	root   common.Hash                       // Root hash to which this layer diff belongs to
-	id     uint64                            // Corresponding state id
-	block  uint64                            // Associated block number
-	nodes  map[common.Hash]map[string][]byte // Cached trie nodes indexed by owner and path
-	states *state.Origin                     // Associated state change set for building history
-	memory uint64                            // Approximate guess as to how much memory we use
+	root   common.Hash // Root hash to which this layer diff belongs to
+	id     uint64      // Corresponding state id
+	block  uint64      // Associated block number
+	memory uint64      // Approximate guess as to how much memory we use
+
+	nodes  map[common.Hash]map[string][]byte // Aggregated trie nodes (nil means the node is deleted)
+	states *stateSetWithOrigin               // Associated state changes along with origin value
 
 	parent layer        // Parent layer modified by this one, never nil, **can be changed**
 	lock   sync.RWMutex // Lock used to protect parent
 }
 
-// newDiffLayer creates a new diff layer on top of an existing layer.
-func newDiffLayer(parent layer, root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *state.Origin) *diffLayer {
-	var (
-		size  int64
-		count int
-	)
+// newDiffLayer creates a new diff layer on top of an existing layer with provided
+// dirty trie nodes and associated prev/post transition states.
+func newDiffLayer(parent layer, root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *stateSetWithOrigin) *diffLayer {
 	dl := &diffLayer{
 		root:   root,
 		id:     id,
 		block:  block,
+		parent: parent,
 		nodes:  nodes,
 		states: states,
-		parent: parent,
 	}
-	for _, subset := range nodes {
-		for path, n := range subset {
-			size += int64(len(n) + len(path))
-		}
-		count += len(subset)
-	}
-	dl.memory = uint64(size)
-	if states != nil {
-		dl.memory += uint64(states.Size())
-	}
-	dirtyWriteMeter.Mark(size)
-	diffLayerNodesMeter.Mark(int64(count))
-	diffLayerBytesMeter.Mark(int64(dl.memory))
-	log.Debug("Created new diff layer", "id", id, "block", block, "nodes", count, "size", common.StorageSize(dl.memory))
+	log.Debug("Created new diff layer", "id", id, "block", block)
 	return dl
 }
 
@@ -117,9 +101,43 @@ func (dl *diffLayer) node(owner common.Hash, path []byte, depth int) ([]byte, *n
 	return dl.parent.node(owner, path, depth+1)
 }
 
+// account directly retrieves the account RLP associated with a particular
+// hash in the slim data format.
+//
+// Note the returned account is not a copy, please don't modify it.
+func (dl *diffLayer) account(hash common.Hash, depth int) ([]byte, error) {
+	// Hold the lock, ensure the parent won't be changed during the
+	// state accessing.
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if blob, found := dl.states.account(hash); found {
+		return blob, nil
+	}
+	// Account is unknown to this layer, resolve from parent
+	return dl.parent.account(hash, depth+1)
+}
+
+// storage directly retrieves the storage data associated with a particular hash,
+// within a particular account.
+//
+// Note the returned account is not a copy, please don't modify it.
+func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([]byte, error) {
+	// Hold the lock, ensure the parent won't be changed during the
+	// state accessing.
+	dl.lock.RLock()
+	defer dl.lock.RUnlock()
+
+	if blob, found := dl.states.storage(accountHash, storageHash); found {
+		return blob, nil
+	}
+	// storage slot is unknown to this layer, resolve from parent
+	return dl.parent.storage(accountHash, storageHash, depth+1)
+}
+
 // update implements the layer interface, creating a new layer on top of the
 // existing layer tree with the specified data items.
-func (dl *diffLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *state.Origin) *diffLayer {
+func (dl *diffLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string][]byte, states *stateSetWithOrigin) *diffLayer {
 	return newDiffLayer(dl, root, id, block, nodes, states)
 }
 

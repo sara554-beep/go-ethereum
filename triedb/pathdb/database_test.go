@@ -69,6 +69,7 @@ const (
 )
 
 type genctx struct {
+	destructs     map[common.Hash]struct{}
 	accounts      map[common.Hash][]byte
 	storages      map[common.Hash]map[common.Hash][]byte
 	accountOrigin map[common.Address][]byte
@@ -78,6 +79,7 @@ type genctx struct {
 
 func newCtx() *genctx {
 	return &genctx{
+		destructs:     make(map[common.Hash]struct{}),
 		accounts:      make(map[common.Hash][]byte),
 		storages:      make(map[common.Hash]map[common.Hash][]byte),
 		accountOrigin: make(map[common.Address][]byte),
@@ -219,7 +221,7 @@ func (t *tester) clearStorage(ctx *genctx, addr common.Address, root common.Hash
 	return root
 }
 
-func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *state.Origin) {
+func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *state.Update) {
 	var (
 		ctx     = newCtx()
 		dirties = make(map[common.Hash]struct{})
@@ -278,6 +280,7 @@ func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNode
 			if acct.Root != types.EmptyRootHash {
 				t.clearStorage(ctx, addr, acct.Root)
 			}
+			ctx.destructs[addrHash] = struct{}{}
 			ctx.accounts[addrHash] = nil
 			ctx.accountOrigin[addr] = account
 		}
@@ -309,7 +312,20 @@ func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNode
 			}
 		}
 	}
-	return root, ctx.nodes, state.NewOrigin(ctx.accountOrigin, ctx.storageOrigin, nil)
+	accounts := make(map[common.Hash][]byte)
+	for addrHash, blob := range ctx.accounts {
+		if len(blob) == 0 {
+			continue
+		}
+		accounts[addrHash] = blob
+	}
+	return root, ctx.nodes, &state.Update{
+		DestructSet:   ctx.destructs,
+		AccountData:   accounts,
+		AccountOrigin: ctx.accountOrigin,
+		StorageData:   ctx.storages,
+		StorageOrigin: ctx.storageOrigin,
+	}
 }
 
 // lastRoot returns the latest root hash, or empty if nothing is cached.

@@ -63,5 +63,6 @@ func (c *Config) Copy() *Config {
 		DirtyCacheSize: c.DirtyCacheSize,
 		ReadOnly:       c.ReadOnly,
 		TrieOpener:     c.TrieOpener,
+		Hasher:         c.Hasher,
 	}
 }

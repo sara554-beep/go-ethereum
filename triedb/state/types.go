@@ -18,51 +18,20 @@ package state
 
 import "github.com/ethereum/go-ethereum/common"
 
-// Origin represents the prev-state for a state transition.
-type Origin struct {
-	// Accounts represents the account data before the state transition, keyed
-	// by the account address. The nil value means the account was not present
-	// before.
-	Accounts map[common.Address][]byte
+// Update encapsulates information about state mutations, including both the changes
+// made and their original values, within the context of a state transition.
+type Update struct {
+	DestructSet map[common.Hash]struct{}               // Keyed markers for deleted (and potentially) recreated accounts
+	AccountData map[common.Hash][]byte                 // Keyed accounts for direct retrieval (nil is not expected)
+	StorageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
 
-	// Storages represents the storage data before the state transition, keyed
-	// by the account address and slot key hash. The nil value means the slot
-	// was not present.
-	Storages map[common.Address]map[common.Hash][]byte
+	// AccountOrigin represents the account data before the state transition,
+	// keyed by the account address. The nil value means the account was not
+	// present before.
+	AccountOrigin map[common.Address][]byte
 
-	// Incomplete set indicates whether the original storage data is incomplete
-	// due to a large deletion. Geth is not capable of handling large storage
-	// deletions to prevent out-of-memory panics. Consequently, such large
-	// deletions are skipped and marked here. This set can be removed once self
-	// destruction is disabled in the following hard fork.
-	Incomplete map[common.Address]struct{}
-
-	size common.StorageSize // Approximate size of set
-}
-
-// NewOrigin constructs the state set with provided data.
-func NewOrigin(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, incomplete map[common.Address]struct{}) *Origin {
-	return &Origin{
-		Accounts:   accounts,
-		Storages:   storages,
-		Incomplete: incomplete,
-	}
-}
-
-// Size returns the approximate memory size occupied by the set.
-func (s *Origin) Size() common.StorageSize {
-	if s.size != 0 {
-		return s.size
-	}
-	for _, account := range s.Accounts {
-		s.size += common.StorageSize(common.AddressLength + len(account))
-	}
-	for _, slots := range s.Storages {
-		for _, val := range slots {
-			s.size += common.StorageSize(common.HashLength + len(val))
-		}
-		s.size += common.StorageSize(common.AddressLength)
-	}
-	s.size += common.StorageSize(common.AddressLength * len(s.Incomplete))
-	return s.size
+	// StorageOrigin represents the storage data before the state transition,
+	// keyed by the account address and slot key hash. The nil value means the
+	// slot was not present.
+	StorageOrigin map[common.Address]map[common.Hash][]byte
 }

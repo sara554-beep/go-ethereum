@@ -475,6 +475,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		txLookups       stat
 		accountSnaps    stat
 		storageSnaps    stat
+		accountStates   stat
+		storageStates   stat
 		preimages       stat
 		bloomBits       stat
 		beaconHeaders   stat
@@ -531,6 +533,10 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			accountSnaps.Add(size)
 		case bytes.HasPrefix(key, SnapshotStoragePrefix) && len(key) == (len(SnapshotStoragePrefix)+2*common.HashLength):
 			storageSnaps.Add(size)
+		case bytes.HasPrefix(key, stateAccountPrefix) && len(key) == (len(stateAccountPrefix)+common.HashLength):
+			accountStates.Add(size)
+		case bytes.HasPrefix(key, stateStoragePrefix) && len(key) == (len(stateStoragePrefix)+2*common.HashLength):
+			storageStates.Add(size)
 		case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
 			preimages.Add(size)
 		case bytes.HasPrefix(key, configPrefix) && len(key) == (len(configPrefix)+common.HashLength):
@@ -572,7 +578,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			for _, meta := range [][]byte{
 				databaseVersionKey, headHeaderKey, headBlockKey, headFastBlockKey, headFinalizedBlockKey,
 				lastPivotKey, fastTrieProgressKey, snapshotDisabledKey, SnapshotRootKey, snapshotJournalKey,
-				snapshotGeneratorKey, snapshotRecoveryKey, txIndexTailKey, fastTxLookupLimitKey,
+				snapshotGeneratorKey, stateGeneratorKey, snapshotRecoveryKey, txIndexTailKey, fastTxLookupLimitKey,
 				uncleanShutdownKey, badBlockKey, transitionStatusKey, skeletonSyncStatusKey,
 				persistentStateIDKey, trieJournalKey, snapshotSyncStatusKey, snapSyncStatusFlagKey,
 			} {
@@ -610,6 +616,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
 		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},
 		{"Key-Value store", "Storage snapshot", storageSnaps.Size(), storageSnaps.Count()},
+		{"Key-Value store", "Account state", accountStates.Size(), accountStates.Count()},
+		{"Key-Value store", "Storage state", storageStates.Size(), storageStates.Count()},
 		{"Key-Value store", "Beacon sync headers", beaconHeaders.Size(), beaconHeaders.Count()},
 		{"Key-Value store", "Clique snapshots", cliqueSnaps.Size(), cliqueSnaps.Count()},
 		{"Key-Value store", "Singleton metadata", metadata.Size(), metadata.Count()},

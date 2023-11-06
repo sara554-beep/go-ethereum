@@ -24,10 +24,10 @@ var (
 	cleanReadMeter  = metrics.NewRegisteredMeter("pathdb/clean/read", nil)
 	cleanWriteMeter = metrics.NewRegisteredMeter("pathdb/clean/write", nil)
 
-	dirtyHitMeter         = metrics.NewRegisteredMeter("pathdb/dirty/hit", nil)
-	dirtyMissMeter        = metrics.NewRegisteredMeter("pathdb/dirty/miss", nil)
-	dirtyReadMeter        = metrics.NewRegisteredMeter("pathdb/dirty/read", nil)
-	dirtyWriteMeter       = metrics.NewRegisteredMeter("pathdb/dirty/write", nil)
+	dirtyHitMeter  = metrics.NewRegisteredMeter("pathdb/dirty/hit", nil)
+	dirtyMissMeter = metrics.NewRegisteredMeter("pathdb/dirty/miss", nil)
+	dirtyReadMeter = metrics.NewRegisteredMeter("pathdb/dirty/read", nil)
+	//dirtyWriteMeter       = metrics.NewRegisteredMeter("pathdb/dirty/write", nil)
 	dirtyNodeHitDepthHist = metrics.NewRegisteredHistogram("pathdb/dirty/depth", nil, metrics.NewExpDecaySample(1028, 0.015))
 
 	cleanFalseMeter = metrics.NewRegisteredMeter("pathdb/clean/false", nil)
@@ -39,11 +39,19 @@ var (
 	commitNodesMeter = metrics.NewRegisteredMeter("pathdb/commit/nodes", nil)
 	commitBytesMeter = metrics.NewRegisteredMeter("pathdb/commit/bytes", nil)
 
-	gcNodesMeter = metrics.NewRegisteredMeter("pathdb/gc/nodes", nil)
-	gcBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/bytes", nil)
-
-	diffLayerBytesMeter = metrics.NewRegisteredMeter("pathdb/diff/bytes", nil)
-	diffLayerNodesMeter = metrics.NewRegisteredMeter("pathdb/diff/nodes", nil)
+	nodeGCCountMeter = metrics.NewRegisteredMeter("pathdb/gc/node/nodes", nil)
+	nodeGCBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/node/bytes", nil)
+	//accountGCCountMeter = metrics.NewRegisteredMeter("pathdb/gc/account/count", nil)
+	//accountGCBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/account/bytes", nil)
+	//storageCCountMeter  = metrics.NewRegisteredMeter("pathdb/gc/storage/count", nil)
+	//storageGCBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/storage/bytes", nil)
+	//
+	//diffLayerNodeBytesMeter    = metrics.NewRegisteredMeter("pathdb/diff/node/bytes", nil)
+	//diffLayerNodeCountMeter    = metrics.NewRegisteredMeter("pathdb/diff/node/count", nil)
+	//diffLayerAccountBytesMeter = metrics.NewRegisteredMeter("pathdb/diff/account/bytes", nil)
+	//diffLayerAccountCountMeter = metrics.NewRegisteredMeter("pathdb/diff/account/count", nil)
+	//diffLayerStorageBytesMeter = metrics.NewRegisteredMeter("pathdb/diff/storage/bytes", nil)
+	//diffLayerStorageCountMeter = metrics.NewRegisteredMeter("pathdb/diff/storage/count", nil)
 
 	historyBuildTimeMeter  = metrics.NewRegisteredTimer("pathdb/history/time", nil)
 	historyDataBytesMeter  = metrics.NewRegisteredMeter("pathdb/history/bytes/data", nil)

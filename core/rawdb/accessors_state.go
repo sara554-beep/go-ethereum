@@ -264,3 +264,72 @@ func WriteStateHistory(db ethdb.AncientWriter, id uint64, meta []byte, accountIn
 		return nil
 	})
 }
+
+// ReadAccountState retrieves the snapshot entry of an account trie leaf.
+func ReadAccountState(db ethdb.KeyValueReader, hash common.Hash) []byte {
+	data, _ := db.Get(accountStateKey(hash))
+	return data
+}
+
+// WriteAccountState stores the snapshot entry of an account trie leaf.
+func WriteAccountState(db ethdb.KeyValueWriter, hash common.Hash, entry []byte) {
+	if err := db.Put(accountStateKey(hash), entry); err != nil {
+		log.Crit("Failed to store account snapshot", "err", err)
+	}
+}
+
+// DeleteAccountState removes the snapshot entry of an account trie leaf.
+func DeleteAccountState(db ethdb.KeyValueWriter, hash common.Hash) {
+	if err := db.Delete(accountStateKey(hash)); err != nil {
+		log.Crit("Failed to delete account snapshot", "err", err)
+	}
+}
+
+// ReadStorageState retrieves the snapshot entry of an storage trie leaf.
+func ReadStorageState(db ethdb.KeyValueReader, accountHash, storageHash common.Hash) []byte {
+	data, _ := db.Get(storageStateKey(accountHash, storageHash))
+	return data
+}
+
+// WriteStorageState stores the snapshot entry of an storage trie leaf.
+func WriteStorageState(db ethdb.KeyValueWriter, accountHash, storageHash common.Hash, entry []byte) {
+	if err := db.Put(storageStateKey(accountHash, storageHash), entry); err != nil {
+		log.Crit("Failed to store storage snapshot", "err", err)
+	}
+}
+
+// DeleteStorageState removes the snapshot entry of an storage trie leaf.
+func DeleteStorageState(db ethdb.KeyValueWriter, accountHash, storageHash common.Hash) {
+	if err := db.Delete(storageStateKey(accountHash, storageHash)); err != nil {
+		log.Crit("Failed to delete storage snapshot", "err", err)
+	}
+}
+
+// IterateStorageStates returns an iterator for walking the entire storage
+// space of a specific account.
+func IterateStorageStates(db ethdb.Iteratee, accountHash common.Hash) ethdb.Iterator {
+	return NewKeyLengthIterator(db.NewIterator(storageStatesKey(accountHash), nil), len(stateStoragePrefix)+2*common.HashLength)
+}
+
+// ReadStateGenerator retrieves the serialized snapshot generator saved at
+// the last shutdown.
+func ReadStateGenerator(db ethdb.KeyValueReader) []byte {
+	data, _ := db.Get(stateGeneratorKey)
+	return data
+}
+
+// WriteStateGenerator stores the serialized snapshot generator to save at
+// shutdown.
+func WriteStateGenerator(db ethdb.KeyValueWriter, generator []byte) {
+	if err := db.Put(stateGeneratorKey, generator); err != nil {
+		log.Crit("Failed to store snapshot generator", "err", err)
+	}
+}
+
+// DeleteStateGenerator deletes the serialized snapshot generator saved at
+// the last shutdown
+func DeleteStateGenerator(db ethdb.KeyValueWriter) {
+	if err := db.Delete(stateGeneratorKey); err != nil {
+		log.Crit("Failed to remove snapshot generator", "err", err)
+	}
+}
