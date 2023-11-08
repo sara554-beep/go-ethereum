@@ -260,8 +260,8 @@ func (t *freezerTable) repair() error {
 	// Print an error log if the index is corrupted due to an incorrect
 	// last index item. While it is theoretically possible to have a zero offset
 	// by storing all zero-size items, it is highly unlikely to occur in practice.
-	if lastIndex.offset == 0 && offsetsSize%indexEntrySize > 1 {
-		log.Error("Corrupted index file detected", "lastOffset", lastIndex.offset, "items", offsetsSize%indexEntrySize-1)
+	if lastIndex.offset == 0 && offsetsSize/indexEntrySize > 1 {
+		log.Error("Corrupted index file detected", "lastOffset", lastIndex.offset, "indexes", offsetsSize/indexEntrySize)
 	}
 	if t.readonly {
 		t.head, err = t.openFile(lastIndex.filenum, openFreezerFileForReadOnly)
