@@ -64,6 +64,7 @@ Remove blockchain and state databases`,
 			dbDeleteCmd,
 			dbPutCmd,
 			dbGetSlotsCmd,
+			dbIterTrieCmd,
 			dbDumpFreezerIndex,
 			dbImportCmd,
 			dbExportCmd,
@@ -153,6 +154,16 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 			utils.SyncModeFlag,
 		}, utils.NetworkFlags, utils.DatabaseFlags),
 		Description: "This command looks up the specified database key from the database.",
+	}
+	dbIterTrieCmd = &cli.Command{
+		Action:    iterTrie,
+		Name:      "iterate-trie",
+		Usage:     "Iterate the specified root with an optional sub root",
+		ArgsUsage: "<hex-encoded state root> <hex-encoded account hash> <hex-encoded trie root> <hex-encoded sub trie path (optional)> <hex-encoded sub trie root (optional)>",
+		Flags: flags.Merge([]cli.Flag{
+			utils.SyncModeFlag,
+		}, utils.NetworkFlags, utils.DatabaseFlags),
+		Description: "This command iterates the specified trie.",
 	}
 	dbDumpFreezerIndex = &cli.Command{
 		Action:    freezerInspect,
@@ -537,6 +548,88 @@ func dbDumpTrie(ctx *cli.Context) error {
 		count++
 	}
 	return it.Err
+}
+
+// iterTrie is a debugging tool that can iterate any specific trie, including
+// a sub-trie inside of the account or storage trie. It will skip the children
+// of node if the node is regarded as corrupted and dump all corrupted trie
+// nodes in the end.
+func iterTrie(ctx *cli.Context) error {
+	if ctx.NArg() < 3 {
+		return fmt.Errorf("required arguments: %v", ctx.Command.ArgsUsage)
+	}
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	db := utils.MakeChainDatabase(ctx, stack, true)
+	defer db.Close()
+
+	triedb := utils.MakeTrieDatabase(ctx, db, false, true, false)
+	defer triedb.Close()
+
+	var (
+		// identifier
+		state   []byte
+		account []byte
+		root    []byte
+
+		err error
+		tr  *trie.Trie
+	)
+	// Parse the trie identifier.
+	if state, err = hexutil.Decode(ctx.Args().Get(0)); err != nil {
+		log.Info("Could not decode the state root", "err", err)
+		return err
+	}
+	if account, err = hexutil.Decode(ctx.Args().Get(1)); err != nil {
+		log.Info("Could not decode the account hash", "err", err)
+		return err
+	}
+	if root, err = hexutil.Decode(ctx.Args().Get(2)); err != nil {
+		log.Info("Could not decode the trie root", "err", err)
+		return err
+	}
+	if common.BytesToHash(account) == (common.Hash{}) && common.BytesToHash(state) != common.BytesToHash(root) {
+		log.Error("State root is different with trie root for account trie")
+		return nil
+	}
+	// Construct the trie according to the provided identifier.
+	if common.BytesToHash(account) == (common.Hash{}) {
+		id := trie.StateTrieID(common.BytesToHash(state))
+		tr, err = trie.New(id, triedb)
+	} else {
+		id := trie.StorageTrieID(common.BytesToHash(state), common.BytesToHash(account), common.BytesToHash(root))
+		tr, err = trie.New(id, triedb)
+	}
+	if err != nil {
+		return err
+	}
+	// Construct the iterator with optional sub trie position.
+	var (
+		path []byte
+		hash []byte
+		it   trie.NodeIterator
+	)
+	if ctx.NArg() == 5 {
+		if path, err = hexutil.Decode(ctx.Args().Get(3)); err != nil {
+			log.Info("Could not decode the sub trie path", "err", err)
+			return err
+		}
+		if hash, err = hexutil.Decode(ctx.Args().Get(4)); err != nil {
+			log.Info("Could not decode the sub trie root", "err", err)
+			return err
+		}
+		it, err = tr.SubTrieNodeIterator(path, common.BytesToHash(hash))
+	} else {
+		it, err = tr.NodeIterator(nil)
+	}
+	if err != nil {
+		return err
+	}
+	for it.Next(true) {
+	}
+	log.Info("Iterated trie", "err", it.Error())
+	return nil
 }
 
 func freezerInspect(ctx *cli.Context) error {

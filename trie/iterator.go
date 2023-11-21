@@ -145,7 +145,7 @@ type nodeIterator struct {
 	err   error                // Failure set in case of an internal error in the iterator
 
 	resolver NodeResolver         // optional node resolver for avoiding disk hits
-	pool     []*nodeIteratorState // local pool for iteratorstates
+	pool     []*nodeIteratorState // local pool for iterator states
 }
 
 // errIteratorEnd is stored in nodeIterator.err when iteration is done.
@@ -170,6 +170,36 @@ func newNodeIterator(trie *Trie, start []byte) NodeIterator {
 	}
 	it := &nodeIterator{trie: trie}
 	it.err = it.seek(start)
+	return it
+}
+
+// newSubTrieNodeIterator constructs a trie iterator initialized with the given
+// path and hash, representing a specific sub-trie. This iterator is used to
+// traverse and operate on nodes within the specified sub-trie.
+//
+// The path is expected in hex format without terminator.
+func newSubTrieNodeIterator(trie *Trie, path []byte, hash common.Hash) NodeIterator {
+	if trie.Hash() == types.EmptyRootHash {
+		return &nodeIterator{
+			trie: trie,
+			err:  errIteratorEnd,
+		}
+	}
+	it := &nodeIterator{
+		trie: trie,
+		path: path,
+	}
+	state := &nodeIteratorState{
+		hash:   hash,
+		node:   hashNode(hash.Bytes()),
+		parent: common.Hash{},
+		index:  -1,
+	}
+	it.stack = append(it.stack, state)
+
+	if err := state.resolve(it, path); err != nil {
+		it.err = err
+	}
 	return it
 }
 
@@ -550,8 +580,8 @@ func (it *nodeIterator) pop() {
 	it.path = it.path[:last.pathlen]
 	it.stack[len(it.stack)-1] = nil
 	it.stack = it.stack[:len(it.stack)-1]
-	// last is now unused
-	it.putInPool(last)
+
+	it.putInPool(last) // last is now unused
 }
 
 func compareNodes(a, b NodeIterator) int {

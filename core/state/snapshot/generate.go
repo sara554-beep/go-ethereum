@@ -255,24 +255,12 @@ func (dl *diskLayer) proveRange(ctx *generatorContext, trieId *trie.ID, prefix [
 	}
 	if err := tr.Prove(origin, proof); err != nil {
 		log.Debug("Failed to prove range", "kind", kind, "origin", origin, "err", err)
-		return &proofResult{
-			keys:     keys,
-			vals:     vals,
-			diskMore: diskMore,
-			proofErr: err,
-			tr:       tr,
-		}, nil
+		return nil, err
 	}
 	if len(keys) > 0 {
 		if err := tr.Prove(keys[len(keys)-1], proof); err != nil {
 			log.Debug("Failed to prove range", "kind", kind, "last", keys[len(keys)-1], "err", err)
-			return &proofResult{
-				keys:     keys,
-				vals:     vals,
-				diskMore: diskMore,
-				proofErr: err,
-				tr:       tr,
-			}, nil
+			return nil, err
 		}
 	}
 	// Verify the snapshot segment with range prover, ensure that all flat states
@@ -688,6 +676,8 @@ func (dl *diskLayer) generate(stats *generatorStats) {
 		// Extract the received interruption signal if exists
 		if aerr, ok := err.(*abortErr); ok {
 			abort = aerr.abort
+		} else {
+			log.Error("Failed to generate snapshot", "root", dl.root.Hex(), "err", err)
 		}
 		// Aborted by internal error, wait the signal
 		if abort == nil {

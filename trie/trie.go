@@ -125,6 +125,16 @@ func (t *Trie) NodeIterator(start []byte) (NodeIterator, error) {
 	return newNodeIterator(t, start), nil
 }
 
+// SubTrieNodeIterator returns an iterator that returns nodes of the trie.
+// Iteration operates on the specified sub trie.
+func (t *Trie) SubTrieNodeIterator(path []byte, hash common.Hash) (NodeIterator, error) {
+	// Short circuit if the trie is already committed and not usable.
+	if t.committed {
+		return nil, ErrCommitted
+	}
+	return newSubTrieNodeIterator(t, path, hash), nil
+}
+
 // MustGet is a wrapper of Get and will omit any encountered error but just
 // print out an error message.
 func (t *Trie) MustGet(key []byte) []byte {

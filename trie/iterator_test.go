@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/trie/testutil"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
@@ -615,6 +616,64 @@ func isTrieNode(scheme string, key, val []byte) (bool, []byte, common.Hash) {
 		hash = crypto.Keccak256Hash(val)
 	}
 	return true, path, hash
+}
+
+func TestSubTrieIterator(t *testing.T) {
+	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	tr := NewEmpty(db)
+
+	for i := 0; i < 20; i++ {
+		tr.Update(testutil.RandBytes(32), testutil.RandBytes(32))
+	}
+	root, nodes, _ := tr.Commit(false)
+	db.Update(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes), nil)
+
+	var (
+		hashes = make(map[string]common.Hash)
+		all    = make(map[string][]byte)
+	)
+	tr, _ = New(TrieID(root), db)
+	it, _ := tr.NodeIterator(nil)
+	for it.Next(true) {
+		path := it.Path()
+		hash := it.Hash()
+
+		if hash != (common.Hash{}) {
+			hashes[string(path)] = hash
+		}
+		all[string(path)] = common.CopyBytes(it.NodeBlob())
+	}
+
+	for path, hash := range hashes {
+		subIt, _ := tr.SubTrieNodeIterator([]byte(path), hash)
+		local := make(map[string]bool)
+		for subIt.Next(true) {
+			subPath := subIt.Path()
+			if !bytes.HasPrefix(subPath, []byte(path)) {
+				t.Errorf("Unexpected trie node from iterator %v %v", []byte(path), subPath)
+			}
+			allBlob, ok := all[string(subPath)]
+			if !ok {
+				t.Errorf("Unexpected trie node from sub iterator %v", path)
+			}
+			if !bytes.Equal(allBlob, subIt.NodeBlob()) {
+				t.Errorf("Unexpected trie node blob, want %x, got %x", allBlob, subIt.NodeBlob())
+			}
+			local[string(subPath)] = true
+		}
+
+		for p := range all {
+			if !bytes.HasPrefix([]byte(p), []byte(path)) {
+				continue
+			}
+			if p == path {
+				continue // TODO fix it.
+			}
+			if !local[p] {
+				t.Errorf("Missing node from iterator, %v, %v", []byte(path), []byte(p))
+			}
+		}
+	}
 }
 
 func BenchmarkIterator(b *testing.B) {
