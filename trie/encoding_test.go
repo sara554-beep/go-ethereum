@@ -20,6 +20,9 @@ import (
 	"bytes"
 	crand "crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/rlp"
 	"math/rand"
 	"testing"
 )
@@ -143,4 +146,18 @@ func BenchmarkHexToKeybytes(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		hexToKeybytes(testBytes)
 	}
+}
+
+func TestFoobAr(t *testing.T) {
+	encbuf := rlp.NewEncoderBuffer(nil)
+	n := &shortNode{
+		Key: common.Hex2Bytes("20a8ccaf952498df75fd7dfb93763a000cc976d1512a01bc3afbbbe2ba92"),
+		Val: hashNode(common.FromHex("a06a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5")),
+	}
+	n.encode(encbuf)
+	fmt.Println(common.Bytes2Hex(encbuf.ToBytes()))
+
+	fmt.Println(common.HexToHash("a06a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5").Hex())
+	xx, _ := rlp.EncodeToBytes(common.FromHex("6a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5"))
+	fmt.Println(common.Bytes2Hex(xx))
 }

@@ -18,6 +18,10 @@ package rawdb
 
 import (
 	"bytes"
+	"fmt"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"os"
 	"testing"
 
@@ -104,4 +108,17 @@ func TestFreezerCleanup(t *testing.T) {
 	if _, err := os.Lstat(tmpName(datadir)); !os.IsNotExist(err) {
 		t.Fatal("Failed to cleanup leftover directory")
 	}
+}
+
+func TestFooBar(t *testing.T) {
+	owner := common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982")
+	path := common.Hex2Bytes("0c05090307")
+	fmt.Println(owner.Hex())
+	fmt.Println(path)
+	key := storageTrieNodeKey(owner, path)
+	fmt.Println(hexutil.Encode(key))
+
+	fmt.Println(crypto.Keccak256Hash(common.FromHex("0xf87180a0df5465feffb831b1f31a6184b1efdf75f10f13b2b4900956c22f41a6108c45c9808080808080a0b1902b4fca66415f63634e3ddeae1bfa7b877a1db5ed4c029730e166ba2031ae808080a02ded9e78076e79e96fcd5562c7951f678d22a167429cc75c17d30a08705bb6e780808080")).Hex())
+	fmt.Println(crypto.Keccak256Hash(common.FromHex("0xf8518080808080808080a0b1902b4fca66415f63634e3ddeae1bfa7b877a1db5ed4c029730e166ba2031ae808080a02ded9e78076e79e96fcd5562c7951f678d22a167429cc75c17d30a08705bb6e780808080")).Hex())
+	fmt.Println(crypto.Keccak256Hash(common.FromHex("0xf8419e20a8ccaf952498df75fd7dfb93763a000cc976d1512a01bc3afbbbe2ba92a1a06a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5")).Hex())
 }

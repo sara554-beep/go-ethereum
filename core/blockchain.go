@@ -470,40 +470,40 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		bc.wg.Add(1)
 		go bc.maintainTxIndex()
 	}
-	var (
-		reqCount  int
-		withCount int
-	)
-	for i := uint64(18500000); i < bc.CurrentHeader().Number.Uint64(); i++ {
-		block := bc.GetBlockByNumber(i)
-		for _, tx := range block.Transactions() {
-			addr := tx.To()
-			if addr == nil {
-				continue
-			}
-			if *addr != common.HexToAddress("0x32400084C286CF3E17e7B677ea9583e60a000324") {
-				continue
-			}
-			if len(tx.Data()) < 4 {
-				log.Info("Tx without payload", "hash", tx.Hash().Hex())
-				continue
-			}
-			if common.Bytes2Hex(tx.Data()[:4]) == "6c0960f9" {
-				log.Info("Finalize eth withdrawal", "hash", tx.Hash().Hex())
-				withCount += 1
-			}
-			if common.Bytes2Hex(tx.Data()[:4]) == "eb672419" {
-				reqCount += 1
-			}
-			//if addr != nil {
-			//	if crypto.Keccak256Hash((*addr).Bytes()) == common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982") {
-			//		log.Info("Found target address", "addr", (*addr).Hex())
-			//		break findLoop
-			//	}
-			//}
-		}
-	}
-	log.Info("Traversed chain", "req", reqCount, "withdrawal", withCount, "blocks", bc.CurrentHeader().Number.Uint64()-18550000)
+	//var (
+	//	reqCount  int
+	//	withCount int
+	//)
+	//for i := uint64(18500000); i < bc.CurrentHeader().Number.Uint64(); i++ {
+	//	block := bc.GetBlockByNumber(i)
+	//	for _, tx := range block.Transactions() {
+	//		addr := tx.To()
+	//		if addr == nil {
+	//			continue
+	//		}
+	//		if *addr != common.HexToAddress("0x32400084C286CF3E17e7B677ea9583e60a000324") {
+	//			continue
+	//		}
+	//		if len(tx.Data()) < 4 {
+	//			log.Info("Tx without payload", "hash", tx.Hash().Hex())
+	//			continue
+	//		}
+	//		if common.Bytes2Hex(tx.Data()[:4]) == "6c0960f9" {
+	//			log.Info("Finalize eth withdrawal", "hash", tx.Hash().Hex())
+	//			withCount += 1
+	//		}
+	//		if common.Bytes2Hex(tx.Data()[:4]) == "eb672419" {
+	//			reqCount += 1
+	//		}
+	//		//if addr != nil {
+	//		//	if crypto.Keccak256Hash((*addr).Bytes()) == common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982") {
+	//		//		log.Info("Found target address", "addr", (*addr).Hex())
+	//		//		break findLoop
+	//		//	}
+	//		//}
+	//	}
+	//}
+	//log.Info("Traversed chain", "req", reqCount, "withdrawal", withCount, "blocks", bc.CurrentHeader().Number.Uint64()-18550000)
 	//if bc.snaps != nil {
 	//	//account := common.HexToAddress("0x09fE5f0236F0Ea5D930197DCE254d77B04128075")
 	//	accountHash := common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982")
