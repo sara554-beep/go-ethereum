@@ -474,14 +474,18 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		block := bc.GetBlockByNumber(i)
 		for _, tx := range block.Transactions() {
 			addr := tx.To()
-			if *addr == common.HexToAddress("0x32400084C286CF3E17e7B677ea9583e60a000324") {
-				if len(tx.Data()) < 4 {
-					log.Info("Tx without payload", "hash", tx.Hash().Hex())
-					continue
-				}
-				if common.Bytes2Hex(tx.Data()[:4]) == "6c0960f9" {
-					log.Info("Finalize eth withdrawal", "hash", tx.Hash().Hex())
-				}
+			if addr == nil {
+				continue
+			}
+			if *addr != common.HexToAddress("0x32400084C286CF3E17e7B677ea9583e60a000324") {
+				continue
+			}
+			if len(tx.Data()) < 4 {
+				log.Info("Tx without payload", "hash", tx.Hash().Hex())
+				continue
+			}
+			if common.Bytes2Hex(tx.Data()[:4]) == "6c0960f9" {
+				log.Info("Finalize eth withdrawal", "hash", tx.Hash().Hex())
 			}
 			//if addr != nil {
 			//	if crypto.Keccak256Hash((*addr).Bytes()) == common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982") {
