@@ -39,7 +39,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/syncx"
@@ -471,35 +470,43 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		bc.wg.Add(1)
 		go bc.maintainTxIndex()
 	}
-findLoop:
-	for i := uint64(18160615); i < bc.CurrentHeader().Number.Uint64(); i++ {
+	for i := uint64(18550000); i < bc.CurrentHeader().Number.Uint64(); i++ {
 		block := bc.GetBlockByNumber(i)
 		for _, tx := range block.Transactions() {
 			addr := tx.To()
-			if addr != nil {
-				if crypto.Keccak256Hash((*addr).Bytes()) == common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982") {
-					log.Info("Found target address", "addr", (*addr).Hex())
-					break findLoop
+			if *addr == common.HexToAddress("0x32400084C286CF3E17e7B677ea9583e60a000324") {
+				if len(tx.Data()) < 4 {
+					log.Info("Tx without payload", "hash", tx.Hash().Hex())
+					continue
+				}
+				if common.Bytes2Hex(tx.Data()[:4]) == "6c0960f9" {
+					log.Info("Finalize eth withdrawal", "hash", tx.Hash().Hex())
 				}
 			}
+			//if addr != nil {
+			//	if crypto.Keccak256Hash((*addr).Bytes()) == common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982") {
+			//		log.Info("Found target address", "addr", (*addr).Hex())
+			//		break findLoop
+			//	}
+			//}
 		}
 	}
-	if bc.snaps != nil {
-		//account := common.HexToAddress("0x09fE5f0236F0Ea5D930197DCE254d77B04128075")
-		accountHash := common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982")
-		storageIt, err := bc.snaps.StorageIterator(bc.CurrentBlock().Root, accountHash, common.Hash{})
-		if err != nil {
-			log.Info("Failed to create storage iterator", "err", err)
-		} else {
-			var count int
-			for storageIt.Next() {
-				log.Info("Dumping storage", "hash", storageIt.Hash().Hex(), "value", storageIt.Slot())
-				count += 1
-			}
-			storageIt.Release()
-			log.Info("Dumped storage", "total", count)
-		}
-	}
+	//if bc.snaps != nil {
+	//	//account := common.HexToAddress("0x09fE5f0236F0Ea5D930197DCE254d77B04128075")
+	//	accountHash := common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982")
+	//	storageIt, err := bc.snaps.StorageIterator(bc.CurrentBlock().Root, accountHash, common.Hash{})
+	//	if err != nil {
+	//		log.Info("Failed to create storage iterator", "err", err)
+	//	} else {
+	//		var count int
+	//		for storageIt.Next() {
+	//			log.Info("Dumping storage", "hash", storageIt.Hash().Hex(), "value", storageIt.Slot())
+	//			count += 1
+	//		}
+	//		storageIt.Release()
+	//		log.Info("Dumped storage", "total", count)
+	//	}
+	//}
 	return bc, nil
 }
 
