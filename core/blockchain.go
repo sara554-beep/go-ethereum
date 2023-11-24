@@ -521,7 +521,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	//		log.Info("Dumped storage", "total", count)
 	//	}
 	//}
-	it := db.NewIterator(nil, nil)
+	it := db.NewIterator([]byte("O"), nil)
 	defer it.Release()
 
 	// Inspect key-value database first.
