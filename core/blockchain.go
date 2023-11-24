@@ -525,6 +525,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	defer it.Release()
 
 	// Inspect key-value database first.
+	var count int
 	for it.Next() {
 		if rawdb.IsStorageTrieNode(it.Key()) {
 			nkey, nval, ok := trie.DecodeShortNode(it.Value())
@@ -535,6 +536,10 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 					break
 				}
 			}
+		}
+		count += 1
+		if count%100000 == 0 {
+			log.Info("Iterating keyvalue store", "count", count)
 		}
 	}
 	return bc, nil
