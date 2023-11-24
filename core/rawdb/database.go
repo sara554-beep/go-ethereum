@@ -519,12 +519,6 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			accountTries.Add(size)
 		case IsStorageTrieNode(key):
 			storageTries.Add(size)
-
-			if bytes.Equal(it.Value(), common.FromHex("0xf8419e20a8ccaf952498df75fd7dfb93763a000cc976d1512a01bc3afbbbe2ba92a1a06a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5")) {
-				_, accountHash, path := ResolveStorageTrieNode(key)
-				log.Info("Found target node", "owner", accountHash.Hex(), "path", path)
-			}
-
 		case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
 			codes.Add(size)
 		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):

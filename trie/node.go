@@ -140,6 +140,21 @@ func decodeNode(hash, buf []byte) (node, error) {
 	return decodeNodeUnsafe(hash, common.CopyBytes(buf))
 }
 
+func DecodeShortNode(buf []byte) ([]byte, []byte, bool) {
+	n, err := decodeNodeUnsafe(nil, buf)
+	if err != nil {
+		return nil, nil, false
+	}
+	nn, ok := n.(*shortNode)
+	if !ok {
+		return nil, nil, false
+	}
+	if !hasTerm(nn.Key) {
+		return nil, nil, false
+	}
+	return nn.Key[:len(nn.Key)-1], nn.Val.(rawNode), true
+}
+
 // decodeNodeUnsafe parses the RLP encoding of a trie node. The passed byte slice
 // will be directly referenced by node without bytes deep copy, so the input MUST
 // not be changed after.

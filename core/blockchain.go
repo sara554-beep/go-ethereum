@@ -18,6 +18,7 @@
 package core
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -520,6 +521,22 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	//		log.Info("Dumped storage", "total", count)
 	//	}
 	//}
+	it := db.NewIterator(nil, nil)
+	defer it.Release()
+
+	// Inspect key-value database first.
+	for it.Next() {
+		if rawdb.IsStorageTrieNode(it.Key()) {
+			nkey, nval, ok := trie.DecodeShortNode(it.Value())
+			if ok {
+				if bytes.Equal(nval, common.FromHex("a06a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5")) {
+					_, accountHash, path := rawdb.ResolveStorageTrieNode(it.Key())
+					log.Info("Found target node", "owner", accountHash.Hex(), "path", path, "nkey", nkey)
+					break
+				}
+			}
+		}
+	}
 	return bc, nil
 }
 
