@@ -152,7 +152,7 @@ func DecodeShortNode(buf []byte) ([]byte, []byte, bool) {
 	if !hasTerm(nn.Key) {
 		return nil, nil, false
 	}
-	return nn.Key[:len(nn.Key)-1], nn.Val.(rawNode), true
+	return nn.Key[:len(nn.Key)-1], nn.Val.(valueNode), true
 }
 
 // decodeNodeUnsafe parses the RLP encoding of a trie node. The passed byte slice
