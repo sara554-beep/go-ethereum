@@ -521,15 +521,21 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	//		log.Info("Dumped storage", "total", count)
 	//	}
 	//}
-	it := db.NewIterator([]byte("O"), nil)
+	it := db.NewIterator(append([]byte("O"), common.HexToHash("5cc0a47442e6bc69eb1ec9e2ff1fe0c9657c26dfa5836f560fd7141038667982").Bytes()...), nil)
 	defer it.Release()
 
 	// Inspect key-value database first.
-	var count int
+	var (
+		count     int
+		node      int
+		shortNode int
+	)
 	for it.Next() {
 		if rawdb.IsStorageTrieNode(it.Key()) {
+			node += 1
 			nkey, nval, ok := trie.DecodeShortNode(it.Value())
 			if ok {
+				shortNode += 1
 				if bytes.Equal(nval, common.FromHex("a06a62a088d03375c29f8c41b3cd5d4e350f25031c4a712bd7ec2f6555b3365cc5")) {
 					_, accountHash, path := rawdb.ResolveStorageTrieNode(it.Key())
 					log.Info("Found target node", "owner", accountHash.Hex(), "path", path, "nkey", nkey)
@@ -538,8 +544,8 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 			}
 		}
 		count += 1
-		if count%100000 == 0 {
-			log.Info("Iterating keyvalue store", "count", count)
+		if count%30000 == 0 {
+			log.Info("Iterating keyvalue store", "count", count, "shortNode", shortNode, "node", node)
 		}
 	}
 	return bc, nil
