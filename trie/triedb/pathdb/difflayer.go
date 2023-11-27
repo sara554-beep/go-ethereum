@@ -49,6 +49,10 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, block uint64, nodes
 	var (
 		size  int64
 		count int
+
+		blobPath     uint64
+		blobHash     uint64
+		blobHashPath uint64
 	)
 	dl := &diffLayer{
 		root:   root,
@@ -62,16 +66,22 @@ func newDiffLayer(parent layer, root common.Hash, id uint64, block uint64, nodes
 		for path, n := range subset {
 			dl.memory += uint64(n.Size() + len(path))
 			size += int64(len(n.Blob) + len(path))
+
+			blobPath += uint64(len(n.Blob) + len(path))
+			blobHash += uint64(len(n.Blob) + common.HashLength)
+			blobHashPath += uint64(len(n.Blob) + common.HashLength + len(path))
 		}
 		count += len(subset)
 	}
+	var stateSize uint64
 	if states != nil {
 		dl.memory += uint64(states.Size())
+		stateSize = uint64(states.Size())
 	}
 	dirtyWriteMeter.Mark(size)
 	diffLayerNodesMeter.Mark(int64(count))
 	diffLayerBytesMeter.Mark(int64(dl.memory))
-	log.Debug("Created new diff layer", "id", id, "block", block, "nodes", count, "size", common.StorageSize(dl.memory))
+	log.Info("Created new diff layer", "id", id, "block", block, "nodes", count, "blobpath", common.StorageSize(blobPath), "blobhash", common.StorageSize(blobHash), "blobhashpath", common.StorageSize(blobHashPath), "statesize", common.StorageSize(stateSize), "size", common.StorageSize(dl.memory))
 	return dl
 }
 
