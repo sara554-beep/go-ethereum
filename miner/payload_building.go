@@ -148,16 +148,14 @@ func (payload *Payload) ResolveEmpty() *engine.ExecutionPayloadEnvelope {
 	return engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil)
 }
 
-// ResolveFull is basically identical to Resolve, but it expects full block only.
-// Don't call Resolve until ResolveFull returns, otherwise it might block forever.
-func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
+func (payload *Payload) resolveBlock() (*types.Block, *big.Int, []*types.BlobTxSidecar) {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
 	if payload.full == nil {
 		select {
 		case <-payload.stop:
-			return nil
+			return nil, nil, nil
 		default:
 		}
 		// Wait the full payload construction. Note it might block
@@ -171,11 +169,21 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 	default:
 		close(payload.stop)
 	}
-	return engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars)
+	return payload.full, payload.fullFees, payload.sidecars
+}
+
+// ResolveFull is basically identical to Resolve, but it expects full block only.
+// Don't call Resolve until ResolveFull returns, otherwise it might block forever.
+func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
+	full, fees, sidecars := payload.resolveBlock()
+	if full == nil {
+		return nil
+	}
+	return engine.BlockToExecutableData(full, fees, sidecars)
 }
 
 // buildPayload builds the payload according to the provided parameters.
-func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
+func (w *Miner) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 	// Build the initial version with no transaction included. It should be fast
 	// enough to run. The empty payload can at least make sure there is something
 	// to deliver for not missing slot.
@@ -189,7 +197,7 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 		beaconRoot:  args.BeaconRoot,
 		noTxs:       true,
 	}
-	empty := w.getSealingBlock(emptyParams)
+	empty := w.generateWork(emptyParams)
 	if empty.err != nil {
 		return nil, empty.err
 	}
@@ -225,11 +233,11 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 			select {
 			case <-timer.C:
 				start := time.Now()
-				r := w.getSealingBlock(fullParams)
+				r := w.generateWork(fullParams)
 				if r.err == nil {
 					payload.update(r, time.Since(start))
 				}
-				timer.Reset(w.recommit)
+				timer.Reset(w.config.Recommit)
 			case <-payload.stop:
 				log.Info("Stopping work on payload", "id", payload.id, "reason", "delivery")
 				return
