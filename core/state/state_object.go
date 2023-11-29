@@ -451,7 +451,7 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 	obj.pendingStorage = s.pendingStorage.Copy()
 	obj.selfDestructed = s.selfDestructed
 	obj.dirtyCode = s.dirtyCode
-	obj.deleted = s.deleted
+	//obj.deleted = s.deleted
 	return obj
 }
 
