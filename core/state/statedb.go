@@ -77,9 +77,8 @@ type StateDB struct {
 	accountsOrigin map[common.Address][]byte                 // The original value of mutated accounts in 'slim RLP' encoding
 	storagesOrigin map[common.Address]map[common.Hash][]byte // The original value of mutated slots in prefix-zero trimmed rlp format
 
-	// This map holds 'live' objects, which will get modified while processing
-	// a state transition.
-	stateObjects         map[common.Address]*stateObject
+	stateObjects         map[common.Address]*stateObject // State objects
+	stateObjectTracker   *tracker
 	stateObjectsPending  map[common.Address]struct{}            // State objects finalized but not yet written to the trie
 	stateObjectsDirty    map[common.Address]struct{}            // State objects modified in the current execution
 	stateObjectsDestruct map[common.Address]*types.StateAccount // State objects destructed in the block along with its previous value
@@ -807,6 +806,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			delete(s.storagesOrigin, obj.address) // Clear out any previously updated storage data (may be recreated via a resurrect)
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
+			s.stateObjectTracker.markDirty()
 		}
 		obj.created = false
 		s.stateObjectsPending[addr] = struct{}{}
