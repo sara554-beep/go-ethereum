@@ -443,9 +443,15 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	if evm.StateDB.GetNonce(address) != 0 || (contractHash != (common.Hash{}) && contractHash != types.EmptyCodeHash) {
 		return nil, common.Address{}, 0, ErrContractAddressCollision
 	}
-	// Create a new account on the state
+	// Create a new account on the blockchain state only if the account does
+	// not already exist. Note: It is also possible that the contract code is
+	// deployed to an existing externally owned account (EOA) with pre-filled
+	// funds. In such cases, we want to avoid creating a new account to prevent
+	// redundancy and potential issues.
 	snapshot := evm.StateDB.Snapshot()
-	evm.StateDB.CreateAccount(address)
+	if !evm.StateDB.Exist(address) {
+		evm.StateDB.CreateAccount(address)
+	}
 	if evm.chainRules.IsEIP158 {
 		evm.StateDB.SetNonce(address, 1)
 	}
