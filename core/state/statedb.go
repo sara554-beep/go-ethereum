@@ -805,10 +805,10 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			//delete(s.storages, obj.addrHash)      // Clear out any previously updated storage data (may be recreated via a resurrect)
 			//delete(s.accountsOrigin, obj.address) // Clear out any previously updated account data (may be recreated via a resurrect)
 			//delete(s.storagesOrigin, obj.address) // Clear out any previously updated storage data (may be recreated via a resurrect)
-			s.stateObjectTracker.mark(obj.address, true)
+			s.stateObjectTracker.markDestruct(obj.address)
 		} else {
-			obj.finalise(true)                            // Prefetch slots in the background
-			s.stateObjectTracker.mark(obj.address, false) // Mark the account as dirty
+			obj.finalise(true)                          // Prefetch slots in the background
+			s.stateObjectTracker.markDirty(obj.address) // Mark the account as dirty
 		}
 		obj.created = false
 		//s.stateObjectsPending[addr] = struct{}{}
