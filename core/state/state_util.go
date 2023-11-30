@@ -27,7 +27,7 @@ const (
 
 type state struct {
 	actions []actionType // list of pending actions
-	index   int          // the position of next action to execute
+	next    int          // the position of next action to execute
 }
 
 type tracker struct {
@@ -36,27 +36,27 @@ type tracker struct {
 
 func (t *tracker) markDirty(addr common.Address) {
 	if _, ok := t.objects[addr]; !ok {
-		t.objects[addr] = &state{index: 0}
+		t.objects[addr] = &state{next: 0}
 	}
 	t.objects[addr].actions = append(t.objects[addr].actions, updateOp)
 }
 
 func (t *tracker) markDestruct(addr common.Address) {
 	if _, ok := t.objects[addr]; !ok {
-		t.objects[addr] = &state{index: 0}
+		t.objects[addr] = &state{next: 0}
 	}
 	t.objects[addr].actions = append(t.objects[addr].actions, deleteOp)
 }
 
 func (t *tracker) execute(fn func(addr common.Address, destruct bool) error) error {
 	for addr, obj := range t.objects {
-		if obj.index == len(obj.actions) {
+		if obj.next == len(obj.actions) {
 			continue
 		}
 		if err := fn(addr, obj.actions[len(obj.actions)-1] == deleteOp); err != nil {
 			return err
 		}
-		obj.index = len(obj.actions)
+		obj.next = len(obj.actions)
 	}
 	return nil
 }
