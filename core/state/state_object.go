@@ -79,6 +79,10 @@ func (s *pendingStorage) flush() ([]common.Hash, []common.Hash) {
 	return keys, vals
 }
 
+func (s *pendingStorage) changeset() (map[common.Hash][]byte, map[common.Hash][]byte) {
+	return nil, nil
+}
+
 // stateObject represents an Ethereum account which is being modified.
 //
 // The usage pattern is as follows:
@@ -201,7 +205,7 @@ func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	//   1) resurrect happened, and new slot values were set -- those should
 	//      have been handles via pendingStorage above.
 	//   2) we don't have new values, and can deliver empty response back
-	if s.db.stateObjectTracker.isDestructed(s.address) {
+	if s.db.stateTracker.isDestructed(s.address) {
 		s.originStorage[key] = common.Hash{}
 		return common.Hash{}
 	}
@@ -277,6 +281,7 @@ func (s *stateObject) finalise(prefetch bool) {
 	if len(s.dirtyStorage) > 0 {
 		s.dirtyStorage = make(Storage)
 	}
+	s.created = false
 }
 
 // updateTrie is responsible for persisting cached storage changes into the

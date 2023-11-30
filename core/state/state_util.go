@@ -81,15 +81,6 @@ func (t *tracker) execute(fn func(addr common.Address, destruct bool) error) err
 	return nil
 }
 
-func (t *tracker) allDone() bool {
-	for _, obj := range t.objects {
-		if obj.next != len(obj.actions) {
-			return false
-		}
-	}
-	return true
-}
-
 func (t *tracker) dirties() []common.Address {
 	var addresses []common.Address
 	for addr, obj := range t.objects {
