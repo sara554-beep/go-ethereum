@@ -80,7 +80,21 @@ func (s *pendingStorage) flush() ([]common.Hash, []common.Hash) {
 }
 
 func (s *pendingStorage) changeset() (map[common.Hash][]byte, map[common.Hash][]byte) {
-	return nil, nil
+	var (
+		storages = make(map[common.Hash][]byte)
+		origins  = make(map[common.Hash][]byte)
+	)
+	for key, val := range s.storage {
+		// Encoding []byte cannot fail, ok to ignore the error.
+		trimmed := common.TrimLeftZeroes(val[:])
+		encoded, _ := rlp.EncodeToBytes(trimmed)
+
+		khash := crypto.HashData(nil, key[:])
+		storages[khash] = encoded // encoded will be nil if it's deleted
+
+		origins[khash] = nil
+	}
+	return storages, origins
 }
 
 // stateObject represents an Ethereum account which is being modified.
