@@ -16,7 +16,10 @@
 
 package state
 
-import "github.com/ethereum/go-ethereum/common"
+import (
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+)
 
 type actionType int
 
@@ -26,26 +29,43 @@ const (
 )
 
 type state struct {
-	actions []actionType // list of pending actions
-	next    int          // the position of next action to execute
+	actions []actionType
+	next    int
 }
 
 type tracker struct {
-	objects map[common.Address]*state
+	objects   map[common.Address]*state
+	destructs map[common.Address]*types.StateAccount
+}
+
+func newTracker() *tracker {
+	return &tracker{
+		objects:   make(map[common.Address]*state),
+		destructs: make(map[common.Address]*types.StateAccount),
+	}
+}
+
+func (t *tracker) mark(addr common.Address, action actionType) {
+	if _, ok := t.objects[addr]; !ok {
+		t.objects[addr] = &state{next: 0}
+	}
+	t.objects[addr].actions = append(t.objects[addr].actions, action)
 }
 
 func (t *tracker) markDirty(addr common.Address) {
-	if _, ok := t.objects[addr]; !ok {
-		t.objects[addr] = &state{next: 0}
-	}
-	t.objects[addr].actions = append(t.objects[addr].actions, updateOp)
+	t.mark(addr, updateOp)
 }
 
-func (t *tracker) markDestruct(addr common.Address) {
-	if _, ok := t.objects[addr]; !ok {
-		t.objects[addr] = &state{next: 0}
+func (t *tracker) markDestruct(addr common.Address, origin *types.StateAccount) {
+	if _, ok := t.destructs[addr]; !ok {
+		t.destructs[addr] = origin
 	}
-	t.objects[addr].actions = append(t.objects[addr].actions, deleteOp)
+	t.mark(addr, deleteOp)
+}
+
+func (t *tracker) isDestructed(addr common.Address) bool {
+	_, ok := t.destructs[addr]
+	return ok
 }
 
 func (t *tracker) execute(fn func(addr common.Address, destruct bool) error) error {
@@ -61,14 +81,22 @@ func (t *tracker) execute(fn func(addr common.Address, destruct bool) error) err
 	return nil
 }
 
-func (t *tracker) dirties() ([]common.Address, []bool) {
-	var (
-		addresses []common.Address
-		destructs []bool
-	)
-	for addr, obj := range t.objects {
-		addresses = append(addresses, addr)
-		destructs = append(destructs, obj.actions[len(obj.actions)-1] == deleteOp)
+func (t *tracker) allDone() bool {
+	for _, obj := range t.objects {
+		if obj.next != len(obj.actions) {
+			return false
+		}
 	}
-	return addresses, destructs
+	return true
+}
+
+func (t *tracker) dirties() []common.Address {
+	var addresses []common.Address
+	for addr, obj := range t.objects {
+		if obj.actions[len(obj.actions)-1] == deleteOp {
+			continue
+		}
+		addresses = append(addresses, addr)
+	}
+	return addresses
 }

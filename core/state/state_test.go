@@ -212,7 +212,7 @@ func TestSnapshot2(t *testing.T) {
 	so0.SetNonce(43)
 	so0.SetCode(crypto.Keccak256Hash([]byte{'c', 'a', 'f', 'e'}), []byte{'c', 'a', 'f', 'e'})
 	so0.selfDestructed = false
-	so0.deleted = false
+	//so0.deleted = false
 	state.setStateObject(so0)
 
 	root, _ := state.Commit(0, false)
@@ -224,7 +224,7 @@ func TestSnapshot2(t *testing.T) {
 	so1.SetNonce(53)
 	so1.SetCode(crypto.Keccak256Hash([]byte{'c', 'a', 'f', 'e', '2'}), []byte{'c', 'a', 'f', 'e', '2'})
 	so1.selfDestructed = true
-	so1.deleted = true
+	//so1.deleted = true
 	state.setStateObject(so1)
 
 	so1 = state.getStateObject(stateobjaddr1)
