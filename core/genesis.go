@@ -126,8 +126,9 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	}
 	// Create an ephemeral in-memory database for computing hash,
 	// all the derived states will be discarded to not pollute disk.
-	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &config)
-	statedb, err := state.New(types.EmptyRootHash, db, nil)
+	memorydb := rawdb.NewMemoryDatabase()
+	db := state.NewDatabase(state.NewCodeDB(memorydb), triedb.NewDatabase(memorydb, &config), nil)
+	statedb, err := state.New(types.EmptyRootHash, db)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -141,14 +142,14 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 			statedb.SetState(addr, key, value)
 		}
 	}
-	return statedb.Commit(0, false)
+	return statedb.IntermediateRoot(false), nil
 }
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
 // states will be persisted into the given database. Also, the genesis state
 // specification will be flushed as well.
 func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
-	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseWithNodeDB(db, triedb), nil)
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(state.NewCodeDB(db), triedb, nil))
 	if err != nil {
 		return err
 	}

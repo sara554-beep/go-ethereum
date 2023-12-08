@@ -38,7 +38,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
-	"github.com/ethereum/go-ethereum/triedb/state"
 	"github.com/holiman/uint256"
 )
 
@@ -96,7 +95,9 @@ func newStateTestAction(addr common.Address, r *rand.Rand, index int) testAction
 		{
 			name: "CreateAccount",
 			fn: func(a testAction, s *StateDB) {
-				s.CreateAccount(addr)
+				if !s.Exist(addr) {
+					s.CreateAccount(addr)
+				}
 			},
 		},
 		{
@@ -178,13 +179,24 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *state.Update) {
-			accountList = append(accountList, copySet(states.AccountOrigin))
-			storageList = append(storageList, copy2DSet(states.StorageOrigin))
+		copyUpdate  = func(update *Update) {
+			accounts := make(map[common.Address][]byte, len(update.AccountsOrigin))
+			for key, val := range update.AccountsOrigin {
+				accounts[key] = common.CopyBytes(val)
+			}
+			accountList = append(accountList, accounts)
+
+			storages := make(map[common.Address]map[common.Hash][]byte, len(update.StoragesOrigin))
+			for addr, subset := range update.StoragesOrigin {
+				storages[addr] = make(map[common.Hash][]byte, len(subset))
+				for key, val := range subset {
+					storages[addr][key] = common.CopyBytes(val)
+				}
+			}
+			storageList = append(storageList, storages)
 		}
 		disk      = rawdb.NewMemoryDatabase()
 		tdb       = triedb.NewDatabase(disk, &dbconfig.PathDefaults)
-		sdb       = NewDatabaseWithNodeDB(disk, tdb)
 		byzantium = rand.Intn(2) == 0
 	)
 	defer disk.Close()
@@ -199,17 +211,17 @@ func (test *stateTest) run() bool {
 			AsyncBuild: false,
 		}, disk, tdb, types.EmptyRootHash)
 	}
+	sdb := NewDatabase(NewCodeDB(disk), tdb, snaps)
+
 	for i, actions := range test.actions {
 		root := types.EmptyRootHash
 		if i != 0 {
 			root = roots[len(roots)-1]
 		}
-		state, err := New(root, sdb, snaps)
+		state, err := New(root, sdb)
 		if err != nil {
 			panic(err)
 		}
-		state.onCommit = onCommit
-
 		for i, action := range actions {
 			if i%test.chunk == 0 && i != 0 {
 				if byzantium {
@@ -225,13 +237,14 @@ func (test *stateTest) run() bool {
 		} else {
 			state.IntermediateRoot(true) // call intermediateRoot at the transaction boundary
 		}
-		nroot, err := state.Commit(0, true) // call commit at the block boundary
+		nroot, update, err := state.commit(0, true) // call commit at the block boundary
 		if err != nil {
 			panic(err)
 		}
 		if nroot == root {
 			return true // filter out non-change state transition
 		}
+		copyUpdate(update)
 		roots = append(roots, nroot)
 	}
 	for i := 0; i < len(test.actions); i++ {

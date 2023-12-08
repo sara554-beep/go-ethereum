@@ -35,15 +35,19 @@ func testNodeIteratorCoverage(t *testing.T, scheme string) {
 	db, sdb, ndb, root, _ := makeTestState(scheme)
 	ndb.Commit(root, false)
 
-	state, err := New(root, sdb, nil)
+	state, err := New(root, sdb)
 	if err != nil {
 		t.Fatalf("failed to create state trie at %x: %v", root, err)
 	}
 	// Gather all the node hashes found by the iterator
 	hashes := make(map[common.Hash]struct{})
-	for it := newNodeIterator(state); it.Next(); {
-		if it.Hash != (common.Hash{}) {
-			hashes[it.Hash] = struct{}{}
+	nodeIt, err := newNodeIterator(state)
+	if err != nil {
+		t.Fatalf("failed to create node iterator, %v", err)
+	}
+	for nodeIt.Next() {
+		if nodeIt.Hash != (common.Hash{}) {
+			hashes[nodeIt.Hash] = struct{}{}
 		}
 	}
 	// Check in-disk nodes

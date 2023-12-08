@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 	"os"
 	"time"
 
@@ -38,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/merkle"
+	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 	cli "github.com/urfave/cli/v2"
 )
 

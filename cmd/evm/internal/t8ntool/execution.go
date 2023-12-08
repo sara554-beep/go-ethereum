@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie/merkle"
+	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"github.com/holiman/uint256"
 	"golang.org/x/crypto/sha3"
@@ -347,7 +348,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 	}
 	// Re-create statedb instance with new root upon the updated database
 	// for accessing latest states.
-	statedb, err = state.New(root, statedb.Database(), nil)
+	statedb, err = state.New(root, statedb.Database())
 	if err != nil {
 		return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not reopen state: %v", err))
 	}
@@ -359,8 +360,10 @@ func MakePreState(db ethdb.Database, accounts types.GenesisAlloc) *state.StateDB
 	config := dbconfig.HashDefaults
 	config.Preimages = true
 
-	sdb := state.NewDatabaseWithConfig(db, &config)
-	statedb, _ := state.New(types.EmptyRootHash, sdb, nil)
+	tdb := triedb.NewDatabase(db, &config)
+	sdb := state.NewDatabase(state.NewCodeDB(db), tdb, nil)
+
+	statedb, _ := state.New(types.EmptyRootHash, sdb)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)
 		statedb.SetNonce(addr, a.Nonce)
@@ -371,7 +374,7 @@ func MakePreState(db ethdb.Database, accounts types.GenesisAlloc) *state.StateDB
 	}
 	// Commit and re-open to start with a clean state.
 	root, _ := statedb.Commit(0, false)
-	statedb, _ = state.New(root, sdb, nil)
+	statedb, _ = state.New(root, sdb)
 	return statedb
 }
 

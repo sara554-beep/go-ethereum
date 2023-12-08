@@ -705,6 +705,10 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 	if statedb == nil || err != nil {
 		return nil, err
 	}
+	db := statedb.Database()
+	if db.TrieDB() == nil {
+		return nil, errors.New("trie loading is not supported")
+	}
 	codeHash := statedb.GetCodeHash(address)
 	storageRoot := statedb.GetStorageRoot(address)
 
