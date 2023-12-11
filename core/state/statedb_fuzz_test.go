@@ -392,3 +392,24 @@ func TestStateChanges(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// copySet returns a deep-copied set.
+func copySet[k comparable](set map[k][]byte) map[k][]byte {
+	copied := make(map[k][]byte, len(set))
+	for key, val := range set {
+		copied[key] = common.CopyBytes(val)
+	}
+	return copied
+}
+
+// copy2DSet returns a two-dimensional deep-copied set.
+func copy2DSet[k comparable](set map[k]map[common.Hash][]byte) map[k]map[common.Hash][]byte {
+	copied := make(map[k]map[common.Hash][]byte, len(set))
+	for addr, subset := range set {
+		copied[addr] = make(map[common.Hash][]byte, len(subset))
+		for key, val := range subset {
+			copied[addr][key] = common.CopyBytes(val)
+		}
+	}
+	return copied
+}
