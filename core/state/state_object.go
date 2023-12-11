@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
 type Storage map[common.Hash]common.Hash
@@ -58,9 +57,10 @@ type stateObject struct {
 	trie Trie   // storage trie, which becomes non-nil on first access
 	code []byte // contract bytecode, which gets set when code is loaded
 
-	originStorage  Storage // Storage cache of original entries to dedup rewrites
-	pendingStorage Storage // Storage entries that need to be flushed to disk, at the end of an entire block
-	dirtyStorage   Storage // Storage entries that have been modified in the current transaction execution, reset for every transaction
+	originStorage  Storage                  // Storage entries that have been resolved in the current block
+	dirtyStorage   Storage                  // Storage entries that have been modified in the current transaction
+	pendingStorage Storage                  // Storage entries that have been modified in the current block
+	pendingStates  map[common.Hash]struct{} // Flags if the pending states have been written
 
 	// Cache flags.
 	dirtyCode bool // true if the code was updated
@@ -94,8 +94,9 @@ func newObject(db *StateDB, address common.Address, acct *types.StateAccount) *s
 		origin:         origin,
 		data:           *acct,
 		originStorage:  make(Storage),
-		pendingStorage: make(Storage),
 		dirtyStorage:   make(Storage),
+		pendingStorage: make(Storage),
+		pendingStates:  make(map[common.Hash]struct{}),
 		created:        created,
 	}
 }
@@ -238,6 +239,8 @@ func (s *stateObject) finalise(prefetch bool) {
 	slotsToPrefetch := make([][]byte, 0, len(s.dirtyStorage))
 	for key, value := range s.dirtyStorage {
 		s.pendingStorage[key] = value
+		s.pendingStates[key] = struct{}{}
+
 		if value != s.originStorage[key] {
 			slotsToPrefetch = append(slotsToPrefetch, common.CopyBytes(key[:])) // Copy needed for closure
 		}
@@ -261,7 +264,7 @@ func (s *stateObject) updateTrie() (Trie, error) {
 	s.finalise(false)
 
 	// Short circuit if nothing changed, don't bother with hashing anything
-	if len(s.pendingStorage) == 0 {
+	if len(s.pendingStates) == 0 {
 		return s.trie, nil
 	}
 	// Track the amount of time wasted on updating the storage trie
@@ -269,26 +272,15 @@ func (s *stateObject) updateTrie() (Trie, error) {
 		defer func(start time.Time) { s.db.StorageUpdates += time.Since(start) }(time.Now())
 	}
 	// The snapshot storage map for the object
-	var (
-		storage map[common.Hash][]byte
-		origin  map[common.Hash][]byte
-	)
 	tr, err := s.getTrie()
 	if err != nil {
 		s.db.setError(err)
 		return nil, err
 	}
 	// Insert all the pending storage updates into the trie
-	usedStorage := make([][]byte, 0, len(s.pendingStorage))
-	for key, value := range s.pendingStorage {
-		// Skip noop changes, persist actual changes
-		if value == s.originStorage[key] {
-			continue
-		}
-		prev := s.originStorage[key]
-		s.originStorage[key] = value
-
-		var encoded []byte // rlp-encoded value to be used by the snapshot
+	usedStorage := make([][]byte, 0, len(s.pendingStates))
+	for key := range s.pendingStates {
+		value := s.pendingStorage[key]
 		if (value == common.Hash{}) {
 			if err := tr.DeleteStorage(s.address, key[:]); err != nil {
 				s.db.setError(err)
@@ -298,39 +290,11 @@ func (s *stateObject) updateTrie() (Trie, error) {
 		} else {
 			// Encoding []byte cannot fail, ok to ignore the error.
 			trimmed := common.TrimLeftZeroes(value[:])
-			encoded, _ = rlp.EncodeToBytes(trimmed)
 			if err := tr.UpdateStorage(s.address, key[:], trimmed); err != nil {
 				s.db.setError(err)
 				return nil, err
 			}
 			s.db.StorageUpdated += 1
-		}
-		// Cache the mutated storage slots until commit
-		if storage == nil {
-			if storage = s.db.storages[s.addrHash]; storage == nil {
-				storage = make(map[common.Hash][]byte)
-				s.db.storages[s.addrHash] = storage
-			}
-		}
-		khash := crypto.HashData(s.db.hasher, key[:])
-		storage[khash] = encoded // encoded will be nil if it's deleted
-
-		// Cache the original value of mutated storage slots
-		if origin == nil {
-			if origin = s.db.storagesOrigin[s.address]; origin == nil {
-				origin = make(map[common.Hash][]byte)
-				s.db.storagesOrigin[s.address] = origin
-			}
-		}
-		// Track the original value of slot only if it's mutated first time
-		if _, ok := origin[khash]; !ok {
-			if prev == (common.Hash{}) {
-				origin[khash] = nil // nil if it was not present previously
-			} else {
-				// Encoding []byte cannot fail, ok to ignore the error.
-				b, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(prev[:]))
-				origin[khash] = b
-			}
 		}
 		// Cache the items for preloading
 		usedStorage = append(usedStorage, common.CopyBytes(key[:])) // Copy needed for closure
@@ -338,7 +302,7 @@ func (s *stateObject) updateTrie() (Trie, error) {
 	if s.db.prefetcher != nil {
 		s.db.prefetcher.used(s.addrHash, s.data.Root, usedStorage)
 	}
-	s.pendingStorage = make(Storage) // reset pending map
+	s.pendingStates = make(map[common.Hash]struct{})
 	return tr, nil
 }
 
@@ -358,14 +322,73 @@ func (s *stateObject) updateRoot() {
 	s.data.Root = tr.Hash()
 }
 
+// commitAccount stores the account's original and current value to result.
+func (s *stateObject) commitAccount(result *commitResult) {
+	// Store the account value after mutation
+	result.accounts[s.addrHash] = types.SlimAccountRLP(s.data)
+
+	// Store the account's original value only if the value has not been recorded
+	// yet. Otherwise, the account must be destructed in the same block, and the
+	// original value is stored in previous steps.
+	if _, ok := result.accountsOrigin[s.address]; ok {
+		return
+	}
+	if s.origin == nil {
+		result.accountsOrigin[s.address] = nil
+	} else {
+		result.accountsOrigin[s.address] = types.SlimAccountRLP(*s.origin)
+	}
+}
+
+// commitStorage stores the account's original and current value of mutated
+// storage to result.
+func (s *stateObject) commitStorage(result *commitResult) {
+	// Allocate the storage maps if they are not created yet.
+	if result.storages[s.addrHash] == nil {
+		result.storages[s.addrHash] = make(map[common.Hash][]byte)
+	}
+	storage := result.storages[s.addrHash]
+	if result.storagesOrigin[s.address] == nil {
+		result.storagesOrigin[s.address] = make(map[common.Hash][]byte)
+	}
+	storageOrigin := result.storagesOrigin[s.address]
+
+	for key, val := range s.pendingStorage {
+		// Store the current value to result set
+		khash := crypto.HashData(s.db.hasher, key[:])
+		encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(val[:]))
+		storage[khash] = encoded
+
+		// Store the original value in the result set only if the value has
+		// not been recorded yet. Otherwise, the account must be destructed
+		// in the same block, and storage slots belonging to the old account
+		// were already deleted and tracked in the result set.
+		if _, ok := storageOrigin[khash]; !ok {
+			old := s.originStorage[key]
+			if old == (common.Hash{}) {
+				storageOrigin[khash] = nil // nil if it was not present previously
+			} else {
+				encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(old[:]))
+				storageOrigin[khash] = encoded
+			}
+		}
+		// Aggregate the mutated storage slots into clean set as committed.
+		s.originStorage[key] = val
+	}
+	s.pendingStorage = make(Storage)
+}
+
 // commit obtains a set of dirty storage trie nodes and updates the account data.
 // The returned set can be nil if nothing to commit. This function assumes all
 // storage mutations have already been flushed into trie by updateRoot.
-func (s *stateObject) commit() (*trienode.NodeSet, error) {
-	// Short circuit if trie is not even loaded, don't bother with committing anything
+func (s *stateObject) commit(result *commitResult) error {
+	// Aggregate the account value changes into result set.
+	s.commitAccount(result)
+
+	// Short circuit if trie is not even loaded, don't bother with committing storage.
 	if s.trie == nil {
 		s.origin = s.data.Copy()
-		return nil, nil
+		return nil
 	}
 	// Track the amount of time wasted on committing the storage trie
 	if metrics.EnabledExpensive {
@@ -376,13 +399,27 @@ func (s *stateObject) commit() (*trienode.NodeSet, error) {
 	// modified, the set can be nil if nothing to commit.
 	root, nodes, err := s.trie.Commit(false)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	s.data.Root = root
+	if s.data.Root != root {
+		return fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
+	}
+	// Aggregate the storage changes into result set
+	s.commitStorage(result)
 
 	// Update original account data after commit
 	s.origin = s.data.Copy()
-	return nodes, nil
+
+	// Aggregate the dirty trie node into the global set
+	if nodes != nil {
+		if err := result.nodes.Merge(nodes); err != nil {
+			return err
+		}
+		updates, deleted := nodes.Size()
+		result.storageTrieNodesUpdated += updates
+		result.storageTrieNodesDeleted += deleted
+	}
+	return nil
 }
 
 // AddBalance adds amount to s's balance.
@@ -435,6 +472,10 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 	obj.dirtyStorage = s.dirtyStorage.Copy()
 	obj.originStorage = s.originStorage.Copy()
 	obj.pendingStorage = s.pendingStorage.Copy()
+	obj.pendingStates = make(map[common.Hash]struct{})
+	for key := range s.pendingStates {
+		obj.pendingStates[key] = struct{}{}
+	}
 	obj.selfDestructed = s.selfDestructed
 	obj.dirtyCode = s.dirtyCode
 	return obj
