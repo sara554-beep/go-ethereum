@@ -31,7 +31,8 @@ import (
 // including all of the contract code and contract state tries. Preimage is
 // required in order to resolve the contract address.
 type nodeIterator struct {
-	state *StateDB // State being iterated
+	state     *StateDB // State being iterated
+	stateTrie Trie
 
 	stateIt trie.NodeIterator // Primary iterator for the global state trie
 	dataIt  trie.NodeIterator // Secondary iterator for the data trie of a contract
@@ -46,11 +47,20 @@ type nodeIterator struct {
 	Error error // Failure set in case of an internal error in the iterator
 }
 
-// newNodeIterator creates an post-order state node iterator.
-func newNodeIterator(state *StateDB) *nodeIterator {
-	return &nodeIterator{
-		state: state,
+// newNodeIterator creates a state iterator over the original state. Note, the
+// cached mutations inside of the state db won't be traversed by the iterator.
+func newNodeIterator(state *StateDB) (*nodeIterator, error) {
+	if state.db.TrieDB() == nil {
+		return nil, errors.New("trie loading is not supported")
 	}
+	tr, err := trie.NewStateTrie(trie.TrieID(state.originalRoot), state.db.TrieDB())
+	if err != nil {
+		return nil, err
+	}
+	return &nodeIterator{
+		state:     state,
+		stateTrie: tr,
+	}, nil
 }
 
 // Next moves the iterator to the next node, returning whether there are any
@@ -78,7 +88,7 @@ func (it *nodeIterator) step() error {
 	// Initialize the iterator if we've just started
 	var err error
 	if it.stateIt == nil {
-		it.stateIt, err = it.state.trie.NodeIterator(nil)
+		it.stateIt, err = it.stateTrie.NodeIterator(nil)
 		if err != nil {
 			return err
 		}
@@ -116,14 +126,14 @@ func (it *nodeIterator) step() error {
 		return err
 	}
 	// Lookup the preimage of account hash
-	preimage := it.state.trie.GetKey(it.stateIt.LeafKey())
+	preimage := it.stateTrie.GetKey(it.stateIt.LeafKey())
 	if preimage == nil {
 		return errors.New("account address is not available")
 	}
 	address := common.BytesToAddress(preimage)
 
 	// Traverse the storage slots belong to the account
-	dataTrie, err := it.state.db.OpenStorageTrie(it.state.originalRoot, address, account.Root, it.state.trie)
+	dataTrie, err := trie.NewStateTrie(trie.StorageTrieID(it.state.originalRoot, common.BytesToHash(it.stateIt.LeafKey()), account.Root), it.state.db.TrieDB())
 	if err != nil {
 		return err
 	}
@@ -136,7 +146,7 @@ func (it *nodeIterator) step() error {
 	}
 	if !bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes()) {
 		it.codeHash = common.BytesToHash(account.CodeHash)
-		it.code, err = it.state.db.ContractCode(address, common.BytesToHash(account.CodeHash))
+		it.code, err = it.state.db.ReadCode(address, common.BytesToHash(account.CodeHash))
 		if err != nil {
 			return fmt.Errorf("code %x: %v", account.CodeHash, err)
 		}

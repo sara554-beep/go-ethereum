@@ -154,8 +154,9 @@ func runCmd(ctx *cli.Context) error {
 	})
 	defer triedb.Close()
 	genesis := genesisConfig.MustCommit(db, triedb)
-	sdb := state.NewDatabaseWithNodeDB(db, triedb)
-	statedb, _ = state.New(genesis.Root(), sdb, nil)
+
+	sdb := state.NewDatabase(state.NewCodeDB(db), triedb, nil)
+	statedb, _ = state.New(genesis.Root(), sdb)
 	chainConfig = genesisConfig.Config
 
 	if ctx.String(SenderFlag.Name) != "" {

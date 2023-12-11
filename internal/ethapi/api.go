@@ -704,14 +704,17 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 	if statedb == nil || err != nil {
 		return nil, err
 	}
+	db := statedb.Database()
+	if db.TrieDB() == nil {
+		return nil, errors.New("trie loading is not supported")
+	}
 	codeHash := statedb.GetCodeHash(address)
 	storageRoot := statedb.GetStorageRoot(address)
 
 	if len(keys) > 0 {
 		var storageTrie state.Trie
 		if storageRoot != types.EmptyRootHash && storageRoot != (common.Hash{}) {
-			id := trie.StorageTrieID(header.Root, crypto.Keccak256Hash(address.Bytes()), storageRoot)
-			st, err := trie.NewStateTrie(id, statedb.Database().TrieDB())
+			st, err := trie.NewStateTrie(trie.StorageTrieID(header.Root, crypto.Keccak256Hash(address.Bytes()), storageRoot), db.TrieDB())
 			if err != nil {
 				return nil, err
 			}
@@ -742,7 +745,7 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 		}
 	}
 	// Create the accountProof.
-	tr, err := trie.NewStateTrie(trie.StateTrieID(header.Root), statedb.Database().TrieDB())
+	tr, err := trie.NewStateTrie(trie.StateTrieID(header.Root), db.TrieDB())
 	if err != nil {
 		return nil, err
 	}
