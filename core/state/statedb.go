@@ -815,6 +815,40 @@ func (s *StateDB) GetRefund() uint64 {
 	return s.refund
 }
 
+func isTarget(hash common.Hash) bool {
+	if hash == common.HexToHash("0x1dff70804724888a5e9a0de818749dd6373791aee04456d72d4ee4d93f7a71d5") {
+		return true
+	}
+	if hash == common.HexToHash("0x218760c66229e10e0bea1e9bef60e4115dad0faa3d9a691e8cfdbf2d68c209b3") {
+		return true
+	}
+	if hash == common.HexToHash("0x31a296e561fab0e2015d5b3c6a5fbda80aac6b592d53b1a5f18aa04245b8905b") {
+		return true
+	}
+	if hash == common.HexToHash("0x36f6474a868c28ee7e5004c850d5d314d71bc9a75f09ab5b0ba8dd1baf83e6c9") {
+		return true
+	}
+	if hash == common.HexToHash("0x4f9f760c31c1755c35dce3c5179faf8cc35c8475e52f1b0602feac1dbc40e949") {
+		return true
+	}
+	if hash == common.HexToHash("0x53f0a0b2859577d08591610c6357a8f7a82bad16cb5202765549d49ddf5fc764") {
+		return true
+	}
+	if hash == common.HexToHash("0x5aaf22523893f1d99777623eb2c63560886a1e5d72996923e1ec46d6d2c4533b") {
+		return true
+	}
+	if hash == common.HexToHash("0x7308c3657a7ccd251156932555886cf053e8e52cb0de3cbc41af9b0019798322") {
+		return true
+	}
+	if hash == common.HexToHash("0x7363a1671d6421f3b616b775a0d82b0b70b45268983b8db11a23a832551a620d") {
+		return true
+	}
+	if hash == common.HexToHash("0x815ae5b92339f5ed8d406d675506ba9a4070ac8b24ed5f69100272605087dc60") {
+		return true
+	}
+	return false
+}
+
 // Finalise finalises the state by removing the destructed objects and clears
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
@@ -849,6 +883,9 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			delete(s.storagesOrigin, obj.address) // Clear out any previously updated storage data (may be recreated via a resurrect)
 		} else {
 			obj.finalise(true) // Prefetch slots in the background
+		}
+		if isTarget(obj.addrHash) {
+			log.Info("Find target account", "hash", obj.addrHash.Hex(), "address", obj.address.Hex())
 		}
 		obj.created = false
 		s.stateObjectsPending[addr] = struct{}{}

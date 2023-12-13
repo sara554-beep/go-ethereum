@@ -21,6 +21,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/holiman/uint256"
+	"math/big"
 	"os"
 	"time"
 
@@ -98,6 +101,26 @@ data, and verifies that all snapshot storage data has a corresponding account.
 				Description: `
 geth snapshot inspect-account <address | hash> checks all snapshot layers and prints out
 information about the specified address.
+`,
+			},
+			{
+				Name:      "find-deployable",
+				Usage:     "",
+				ArgsUsage: "",
+				Action:    findDeployable,
+				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Description: `
+geth snapshot find-deployable finds all deployable accounts for debugging purposes.
+`,
+			},
+			{
+				Name:      "find-zerononce-whale",
+				Usage:     "",
+				ArgsUsage: "",
+				Action:    findZeroNonceWhale,
+				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Description: `
+geth snapshot find-zerononce-whale finds all zero-nonce accounts with a lot of funds.
 `,
 			},
 			{
@@ -687,5 +710,130 @@ func checkAccount(ctx *cli.Context) error {
 		return err
 	}
 	log.Info("Checked the snapshot journalled storage", "time", common.PrettyDuration(time.Since(start)))
+	return nil
+}
+
+func iterateAccounts(ctx *cli.Context, onAccount func(hash common.Hash, account *types.StateAccount)) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	chaindb := utils.MakeChainDatabase(ctx, stack, true)
+	defer chaindb.Close()
+
+	headBlock := rawdb.ReadHeadBlock(chaindb)
+	if headBlock == nil {
+		return errors.New("no head block")
+	}
+	triedb := utils.MakeTrieDatabase(ctx, chaindb, false, true, false)
+	defer triedb.Close()
+
+	snapConfig := snapshot.Config{
+		CacheSize:  256,
+		Recovery:   false,
+		NoBuild:    true,
+		AsyncBuild: false,
+	}
+	snaps, err := snapshot.New(snapConfig, chaindb, triedb, headBlock.Root())
+	if err != nil {
+		log.Error("Failed to open snapshot tree", "err", err)
+		return err
+	}
+	iter, err := snaps.AccountIterator(headBlock.Root(), common.Hash{})
+	if err != nil {
+		log.Error("Failed to create account iterator", "err", err)
+		return err
+	}
+	defer iter.Release()
+
+	for iter.Next() {
+		account, err := types.FullAccount(iter.Account())
+		if err != nil {
+			log.Error("Failed to decode account", "err", err)
+			return err
+		}
+		onAccount(iter.Hash(), account)
+	}
+	return nil
+}
+
+func findDeployable(ctx *cli.Context) error {
+	var (
+		total                     int
+		empty                     int
+		deployable                int
+		deployableWithStorage     int
+		deployableNoStorage       int
+		deployableWithStorageList []common.Hash
+	)
+	onAccount := func(hash common.Hash, account *types.StateAccount) {
+		isDeployable := account.Nonce == 0 && bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes())
+		isEmpty := isDeployable && account.Balance.Uint64() == 0
+
+		if isDeployable {
+			deployable += 1
+		}
+		if isEmpty {
+			empty += 1
+		}
+		if isDeployable && account.Root == types.EmptyRootHash {
+			deployableNoStorage += 1
+		}
+		if isDeployable && account.Root != types.EmptyRootHash {
+			deployableWithStorage += 1
+			deployableWithStorageList = append(deployableWithStorageList, hash)
+		}
+	}
+	if err := iterateAccounts(ctx, onAccount); err != nil {
+		return err
+	}
+	log.Info("Iterated state",
+		"empty", empty,
+		"deployable", deployable,
+		"deployableWithStorage", deployableWithStorage,
+		"deployableNoStorage", deployableNoStorage,
+		"total", total,
+	)
+	for _, hash := range deployableWithStorageList {
+		log.Info("Deployable account but with storage", "hash", hash.Hex())
+	}
+	return nil
+}
+
+func findZeroNonceWhale(ctx *cli.Context) error {
+	var (
+		count  int
+		hashes []common.Hash
+		funds  = uint256.NewInt(0)
+	)
+	onAccount := func(hash common.Hash, account *types.StateAccount) {
+		if account.Nonce != 0 || account.Balance.Sign() == 0 {
+			return
+		}
+		fundInEther := new(big.Float).Quo(
+			new(big.Float).SetInt(account.Balance.ToBig()),
+			big.NewFloat(params.Ether),
+		)
+		count++
+		funds = new(uint256.Int).Add(funds, account.Balance)
+
+		if fundInEther.Cmp(big.NewFloat(3000)) > 0 {
+			hashes = append(hashes, hash)
+		}
+	}
+	if err := iterateAccounts(ctx, onAccount); err != nil {
+		return err
+	}
+	fundInEther := new(big.Float).Quo(
+		new(big.Float).SetInt(funds.ToBig()),
+		big.NewFloat(params.Ether),
+	)
+	fundInAverage := new(big.Float).Quo(
+		fundInEther,
+		big.NewFloat(float64(count)),
+	)
+	log.Info("Iterated state", "whale", count, "totalfunds", fundInEther, "averagefunds", fundInAverage)
+	for _, hash := range hashes {
+		log.Info("Zero-nonce whales", "hash", hash.Hex())
+	}
 	return nil
 }
