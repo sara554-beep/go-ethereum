@@ -1,4 +1,4 @@
-// Copyright 2017 The go-ethereum Authors
+// Copyright 2023 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -21,15 +21,18 @@ import (
 
 	"github.com/crate-crypto/go-ipa/banderwagon"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 	"github.com/ethereum/go-ethereum/trie/utils"
 )
 
-var (
+const (
 	// commitmentSize is the size of commitment stored in cache.
 	commitmentSize = banderwagon.UncompressedSize
 
@@ -37,133 +40,211 @@ var (
 	commitmentCacheItems = 64 * 1024 * 1024 / (commitmentSize + common.AddressLength)
 )
 
-// CodeReader wraps the ReadCode and ReadCodeSize methods of a backing contract
-// code store, providing an interface for retrieving contract code and its size.
-type CodeReader interface {
-	// ReadCode retrieves a particular contract's code.
-	ReadCode(addr common.Address, codeHash common.Hash) ([]byte, error)
-
-	// ReadCodeSize retrieves a particular contracts code's size.
-	ReadCodeSize(addr common.Address, codeHash common.Hash) (int, error)
+// snapReader is a wrapper over the state snapshot and implements the StateReader
+// interface. It provides an efficient way to access state.
+type snapReader struct {
+	snap   snapshot.Snapshot
+	hasher crypto.KeccakState
 }
 
-// CodeWriter wraps the WriteCodes method of a backing contract code store,
-// providing an interface for writing contract codes back to database.
-type CodeWriter interface {
-	// WriteCodes persists the provided a batch of contract codes.
-	WriteCodes(addresses []common.Address, codeHashes []common.Hash, codes [][]byte) error
-}
-
-// CodeStore defines the essential methods for reading and writing contract codes,
-// providing a comprehensive interface for code management.
-type CodeStore interface {
-	CodeReader
-	CodeWriter
-}
-
-// Database defines the essential methods for reading and writing ethereum states,
-// providing a comprehensive interface for ethereum state management.
-type Database interface {
-	CodeStore
-
-	// OpenTrie opens the main account trie.
-	OpenTrie(root common.Hash) (Trie, error)
-
-	// OpenStorageTrie opens the storage trie of an account.
-	OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash, trie Trie) (Trie, error)
-
-	// CopyTrie returns an independent copy of the given trie.
-	CopyTrie(Trie) Trie
-
-	// TrieDB returns the underlying trie database for managing trie nodes.
-	TrieDB() *trie.Database
-}
-
-// Trie is a Ethereum state trie interface, defining the essential methods
-// to read and write states via trie.
-type Trie interface {
-	// GetKey returns the sha3 preimage of a hashed key that was previously used
-	// to store a value.
-	//
-	// TODO(fjl): remove this when StateTrie is removed
-	GetKey([]byte) []byte
-
-	// GetAccount abstracts an account read from the trie. It retrieves the
-	// account blob from the trie with provided account address and decodes it
-	// with associated decoding algorithm. If the specified account is not in
-	// the trie, nil will be returned. If the trie is corrupted(e.g. some nodes
-	// are missing or the account blob is incorrect for decoding), an error will
-	// be returned.
-	GetAccount(address common.Address) (*types.StateAccount, error)
-
-	// GetStorage returns the value for key stored in the trie. The value bytes
-	// must not be modified by the caller. If a node was not found in the database,
-	// a trie.MissingNodeError is returned.
-	GetStorage(addr common.Address, key []byte) ([]byte, error)
-
-	// UpdateAccount abstracts an account write to the trie. It encodes the
-	// provided account object with associated algorithm and then updates it
-	// in the trie with provided address.
-	UpdateAccount(address common.Address, account *types.StateAccount) error
-
-	// UpdateStorage associates key with value in the trie. If value has length zero,
-	// any existing value is deleted from the trie. The value bytes must not be modified
-	// by the caller while they are stored in the trie. If a node was not found in the
-	// database, a trie.MissingNodeError is returned.
-	UpdateStorage(addr common.Address, key, value []byte) error
-
-	// DeleteAccount abstracts an account deletion from the trie.
-	DeleteAccount(address common.Address) error
-
-	// DeleteStorage removes any existing value for key from the trie. If a node
-	// was not found in the database, a trie.MissingNodeError is returned.
-	DeleteStorage(addr common.Address, key []byte) error
-
-	// UpdateContractCode abstracts code write to the trie. It is expected
-	// to be moved to the stateWriter interface when the latter is ready.
-	UpdateContractCode(address common.Address, codeHash common.Hash, code []byte) error
-
-	// Hash returns the root hash of the trie. It does not write to the database and
-	// can be used even if the trie doesn't have one.
-	Hash() common.Hash
-
-	// Commit collects all dirty nodes in the trie and replace them with the
-	// corresponding node hash. All collected nodes(including dirty leaves if
-	// collectLeaf is true) will be encapsulated into a nodeset for return.
-	// The returned nodeset can be nil if the trie is clean(nothing to commit).
-	// Once the trie is committed, it's not usable anymore. A new trie must
-	// be created with new root and updated trie database for following usage
-	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error)
-
-	// NodeIterator returns an iterator that returns nodes of the trie. Iteration
-	// starts at the key after the given start key. And error will be returned
-	// if fails to create node iterator.
-	NodeIterator(startKey []byte) (trie.NodeIterator, error)
-
-	// Prove constructs a Merkle proof for key. The result contains all encoded nodes
-	// on the path to the value at key. The value itself is also included in the last
-	// node and can be retrieved by verifying the proof.
-	//
-	// If the trie does not contain a value for key, the returned proof contains all
-	// nodes of the longest existing prefix of the key (at least the root), ending
-	// with the node that proves the absence of the key.
-	Prove(key []byte, proofDb ethdb.KeyValueWriter) error
-}
-
-// NewDatabase creates a state database with the provided contract code store
-// and trie node database.
-func NewDatabase(codedb *CodeDB, triedb *trie.Database) Database {
-	return &cachingDB{
-		codedb: codedb,
-		triedb: triedb,
+// newSnapReader constructs a snap reader based on the specific state root.
+func newSnapReader(snaps *snapshot.Tree, root common.Hash) *snapReader {
+	snap := snaps.Snapshot(root)
+	if snap == nil {
+		return nil
+	}
+	return &snapReader{
+		snap:   snap,
+		hasher: crypto.NewKeccakState(),
 	}
 }
 
-// NewDatabaseForTesting is similar to NewDatabase, but it sets up a local code
-// store and trie database with default config by using the provided database,
-// specifically intended for testing.
+// Account implements StateReader, retrieving the account specified by the address
+// from the associated state. An error will be returned if the referenced snapshot
+// is already stale or the snapshot is not fully constructed yet.
+func (r *snapReader) Account(addr common.Address) (*types.StateAccount, error) {
+	ret, err := r.snap.Account(crypto.HashData(r.hasher, addr.Bytes()))
+	if err != nil {
+		return nil, err
+	}
+	if ret == nil {
+		return nil, nil
+	}
+	acct := &types.StateAccount{
+		Nonce:    ret.Nonce,
+		Balance:  ret.Balance,
+		CodeHash: ret.CodeHash,
+		Root:     common.BytesToHash(ret.Root),
+	}
+	if len(acct.CodeHash) == 0 {
+		acct.CodeHash = types.EmptyCodeHash.Bytes()
+	}
+	if acct.Root == (common.Hash{}) {
+		acct.Root = types.EmptyRootHash
+	}
+	return acct, nil
+}
+
+// Storage implements StateReader, retrieving the storage slot specified by the
+// address and slot key from the associated state. An error will be returned if
+// the referenced snapshot is already stale or the snapshot is not fully
+// constructed yet.
+func (r *snapReader) Storage(addr common.Address, root common.Hash, key common.Hash) (common.Hash, error) {
+	addrHash := crypto.HashData(r.hasher, addr.Bytes())
+	slotHash := crypto.HashData(r.hasher, key.Bytes())
+	ret, err := r.snap.Storage(addrHash, slotHash)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if len(ret) == 0 {
+		return common.Hash{}, nil
+	}
+	_, content, _, err := rlp.Split(ret)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	var slot common.Hash
+	slot.SetBytes(content)
+	return slot, nil
+}
+
+// trieReader implements the StateReader interface, providing functions to access
+// state from the referenced trie.
+type trieReader struct {
+	root     common.Hash             // State root which uniquely represent a state.
+	db       *trie.Database          // Database for loading trie
+	hasher   crypto.KeccakState      // Hasher for keccak256 hashing.
+	mainTrie Trie                    // Main trie, resolved in constructor
+	subTries map[common.Address]Trie // group of storage tries, cached when it's resolved.
+}
+
+// trieReader constructs a trie reader of the specific state.
+func newTrieReader(root common.Hash, db *trie.Database) (*trieReader, error) {
+	var (
+		tr  Trie
+		err error
+	)
+	if !db.IsVerkle() {
+		tr, err = trie.NewStateTrie(trie.StateTrieID(root), db)
+	} else {
+		tr, err = trie.NewVerkleTrie(root, db, utils.NewPointCache(commitmentCacheItems))
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &trieReader{
+		root:     root,
+		db:       db,
+		hasher:   crypto.NewKeccakState(),
+		mainTrie: tr,
+		subTries: make(map[common.Address]Trie),
+	}, nil
+}
+
+// Account implements StateReader, retrieving the account specified by the address
+// from the associated state.
+func (r *trieReader) Account(addr common.Address) (*types.StateAccount, error) {
+	return r.mainTrie.GetAccount(addr)
+}
+
+// Storage implements StateReader, retrieving the storage slot specified by the
+// address and slot key from the associated state.
+func (r *trieReader) Storage(addr common.Address, root common.Hash, key common.Hash) (common.Hash, error) {
+	var (
+		tr    Trie
+		found bool
+		slot  common.Hash
+	)
+	if r.db.IsVerkle() {
+		tr = r.mainTrie
+	} else {
+		tr, found = r.subTries[addr]
+		if !found {
+			var err error
+			tr, err = trie.NewStateTrie(trie.StorageTrieID(r.root, crypto.HashData(r.hasher, addr.Bytes()), root), r.db)
+			if err != nil {
+				return common.Hash{}, err
+			}
+			r.subTries[addr] = tr
+		}
+	}
+	ret, err := tr.GetStorage(addr, key.Bytes())
+	if err != nil {
+		return common.Hash{}, err
+	}
+	slot.SetBytes(ret)
+	return slot, nil
+}
+
+// reader implements the StateReader interface, offering methods to access
+// accounts and storage slots.
+type reader struct {
+	snap *snapReader // fast reader, might not available
+	trie *trieReader // slow reader, always available
+}
+
+// newReader constructs a reader of the specific state.
+func newReader(root common.Hash, db *trie.Database, snaps *snapshot.Tree) (*reader, error) {
+	trie, err := newTrieReader(root, db) // mandatory trie reader
+	if err != nil {
+		return nil, err
+	}
+	var snap *snapReader
+	if snaps != nil {
+		snap = newSnapReader(snaps, root) // optional snapshot reader
+	}
+	return &reader{
+		snap: snap,
+		trie: trie,
+	}, nil
+}
+
+// Account implements StateReader, retrieving the account specified by the address
+// from the associated state.
+func (r *reader) Account(addr common.Address) (*types.StateAccount, error) {
+	if r.snap != nil {
+		acct, err := r.snap.Account(addr)
+		if err == nil {
+			return acct, nil
+		}
+	}
+	acct, err := r.trie.Account(addr)
+	if err != nil {
+		return nil, err
+	}
+	return acct, nil
+}
+
+// Storage implements StateReader, retrieving the storage slot specified by the
+// address and slot key from the associated state.
+func (r *reader) Storage(addr common.Address, root common.Hash, key common.Hash) (common.Hash, error) {
+	if r.snap != nil {
+		slot, err := r.snap.Storage(addr, root, key)
+		if err == nil {
+			return slot, nil
+		}
+	}
+	slot, err := r.trie.Storage(addr, root, key)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return slot, nil
+}
+
+// NewDatabase creates a state database with the provided data sources.
+func NewDatabase(codedb *CodeDB, triedb *trie.Database, snaps *snapshot.Tree) Database {
+	return &cachingDB{
+		codedb: codedb,
+		triedb: triedb,
+		snaps:  snaps,
+	}
+}
+
+// NewDatabaseForTesting is similar to NewDatabase, but it sets up the different
+// data sources using the same provided database with default config, specifically
+// intended for testing.
 func NewDatabaseForTesting(db ethdb.Database) Database {
-	return NewDatabase(NewCodeDB(db), trie.NewDatabase(db, nil))
+	return NewDatabase(NewCodeDB(db), trie.NewDatabase(db, nil), nil)
 }
 
 // cachingDB is the implementation of Database interface, designed for providing
@@ -171,6 +252,12 @@ func NewDatabaseForTesting(db ethdb.Database) Database {
 type cachingDB struct {
 	codedb *CodeDB
 	triedb *trie.Database
+	snaps  *snapshot.Tree
+}
+
+// StateReader constructs a reader for the specific state.
+func (db *cachingDB) StateReader(stateRoot common.Hash) (StateReader, error) {
+	return newReader(stateRoot, db.triedb, nil)
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
@@ -222,4 +309,49 @@ func (db *cachingDB) WriteCodes(addresses []common.Address, hashes []common.Hash
 // TrieDB retrieves any intermediate trie-node caching layer.
 func (db *cachingDB) TrieDB() *trie.Database {
 	return db.triedb
+}
+
+// Snapshot returns the associated state snapshot, it may be nil if not configured.
+func (db *cachingDB) Snapshot() *snapshot.Tree {
+	return db.snaps
+}
+
+// Commit accepts the state changes made by execution and applies it to database.
+func (db *cachingDB) Commit(originRoot, root common.Hash, block uint64, trans *Transition) error {
+	// Short circuit if the state is not changed at all.
+	if originRoot == root {
+		return nil
+	}
+	// Flush the cached dirty contract codes.
+	var (
+		blobs     [][]byte
+		hashes    []common.Hash
+		addresses []common.Address
+	)
+	for _, item := range trans.Codes {
+		blobs = append(blobs, item.Blob)
+		hashes = append(hashes, item.Hash)
+		addresses = append(addresses, item.Address)
+	}
+	if err := db.codedb.WriteCodes(addresses, hashes, blobs); err != nil {
+		return err
+	}
+	// If snapshotting is enabled, update the snapshot tree with this new version
+	if db.snaps != nil && db.snaps.Snapshot(originRoot) != nil {
+		if err := db.snaps.Update(root, originRoot, trans.Destructs, trans.Accounts, trans.Storages); err != nil {
+			log.Warn("Failed to update snapshot tree", "from", originRoot, "to", root, "err", err)
+			return err
+		}
+		// Keep 128 diff layers in the memory, persistent layer is 129th.
+		// - head layer is paired with HEAD state
+		// - head-1 layer is paired with HEAD-1 state
+		// - head-127 layer(bottom-most diff layer) is paired with HEAD-127 state
+		if err := db.snaps.Cap(root, 128); err != nil {
+			log.Warn("Failed to cap snapshot tree", "root", root, "layers", 128, "err", err)
+			return err
+		}
+	}
+	// Update the trie database with new version
+	set := triestate.New(trans.AccountsOrigin, trans.StoragesOrigin, trans.StorageIncomplete)
+	return db.triedb.Update(root, originRoot, block, trans.Nodes, set)
 }

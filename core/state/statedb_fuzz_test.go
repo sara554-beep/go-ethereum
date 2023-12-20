@@ -37,7 +37,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // A stateTest checks that the state changes are correctly captured. Instances
@@ -178,13 +177,24 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *triestate.Set) {
-			accountList = append(accountList, copySet(states.Accounts))
-			storageList = append(storageList, copy2DSet(states.Storages))
+		onCommit    = func(trans *Transition) {
+			accounts := make(map[common.Address][]byte, len(trans.AccountsOrigin))
+			for key, val := range trans.AccountsOrigin {
+				accounts[key] = common.CopyBytes(val)
+			}
+			accountList = append(accountList, accounts)
+
+			storages := make(map[common.Address]map[common.Hash][]byte, len(trans.StoragesOrigin))
+			for addr, subset := range trans.StoragesOrigin {
+				storages[addr] = make(map[common.Hash][]byte, len(subset))
+				for key, val := range subset {
+					storages[addr][key] = common.CopyBytes(val)
+				}
+			}
+			storageList = append(storageList, storages)
 		}
 		disk      = rawdb.NewMemoryDatabase()
 		tdb       = trie.NewDatabase(disk, &trie.Config{PathDB: pathdb.Defaults})
-		sdb       = NewDatabase(NewCodeDB(disk), tdb)
 		byzantium = rand.Intn(2) == 0
 	)
 	defer disk.Close()
@@ -199,12 +209,14 @@ func (test *stateTest) run() bool {
 			AsyncBuild: false,
 		}, disk, tdb, types.EmptyRootHash)
 	}
+	sdb := NewDatabase(NewCodeDB(disk), tdb, snaps)
+
 	for i, actions := range test.actions {
 		root := types.EmptyRootHash
 		if i != 0 {
 			root = roots[len(roots)-1]
 		}
-		state, err := New(root, sdb, snaps)
+		state, err := New(root, sdb)
 		if err != nil {
 			panic(err)
 		}
@@ -391,25 +403,4 @@ func TestStateChanges(t *testing.T) {
 	} else if err != nil {
 		t.Error(err)
 	}
-}
-
-// copySet returns a deep-copied set.
-func copySet[k comparable](set map[k][]byte) map[k][]byte {
-	copied := make(map[k][]byte, len(set))
-	for key, val := range set {
-		copied[key] = common.CopyBytes(val)
-	}
-	return copied
-}
-
-// copy2DSet returns a two-dimensional deep-copied set.
-func copy2DSet[k comparable](set map[k]map[common.Hash][]byte) map[k]map[common.Hash][]byte {
-	copied := make(map[k]map[common.Hash][]byte, len(set))
-	for addr, subset := range set {
-		copied[addr] = make(map[common.Hash][]byte, len(subset))
-		for key, val := range subset {
-			copied[addr][key] = common.CopyBytes(val)
-		}
-	}
-	return copied
 }

@@ -171,43 +171,11 @@ func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	if _, destructed := s.db.stateObjectsDestruct[s.address]; destructed {
 		return common.Hash{}
 	}
-	// If no live objects are available, attempt to use snapshots
-	var (
-		enc   []byte
-		err   error
-		value common.Hash
-	)
-	if s.db.snap != nil {
-		start := time.Now()
-		enc, err = s.db.snap.Storage(s.addrHash, crypto.Keccak256Hash(key.Bytes()))
-		if metrics.EnabledExpensive {
-			s.db.SnapshotStorageReads += time.Since(start)
-		}
-		if len(enc) > 0 {
-			_, content, _, err := rlp.Split(enc)
-			if err != nil {
-				s.db.setError(err)
-			}
-			value.SetBytes(content)
-		}
-	}
-	// If the snapshot is unavailable or reading from it fails, load from the database.
-	if s.db.snap == nil || err != nil {
-		start := time.Now()
-		tr, err := s.getTrie()
-		if err != nil {
-			s.db.setError(err)
-			return common.Hash{}
-		}
-		val, err := tr.GetStorage(s.address, key.Bytes())
-		if metrics.EnabledExpensive {
-			s.db.StorageReads += time.Since(start)
-		}
-		if err != nil {
-			s.db.setError(err)
-			return common.Hash{}
-		}
-		value.SetBytes(val)
+	// If no live objects are available, attempt to read from database.
+	value, err := s.db.reader.Storage(s.address, s.data.Root, key)
+	if err != nil {
+		s.db.setError(err)
+		return common.Hash{}
 	}
 	s.originStorage[key] = value
 	return value
@@ -310,7 +278,7 @@ func (s *stateObject) updateTrie() (Trie, error) {
 // new storage trie root.
 func (s *stateObject) updateRoot() {
 	// Flush cached storage mutations into trie, short circuit if any error
-	// is occurred or there is not change in the trie.
+	// is occurred or there is no change in the trie.
 	tr, err := s.updateTrie()
 	if err != nil || tr == nil {
 		return
@@ -323,46 +291,46 @@ func (s *stateObject) updateRoot() {
 }
 
 // commitAccount stores the account's original and current value to result.
-func (s *stateObject) commitAccount(result *commitResult) {
+func (s *stateObject) commitAccount(trans *Transition) {
 	// Store the account value after mutation
-	result.accounts[s.addrHash] = types.SlimAccountRLP(s.data)
+	trans.Accounts[s.addrHash] = types.SlimAccountRLP(s.data)
 
 	// Store the account's original value only if the value has not been recorded
-	// yet. Otherwise, the account must be destructed in the same block, and the
-	// original value is stored in previous steps.
-	if _, ok := result.accountsOrigin[s.address]; ok {
+	// yet. Otherwise, the account must be destructed in the same block.
+	if _, ok := trans.AccountsOrigin[s.address]; ok {
 		return
 	}
 	if s.origin == nil {
-		result.accountsOrigin[s.address] = nil
+		trans.AccountsOrigin[s.address] = nil
 	} else {
-		result.accountsOrigin[s.address] = types.SlimAccountRLP(*s.origin)
+		trans.AccountsOrigin[s.address] = types.SlimAccountRLP(*s.origin)
 	}
 }
 
 // commitStorage stores the account's original and current value of mutated
 // storage to result.
-func (s *stateObject) commitStorage(result *commitResult) {
+func (s *stateObject) commitStorage(trans *Transition) {
 	// Allocate the storage maps if they are not created yet.
-	if result.storages[s.addrHash] == nil {
-		result.storages[s.addrHash] = make(map[common.Hash][]byte)
+	if trans.Storages[s.addrHash] == nil {
+		trans.Storages[s.addrHash] = make(map[common.Hash][]byte)
 	}
-	storage := result.storages[s.addrHash]
-	if result.storagesOrigin[s.address] == nil {
-		result.storagesOrigin[s.address] = make(map[common.Hash][]byte)
+	storage := trans.Storages[s.addrHash]
+	if trans.StoragesOrigin[s.address] == nil {
+		trans.StoragesOrigin[s.address] = make(map[common.Hash][]byte)
 	}
-	storageOrigin := result.storagesOrigin[s.address]
+	storageOrigin := trans.StoragesOrigin[s.address]
 
 	for key, val := range s.pendingStorage {
-		// Store the current value to result set
 		khash := crypto.HashData(s.db.hasher, key[:])
+
+		// Store the current value to result set
 		encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(val[:]))
 		storage[khash] = encoded
 
 		// Store the original value in the result set only if the value has
 		// not been recorded yet. Otherwise, the account must be destructed
 		// in the same block, and storage slots belonging to the old account
-		// were already deleted and tracked in the result set.
+		// were already deleted and tracked in the set.
 		if _, ok := storageOrigin[khash]; !ok {
 			old := s.originStorage[key]
 			if old == (common.Hash{}) {
@@ -381,9 +349,9 @@ func (s *stateObject) commitStorage(result *commitResult) {
 // commit obtains a set of dirty storage trie nodes and updates the account data.
 // The returned set can be nil if nothing to commit. This function assumes all
 // storage mutations have already been flushed into trie by updateRoot.
-func (s *stateObject) commit(result *commitResult) error {
+func (s *stateObject) commit(trans *Transition) error {
 	// Aggregate the account value changes into result set.
-	s.commitAccount(result)
+	s.commitAccount(trans)
 
 	// Short circuit if trie is not even loaded, don't bother with committing storage.
 	if s.trie == nil {
@@ -405,19 +373,19 @@ func (s *stateObject) commit(result *commitResult) error {
 		return fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
 	}
 	// Aggregate the storage changes into result set
-	s.commitStorage(result)
+	s.commitStorage(trans)
 
 	// Update original account data after commit
 	s.origin = s.data.Copy()
 
 	// Aggregate the dirty trie node into the global set
 	if nodes != nil {
-		if err := result.nodes.Merge(nodes); err != nil {
+		if err := trans.Nodes.Merge(nodes); err != nil {
 			return err
 		}
-		updates, deleted := nodes.Size()
-		result.storageTrieNodesUpdated += updates
-		result.storageTrieNodesDeleted += deleted
+		//updates, deleted := nodes.Size()
+		//result.storageTrieNodesUpdated += updates
+		//result.storageTrieNodesDeleted += deleted
 	}
 	return nil
 }
