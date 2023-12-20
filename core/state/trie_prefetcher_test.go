@@ -27,7 +27,7 @@ import (
 )
 
 func filledStateDB() *StateDB {
-	state, _ := New(types.EmptyRootHash, NewDatabaseForTesting(rawdb.NewMemoryDatabase()), nil)
+	state, _ := New(types.EmptyRootHash, NewDatabaseForTesting(rawdb.NewMemoryDatabase()))
 
 	// Create an account and check if the retrieved balance is correct
 	addr := common.HexToAddress("0xaffeaffeaffeaffeaffeaffeaffeaffeaffeaffe")
@@ -45,9 +45,11 @@ func filledStateDB() *StateDB {
 }
 
 func TestCopyAndClose(t *testing.T) {
-	db := filledStateDB()
-	prefetcher := newTriePrefetcher(db.db, db.originalRoot, "")
-	skey := common.HexToHash("aaa")
+	var (
+		db         = filledStateDB()
+		skey       = common.HexToHash("aaa")
+		prefetcher = newTriePrefetcher(db.db, db.originalRoot, "")
+	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	time.Sleep(1 * time.Second)
@@ -70,9 +72,11 @@ func TestCopyAndClose(t *testing.T) {
 }
 
 func TestUseAfterClose(t *testing.T) {
-	db := filledStateDB()
-	prefetcher := newTriePrefetcher(db.db, db.originalRoot, "")
-	skey := common.HexToHash("aaa")
+	var (
+		db         = filledStateDB()
+		skey       = common.HexToHash("aaa")
+		prefetcher = newTriePrefetcher(db.db, db.originalRoot, "")
+	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	a := prefetcher.trie(common.Hash{}, db.originalRoot)
 	prefetcher.close()
@@ -86,9 +90,11 @@ func TestUseAfterClose(t *testing.T) {
 }
 
 func TestCopyClose(t *testing.T) {
-	db := filledStateDB()
-	prefetcher := newTriePrefetcher(db.db, db.originalRoot, "")
-	skey := common.HexToHash("aaa")
+	var (
+		db         = filledStateDB()
+		skey       = common.HexToHash("aaa")
+		prefetcher = newTriePrefetcher(db, db.originalRoot, "")
+	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	cpy := prefetcher.copy()
 	a := prefetcher.trie(common.Hash{}, db.originalRoot)

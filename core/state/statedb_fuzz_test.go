@@ -37,7 +37,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // A stateTest checks that the state changes are correctly captured. Instances
@@ -178,13 +177,24 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *triestate.Set) {
-			accountList = append(accountList, copySet(states.Accounts))
-			storageList = append(storageList, copy2DSet(states.Storages))
+		copyUpdate  = func(update *Update) {
+			accounts := make(map[common.Address][]byte, len(update.AccountsOrigin))
+			for key, val := range update.AccountsOrigin {
+				accounts[key] = common.CopyBytes(val)
+			}
+			accountList = append(accountList, accounts)
+
+			storages := make(map[common.Address]map[common.Hash][]byte, len(update.StoragesOrigin))
+			for addr, subset := range update.StoragesOrigin {
+				storages[addr] = make(map[common.Hash][]byte, len(subset))
+				for key, val := range subset {
+					storages[addr][key] = common.CopyBytes(val)
+				}
+			}
+			storageList = append(storageList, storages)
 		}
 		disk      = rawdb.NewMemoryDatabase()
 		tdb       = trie.NewDatabase(disk, &trie.Config{PathDB: pathdb.Defaults})
-		sdb       = NewDatabase(NewCodeDB(disk), tdb)
 		byzantium = rand.Intn(2) == 0
 	)
 	defer disk.Close()
@@ -199,17 +209,17 @@ func (test *stateTest) run() bool {
 			AsyncBuild: false,
 		}, disk, tdb, types.EmptyRootHash)
 	}
+	sdb := NewDatabase(NewCodeDB(disk), tdb, snaps)
+
 	for i, actions := range test.actions {
 		root := types.EmptyRootHash
 		if i != 0 {
 			root = roots[len(roots)-1]
 		}
-		state, err := New(root, sdb, snaps)
+		state, err := New(root, sdb)
 		if err != nil {
 			panic(err)
 		}
-		state.onCommit = onCommit
-
 		for i, action := range actions {
 			if i%test.chunk == 0 && i != 0 {
 				if byzantium {
@@ -225,13 +235,14 @@ func (test *stateTest) run() bool {
 		} else {
 			state.IntermediateRoot(true) // call intermediateRoot at the transaction boundary
 		}
-		nroot, err := state.Commit(0, true) // call commit at the block boundary
+		nroot, update, err := state.commit(0, true) // call commit at the block boundary
 		if err != nil {
 			panic(err)
 		}
 		if nroot == root {
 			return true // filter out non-change state transition
 		}
+		copyUpdate(update)
 		roots = append(roots, nroot)
 	}
 	for i := 0; i < len(test.actions); i++ {
@@ -391,25 +402,4 @@ func TestStateChanges(t *testing.T) {
 	} else if err != nil {
 		t.Error(err)
 	}
-}
-
-// copySet returns a deep-copied set.
-func copySet[k comparable](set map[k][]byte) map[k][]byte {
-	copied := make(map[k][]byte, len(set))
-	for key, val := range set {
-		copied[key] = common.CopyBytes(val)
-	}
-	return copied
-}
-
-// copy2DSet returns a two-dimensional deep-copied set.
-func copy2DSet[k comparable](set map[k]map[common.Hash][]byte) map[k]map[common.Hash][]byte {
-	copied := make(map[k]map[common.Hash][]byte, len(set))
-	for addr, subset := range set {
-		copied[addr] = make(map[common.Hash][]byte, len(subset))
-		for key, val := range subset {
-			copied[addr][key] = common.CopyBytes(val)
-		}
-	}
-	return copied
 }

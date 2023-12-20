@@ -43,6 +43,7 @@ type DumpConfig struct {
 type DumpCollector interface {
 	// OnRoot is called with the state root
 	OnRoot(common.Hash)
+
 	// OnAccount is called once for each account in the trie
 	OnAccount(*common.Address, DumpAccount)
 }
@@ -124,10 +125,14 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		start            = time.Now()
 		logged           = time.Now()
 	)
-	log.Info("Trie dumping started", "root", s.trie.Hash())
-	c.OnRoot(s.trie.Hash())
+	tr, err := s.db.OpenTrie(s.originalRoot)
+	if err != nil {
+		return nil
+	}
+	log.Info("Trie dumping started", "root", tr.Hash())
+	c.OnRoot(tr.Hash())
 
-	trieIt, err := s.trie.NodeIterator(conf.Start)
+	trieIt, err := tr.NodeIterator(conf.Start)
 	if err != nil {
 		log.Error("Trie dumping error", "err", err)
 		return nil
@@ -148,7 +153,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 			}
 			address   *common.Address
 			addr      common.Address
-			addrBytes = s.trie.GetKey(it.Key)
+			addrBytes = tr.GetKey(it.Key)
 		)
 		if addrBytes == nil {
 			missingPreimages++
@@ -166,7 +171,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		}
 		if !conf.SkipStorage {
 			account.Storage = make(map[common.Hash]string)
-			tr, err := obj.getTrie()
+			tr, err := s.db.OpenStorageTrie(s.originalRoot, addr, data.Root)
 			if err != nil {
 				log.Error("Failed to load storage trie", "err", err)
 				continue
@@ -183,7 +188,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				account.Storage[common.BytesToHash(s.trie.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
+				account.Storage[common.BytesToHash(tr.GetKey(storageIt.Key))] = common.Bytes2Hex(content)
 			}
 		}
 		c.OnAccount(address, account)
