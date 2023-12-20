@@ -27,6 +27,8 @@ var (
 	storageTriesUpdatedMeter = metrics.NewRegisteredMeter("state/update/storagenodes", nil)
 	accountTrieDeletedMeter  = metrics.NewRegisteredMeter("state/delete/accountnodes", nil)
 	storageTriesDeletedMeter = metrics.NewRegisteredMeter("state/delete/storagenodes", nil)
+	contractCodeCountMeter   = metrics.NewRegisteredMeter("state/code/count", nil)
+	contractCodeSizeMeter    = metrics.NewRegisteredMeter("state/code/size", nil)
 
 	slotDeletionMaxCount = metrics.NewRegisteredGauge("state/delete/storage/max/slot", nil)
 	slotDeletionMaxSize  = metrics.NewRegisteredGauge("state/delete/storage/max/size", nil)

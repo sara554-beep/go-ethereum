@@ -18,6 +18,7 @@ package state
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -40,6 +41,15 @@ func (s Storage) Copy() Storage {
 	return cpy
 }
 
+// hasherType indicates the type of hasher for hashing storage.
+type hasherType int
+
+const (
+	typeUnknown hasherType = iota
+	typeMerkle
+	typeVerkle
+)
+
 // stateObject represents an Ethereum account which is being modified.
 //
 // The usage pattern is as follows:
@@ -53,10 +63,8 @@ type stateObject struct {
 	origin   *types.StateAccount // Account original data without any change applied, nil means it was not existent
 	data     types.StateAccount  // Account data with all mutations applied in the scope of block
 
-	// Write caches.
-	trie Trie   // storage trie, which becomes non-nil on first access
-	code []byte // contract bytecode, which gets set when code is loaded
-
+	trie           Trie                     // storage trie, which becomes non-nil on first access
+	code           []byte                   // contract bytecode, which gets set when code is loaded
 	originStorage  Storage                  // Storage entries that have been resolved in the current block
 	dirtyStorage   Storage                  // Storage entries that have been modified in the current transaction
 	pendingStorage Storage                  // Storage entries that have been modified in the current block
@@ -71,6 +79,8 @@ type stateObject struct {
 
 	// Flag whether the object was created in the current transaction
 	created bool
+
+	hasher hasherType // the type of hasher for hashing stoarge
 }
 
 // empty returns whether the account is considered empty.
@@ -83,9 +93,17 @@ func newObject(db *StateDB, address common.Address, acct *types.StateAccount) *s
 	var (
 		origin  = acct
 		created = acct == nil // true if the account was not existent
+		hasher  = typeUnknown
 	)
 	if acct == nil {
 		acct = types.NewEmptyStateAccount()
+	}
+	if db.db.TrieDB() != nil {
+		if db.db.TrieDB().IsVerkle() {
+			hasher = typeVerkle
+		} else {
+			hasher = typeMerkle
+		}
 	}
 	return &stateObject{
 		db:             db,
@@ -98,6 +116,7 @@ func newObject(db *StateDB, address common.Address, acct *types.StateAccount) *s
 		pendingStorage: make(Storage),
 		pendingStates:  make(map[common.Hash]struct{}),
 		created:        created,
+		hasher:         hasher,
 	}
 }
 
@@ -119,27 +138,6 @@ func (s *stateObject) touch() {
 		// flattened journals.
 		s.db.journal.dirty(s.address)
 	}
-}
-
-// getTrie returns the associated storage trie. The trie will be opened
-// if it's not loaded previously. An error will be returned if trie can't
-// be loaded.
-func (s *stateObject) getTrie() (Trie, error) {
-	if s.trie == nil {
-		// Try fetching from prefetcher first
-		if s.data.Root != types.EmptyRootHash && s.db.prefetcher != nil {
-			// When the miner is creating the pending state, there is no prefetcher
-			s.trie = s.db.prefetcher.trie(s.addrHash, s.data.Root)
-		}
-		if s.trie == nil {
-			tr, err := s.db.db.OpenStorageTrie(s.db.originalRoot, s.address, s.data.Root, s.db.trie)
-			if err != nil {
-				return nil, err
-			}
-			s.trie = tr
-		}
-	}
-	return s.trie, nil
 }
 
 // GetState retrieves a value from the account storage trie.
@@ -171,45 +169,13 @@ func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	if _, destructed := s.db.stateObjectsDestruct[s.address]; destructed {
 		return common.Hash{}
 	}
-	// If no live objects are available, attempt to use snapshots
-	var (
-		enc   []byte
-		err   error
-		value common.Hash
-	)
-	if s.db.snap != nil {
-		start := time.Now()
-		enc, err = s.db.snap.Storage(s.addrHash, crypto.Keccak256Hash(key.Bytes()))
-		if metrics.EnabledExpensive {
-			s.db.SnapshotStorageReads += time.Since(start)
-		}
-		if len(enc) > 0 {
-			_, content, _, err := rlp.Split(enc)
-			if err != nil {
-				s.db.setError(err)
-			}
-			value.SetBytes(content)
-		}
+	// If no live storage slot available, attempt to read from database.
+	value, err := s.db.reader.Storage(s.address, s.data.Root, key)
+	if err != nil {
+		s.db.setError(err)
+		return common.Hash{}
 	}
-	// If the snapshot is unavailable or reading from it fails, load from the database.
-	if s.db.snap == nil || err != nil {
-		start := time.Now()
-		tr, err := s.getTrie()
-		if err != nil {
-			s.db.setError(err)
-			return common.Hash{}
-		}
-		val, err := tr.GetStorage(s.address, key.Bytes())
-		if metrics.EnabledExpensive {
-			s.db.StorageReads += time.Since(start)
-		}
-		if err != nil {
-			s.db.setError(err)
-			return common.Hash{}
-		}
-		value.SetBytes(val)
-	}
-	s.originStorage[key] = value
+	s.originStorage[key] = value // cache the slot regardless it's empty or not
 	return value
 }
 
@@ -259,40 +225,32 @@ func (s *stateObject) finalise(prefetch bool) {
 // loading or updating of the trie, an error will be returned. Furthermore,
 // this function will return the mutated storage trie, or nil if there is no
 // storage change at all.
-func (s *stateObject) updateTrie() (Trie, error) {
+func (s *stateObject) updateTrie() error {
 	// Make sure all dirty slots are finalized into the pending storage area
 	s.finalise(false)
 
 	// Short circuit if nothing changed, don't bother with hashing anything
 	if len(s.pendingStates) == 0 {
-		return s.trie, nil
+		return nil
 	}
 	// Track the amount of time wasted on updating the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageUpdates += time.Since(start) }(time.Now())
-	}
-	// The snapshot storage map for the object
-	tr, err := s.getTrie()
-	if err != nil {
-		s.db.setError(err)
-		return nil, err
 	}
 	// Insert all the pending storage updates into the trie
 	usedStorage := make([][]byte, 0, len(s.pendingStates))
 	for key := range s.pendingStates {
 		value := s.pendingStorage[key]
 		if (value == common.Hash{}) {
-			if err := tr.DeleteStorage(s.address, key[:]); err != nil {
-				s.db.setError(err)
-				return nil, err
+			if err := s.trie.DeleteStorage(s.address, key[:]); err != nil {
+				return err
 			}
 			s.db.StorageDeleted += 1
 		} else {
 			// Encoding []byte cannot fail, ok to ignore the error.
 			trimmed := common.TrimLeftZeroes(value[:])
-			if err := tr.UpdateStorage(s.address, key[:], trimmed); err != nil {
-				s.db.setError(err)
-				return nil, err
+			if err := s.trie.UpdateStorage(s.address, key[:], trimmed); err != nil {
+				return err
 			}
 			s.db.StorageUpdated += 1
 		}
@@ -303,67 +261,123 @@ func (s *stateObject) updateTrie() (Trie, error) {
 		s.db.prefetcher.used(s.addrHash, s.data.Root, usedStorage)
 	}
 	s.pendingStates = make(map[common.Hash]struct{})
-	return tr, nil
+	return nil
+}
+
+// openStorageTrie loads the storage trie if it hasn't been loaded yet. Notably, the
+// trie used for hashing storage differs between the merkle and verkle worlds.
+// Specifically, a separate storage trie is used for hashing storage when a merkle
+// trie is used; otherwise, the global verkle trie is used for hashing storage.
+func (s *stateObject) openStorageTrie() error {
+	// The trie is already loaded, return it.
+	if s.trie != nil {
+		return nil
+	}
+	// Short circuit if the type of storage hasher is unknown.
+	if s.hasher == typeUnknown {
+		return errors.New("unknown state hasher")
+	}
+	// If the type of the used hasher is verkle tree, reuse the global one,
+	// which is assumed to be loaded already.
+	if s.hasher == typeVerkle {
+		s.trie = s.db.trie
+		return nil
+	}
+	// If the type of the used hasher is merkle tree, try to resolve it either
+	// from prefetcher if it's active, or from state database.
+	if s.db.prefetcher != nil {
+		s.trie = s.db.prefetcher.trie(s.addrHash, s.data.Root)
+	}
+	if s.trie == nil {
+		var err error
+		s.trie, err = s.db.db.OpenStorageTrie(s.db.originalRoot, s.address, s.data.Root)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // updateRoot flushes all cached storage mutations to trie, recalculating the
 // new storage trie root.
 func (s *stateObject) updateRoot() {
-	// Flush cached storage mutations into trie, short circuit if any error
-	// is occurred or there is not change in the trie.
-	tr, err := s.updateTrie()
-	if err != nil || tr == nil {
+	// Ensure the associated storage trie is available, bail out if failed to
+	// resolve it, e.g. the trie loading is not supported by state database.
+	if err := s.openStorageTrie(); err != nil {
+		s.db.setError(err)
+		return
+	}
+	// Short circuit if failed to flush the pending states.
+	if err := s.updateTrie(); err != nil {
+		s.db.setError(err)
+		return
+	}
+	// Short circuit if nothing is changed.
+	if len(s.pendingStorage) == 0 {
 		return
 	}
 	// Track the amount of time wasted on hashing the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageHashes += time.Since(start) }(time.Now())
 	}
-	s.data.Root = tr.Hash()
+	// Update the storage root only if merkle trie is used as hasher.
+	if s.hasher == typeMerkle {
+		s.data.Root = s.trie.Hash()
+	}
 }
 
 // commitAccount stores the account's original and current value to result.
-func (s *stateObject) commitAccount(result *commitResult) {
+func (s *stateObject) commitAccount(update *Update) {
 	// Store the account value after mutation
-	result.accounts[s.addrHash] = types.SlimAccountRLP(s.data)
+	update.Accounts[s.addrHash] = types.SlimAccountRLP(s.data)
 
 	// Store the account's original value only if the value has not been recorded
-	// yet. Otherwise, the account must be destructed in the same block, and the
-	// original value is stored in previous steps.
-	if _, ok := result.accountsOrigin[s.address]; ok {
+	// yet. Otherwise, the account must be destructed in the same block.
+	if _, ok := update.AccountsOrigin[s.address]; ok {
 		return
 	}
 	if s.origin == nil {
-		result.accountsOrigin[s.address] = nil
+		update.AccountsOrigin[s.address] = nil
 	} else {
-		result.accountsOrigin[s.address] = types.SlimAccountRLP(*s.origin)
+		update.AccountsOrigin[s.address] = types.SlimAccountRLP(*s.origin)
 	}
 }
 
 // commitStorage stores the account's original and current value of mutated
 // storage to result.
-func (s *stateObject) commitStorage(result *commitResult) {
-	// Allocate the storage maps if they are not created yet.
-	if result.storages[s.addrHash] == nil {
-		result.storages[s.addrHash] = make(map[common.Hash][]byte)
-	}
-	storage := result.storages[s.addrHash]
-	if result.storagesOrigin[s.address] == nil {
-		result.storagesOrigin[s.address] = make(map[common.Hash][]byte)
-	}
-	storageOrigin := result.storagesOrigin[s.address]
-
+func (s *stateObject) commitStorage(update *Update) {
+	var (
+		hasher        = crypto.NewKeccakState()
+		storage       map[common.Hash][]byte
+		storageOrigin map[common.Hash][]byte
+	)
 	for key, val := range s.pendingStorage {
+		if val == s.originStorage[key] {
+			continue
+		}
+		khash := crypto.HashData(hasher, key[:])
+
 		// Store the current value to result set
-		khash := crypto.HashData(s.db.hasher, key[:])
+		if storage == nil {
+			if update.Storages[s.addrHash] == nil {
+				update.Storages[s.addrHash] = make(map[common.Hash][]byte)
+			}
+			storage = update.Storages[s.addrHash]
+		}
 		encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(val[:]))
 		storage[khash] = encoded
 
 		// Store the original value in the result set only if the value has
 		// not been recorded yet. Otherwise, the account must be destructed
 		// in the same block, and storage slots belonging to the old account
-		// were already deleted and tracked in the result set.
-		if _, ok := storageOrigin[khash]; !ok {
+		// were already deleted and tracked in the set.
+		if storageOrigin == nil {
+			if update.StoragesOrigin[s.address] == nil {
+				update.StoragesOrigin[s.address] = make(map[common.Hash][]byte)
+			}
+			storageOrigin = update.StoragesOrigin[s.address]
+		}
+		if _, found := storageOrigin[khash]; !found {
 			old := s.originStorage[key]
 			if old == (common.Hash{}) {
 				storageOrigin[khash] = nil // nil if it was not present previously
@@ -381,12 +395,12 @@ func (s *stateObject) commitStorage(result *commitResult) {
 // commit obtains a set of dirty storage trie nodes and updates the account data.
 // The returned set can be nil if nothing to commit. This function assumes all
 // storage mutations have already been flushed into trie by updateRoot.
-func (s *stateObject) commit(result *commitResult) error {
-	// Aggregate the account value changes into result set.
-	s.commitAccount(result)
+func (s *stateObject) commit(update *Update) error {
+	// Aggregate the account changes into result set.
+	s.commitAccount(update)
 
-	// Short circuit if trie is not even loaded, don't bother with committing storage.
-	if s.trie == nil {
+	// Short circuit if storage is not changed at all.
+	if len(s.pendingStorage) == 0 {
 		s.origin = s.data.Copy()
 		return nil
 	}
@@ -394,31 +408,28 @@ func (s *stateObject) commit(result *commitResult) error {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 	}
-	// The trie is currently in an open state and could potentially contain
-	// cached mutations. Call commit to acquire a set of nodes that have been
-	// modified, the set can be nil if nothing to commit.
-	root, nodes, err := s.trie.Commit(false)
-	if err != nil {
-		return err
-	}
-	if s.data.Root != root {
-		return fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
-	}
 	// Aggregate the storage changes into result set
-	s.commitStorage(result)
+	s.commitStorage(update)
 
-	// Update original account data after commit
-	s.origin = s.data.Copy()
-
-	// Aggregate the dirty trie node into the global set
-	if nodes != nil {
-		if err := result.nodes.Merge(nodes); err != nil {
+	// If the used hasher is merkle tree, commit the storage changes as the
+	// storage trie is separated from the main one.
+	if s.hasher == typeMerkle {
+		// The trie is currently in an open state and could potentially contain
+		// cached mutations. Call commit to acquire a set of nodes that have been
+		// modified, the set can be nil if nothing to commit.
+		root, nodes, err := s.trie.Commit(false)
+		if err != nil {
 			return err
 		}
-		updates, deleted := nodes.Size()
-		result.storageTrieNodesUpdated += updates
-		result.storageTrieNodesDeleted += deleted
+		if s.data.Root != root {
+			return fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
+		}
+		// Aggregate the dirty trie node into the global set
+		if err := update.AddNodes(nodes); err != nil {
+			return err
+		}
 	}
+	s.origin = s.data.Copy() // Update original account data after commit
 	return nil
 }
 
@@ -466,11 +477,11 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 		data:     s.data,
 	}
 	if s.trie != nil {
-		obj.trie = db.db.CopyTrie(s.trie)
+		obj.trie = mustCopyTrie(s.trie)
 	}
 	obj.code = s.code
-	obj.dirtyStorage = s.dirtyStorage.Copy()
 	obj.originStorage = s.originStorage.Copy()
+	obj.dirtyStorage = s.dirtyStorage.Copy()
 	obj.pendingStorage = s.pendingStorage.Copy()
 	obj.pendingStates = make(map[common.Hash]struct{})
 	for key := range s.pendingStates {
@@ -478,6 +489,8 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 	}
 	obj.selfDestructed = s.selfDestructed
 	obj.dirtyCode = s.dirtyCode
+	obj.created = s.created
+	obj.hasher = s.hasher
 	return obj
 }
 

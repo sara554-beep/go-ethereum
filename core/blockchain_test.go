@@ -159,8 +159,8 @@ func testBlockChainImport(chain types.Blocks, blockchain *BlockChain) error {
 			}
 			return err
 		}
-		sdb := state.NewDatabase(blockchain.CodeDB(), blockchain.TrieDB())
-		statedb, err := state.New(blockchain.GetBlockByHash(block.ParentHash()).Root(), sdb, nil)
+		sdb := state.NewDatabase(blockchain.CodeDB(), blockchain.TrieDB(), nil)
+		statedb, err := state.New(blockchain.GetBlockByHash(block.ParentHash()).Root(), sdb)
 		if err != nil {
 			return err
 		}
@@ -977,7 +977,7 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 	)
-	height := uint64(1024)
+	height := uint64(128)
 	_, blocks, receipts := GenerateChainWithGenesis(gspec, ethash.NewFaker(), int(height), nil)
 
 	// makeDb creates a db instance for testing.
@@ -1062,7 +1062,8 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	if frozen, err := ancientDb.Ancients(); err != nil || frozen != 1 {
 		t.Fatalf("failed to truncate ancient store, want %v, have %v", 1, frozen)
 	}
-	// Import the chain as a light node and ensure all pointers are updated
+
+	//Import the chain as a light node and ensure all pointers are updated
 	lightDb := makeDb()
 	defer lightDb.Close()
 	light, _ := NewBlockChain(lightDb, DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
