@@ -38,22 +38,8 @@ type CodeReader interface {
 // CodeWriter wraps the WriteCodes method of a backing contract code store,
 // providing an interface for writing contract codes back to database.
 type CodeWriter interface {
-	// WriteCodes persists the provided a batch of contract codes.
+	// WriteCodes persists the provided contract codes.
 	WriteCodes(addresses []common.Address, codeHashes []common.Hash, codes [][]byte) error
-}
-
-// StateReader defines the interface for accessing accounts or storage slots
-// associated with a specific state.
-type StateReader interface {
-	// Account retrieves the account associated with a particular address.
-	// Null account is returned if the requested account is not existent.
-	// Error is only returned if any unexpected error occurs.
-	Account(addr common.Address) (*types.StateAccount, error)
-
-	// Storage retrieves the storage slot associated with a particular account
-	// address and slot key. Null slot is returned if the requested slot is
-	// not existent. Error is only returned if any unexpected error occurs.
-	Storage(addr common.Address, storageRoot common.Hash, slot common.Hash) (common.Hash, error)
 }
 
 // CodeStore defines the essential methods for reading and writing contract codes,
@@ -63,22 +49,71 @@ type CodeStore interface {
 	CodeWriter
 }
 
+// Reader defines the interface for accessing accounts or storage slots
+// associated with a specific state.
+type Reader interface {
+	// Account retrieves the account associated with a particular address.
+	// Null account is returned if the requested one is not existent. Error
+	// is only returned if any unexpected error occurs.
+	Account(addr common.Address) (*types.StateAccount, error)
+
+	// Storage retrieves the storage slot associated with a particular account
+	// address and slot key. Null slot is returned if the requested one is
+	// not existent. Error is only returned if any unexpected error occurs.
+	Storage(addr common.Address, storageRoot common.Hash, slot common.Hash) (common.Hash, error)
+}
+
+// Hasher defines the interface for hashing state with associated state
+// changes caused by state execution.
+type Hasher interface {
+	// UpdateAccount abstracts an account write to the trie. It encodes the
+	// provided account object with associated algorithm and then updates it
+	// in the trie with provided address.
+	UpdateAccount(address common.Address, account *types.StateAccount) error
+
+	// UpdateStorage associates key with value in the trie. If value has length zero,
+	// any existing value is deleted from the trie. The value bytes must not be modified
+	// by the caller while they are stored in the trie. If a node was not found in the
+	// database, a trie.MissingNodeError is returned.
+	UpdateStorage(address common.Address, root common.Hash, key, value []byte) error
+
+	// DeleteAccount abstracts an account deletion from the trie.
+	DeleteAccount(address common.Address) error
+
+	// DeleteStorage removes any existing value for key from the trie. If a node
+	// was not found in the database, a trie.MissingNodeError is returned.
+	DeleteStorage(address common.Address, root common.Hash, key []byte) error
+
+	// UpdateContractCode abstracts code write to the trie. It is expected
+	// to be moved to the stateWriter interface when the latter is ready.
+	UpdateContractCode(address common.Address, codeHash common.Hash, code []byte) error
+
+	// Hash returns the root hash of the trie. It does not write to the database and
+	// can be used even if the trie doesn't have one.
+	Hash(address *common.Address, origin common.Hash) (common.Hash, error)
+
+	// Commit collects all dirty nodes in the trie and replace them with the
+	// corresponding node hash. All collected nodes(including dirty leaves if
+	// collectLeaf is true) will be encapsulated into a nodeset for return.
+	// The returned nodeset can be nil if the trie is clean(nothing to commit).
+	// Once the trie is committed, it's not usable anymore. A new trie must
+	// be created with new root and updated trie database for following usage
+	Commit(address *common.Address, root common.Hash, collectLeaf bool) (*trienode.NodeSet, error)
+
+	// Copy returns a deep-copied state hasher.
+	Copy() Hasher
+}
+
 // Database defines the essential methods for reading and writing ethereum states,
 // providing a comprehensive interface for ethereum state management.
 type Database interface {
 	CodeStore
 
-	// StateReader returns a state reader interface with the specified state root.
-	StateReader(stateRoot common.Hash) (StateReader, error)
+	// Reader returns a state reader interface with the specified state root.
+	Reader(stateRoot common.Hash) (Reader, error)
 
-	// OpenTrie opens the main account trie.
-	OpenTrie(root common.Hash) (Trie, error)
-
-	// OpenStorageTrie opens the storage trie of an account.
-	OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash, trie Trie) (Trie, error)
-
-	// CopyTrie returns an independent copy of the given trie.
-	CopyTrie(Trie) Trie
+	// Hasher returns a state hasher interface with the specified state root.
+	Hasher(stateRoot common.Hash) (Hasher, error)
 
 	// TrieDB returns the underlying trie database for managing trie nodes.
 	TrieDB() *trie.Database
@@ -112,39 +147,9 @@ type Trie interface {
 	// a trie.MissingNodeError is returned.
 	GetStorage(addr common.Address, key []byte) ([]byte, error)
 
-	// UpdateAccount abstracts an account write to the trie. It encodes the
-	// provided account object with associated algorithm and then updates it
-	// in the trie with provided address.
-	UpdateAccount(address common.Address, account *types.StateAccount) error
-
-	// UpdateStorage associates key with value in the trie. If value has length zero,
-	// any existing value is deleted from the trie. The value bytes must not be modified
-	// by the caller while they are stored in the trie. If a node was not found in the
-	// database, a trie.MissingNodeError is returned.
-	UpdateStorage(addr common.Address, key, value []byte) error
-
-	// DeleteAccount abstracts an account deletion from the trie.
-	DeleteAccount(address common.Address) error
-
-	// DeleteStorage removes any existing value for key from the trie. If a node
-	// was not found in the database, a trie.MissingNodeError is returned.
-	DeleteStorage(addr common.Address, key []byte) error
-
-	// UpdateContractCode abstracts code write to the trie. It is expected
-	// to be moved to the stateWriter interface when the latter is ready.
-	UpdateContractCode(address common.Address, codeHash common.Hash, code []byte) error
-
 	// Hash returns the root hash of the trie. It does not write to the database and
 	// can be used even if the trie doesn't have one.
 	Hash() common.Hash
-
-	// Commit collects all dirty nodes in the trie and replace them with the
-	// corresponding node hash. All collected nodes(including dirty leaves if
-	// collectLeaf is true) will be encapsulated into a nodeset for return.
-	// The returned nodeset can be nil if the trie is clean(nothing to commit).
-	// Once the trie is committed, it's not usable anymore. A new trie must
-	// be created with new root and updated trie database for following usage
-	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error)
 
 	// NodeIterator returns an iterator that returns nodes of the trie. Iteration
 	// starts at the key after the given start key. And error will be returned

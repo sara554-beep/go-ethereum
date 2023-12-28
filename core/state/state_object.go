@@ -53,10 +53,7 @@ type stateObject struct {
 	origin   *types.StateAccount // Account original data without any change applied, nil means it was not existent
 	data     types.StateAccount  // Account data with all mutations applied in the scope of block
 
-	// Write caches.
-	trie Trie   // storage trie, which becomes non-nil on first access
-	code []byte // contract bytecode, which gets set when code is loaded
-
+	code           []byte                   // contract bytecode, which is set when code is loaded
 	originStorage  Storage                  // Storage entries that have been resolved in the current block
 	dirtyStorage   Storage                  // Storage entries that have been modified in the current transaction
 	pendingStorage Storage                  // Storage entries that have been modified in the current block
@@ -121,27 +118,6 @@ func (s *stateObject) touch() {
 	}
 }
 
-// getTrie returns the associated storage trie. The trie will be opened
-// if it's not loaded previously. An error will be returned if trie can't
-// be loaded.
-func (s *stateObject) getTrie() (Trie, error) {
-	if s.trie == nil {
-		// Try fetching from prefetcher first
-		if s.data.Root != types.EmptyRootHash && s.db.prefetcher != nil {
-			// When the miner is creating the pending state, there is no prefetcher
-			s.trie = s.db.prefetcher.trie(s.addrHash, s.data.Root)
-		}
-		if s.trie == nil {
-			tr, err := s.db.db.OpenStorageTrie(s.db.originalRoot, s.address, s.data.Root, s.db.trie)
-			if err != nil {
-				return nil, err
-			}
-			s.trie = tr
-		}
-	}
-	return s.trie, nil
-}
-
 // GetState retrieves a value from the account storage trie.
 func (s *stateObject) GetState(key common.Hash) common.Hash {
 	// If we have a dirty value for this state entry, return it
@@ -177,6 +153,7 @@ func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 		s.db.setError(err)
 		return common.Hash{}
 	}
+	// Cache the returned slot regardless it's existent or not.
 	s.originStorage[key] = value
 	return value
 }
@@ -227,40 +204,32 @@ func (s *stateObject) finalise(prefetch bool) {
 // loading or updating of the trie, an error will be returned. Furthermore,
 // this function will return the mutated storage trie, or nil if there is no
 // storage change at all.
-func (s *stateObject) updateTrie() (Trie, error) {
+func (s *stateObject) updateTrie() error {
 	// Make sure all dirty slots are finalized into the pending storage area
 	s.finalise(false)
 
 	// Short circuit if nothing changed, don't bother with hashing anything
 	if len(s.pendingStates) == 0 {
-		return s.trie, nil
+		return nil
 	}
 	// Track the amount of time wasted on updating the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageUpdates += time.Since(start) }(time.Now())
-	}
-	// The snapshot storage map for the object
-	tr, err := s.getTrie()
-	if err != nil {
-		s.db.setError(err)
-		return nil, err
 	}
 	// Insert all the pending storage updates into the trie
 	usedStorage := make([][]byte, 0, len(s.pendingStates))
 	for key := range s.pendingStates {
 		value := s.pendingStorage[key]
 		if (value == common.Hash{}) {
-			if err := tr.DeleteStorage(s.address, key[:]); err != nil {
-				s.db.setError(err)
-				return nil, err
+			if err := s.db.hasher.DeleteStorage(s.address, s.data.Root, key[:]); err != nil {
+				return err
 			}
 			s.db.StorageDeleted += 1
 		} else {
 			// Encoding []byte cannot fail, ok to ignore the error.
 			trimmed := common.TrimLeftZeroes(value[:])
-			if err := tr.UpdateStorage(s.address, key[:], trimmed); err != nil {
-				s.db.setError(err)
-				return nil, err
+			if err := s.db.hasher.UpdateStorage(s.address, s.data.Root, key[:], trimmed); err != nil {
+				return err
 			}
 			s.db.StorageUpdated += 1
 		}
@@ -271,23 +240,31 @@ func (s *stateObject) updateTrie() (Trie, error) {
 		s.db.prefetcher.used(s.addrHash, s.data.Root, usedStorage)
 	}
 	s.pendingStates = make(map[common.Hash]struct{})
-	return tr, nil
+	return nil
 }
 
 // updateRoot flushes all cached storage mutations to trie, recalculating the
 // new storage trie root.
 func (s *stateObject) updateRoot() {
-	// Flush cached storage mutations into trie, short circuit if any error
-	// is occurred or there is no change in the trie.
-	tr, err := s.updateTrie()
-	if err != nil || tr == nil {
+	// Short circuit if failed to flush the pending states.
+	if err := s.updateTrie(); err != nil {
+		s.db.setError(err)
+		return
+	}
+	// Short circuit if nothing is changed.
+	if len(s.pendingStorage) == 0 {
 		return
 	}
 	// Track the amount of time wasted on hashing the storage trie
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.db.StorageHashes += time.Since(start) }(time.Now())
 	}
-	s.data.Root = tr.Hash()
+	root, err := s.db.hasher.Hash(&s.address, s.data.Root)
+	if err != nil {
+		s.db.setError(err)
+		return
+	}
+	s.data.Root = root
 }
 
 // commitAccount stores the account's original and current value to result.
@@ -320,8 +297,9 @@ func (s *stateObject) commitStorage(trans *Transition) {
 	}
 	storageOrigin := trans.StoragesOrigin[s.address]
 
+	hasher := crypto.NewKeccakState()
 	for key, val := range s.pendingStorage {
-		khash := crypto.HashData(s.db.hasher, key[:])
+		khash := crypto.HashData(hasher, key[:])
 
 		// Store the current value to result set
 		encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(val[:]))
@@ -353,8 +331,8 @@ func (s *stateObject) commit(trans *Transition) error {
 	// Aggregate the account value changes into result set.
 	s.commitAccount(trans)
 
-	// Short circuit if trie is not even loaded, don't bother with committing storage.
-	if s.trie == nil {
+	// Short circuit if storage is not changed at all.
+	if len(s.pendingStorage) == 0 {
 		s.origin = s.data.Copy()
 		return nil
 	}
@@ -365,12 +343,9 @@ func (s *stateObject) commit(trans *Transition) error {
 	// The trie is currently in an open state and could potentially contain
 	// cached mutations. Call commit to acquire a set of nodes that have been
 	// modified, the set can be nil if nothing to commit.
-	root, nodes, err := s.trie.Commit(false)
+	nodes, err := s.db.hasher.Commit(&s.address, s.data.Root, false)
 	if err != nil {
 		return err
-	}
-	if s.data.Root != root {
-		return fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
 	}
 	// Aggregate the storage changes into result set
 	s.commitStorage(trans)
@@ -433,9 +408,9 @@ func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 		origin:   s.origin,
 		data:     s.data,
 	}
-	if s.trie != nil {
-		obj.trie = db.db.CopyTrie(s.trie)
-	}
+	//if s.trie != nil {
+	//	obj.trie = db.db.CopyTrie(s.trie)
+	//}
 	obj.code = s.code
 	obj.dirtyStorage = s.dirtyStorage.Copy()
 	obj.originStorage = s.originStorage.Copy()

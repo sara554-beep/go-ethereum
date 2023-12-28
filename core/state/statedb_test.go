@@ -489,7 +489,7 @@ func forEachStorage(s *StateDB, addr common.Address, cb func(key, value common.H
 	if so == nil {
 		return nil
 	}
-	tr, err := so.getTrie()
+	tr, err := trie.NewStateTrie(trie.StorageTrieID(s.originalRoot, so.addrHash, so.data.Root), s.db.TrieDB())
 	if err != nil {
 		return err
 	}

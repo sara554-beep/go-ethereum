@@ -67,10 +67,9 @@ func (s *objectState) isDelete() bool {
 // commit states.
 type StateDB struct {
 	db         Database
-	reader     StateReader
-	prefetcher *triePrefetcher
-	hasher     crypto.KeccakState
-	trie       Trie // account trie, which becomes non-nil on first access
+	reader     Reader          // state reader, always available
+	hasher     Hasher          // state hasher, becomes non-nil on first access
+	prefetcher *triePrefetcher // state prefetcher, for faster hashing
 
 	// originalRoot is the pre-state root, before any changes were made.
 	// It will be updated when the Commit is called.
@@ -140,7 +139,7 @@ type StateDB struct {
 
 // New creates a new state from a given trie.
 func New(root common.Hash, db Database) (*StateDB, error) {
-	reader, err := db.StateReader(root)
+	reader, err := db.Reader(root)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +155,6 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 		journal:              newJournal(),
 		accessList:           newAccessList(),
 		transientStorage:     newTransientStorage(),
-		hasher:               crypto.NewKeccakState(),
 	}, nil
 }
 
@@ -165,7 +163,7 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 // commit phase, most of the needed data is already hot.
 func (s *StateDB) StartPrefetcher(namespace string) {
 	s.StopPrefetcher()
-	s.prefetcher = newTriePrefetcher(s.db, s.originalRoot, namespace)
+	s.prefetcher = newTriePrefetcher(s.db.TrieDB(), s.originalRoot, namespace)
 }
 
 // StopPrefetcher terminates a running prefetcher and reports any leftover stats
@@ -488,11 +486,11 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	}
 	// Encode the account and update the account trie
 	addr := obj.Address()
-	if err := s.trie.UpdateAccount(addr, &obj.data); err != nil {
+	if err := s.hasher.UpdateAccount(addr, &obj.data); err != nil {
 		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
 	if obj.dirtyCode {
-		s.trie.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
+		s.hasher.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
 	}
 }
 
@@ -503,7 +501,7 @@ func (s *StateDB) deleteStateObject(addr common.Address) {
 		defer func(start time.Time) { s.AccountUpdates += time.Since(start) }(time.Now())
 	}
 	// Delete the account from the trie
-	if err := s.trie.DeleteAccount(addr); err != nil {
+	if err := s.hasher.DeleteAccount(addr); err != nil {
 		s.setError(fmt.Errorf("deleteStateObject (%x) error: %v", addr[:], err))
 	}
 }
@@ -579,14 +577,13 @@ func (s *StateDB) Copy() *StateDB {
 		logSize:              s.logSize,
 		preimages:            make(map[common.Hash][]byte, len(s.preimages)),
 		journal:              s.journal.copy(),
-		hasher:               crypto.NewKeccakState(),
 	}
 	// Copy the trie if it's accessed.
-	if s.trie != nil {
-		state.trie = s.db.CopyTrie(s.trie)
+	if s.hasher != nil {
+		state.hasher = s.hasher.Copy()
 	}
 	// Create a new state reader for the copied state.
-	reader, err := s.db.StateReader(s.originalRoot)
+	reader, err := s.db.Reader(s.originalRoot)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to create state reader, %v", err))
 	}
@@ -728,20 +725,17 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 			s.prefetcher = nil
 		}()
 	}
-	// Now we're about to start to write changes to the trie. The trie is so far
-	// _untouched_. We can check with the prefetcher, if it can give us a trie
-	// which has the same root, but also has some content loaded into it.
-	if prefetcher != nil {
-		if trie := prefetcher.trie(common.Hash{}, s.originalRoot); trie != nil {
-			s.trie = trie
+	if s.hasher == nil {
+		var err error
+		if prefetcher != nil {
+			s.hasher, err = prefetcher.hasher()
+		} else {
+			s.hasher, err = s.db.Hasher(s.originalRoot)
 		}
-	}
-	if s.trie == nil {
-		tr, err := s.db.OpenTrie(s.originalRoot)
 		if err != nil {
-			return common.Hash{} // hashing is not supported or the database is corrupted
+			s.setError(err)
+			return common.Hash{}
 		}
-		s.trie = tr
 	}
 	var usedAddrs [][]byte
 	for addr, obj := range s.stateObjectsState {
@@ -768,7 +762,12 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.AccountHashes += time.Since(start) }(time.Now())
 	}
-	return s.trie.Hash()
+	hash, err := s.hasher.Hash(nil, s.originalRoot)
+	if err != nil {
+		s.setError(err)
+		return common.Hash{}
+	}
+	return hash
 }
 
 // SetTxContext sets the current transaction hash and index which are
@@ -837,7 +836,7 @@ func (s *StateDB) fastDeleteStorage(addrHash common.Hash, root common.Hash) (boo
 // employed when the associated state snapshot is not available. It iterates the
 // storage slots along with all internal trie nodes via trie directly.
 func (s *StateDB) slowDeleteStorage(addr common.Address, addrHash common.Hash, root common.Hash) (bool, common.StorageSize, map[common.Hash][]byte, *trienode.NodeSet, error) {
-	tr, err := s.db.OpenStorageTrie(s.originalRoot, addr, root, s.trie)
+	tr, err := trie.NewStateTrie(trie.StorageTrieID(s.originalRoot, crypto.Keccak256Hash(addr.Bytes()), root), s.db.TrieDB())
 	if err != nil {
 		return false, 0, nil, nil, fmt.Errorf("failed to open storage trie, err: %w", err)
 	}
@@ -940,13 +939,15 @@ func (s *StateDB) deleteStorage(addr common.Address, addrHash common.Hash, root 
 func (s *StateDB) handleDestruction(trans *Transition) error {
 	// Short circuit if geth is running with hash mode. This procedure can consume
 	// considerable time and storage deletion isn't supported in hash mode, thus
-	// preemptively avoiding unnecessary expenses.
+	// avoiding unnecessary expenses.
 	if s.db.TrieDB().Scheme() == rawdb.HashScheme {
 		return nil
 	}
 	for addr, prev := range s.stateObjectsDestruct {
 		// The original account was non-existing, and it's marked as destructed
-		// in the scope of block. It can be case (a) or (b).
+		// in the scope of block. It can be case (a) or (b) and can be interpreted
+		// as null->null useless state transition.
+		//
 		// - for (a), skip it without doing anything.
 		// - for (b), the resurrected account will be handled later
 		if prev == nil {
@@ -993,7 +994,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 		return common.Hash{}, fmt.Errorf("commit aborted due to earlier error: %v", s.dbErr)
 	}
 	// Finalize any pending changes and merge everything into the tries
-	s.IntermediateRoot(deleteEmptyObjects)
+	root := s.IntermediateRoot(deleteEmptyObjects)
 
 	// Construct a state transition object to store all state changes.
 	trans := NewTransition()
@@ -1025,7 +1026,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	if metrics.EnabledExpensive {
 		start = time.Now()
 	}
-	root, set, err := s.trie.Commit(true)
+	set, err := s.hasher.Commit(nil, root, true)
 	if err != nil {
 		return common.Hash{}, err
 	}

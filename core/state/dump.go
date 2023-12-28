@@ -124,7 +124,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		start            = time.Now()
 		logged           = time.Now()
 	)
-	tr, err := s.db.OpenTrie(s.originalRoot)
+	tr, err := trie.NewStateTrie(trie.StateTrieID(s.originalRoot), s.db.TrieDB())
 	if err != nil {
 		return nil
 	}
@@ -170,7 +170,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		}
 		if !conf.SkipStorage {
 			account.Storage = make(map[common.Hash]string)
-			tr, err := obj.getTrie()
+			tr, err := trie.NewStateTrie(trie.StorageTrieID(s.originalRoot, common.BytesToHash(it.Key), data.Root), s.db.TrieDB())
 			if err != nil {
 				log.Error("Failed to load storage trie", "err", err)
 				continue

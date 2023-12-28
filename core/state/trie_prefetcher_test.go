@@ -45,23 +45,26 @@ func filledStateDB() *StateDB {
 }
 
 func TestCopyAndClose(t *testing.T) {
-	db := filledStateDB()
-	prefetcher := newTriePrefetcher(db.db, db.originalRoot, "")
-	skey := common.HexToHash("aaa")
+	var (
+		db         = filledStateDB()
+		skey       = common.HexToHash("aaa")
+		prefetcher = newTriePrefetcher(db.db.TrieDB(), db.originalRoot, "")
+		id         = newTrieID(typeMerkle, db.originalRoot, common.Hash{}, db.originalRoot)
+	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	time.Sleep(1 * time.Second)
-	a := prefetcher.trie(common.Hash{}, db.originalRoot)
+	a := prefetcher.trie(id)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
-	b := prefetcher.trie(common.Hash{}, db.originalRoot)
+	b := prefetcher.trie(id)
 	cpy := prefetcher.copy()
 	cpy.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	cpy.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
-	c := cpy.trie(common.Hash{}, db.originalRoot)
+	c := cpy.trie(id)
 	prefetcher.close()
 	cpy2 := cpy.copy()
 	cpy2.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
-	d := cpy2.trie(common.Hash{}, db.originalRoot)
+	d := cpy2.trie(id)
 	cpy.close()
 	cpy2.close()
 	if a.Hash() != b.Hash() || a.Hash() != c.Hash() || a.Hash() != d.Hash() {
@@ -70,13 +73,16 @@ func TestCopyAndClose(t *testing.T) {
 }
 
 func TestUseAfterClose(t *testing.T) {
-	db := filledStateDB()
-	prefetcher := newTriePrefetcher(db.db, db.originalRoot, "")
-	skey := common.HexToHash("aaa")
+	var (
+		db         = filledStateDB()
+		skey       = common.HexToHash("aaa")
+		prefetcher = newTriePrefetcher(db.db.TrieDB(), db.originalRoot, "")
+		id         = newTrieID(typeMerkle, db.originalRoot, common.Hash{}, db.originalRoot)
+	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
-	a := prefetcher.trie(common.Hash{}, db.originalRoot)
+	a := prefetcher.trie(id)
 	prefetcher.close()
-	b := prefetcher.trie(common.Hash{}, db.originalRoot)
+	b := prefetcher.trie(id)
 	if a == nil {
 		t.Fatal("Prefetching before close should not return nil")
 	}
@@ -86,16 +92,19 @@ func TestUseAfterClose(t *testing.T) {
 }
 
 func TestCopyClose(t *testing.T) {
-	db := filledStateDB()
-	prefetcher := newTriePrefetcher(db.db, db.originalRoot, "")
-	skey := common.HexToHash("aaa")
+	var (
+		db         = filledStateDB()
+		skey       = common.HexToHash("aaa")
+		prefetcher = newTriePrefetcher(db.db.TrieDB(), db.originalRoot, "")
+		id         = newTrieID(typeMerkle, db.originalRoot, common.Hash{}, db.originalRoot)
+	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	cpy := prefetcher.copy()
-	a := prefetcher.trie(common.Hash{}, db.originalRoot)
-	b := cpy.trie(common.Hash{}, db.originalRoot)
+	a := prefetcher.trie(id)
+	b := cpy.trie(id)
 	prefetcher.close()
-	c := prefetcher.trie(common.Hash{}, db.originalRoot)
-	d := cpy.trie(common.Hash{}, db.originalRoot)
+	c := prefetcher.trie(id)
+	d := cpy.trie(id)
 	if a == nil {
 		t.Fatal("Prefetching before close should not return nil")
 	}

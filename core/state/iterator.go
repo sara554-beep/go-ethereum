@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -49,7 +50,7 @@ type nodeIterator struct {
 
 // newNodeIterator creates a state iterator over the original state.
 func newNodeIterator(state *StateDB) (*nodeIterator, error) {
-	tr, err := state.db.OpenTrie(state.originalRoot)
+	tr, err := trie.NewStateTrie(trie.StateTrieID(state.originalRoot), state.db.TrieDB())
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +130,7 @@ func (it *nodeIterator) step() error {
 	address := common.BytesToAddress(preimage)
 
 	// Traverse the storage slots belong to the account
-	dataTrie, err := it.state.db.OpenStorageTrie(it.state.originalRoot, address, account.Root, it.stateTrie)
+	dataTrie, err := trie.NewStateTrie(trie.StorageTrieID(it.state.originalRoot, crypto.Keccak256Hash(address.Bytes()), account.Root), it.state.db.TrieDB())
 	if err != nil {
 		return err
 	}
