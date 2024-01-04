@@ -18,6 +18,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -67,8 +68,8 @@ func (s *objectState) isDelete() bool {
 // commit states.
 type StateDB struct {
 	db         Database
-	reader     Reader          // state reader, always available
-	trie       Trie            // state trie, becomes non-nil on first access
+	reader     Reader          // state hasher, always non-nil
+	hasher     Hasher          // state hasher, becomes non-nil when access
 	prefetcher *triePrefetcher // state prefetcher to fasten state hashing
 
 	// originalRoot is the pre-state root, before any changes were made.
@@ -127,14 +128,9 @@ type StateDB struct {
 	SnapshotStorageReads time.Duration
 	SnapshotCommits      time.Duration
 	TrieDBCommits        time.Duration
-
-	AccountUpdated int
-	StorageUpdated int
-	AccountDeleted int
-	StorageDeleted int
 }
 
-// New creates a new state from a given trie.
+// New creates a new state associated with the specified root with given database.
 func New(root common.Hash, db Database) (*StateDB, error) {
 	reader, err := db.Reader(root)
 	if err != nil {
@@ -483,11 +479,11 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	}
 	// Encode the account and update the account trie
 	addr := obj.Address()
-	if err := s.trie.UpdateAccount(addr, &obj.data); err != nil {
+	if err := s.hasher.UpdateAccount(addr, &obj.data); err != nil {
 		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
 	if obj.dirtyCode {
-		s.trie.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
+		s.hasher.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
 	}
 }
 
@@ -498,7 +494,7 @@ func (s *StateDB) deleteStateObject(addr common.Address) {
 		defer func(start time.Time) { s.AccountUpdates += time.Since(start) }(time.Now())
 	}
 	// Delete the account from the trie
-	if err := s.trie.DeleteAccount(addr); err != nil {
+	if err := s.hasher.DeleteAccount(addr); err != nil {
 		s.setError(fmt.Errorf("deleteStateObject (%x) error: %v", addr[:], err))
 	}
 }
@@ -565,6 +561,7 @@ func (s *StateDB) Copy() *StateDB {
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{
 		db:                   s.db,
+		reader:               s.reader.Copy(),
 		originalRoot:         s.originalRoot,
 		stateObjects:         make(map[common.Address]*stateObject, len(s.stateObjects)),
 		stateObjectsState:    make(map[common.Address]*objectState, len(s.stateObjectsState)),
@@ -580,18 +577,10 @@ func (s *StateDB) Copy() *StateDB {
 		validRevisions:       make([]revision, len(s.validRevisions)),
 		nextRevisionId:       s.nextRevisionId,
 	}
-	// Copy the trie if it's accessed.
-	if s.trie != nil {
-		state.trie = mustCopyTrie(s.trie)
+	// Deep copy state hasher if it's available.
+	if s.hasher != nil {
+		state.hasher = s.hasher.Copy()
 	}
-	// Create a new state reader for the copied state, as state reader
-	// is stateless, safe to re-create instead of deep copying.
-	reader, err := s.db.Reader(s.originalRoot)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to create state reader, %v", err))
-	}
-	state.reader = reader
-
 	// Deep copy cached state objects.
 	for addr, obj := range s.stateObjects {
 		state.stateObjects[addr] = obj.deepCopy(state)
@@ -735,20 +724,23 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	// to database otherwise. Note it might be possible that trie loading is
 	// not supported, an error will be recorded and empty hash is returned in
 	// this case.
-	if prefetcher != nil && s.trie == nil {
-		s.trie = prefetcher.trie(common.Hash{}, s.originalRoot)
+	if prefetcher != nil && s.hasher == nil {
+		hasher, err := prefetcher.hasher(s.originalRoot)
+		if err == nil {
+			s.hasher = hasher
+		}
 	}
 	// Fallback to resolve trie from database, it might be possible the trie
 	// is not available even in database because of the corrupted state or
 	// trie loading is not supported. Record the occurred error and return
 	// empty hash in case.
-	if s.trie == nil {
-		tr, err := s.db.OpenTrie(s.originalRoot)
+	if s.hasher == nil {
+		hasher, err := s.db.Hasher(s.originalRoot)
 		if err != nil {
 			s.setError(err)
 			return common.Hash{}
 		}
-		s.trie = tr
+		s.hasher = hasher
 	}
 	var usedAddrs [][]byte
 	for addr, obj := range s.stateObjectsState {
@@ -759,12 +751,10 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 
 		if obj.isDelete() {
 			s.deleteStateObject(addr)
-			s.AccountDeleted += 1
 		} else {
 			obj := s.stateObjects[addr]
 			obj.updateRoot()
 			s.updateStateObject(obj)
-			s.AccountUpdated += 1
 		}
 		usedAddrs = append(usedAddrs, common.CopyBytes(addr[:])) // Copy needed for closure
 	}
@@ -775,7 +765,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.AccountHashes += time.Since(start) }(time.Now())
 	}
-	return s.trie.Hash()
+	return s.hasher.Hash()
 }
 
 // SetTxContext sets the current transaction hash and index which are
@@ -843,8 +833,11 @@ func (s *StateDB) fastDeleteStorage(addrHash common.Hash, root common.Hash) (boo
 // slowDeleteStorage serves as a less-efficient alternative to "fastDeleteStorage,"
 // employed when the associated state snapshot is not available. It iterates the
 // storage slots along with all internal trie nodes via trie directly.
-func (s *StateDB) slowDeleteStorage(addr common.Address, addrHash common.Hash, root common.Hash) (bool, common.StorageSize, map[common.Hash][]byte, *trienode.NodeSet, error) {
-	tr, err := s.db.OpenStorageTrie(s.originalRoot, addr, root)
+func (s *StateDB) slowDeleteStorage(addrHash common.Hash, root common.Hash) (bool, common.StorageSize, map[common.Hash][]byte, *trienode.NodeSet, error) {
+	if s.db.TrieDB() == nil {
+		return false, 0, nil, nil, errors.New("trie loading is not supported")
+	}
+	tr, err := trie.NewStateTrie(trie.StorageTrieID(s.originalRoot, addrHash, root), s.db.TrieDB())
 	if err != nil {
 		return false, 0, nil, nil, fmt.Errorf("failed to open storage trie, err: %w", err)
 	}
@@ -883,7 +876,7 @@ func (s *StateDB) slowDeleteStorage(addr common.Address, addrHash common.Hash, r
 // potentially leading to an out-of-memory panic. The function will make an attempt
 // to utilize an efficient strategy if the associated state snapshot is reachable;
 // otherwise, it will resort to a less-efficient approach.
-func (s *StateDB) deleteStorage(addr common.Address, addrHash common.Hash, root common.Hash) (bool, map[common.Hash][]byte, *trienode.NodeSet, error) {
+func (s *StateDB) deleteStorage(addrHash common.Hash, root common.Hash) (bool, map[common.Hash][]byte, *trienode.NodeSet, error) {
 	var (
 		start   = time.Now()
 		err     error
@@ -899,7 +892,7 @@ func (s *StateDB) deleteStorage(addr common.Address, addrHash common.Hash, root 
 		aborted, size, slots, nodes, err = s.fastDeleteStorage(addrHash, root)
 	}
 	if s.db.Snapshot() == nil || err != nil {
-		aborted, size, slots, nodes, err = s.slowDeleteStorage(addr, addrHash, root)
+		aborted, size, slots, nodes, err = s.slowDeleteStorage(addrHash, root)
 	}
 	if err != nil {
 		return false, nil, nil, err
@@ -944,13 +937,12 @@ func (s *StateDB) deleteStorage(addr common.Address, addrHash common.Hash, root 
 //
 // In case (d), **original** account along with its storages should be deleted,
 // with their values be tracked as original value.
-func (s *StateDB) handleDestruction(update *Update) error {
-	// Short circuit if geth is running with hash mode. This procedure can consume
-	// considerable time and storage deletion isn't supported in hash mode, thus
-	// avoiding unnecessary expenses.
-	if s.db.TrieDB().Scheme() == rawdb.HashScheme {
-		return nil
-	}
+func (s *StateDB) handleDestruction() (map[common.Hash]*AccountDelete, []*trienode.NodeSet, error) {
+	var (
+		nodes   []*trienode.NodeSet
+		hasher  = crypto.NewKeccakState()
+		deletes = make(map[common.Hash]*AccountDelete)
+	)
 	for addr, prev := range s.stateObjectsDestruct {
 		// The original account was non-existing, and it's marked as destructed
 		// in the scope of block. It can be case (a) or (b) and can be interpreted
@@ -961,31 +953,39 @@ func (s *StateDB) handleDestruction(update *Update) error {
 		if prev == nil {
 			continue
 		}
-		update.AccountsOrigin[addr] = types.SlimAccountRLP(*prev) // case (c) or (d)
+		delete := &AccountDelete{
+			Address: addr,
+			Origin:  types.SlimAccountRLP(*prev),
+		} // case (c) or (d)
+		deletes[crypto.HashData(hasher, addr.Bytes())] = delete
 
-		// Short circuit if the storage was empty.
+		// Short circuit if the storage was empty, nothing to delete.
 		if prev.Root == types.EmptyRootHash {
 			continue
 		}
+		// Skip storage deletion if hash scheme is used. This procedure can consume
+		// considerable time and storage deletion isn't supported in hash mode at
+		// all, avoiding unnecessary expenses.
+		if s.db.TrieDB().Scheme() == rawdb.HashScheme {
+			continue
+		}
 		// Remove storage slots belong to the account.
-		aborted, slots, set, err := s.deleteStorage(addr, crypto.Keccak256Hash(addr[:]), prev.Root)
+		aborted, slots, set, err := s.deleteStorage(crypto.Keccak256Hash(addr[:]), prev.Root)
 		if err != nil {
-			return fmt.Errorf("failed to delete storage, err: %w", err)
+			return nil, nil, fmt.Errorf("failed to delete storage, err: %w", err)
 		}
 		// The storage is too huge to handle, skip it but mark as incomplete.
 		if aborted {
-			update.StorageIncomplete[addr] = struct{}{}
+			delete.StorageIncomplete = true
 			log.Info("Skip deleting storage for large contract", "address", addr.Hex())
 			continue
 		}
-		update.StoragesOrigin[addr] = slots
-
-		// Aggregate the dirty storage trie nodes into global set.
-		if err := update.AddNodes(set); err != nil {
-			return err
+		delete.StoragesOrigin = slots
+		if set != nil {
+			nodes = append(nodes, set)
 		}
 	}
-	return nil
+	return deletes, nodes, nil
 }
 
 // commit is the internal version of Commit which also returns the state
@@ -995,71 +995,100 @@ func (s *StateDB) commit(block uint64, deleteEmptyObjects bool) (common.Hash, *U
 	if s.dbErr != nil {
 		return common.Hash{}, nil, fmt.Errorf("commit aborted due to earlier error: %v", s.dbErr)
 	}
-	// Finalize any pending changes and merge everything into the tries
+	// Finalize any pending changes and compute the final state root.
 	s.IntermediateRoot(deleteEmptyObjects)
 
-	// Construct a state transition object to store all state changes.
-	update := NewUpdate()
-	update.Destructs = s.convertAccountSet(s.stateObjectsDestruct)
+	var (
+		accountTrieNodesUpdated int
+		accountTrieNodesDeleted int
+		storageTrieNodesUpdated int
+		storageTrieNodesDeleted int
 
-	// Handle all state deletions first
-	if err := s.handleDestruction(update); err != nil {
+		nodes = trienode.NewMergedNodeSet()
+		merge = func(set *trienode.NodeSet) error {
+			if set == nil {
+				return nil
+			}
+			update, delete := set.Size()
+			if set.Owner == (common.Hash{}) {
+				accountTrieNodesUpdated += update
+				accountTrieNodesDeleted += delete
+			} else {
+				storageTrieNodesUpdated += update
+				storageTrieNodesDeleted += delete
+			}
+			return nodes.Merge(set)
+		}
+	)
+	// Handle all state deletions first as the deleted accounts might
+	// be resurrected in the same block, the changes belong to same
+	// account need to be combined.
+	deletes, deleteNodes, err := s.handleDestruction()
+	if err != nil {
 		return common.Hash{}, nil, err
 	}
-	// Handle all state updates afterwards
-	for addr, obj := range s.stateObjectsState {
-		if obj.isDelete() {
-			continue // handled in `handleDestruction`
+	for _, set := range deleteNodes {
+		if err := merge(set); err != nil {
+			return common.Hash{}, nil, err
 		}
-		obj := s.stateObjects[addr]
+	}
 
-		// Write any contract code associated with the state object
-		if obj.code != nil && obj.dirtyCode {
-			obj.dirtyCode = false
-			update.AddCode(addr, common.BytesToHash(obj.CodeHash()), obj.code)
+	// Handle all state updates afterwards, it's possible the accounts
+	// updated are also present in deletion map if they are destructed
+	// and resurrected in the same block.
+	updates := make(map[common.Hash]*AccountUpdate)
+	for addr, state := range s.stateObjectsState {
+		// skip deletion as they are already processed before
+		if state.isDelete() {
+			continue
 		}
-		// Write any storage changes in the state object to its storage trie
-		if err := obj.commit(update); err != nil {
+		object := s.stateObjects[addr]
+		if object == nil {
+			return common.Hash{}, nil, errors.New("missing state object")
+		}
+		update, set, err := object.commit()
+		if err != nil {
+			return common.Hash{}, nil, err
+		}
+		updates[object.addrHash] = update
+
+		// Aggregate the dirty trie nodes produced by storage hasher
+		// into the global set.
+		if err := merge(set); err != nil {
 			return common.Hash{}, nil, err
 		}
 	}
 	// Write the account trie changes, measuring the amount of wasted time
 	var start time.Time
-	if metrics.EnabledExpensive {
-		start = time.Now()
-	}
-	root, set, err := s.trie.Commit(true)
+	root, set, err := s.hasher.Commit()
 	if err != nil {
 		return common.Hash{}, nil, err
 	}
-	// Merge the dirty nodes of account trie into global set
-	if err := update.AddNodes(set); err != nil {
+	// Aggregate the dirty trie nodes produced by state hasher into the global set.
+	if err := merge(set); err != nil {
 		return common.Hash{}, nil, err
 	}
 	if metrics.EnabledExpensive {
 		s.AccountCommits += time.Since(start)
-
-		accountUpdatedMeter.Mark(int64(s.AccountUpdated))
-		storageUpdatedMeter.Mark(int64(s.StorageUpdated))
-		accountDeletedMeter.Mark(int64(s.AccountDeleted))
-		storageDeletedMeter.Mark(int64(s.StorageDeleted))
-		accountTrieUpdatedMeter.Mark(int64(update.accountTrieNodesUpdated))
-		accountTrieDeletedMeter.Mark(int64(update.accountTrieNodesDeleted))
-		storageTriesUpdatedMeter.Mark(int64(update.storageTrieNodesUpdated))
-		storageTriesDeletedMeter.Mark(int64(update.storageTrieNodesDeleted))
-		contractCodeCountMeter.Mark(int64(update.contractCodeCount))
-		contractCodeSizeMeter.Mark(int64(update.contractCodeSize))
-
-		s.AccountUpdated, s.AccountDeleted = 0, 0
-		s.StorageUpdated, s.StorageDeleted = 0, 0
 	}
-	if err := s.db.Commit(types.TrieRootHash(s.originalRoot), types.TrieRootHash(root), block, update); err != nil {
+	// Construct the state update with delete and update sets.
+	update := NewUpdate(deletes, updates)
+	if err := s.db.Commit(types.TrieRootHash(s.originalRoot), types.TrieRootHash(root), block, update, nodes); err != nil {
 		return common.Hash{}, nil, err
 	}
 	// Clear all internal flags at the end of commit operation.
 	s.stateObjectsState = make(map[common.Address]*objectState)
 	s.stateObjectsDestruct = make(map[common.Address]*types.StateAccount)
 	s.originalRoot = types.TrieRootHash(root)
+
+	// Update state transition metrics
+	if metrics.EnabledExpensive {
+		update.SetMetrics()
+		accountTrieUpdatedMeter.Mark(int64(accountTrieNodesUpdated))
+		accountTrieDeletedMeter.Mark(int64(accountTrieNodesDeleted))
+		storageTriesUpdatedMeter.Mark(int64(storageTrieNodesUpdated))
+		storageTriesDeletedMeter.Mark(int64(storageTrieNodesDeleted))
+	}
 	return root, update, nil
 }
 
@@ -1150,20 +1179,6 @@ func (s *StateDB) AddressInAccessList(addr common.Address) bool {
 // SlotInAccessList returns true if the given (address, slot)-tuple is in the access list.
 func (s *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (addressPresent bool, slotPresent bool) {
 	return s.accessList.Contains(addr, slot)
-}
-
-// convertAccountSet converts a provided account set from address keyed to hash keyed.
-func (s *StateDB) convertAccountSet(set map[common.Address]*types.StateAccount) map[common.Hash]struct{} {
-	ret := make(map[common.Hash]struct{}, len(set))
-	for addr := range set {
-		obj, exist := s.stateObjects[addr]
-		if !exist {
-			ret[crypto.Keccak256Hash(addr[:])] = struct{}{}
-		} else {
-			ret[obj.addrHash] = struct{}{}
-		}
-	}
-	return ret
 }
 
 func (s *StateDB) mark(addr common.Address, typ int) {

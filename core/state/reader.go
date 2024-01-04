@@ -36,7 +36,7 @@ type snapReader struct {
 }
 
 // newSnapReader constructs a snap reader based on the specific state root.
-func newSnapReader(snaps *snapshot.Tree, root common.Hash) (*snapReader, error) {
+func newSnapReader(root common.Hash, snaps *snapshot.Tree) (*snapReader, error) {
 	snap := snaps.Snapshot(root)
 	if snap == nil {
 		return nil, errors.New("snapshot is not available")
@@ -53,7 +53,7 @@ func newSnapReader(snaps *snapshot.Tree, root common.Hash) (*snapReader, error) 
 // An error will be returned if the associated snapshot is already stale or
 // the snapshot is not fully constructed yet.
 //
-// The returned account might be nil if it's not existent in the state.
+// The returned account might be nil if it's not existent.
 func (r *snapReader) Account(addr common.Address) (*types.StateAccount, error) {
 	ret, err := r.snap.Account(crypto.HashData(r.hasher, addr.Bytes()))
 	if err != nil {
@@ -83,7 +83,7 @@ func (r *snapReader) Account(addr common.Address) (*types.StateAccount, error) {
 // An error will be returned if the associated snapshot is already stale or
 // the snapshot is not fully constructed yet.
 //
-// The returned storage slot might be empty if it's not existent in the state.
+// The returned storage slot might be empty if it's not existent.
 func (r *snapReader) Storage(addr common.Address, root common.Hash, key common.Hash) (common.Hash, error) {
 	addrHash := crypto.HashData(r.hasher, addr.Bytes())
 	slotHash := crypto.HashData(r.hasher, key.Bytes())
@@ -101,6 +101,14 @@ func (r *snapReader) Storage(addr common.Address, root common.Hash, key common.H
 	var slot common.Hash
 	slot.SetBytes(content)
 	return slot, nil
+}
+
+// Copy implements Reader, returning a deep-copied snap reader.
+func (r *snapReader) Copy() Reader {
+	return &snapReader{
+		snap:   r.snap,
+		hasher: crypto.NewKeccakState(),
+	}
 }
 
 // trieReader implements the Reader interface, providing functions to access
@@ -178,61 +186,17 @@ func (r *trieReader) Storage(addr common.Address, root common.Hash, key common.H
 	return slot, nil
 }
 
-// The reader implements the Reader interface by combining the state snapshot
-// along with the trie database, offering methods to efficiently access states
-// with the snapshot first and falling back to trie reader if it fails.
-type reader struct {
-	snap *snapReader // fast reader, might not available
-	trie *trieReader // slow reader, always available
-}
-
-// newReader constructs a reader of the specific state.
-func newReader(root common.Hash, db *trie.Database, snaps *snapshot.Tree) (*reader, error) {
-	var snap *snapReader // optional snapshot reader
-	if snaps != nil {
-		snap, _ = newSnapReader(snaps, root)
+// Copy implements Reader, returning a deep-copied trie reader.
+func (r *trieReader) Copy() Reader {
+	tries := make(map[common.Address]Trie)
+	for addr, tr := range r.subTries {
+		tries[addr] = mustCopyTrie(tr)
 	}
-	trie, err := newTrieReader(root, db) // mandatory trie reader
-	if err != nil {
-		return nil, err
+	return &trieReader{
+		root:     r.root,
+		db:       r.db,
+		hasher:   crypto.NewKeccakState(),
+		mainTrie: mustCopyTrie(r.mainTrie),
+		subTries: tries,
 	}
-	return &reader{
-		snap: snap,
-		trie: trie,
-	}, nil
-}
-
-// Account implements Reader, retrieving the account specified by the address
-// from the associated state. Nil account is returned if the requested one is
-// not existent in the state. Error is only returned if any unexpected error occurs.
-func (r *reader) Account(addr common.Address) (*types.StateAccount, error) {
-	if r.snap != nil {
-		acct, err := r.snap.Account(addr)
-		if err == nil {
-			return acct, nil
-		}
-	}
-	acct, err := r.trie.Account(addr)
-	if err != nil {
-		return nil, err
-	}
-	return acct, nil
-}
-
-// Storage implements Reader, retrieving the storage slot specified by the
-// address and slot key from the associated state. Null slot is returned if
-// the requested one is not existent in the state. Error is only returned if
-// any unexpected error occurs.
-func (r *reader) Storage(addr common.Address, root common.Hash, key common.Hash) (common.Hash, error) {
-	if r.snap != nil {
-		slot, err := r.snap.Storage(addr, root, key)
-		if err == nil {
-			return slot, nil
-		}
-	}
-	slot, err := r.trie.Storage(addr, root, key)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	return slot, nil
 }

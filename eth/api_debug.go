@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -233,7 +234,11 @@ func storageRangeAt(statedb *state.StateDB, root common.Hash, address common.Add
 	if storageRoot == types.EmptyRootHash || storageRoot == (common.Hash{}) {
 		return StorageRangeResult{}, nil // empty storage
 	}
-	tr, err := statedb.Database().OpenStorageTrie(root, address, storageRoot)
+	db := statedb.Database()
+	if db.TrieDB() == nil {
+		return StorageRangeResult{}, nil
+	}
+	tr, err := trie.NewStateTrie(trie.StorageTrieID(root, crypto.Keccak256Hash(address.Bytes()), storageRoot), db.TrieDB())
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
