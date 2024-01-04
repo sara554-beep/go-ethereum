@@ -50,7 +50,10 @@ type nodeIterator struct {
 // newNodeIterator creates a state iterator over the original state. Note, the
 // cached mutations inside of the state db won't be traversed by the iterator.
 func newNodeIterator(state *StateDB) (*nodeIterator, error) {
-	tr, err := state.db.OpenTrie(state.originalRoot)
+	if state.db.TrieDB() == nil {
+		return nil, errors.New("trie loading is not supported")
+	}
+	tr, err := trie.NewStateTrie(trie.TrieID(state.originalRoot), state.db.TrieDB())
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +133,7 @@ func (it *nodeIterator) step() error {
 	address := common.BytesToAddress(preimage)
 
 	// Traverse the storage slots belong to the account
-	dataTrie, err := it.state.db.OpenStorageTrie(it.state.originalRoot, address, account.Root)
+	dataTrie, err := trie.NewStateTrie(trie.StorageTrieID(it.state.originalRoot, common.BytesToHash(it.stateIt.LeafKey()), account.Root), it.state.db.TrieDB())
 	if err != nil {
 		return err
 	}

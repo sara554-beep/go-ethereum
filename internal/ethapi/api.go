@@ -47,6 +47,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/tyler-smith/go-bip39"
 )
 
@@ -692,13 +693,17 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 	if statedb == nil || err != nil {
 		return nil, err
 	}
+	db := statedb.Database()
+	if db.TrieDB() == nil {
+		return nil, errors.New("trie loading is not supported")
+	}
 	codeHash := statedb.GetCodeHash(address)
 	storageRoot := statedb.GetStorageRoot(address)
 
 	if len(keys) > 0 {
 		var storageTrie state.Trie
 		if storageRoot != types.EmptyRootHash && storageRoot != (common.Hash{}) {
-			st, err := statedb.Database().OpenStorageTrie(header.Root, address, storageRoot)
+			st, err := trie.NewStateTrie(trie.StorageTrieID(header.Root, crypto.Keccak256Hash(address.Bytes()), storageRoot), db.TrieDB())
 			if err != nil {
 				return nil, err
 			}
@@ -729,7 +734,7 @@ func (s *BlockChainAPI) GetProof(ctx context.Context, address common.Address, st
 		}
 	}
 	// Create the accountProof.
-	tr, err := statedb.Database().OpenTrie(header.Root)
+	tr, err := trie.NewStateTrie(trie.StateTrieID(header.Root), db.TrieDB())
 	if err != nil {
 		return nil, err
 	}

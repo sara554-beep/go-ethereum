@@ -17,18 +17,16 @@
 package state
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/crate-crypto/go-ipa/banderwagon"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
-	"github.com/ethereum/go-ethereum/trie/utils"
 )
 
 const (
@@ -40,8 +38,8 @@ const (
 )
 
 // NewDatabase creates a state database with the provided data sources.
-func NewDatabase(codedb *CodeDB, triedb *trie.Database, snaps *snapshot.Tree) Database {
-	return &cachingDB{
+func NewDatabase(codedb *CodeDB, triedb *trie.Database, snaps *snapshot.Tree) *FullDB {
+	return &FullDB{
 		codedb: codedb,
 		triedb: triedb,
 		snaps:  snaps,
@@ -50,87 +48,72 @@ func NewDatabase(codedb *CodeDB, triedb *trie.Database, snaps *snapshot.Tree) Da
 
 // NewDatabaseForTesting is similar to NewDatabase, but it sets up the different
 // data sources using the same provided database with default config for testing.
-func NewDatabaseForTesting(db ethdb.Database) Database {
+func NewDatabaseForTesting(db ethdb.Database) *FullDB {
 	return NewDatabase(NewCodeDB(db), trie.NewDatabase(db, nil), nil)
 }
 
-// NewDatabaseWithOverrides is similar to NewDatabase, but it accepts an extra
-// state overrides for mocking state.
-func NewDatabaseWithOverrides(codedb *CodeDB, triedb *trie.Database, snaps *snapshot.Tree, overrides map[common.Address]OverrideAccount) Database {
-	return &cachingDB{
-		codedb:    codedb,
-		triedb:    triedb,
-		snaps:     snaps,
-		overrides: overrides,
-	}
-}
-
-// cachingDB is the implementation of Database interface, designed for providing
+// FullDB is the implementation of Database interface, designed for providing
 // functionalities to read and write states.
-type cachingDB struct {
-	codedb    *CodeDB
-	triedb    *trie.Database
-	snaps     *snapshot.Tree
-	overrides map[common.Address]OverrideAccount
+type FullDB struct {
+	codedb *CodeDB
+	triedb *trie.Database
+	snaps  *snapshot.Tree
 }
 
 // Reader implements Database interface, returning a reader of the specific state.
-func (db *cachingDB) Reader(stateRoot common.Hash) (Reader, error) {
-	reader, err := newReader(stateRoot, db.triedb, db.snaps)
+func (db *FullDB) Reader(stateRoot common.Hash) (Reader, error) {
+	var readers []Reader
+	if db.snaps != nil {
+		sr, err := newSnapReader(stateRoot, db.snaps)
+		if err == nil {
+			readers = append(readers, sr) // snap reader is optional
+		}
+	}
+	tr, err := newTrieReader(stateRoot, db.triedb)
 	if err != nil {
-		return nil, err
+		return nil, err // trie reader is mandatory
 	}
-	if db.overrides != nil {
-		return newReaderWithOverrides(reader, db.overrides)
-	}
-	return reader, nil
+	readers = append(readers, tr)
+	return newMultiReader(readers...)
 }
 
-// OpenTrie opens the main account trie.
-func (db *cachingDB) OpenTrie(stateRoot common.Hash) (Trie, error) {
+// Hasher implements Database interface, returning a hasher of the specific state.
+func (db *FullDB) Hasher(stateRoot common.Hash) (Hasher, error) {
 	if db.triedb.IsVerkle() {
-		return trie.NewVerkleTrie(stateRoot, db.triedb, utils.NewPointCache(commitmentCacheItems))
+		return newVerkleHasher(stateRoot, db.triedb, nil)
 	}
-	return trie.NewStateTrie(trie.StateTrieID(stateRoot), db.triedb)
-}
-
-// OpenStorageTrie opens the storage trie of an account.
-func (db *cachingDB) OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (Trie, error) {
-	if db.triedb.IsVerkle() {
-		return nil, errors.New("not supported")
-	}
-	return trie.NewStateTrie(trie.StorageTrieID(stateRoot, crypto.Keccak256Hash(address.Bytes()), root), db.triedb)
+	return newMerkleHasher(stateRoot, db.triedb, nil)
 }
 
 // ReadCode implements CodeReader, retrieving a particular contract's code.
-func (db *cachingDB) ReadCode(address common.Address, codeHash common.Hash) ([]byte, error) {
+func (db *FullDB) ReadCode(address common.Address, codeHash common.Hash) ([]byte, error) {
 	return db.codedb.ReadCode(address, codeHash)
 }
 
 // ReadCodeSize implements CodeReader, retrieving a particular contracts
 // code's size.
-func (db *cachingDB) ReadCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
+func (db *FullDB) ReadCodeSize(addr common.Address, codeHash common.Hash) (int, error) {
 	return db.codedb.ReadCodeSize(addr, codeHash)
 }
 
 // WriteCodes implements CodeWriter, writing the provided a list of contract
 // codes into database.
-func (db *cachingDB) WriteCodes(addresses []common.Address, hashes []common.Hash, codes [][]byte) error {
+func (db *FullDB) WriteCodes(addresses []common.Address, hashes []common.Hash, codes [][]byte) error {
 	return db.codedb.WriteCodes(addresses, hashes, codes)
 }
 
 // TrieDB returns the associated trie database.
-func (db *cachingDB) TrieDB() *trie.Database {
+func (db *FullDB) TrieDB() *trie.Database {
 	return db.triedb
 }
 
 // Snapshot returns the associated state snapshot, it may be nil if not configured.
-func (db *cachingDB) Snapshot() *snapshot.Tree {
+func (db *FullDB) Snapshot() *snapshot.Tree {
 	return db.snaps
 }
 
 // Commit accepts the state changes made by execution and applies it to database.
-func (db *cachingDB) Commit(originRoot, root common.Hash, block uint64, update *Update) error {
+func (db *FullDB) Commit(originRoot, root common.Hash, block uint64, update *Update, nodes *trienode.MergedNodeSet) error {
 	// Short circuit if the state is not changed at all.
 	if originRoot == root {
 		return nil
@@ -167,7 +150,7 @@ func (db *cachingDB) Commit(originRoot, root common.Hash, block uint64, update *
 	}
 	// Update the trie database with new version.
 	set := triestate.New(update.AccountsOrigin, update.StoragesOrigin, update.StorageIncomplete)
-	return db.triedb.Update(root, originRoot, block, update.Nodes, set)
+	return db.triedb.Update(root, originRoot, block, nodes, set)
 }
 
 // mustCopyTrie creates a deep-copied trie and panic if the trie is unknown.

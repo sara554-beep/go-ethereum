@@ -93,7 +93,7 @@ func TestCopyClose(t *testing.T) {
 	var (
 		db         = filledStateDB()
 		skey       = common.HexToHash("aaa")
-		prefetcher = newTriePrefetcher(db, db.originalRoot, "")
+		prefetcher = newTriePrefetcher(db.db, db.originalRoot, "")
 	)
 	prefetcher.prefetch(common.Hash{}, db.originalRoot, common.Address{}, [][]byte{skey.Bytes()})
 	cpy := prefetcher.copy()

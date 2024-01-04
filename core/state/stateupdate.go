@@ -18,76 +18,149 @@ package state
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/metrics"
 )
 
-// Code represents the mutated contract code along with its metadata.
-type Code struct {
-	Hash    common.Hash    // Hash of the contract code
-	Blob    []byte         // Blob of the contract code
-	Address common.Address // Corresponding account address
+// ContractCode represents the contract code with associated metadata.
+type ContractCode struct {
+	Address common.Address // Address is the unique identifier of the contract.
+	Hash    common.Hash    // Hash is the cryptographic hash of the contract code.
+	Blob    []byte         // Blob is the binary representation of the contract code.
 }
 
-// Update represents the difference between two states made by state execution.
-// It contains information about the mutated states, including their original
-// values. Additionally, it provides an associated set of trie nodes reflecting
-// the trie changes.
+// AccountDelete represents a data structure for deleting an Ethereum account.
+type AccountDelete struct {
+	Address           common.Address         // Address is the identifier of the deleted account.
+	Origin            []byte                 // Origin is the original value of account metadata in slim-RLP encoding.
+	StoragesOrigin    map[common.Hash][]byte // StoragesOrigin stores the original values of mutated slots in prefix-zero trimmed RLP format.
+	StorageIncomplete bool                   // StorageIncomplete is a flag indicating whether the storage set is incomplete.
+}
+
+// AccountUpdate represents a data structure for updating an Ethereum account.
+type AccountUpdate struct {
+	Address        common.Address         // Address is the identifier of the updated account.
+	Data           []byte                 // Data is the slim-RLP encoded account metadata.
+	Origin         []byte                 // Origin is the original value of account metadata in slim-RLP encoding.
+	Code           *ContractCode          // Code represents mutated contract code; nil means it's not modified.
+	Storages       map[common.Hash][]byte // Storages stores mutated slots in prefix-zero-trimmed RLP format.
+	StoragesOrigin map[common.Hash][]byte // StoragesOrigin stores the original values of mutated slots in prefix-zero trimmed RLP format.
+}
+
+// Update represents the difference between two states resulting from state execution.
+// It contains information about mutated contract codes, accounts, and storage slots,
+// along with their original values.
 type Update struct {
-	Destructs         map[common.Hash]struct{}                  // The list of destructed accounts
-	Accounts          map[common.Hash][]byte                    // The mutated accounts in 'slim RLP' encoding
-	AccountsOrigin    map[common.Address][]byte                 // The original value of mutated accounts in 'slim RLP' encoding
-	Storages          map[common.Hash]map[common.Hash][]byte    // The mutated slots in prefix-zero trimmed rlp format
-	StoragesOrigin    map[common.Address]map[common.Hash][]byte // The original value of mutated slots in prefix-zero trimmed rlp format
-	StorageIncomplete map[common.Address]struct{}               // The marker for incomplete storage sets
-	Codes             []Code                                    // The list of dirty codes
-	Nodes             *trienode.MergedNodeSet                   // Aggregated dirty node set
+	Destructs         map[common.Hash]struct{}                  // Destructs contains the list of destructed accounts.
+	Accounts          map[common.Hash][]byte                    // Accounts stores mutated accounts in 'slim RLP' encoding.
+	AccountsOrigin    map[common.Address][]byte                 // AccountsOrigin stores the original values of mutated accounts in 'slim RLP' encoding.
+	Storages          map[common.Hash]map[common.Hash][]byte    // Storages stores mutated slots in prefix-zero trimmed RLP format.
+	StoragesOrigin    map[common.Address]map[common.Hash][]byte // StoragesOrigin stores the original values of mutated slots in prefix-zero trimmed RLP format.
+	StorageIncomplete map[common.Address]struct{}               // StorageIncomplete is a marker for incomplete storage sets.
+	Codes             []*ContractCode                           // Codes contains the list of dirty codes.
 
-	accountTrieNodesUpdated int // the number of trie nodes updated in account trie
-	accountTrieNodesDeleted int // the number of trie nodes deleted in account trie
-	storageTrieNodesUpdated int // the number of trie nodes updated in storage trie
-	storageTrieNodesDeleted int // the number of trie nodes deleted in account trie
-	contractCodeCount       int // the number of contract codes updated
-	contractCodeSize        int // the total size of updated contract code
+	// metrics
+	accountUpdate    int
+	accountDelete    int
+	storageUpdate    int
+	storageDelete    int
+	contractCodeSize int
 }
 
-// NewUpdate constructs a state update object.
-func NewUpdate() *Update {
+// NewUpdate constructs a state update object, representing the differences
+// between two states by performing state execution. It takes a map of deleted
+// accounts and a map of updated accounts to generate a comprehensive Update.
+func NewUpdate(deletes map[common.Hash]*AccountDelete, updates map[common.Hash]*AccountUpdate) *Update {
+	var (
+		destructs         = make(map[common.Hash]struct{})
+		accounts          = make(map[common.Hash][]byte)
+		accountsOrigin    = make(map[common.Address][]byte)
+		storages          = make(map[common.Hash]map[common.Hash][]byte)
+		storagesOrigin    = make(map[common.Address]map[common.Hash][]byte)
+		storageIncomplete = make(map[common.Address]struct{})
+		codes             []*ContractCode
+
+		storageUpdate    int
+		storageDelete    int
+		contractCodeSize int
+	)
+	// Process deleted accounts as the first step. Might be possible
+	// some accounts are destructed and resurrected in the same block,
+	// therefore, deletions need to be handled first and the combine
+	// the mutations by resurrected accounts later.
+	for addrHash, delete := range deletes {
+		address := delete.Address
+		destructs[addrHash] = struct{}{}
+		accountsOrigin[address] = delete.Origin
+		if len(delete.StoragesOrigin) > 0 {
+			storagesOrigin[address] = delete.StoragesOrigin
+			storageDelete += len(delete.StoragesOrigin)
+		}
+		// Mark incomplete storage sets if flagged
+		if delete.StorageIncomplete {
+			storageIncomplete[address] = struct{}{}
+		}
+	}
+	// Process updated accounts then.
+	for addrHash, update := range updates {
+		address := update.Address
+		if update.Code != nil {
+			codes = append(codes, update.Code)
+			contractCodeSize += len(update.Code.Blob)
+		}
+		accounts[addrHash] = update.Data
+
+		// Original account data is only aggregated if it's not recorded yet,
+		// otherwise it means the account with same address is destructed in
+		// the same block and the origin data associated is incorrect.
+		if _, found := accountsOrigin[address]; !found {
+			accountsOrigin[address] = update.Origin
+		}
+		if len(update.Storages) > 0 {
+			storages[addrHash] = update.Storages
+			storageUpdate += len(update.Storages)
+		}
+		// Original storage data is only aggregated if it's not recorded yet,
+		// otherwise it means the account with same address is destructed in
+		// the same block and the leftover storage slots belonging to the
+		// deleted one are already recorded as the original value.
+		if len(update.StoragesOrigin) > 0 {
+			origin := storagesOrigin[address]
+			if origin == nil {
+				origin = make(map[common.Hash][]byte)
+				storagesOrigin[address] = origin
+			}
+			for key, slot := range update.StoragesOrigin {
+				if _, found := origin[key]; !found {
+					origin[key] = slot
+				}
+			}
+		}
+	}
 	return &Update{
-		Destructs:         make(map[common.Hash]struct{}),
-		Accounts:          make(map[common.Hash][]byte),
-		Storages:          make(map[common.Hash]map[common.Hash][]byte),
-		AccountsOrigin:    make(map[common.Address][]byte),
-		StoragesOrigin:    make(map[common.Address]map[common.Hash][]byte),
-		StorageIncomplete: make(map[common.Address]struct{}),
-		Nodes:             trienode.NewMergedNodeSet(),
+		Destructs:         destructs,
+		Accounts:          accounts,
+		AccountsOrigin:    accountsOrigin,
+		Storages:          storages,
+		StoragesOrigin:    storagesOrigin,
+		StorageIncomplete: storageIncomplete,
+		Codes:             codes,
+		accountUpdate:     len(updates),
+		accountDelete:     len(deletes),
+		storageUpdate:     storageUpdate,
+		storageDelete:     storageDelete,
+		contractCodeSize:  contractCodeSize,
 	}
 }
 
-// AddCode tracks the provided dirty contract code locally.
-func (update *Update) AddCode(address common.Address, hash common.Hash, blob []byte) {
-	update.Codes = append(update.Codes, Code{
-		Address: address,
-		Hash:    hash,
-		Blob:    blob,
-	})
-	update.contractCodeCount++
-	update.contractCodeSize += len(blob)
-}
-
-// AddNodes tracks the provided trie node set locally.
-func (update *Update) AddNodes(nodes *trienode.NodeSet) error {
-	if nodes == nil {
-		return nil
+// SetMetrics uploads the metrics data.
+func (update *Update) SetMetrics() {
+	if !metrics.EnabledExpensive {
+		return
 	}
-	if err := update.Nodes.Merge(nodes); err != nil {
-		return err
-	}
-	if nodes.Owner == (common.Hash{}) {
-		update.accountTrieNodesUpdated, update.accountTrieNodesDeleted = nodes.Size()
-		return nil
-	}
-	updates, deleted := nodes.Size()
-	update.storageTrieNodesUpdated += updates
-	update.storageTrieNodesDeleted += deleted
-	return nil
+	accountUpdatedMeter.Mark(int64(update.accountUpdate))
+	storageUpdatedMeter.Mark(int64(update.storageUpdate))
+	accountDeletedMeter.Mark(int64(update.accountDelete))
+	storageDeletedMeter.Mark(int64(update.storageDelete))
+	contractCodeCountMeter.Mark(int64(len(update.Codes)))
+	contractCodeSizeMeter.Mark(int64(update.contractCodeSize))
 }

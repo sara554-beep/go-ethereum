@@ -40,7 +40,7 @@ type trieID struct {
 	root  common.Hash
 }
 
-// newTrieID returns the trie ID by provided parameters.
+// newTrieID returns the trie ID with provided parameters.
 func newTrieID(verkle bool, state common.Hash, owner common.Hash, root common.Hash) *trieID {
 	if verkle {
 		return &trieID{owner: common.Hash{}, root: state}
@@ -224,6 +224,14 @@ func (p *triePrefetcher) used(owner common.Hash, root common.Hash, used [][]byte
 	if fetcher := p.fetchers[id.string()]; fetcher != nil {
 		fetcher.used = used
 	}
+}
+
+// hasher returns the state hasher based on the preloding trie type.
+func (p *triePrefetcher) hasher(stateRoot common.Hash) (Hasher, error) {
+	if p.verkle {
+		return newVerkleHasher(stateRoot, p.db, p)
+	}
+	return newMerkleHasher(stateRoot, p.db, p)
 }
 
 // subfetcher is a trie fetcher goroutine responsible for pulling entries for a

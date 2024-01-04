@@ -41,6 +41,7 @@ type OverrideAccount struct {
 	StateDiff *map[common.Hash]common.Hash `json:"stateDiff"`
 }
 
+// nolint
 type overrideMarshaling struct {
 	Nonce   *hexutil.Uint64
 	Code    *hexutil.Bytes
@@ -48,7 +49,7 @@ type overrideMarshaling struct {
 }
 
 type readerWithOverrides struct {
-	reader    *reader
+	reader    Reader
 	overrides map[common.Address]OverrideAccount
 }
 
@@ -63,7 +64,7 @@ func sanitize(overrides map[common.Address]OverrideAccount) error {
 
 // newReaderWithOverrides constructs a state header with provided state overrides.
 // It's mostly used in RPC serving for development or testing purposes.
-func newReaderWithOverrides(r *reader, overrides map[common.Address]OverrideAccount) (*readerWithOverrides, error) {
+func newReaderWithOverrides(r Reader, overrides map[common.Address]OverrideAccount) (*readerWithOverrides, error) {
 	if err := sanitize(overrides); err != nil {
 		return nil, err
 	}
@@ -111,4 +112,16 @@ func (r *readerWithOverrides) Storage(addr common.Address, root common.Hash, key
 		}
 	}
 	return r.reader.Storage(addr, root, key)
+}
+
+// Copy returns a deep-copied reader.
+func (r *readerWithOverrides) Copy() Reader {
+	overrides := make(map[common.Address]OverrideAccount)
+	for addr, override := range r.overrides {
+		overrides[addr] = override
+	}
+	return &readerWithOverrides{
+		reader:    r.reader.Copy(),
+		overrides: overrides,
+	}
 }

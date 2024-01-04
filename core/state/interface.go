@@ -49,23 +49,92 @@ type CodeStore interface {
 	CodeWriter
 }
 
-// Reader defines the interface for accessing accounts or storage slots
-// associated with a specific state.
-type Reader interface {
+// AccountReader wraps the Account method of a backing state database
+// providing an interface for accessing account data.
+type AccountReader interface {
 	// Account retrieves the account associated with a particular address.
 	//
-	// - Nil account is returned if it's not existent
-	// - Error is returned if any unexpected error occurs
-	// - The returned account is safe to modify
+	// (a) A nil account is returned if it's not existent
+	// (b) An error is returned if any unexpected error occurs
+	// (c) The returned account is safe to modify
 	Account(addr common.Address) (*types.StateAccount, error)
+}
 
+// StorageReader wraps the Storage method of a backing state database
+// providing an interface for accessing storage slot.
+type StorageReader interface {
 	// Storage retrieves the storage slot associated with a particular account
 	// address and slot key.
 	//
-	// - Null slot is returned if it's not existent
-	// - Error is returned if any unexpected error occurs
-	// - The returned storage slot is safe to modify
+	// (a) An empty slot is returned if it's not existent
+	// (b) An error is returned if any unexpected error occurs
+	// (c) The returned storage slot is safe to modify
 	Storage(addr common.Address, storageRoot common.Hash, slot common.Hash) (common.Hash, error)
+}
+
+// Reader defines the interface for accessing accounts or storage slots
+// associated with a specific state.
+type Reader interface {
+	AccountReader
+	StorageReader
+
+	// Copy returns a deep-copied state reader.
+	Copy() Reader
+}
+
+// AccountHasher wraps the multiple mutation methods of a backing state database
+// providing an interface for writing account changes to database.
+type AccountHasher interface {
+	// UpdateAccount abstracts an account write to the trie. It encodes the
+	// provided account object with associated algorithm and then updates it
+	// in the hasher with provided address.
+	UpdateAccount(address common.Address, account *types.StateAccount) error
+
+	// DeleteAccount abstracts an account deletion from the hasher.
+	DeleteAccount(address common.Address) error
+
+	// UpdateContractCode abstracts code write to the hasher.
+	UpdateContractCode(address common.Address, codeHash common.Hash, code []byte) error
+
+	// Hash returns the root hash of the state. It does not write to the database
+	// and can be used even if the hasher doesn't have one.
+	Hash() common.Hash
+
+	// Commit collects all dirty nodes produced by hasher for state rehashing.
+	// The nodeset can be nil if the state is not changed at all.
+	Commit() (common.Hash, *trienode.NodeSet, error)
+}
+
+// StorageHasher wraps the multiple mutation methods of a backing state database
+// providing an interface for writing storage changes to database.
+type StorageHasher interface {
+	// UpdateStorage associates key with value in the hasher.
+	UpdateStorage(address common.Address, key, value []byte) error
+
+	// DeleteStorage removes any existing value for key from the hasher.
+	DeleteStorage(address common.Address, key []byte) error
+
+	// Hash returns the root hash of the storage. It does not write to the
+	// database and can be used even if the hasher doesn't have one.
+	Hash() common.Hash
+
+	// Commit collects all dirty nodes produced by hasher for storage rehashing.
+	// The nodeset can be nil if the storage is not changed at all.
+	Commit() (common.Hash, *trienode.NodeSet, error)
+
+	// Copy returns a deep-copied storage hasher.
+	Copy(Hasher) StorageHasher
+}
+
+// Hasher defines the interface for hashing account and storage changes.
+type Hasher interface {
+	AccountHasher
+
+	// Copy returns a deep-copied hasher.
+	Copy() Hasher
+
+	// StorageHasher returns a storage writer for the specific account.
+	StorageHasher(address common.Address, root common.Hash) (StorageHasher, error)
 }
 
 // Database defines the essential methods for reading and writing ethereum states,
@@ -76,21 +145,8 @@ type Database interface {
 	// Reader returns a state reader interface with the specified state root.
 	Reader(stateRoot common.Hash) (Reader, error)
 
-	// OpenTrie opens the main account trie. An error will be returned in these
-	// following scenarios:
-	//
-	// - The trie requested is not existent,
-	// - The state data is corrupted
-	// - The trie loading is not supported
-	OpenTrie(stateRoot common.Hash) (Trie, error)
-
-	// OpenStorageTrie opens the storage trie of an account. An error will be
-	// returned in these following scenarios:
-	//
-	// - The trie requested is not existent
-	// - The state data is corrupted
-	// - The trie loading is not supported
-	OpenStorageTrie(stateRoot common.Hash, address common.Address, root common.Hash) (Trie, error)
+	// Hasher returns a state hasher interface with the specified state root.
+	Hasher(stateRoot common.Hash) (Hasher, error)
 
 	// TrieDB returns the underlying trie database for managing trie nodes.
 	TrieDB() *trie.Database
@@ -103,7 +159,7 @@ type Database interface {
 	//
 	// - The state transition in underlying state layers fail
 	// - The write functionality is not supported(e.g. for read-only state database)
-	Commit(originRoot common.Hash, root common.Hash, block uint64, update *Update) error
+	Commit(originRoot common.Hash, root common.Hash, block uint64, update *Update, nodes *trienode.MergedNodeSet) error
 }
 
 // Trie is a state trie interface, can be implemented by Ethereum Merkle Patricia
