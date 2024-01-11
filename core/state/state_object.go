@@ -305,7 +305,7 @@ func (s *stateObject) commit() (*AccountUpdate, *trienode.NodeSet, error) {
 	}
 	if s.origin != nil {
 		update.Origin = types.SlimAccountRLP(*s.origin)
-	}
+	} // s.origin == nil means the account was not present
 	if s.dirtyCode {
 		update.Code = &ContractCode{
 			Address: s.address,
@@ -314,27 +314,29 @@ func (s *stateObject) commit() (*AccountUpdate, *trienode.NodeSet, error) {
 		}
 		s.dirtyCode = false
 	}
-	// Short circuit if storage is not changed at all.
-	if len(s.pendingStorage) == 0 {
-		s.origin = s.data.Copy()
-		return update, nil, nil
-	}
-	// Aggregate the storage changes into result set
-	s.commitStorage(update)
+	// Commit storage changes if the storage is mutated.
+	var nodes *trienode.NodeSet
+	if len(s.pendingStorage) != 0 {
+		s.commitStorage(update)
 
-	// Track the amount of time wasted on committing the storage hasher
-	if metrics.EnabledExpensive {
-		defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
-	}
-	// The hasher could potentially contain cached mutations. Call commit to
-	// acquire a set of nodes that have been modified, the set can be nil if
-	// nothing to commit.
-	root, nodes, err := s.hasher.Commit()
-	if err != nil {
-		return nil, nil, err
-	}
-	if s.data.Root != root {
-		return nil, nil, fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
+		// Track the amount of time wasted on committing the storage hasher
+		if metrics.EnabledExpensive {
+			defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
+		}
+		// The hasher could potentially contain cached mutations. Call commit to
+		// acquire a set of nodes that have been modified, the set can be nil if
+		// nothing to commit.
+		var (
+			err  error
+			root common.Hash
+		)
+		root, nodes, err = s.hasher.Commit()
+		if err != nil {
+			return nil, nil, err
+		}
+		if s.data.Root != root {
+			return nil, nil, fmt.Errorf("unexpected storage root, %x != %x", root, s.data.Root)
+		}
 	}
 	s.origin = s.data.Copy() // Update original account data after commit
 	return update, nodes, nil

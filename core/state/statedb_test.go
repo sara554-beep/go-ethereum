@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
@@ -1196,11 +1195,13 @@ func TestDeleteStorage(t *testing.T) {
 	obj := fastState.getOrNewStateObject(addr)
 	storageRoot := obj.data.Root
 
-	_, _, fastNodes, err := fastState.deleteStorage(crypto.Keccak256Hash(addr[:]), storageRoot)
+	fastDeleter, _ := fastState.db.StorageDeleter(root)
+	slowDeleter, _ := slowState.db.StorageDeleter(root)
+	_, _, fastNodes, err := fastDeleter.Delete(addr, storageRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, slowNodes, err := slowState.deleteStorage(crypto.Keccak256Hash(addr[:]), storageRoot)
+	_, _, slowNodes, err := slowDeleter.Delete(addr, storageRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

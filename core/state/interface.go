@@ -18,7 +18,6 @@ package state
 
 import (
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/trie"
@@ -137,6 +136,13 @@ type Hasher interface {
 	StorageHasher(address common.Address, root common.Hash) (StorageHasher, error)
 }
 
+// StorageDeleter defines the interface for deleting storage of specific account.
+type StorageDeleter interface {
+	// Delete wipes the storage belongs to the specific account and returns all
+	// deleted slots along with associated hashing proofs.
+	Delete(address common.Address, root common.Hash) (bool, map[common.Hash][]byte, *trienode.NodeSet, error)
+}
+
 // Database defines the essential methods for reading and writing ethereum states,
 // providing a comprehensive interface for ethereum state management.
 type Database interface {
@@ -148,11 +154,11 @@ type Database interface {
 	// Hasher returns a state hasher interface with the specified state root.
 	Hasher(stateRoot common.Hash) (Hasher, error)
 
+	// StorageDeleter returns a storage deleter interface with the specified state root.
+	StorageDeleter(stateRoot common.Hash) (StorageDeleter, error)
+
 	// TrieDB returns the underlying trie database for managing trie nodes.
 	TrieDB() *trie.Database
-
-	// Snapshot returns the associated state snapshot; it may be nil if not available.
-	Snapshot() *snapshot.Tree
 
 	// Commit accepts the state changes made by execution and applies it to database.
 	// An error will be returned in these following scenarios:

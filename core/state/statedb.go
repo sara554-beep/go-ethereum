@@ -30,15 +30,8 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/holiman/uint256"
-)
-
-const (
-	// storageDeleteLimit denotes the highest permissible memory allocation
-	// employed for contract storage deletion.
-	storageDeleteLimit = 512 * 1024 * 1024
 )
 
 type revision struct {
@@ -784,135 +777,6 @@ func (s *StateDB) clearJournalAndRefund() {
 	s.validRevisions = s.validRevisions[:0] // Snapshots can be created without journal entries
 }
 
-// fastDeleteStorage is the function that efficiently deletes the storage trie
-// of a specific account. It leverages the associated state snapshot for fast
-// storage iteration and constructs trie node deletion markers by creating
-// stack trie with iterated slots.
-func (s *StateDB) fastDeleteStorage(addrHash common.Hash, root common.Hash) (bool, common.StorageSize, map[common.Hash][]byte, *trienode.NodeSet, error) {
-	iter, err := s.db.Snapshot().StorageIterator(s.originalRoot, addrHash, common.Hash{})
-	if err != nil {
-		return false, 0, nil, nil, err
-	}
-	defer iter.Release()
-
-	var (
-		size  common.StorageSize
-		nodes = trienode.NewNodeSet(addrHash)
-		slots = make(map[common.Hash][]byte)
-	)
-	options := trie.NewStackTrieOptions()
-	options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
-		nodes.AddNode(path, trienode.NewDeleted())
-		size += common.StorageSize(len(path))
-	})
-	stack := trie.NewStackTrie(options)
-	for iter.Next() {
-		if size > storageDeleteLimit {
-			return true, size, nil, nil, nil
-		}
-		slot := common.CopyBytes(iter.Slot())
-		if err := iter.Error(); err != nil { // error might occur after Slot function
-			return false, 0, nil, nil, err
-		}
-		size += common.StorageSize(common.HashLength + len(slot))
-		slots[iter.Hash()] = slot
-
-		if err := stack.Update(iter.Hash().Bytes(), slot); err != nil {
-			return false, 0, nil, nil, err
-		}
-	}
-	if err := iter.Error(); err != nil { // error might occur during iteration
-		return false, 0, nil, nil, err
-	}
-	if stack.Hash() != root {
-		return false, 0, nil, nil, fmt.Errorf("snapshot is not matched, exp %x, got %x", root, stack.Hash())
-	}
-	return false, size, slots, nodes, nil
-}
-
-// slowDeleteStorage serves as a less-efficient alternative to "fastDeleteStorage,"
-// employed when the associated state snapshot is not available. It iterates the
-// storage slots along with all internal trie nodes via trie directly.
-func (s *StateDB) slowDeleteStorage(addrHash common.Hash, root common.Hash) (bool, common.StorageSize, map[common.Hash][]byte, *trienode.NodeSet, error) {
-	if s.db.TrieDB() == nil {
-		return false, 0, nil, nil, errors.New("trie loading is not supported")
-	}
-	tr, err := trie.NewStateTrie(trie.StorageTrieID(s.originalRoot, addrHash, root), s.db.TrieDB())
-	if err != nil {
-		return false, 0, nil, nil, fmt.Errorf("failed to open storage trie, err: %w", err)
-	}
-	it, err := tr.NodeIterator(nil)
-	if err != nil {
-		return false, 0, nil, nil, fmt.Errorf("failed to open storage iterator, err: %w", err)
-	}
-	var (
-		size  common.StorageSize
-		nodes = trienode.NewNodeSet(addrHash)
-		slots = make(map[common.Hash][]byte)
-	)
-	for it.Next(true) {
-		if size > storageDeleteLimit {
-			return true, size, nil, nil, nil
-		}
-		if it.Leaf() {
-			slots[common.BytesToHash(it.LeafKey())] = common.CopyBytes(it.LeafBlob())
-			size += common.StorageSize(common.HashLength + len(it.LeafBlob()))
-			continue
-		}
-		if it.Hash() == (common.Hash{}) {
-			continue
-		}
-		size += common.StorageSize(len(it.Path()))
-		nodes.AddNode(it.Path(), trienode.NewDeleted())
-	}
-	if err := it.Error(); err != nil {
-		return false, 0, nil, nil, err
-	}
-	return false, size, slots, nodes, nil
-}
-
-// deleteStorage is designed to delete the storage trie of a designated account.
-// It could potentially be terminated if the storage size is excessively large,
-// potentially leading to an out-of-memory panic. The function will make an attempt
-// to utilize an efficient strategy if the associated state snapshot is reachable;
-// otherwise, it will resort to a less-efficient approach.
-func (s *StateDB) deleteStorage(addrHash common.Hash, root common.Hash) (bool, map[common.Hash][]byte, *trienode.NodeSet, error) {
-	var (
-		start   = time.Now()
-		err     error
-		aborted bool
-		size    common.StorageSize
-		slots   map[common.Hash][]byte
-		nodes   *trienode.NodeSet
-	)
-	// The fast approach can be failed if the snapshot is not fully
-	// generated, or it's internally corrupted. Fallback to the slow
-	// one just in case.
-	if s.db.Snapshot() != nil {
-		aborted, size, slots, nodes, err = s.fastDeleteStorage(addrHash, root)
-	}
-	if s.db.Snapshot() == nil || err != nil {
-		aborted, size, slots, nodes, err = s.slowDeleteStorage(addrHash, root)
-	}
-	if err != nil {
-		return false, nil, nil, err
-	}
-	if metrics.EnabledExpensive {
-		if aborted {
-			slotDeletionSkip.Inc(1)
-		}
-		n := int64(len(slots))
-
-		slotDeletionMaxCount.UpdateIfGt(int64(len(slots)))
-		slotDeletionMaxSize.UpdateIfGt(int64(size))
-
-		slotDeletionTimer.UpdateSince(start)
-		slotDeletionCount.Mark(n)
-		slotDeletionSize.Mark(int64(size))
-	}
-	return aborted, slots, nodes, nil
-}
-
 // handleDestruction processes all destruction markers and deletes the account
 // and associated storage slots if necessary. There are four possible situations
 // here:
@@ -970,7 +834,11 @@ func (s *StateDB) handleDestruction() (map[common.Hash]*AccountDelete, []*trieno
 			continue
 		}
 		// Remove storage slots belong to the account.
-		aborted, slots, set, err := s.deleteStorage(crypto.Keccak256Hash(addr[:]), prev.Root)
+		deleter, err := s.db.StorageDeleter(s.originalRoot)
+		if err != nil {
+			return nil, nil, err
+		}
+		aborted, slots, set, err := deleter.Delete(addr, prev.Root)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to delete storage, err: %w", err)
 		}

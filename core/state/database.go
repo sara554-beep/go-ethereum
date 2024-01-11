@@ -17,6 +17,7 @@
 package state
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/crate-crypto/go-ipa/banderwagon"
@@ -85,6 +86,15 @@ func (db *FullDB) Hasher(stateRoot common.Hash) (Hasher, error) {
 	return newMerkleHasher(stateRoot, db.triedb, nil)
 }
 
+// StorageDeleter implements Database interface, returning a storage deleter of
+// the specific state.
+func (db *FullDB) StorageDeleter(stateRoot common.Hash) (StorageDeleter, error) {
+	if db.triedb.IsVerkle() {
+		return nil, errors.New("not supported")
+	}
+	return newMerkleStorageDeleter(db.snaps, db.triedb, stateRoot), nil
+}
+
 // ReadCode implements CodeReader, retrieving a particular contract's code.
 func (db *FullDB) ReadCode(address common.Address, codeHash common.Hash) ([]byte, error) {
 	return db.codedb.ReadCode(address, codeHash)
@@ -105,11 +115,6 @@ func (db *FullDB) WriteCodes(addresses []common.Address, hashes []common.Hash, c
 // TrieDB returns the associated trie database.
 func (db *FullDB) TrieDB() *trie.Database {
 	return db.triedb
-}
-
-// Snapshot returns the associated state snapshot, it may be nil if not configured.
-func (db *FullDB) Snapshot() *snapshot.Tree {
-	return db.snaps
 }
 
 // Commit accepts the state changes made by execution and applies it to database.
