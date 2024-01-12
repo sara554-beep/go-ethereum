@@ -179,7 +179,7 @@ func (miner *Miner) pending() *newPayloadResult {
 	// Lock pending block
 	miner.pendingMu.Lock()
 	defer miner.pendingMu.Unlock()
-	if time.Since(miner.cacheTime) < time.Second {
+	if time.Since(miner.cacheTime) < time.Second && coinbase == miner.pendingCache.coinbase {
 		return miner.pendingCache
 	}
 	pending := miner.generateWork(&generateParams{
