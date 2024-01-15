@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package triedb
 
 import (
 	"errors"
@@ -29,22 +29,22 @@ import (
 	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
-// Reader wraps the Node method of a backing trie store.
-type Reader interface {
-	// Node retrieves the trie node blob with the provided trie identifier, node path and
-	// the corresponding node hash. No error will be returned if the node is not found.
-	//
-	// When looking up nodes in the account trie, 'owner' is the zero hash. For contract
-	// storage trie nodes, 'owner' is the hash of the account address that containing the
-	// storage.
-	//
-	// Notably, the provided hash might be useless in path mode if hash check is
-	// configured as disabled, e.g. in the verkle context.
-	//
-	// Don't modify the returned byte slice since it's not deep-copied and still
-	// be referenced by database.
-	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
-}
+//// Reader wraps the Node method of a backing trie store.
+//type Reader interface {
+//	// Node retrieves the trie node blob with the provided trie identifier, node path and
+//	// the corresponding node hash. No error will be returned if the node is not found.
+//	//
+//	// When looking up nodes in the account trie, 'owner' is the zero hash. For contract
+//	// storage trie nodes, 'owner' is the hash of the account address that containing the
+//	// storage.
+//	//
+//	// Notably, the provided hash might be useless in path mode if hash check is
+//	// configured as disabled, e.g. in the verkle context.
+//	//
+//	// Don't modify the returned byte slice since it's not deep-copied and still
+//	// be referenced by database.
+//	Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error)
+//}
 
 // Config defines all necessary options for database.
 type Config struct {
@@ -115,7 +115,7 @@ type Database struct {
 func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	// Sanitize the config and use the default one if it's not specified.
 	if config == nil {
-		config = HashDefaults
+		config = PathDefaults
 	}
 	var preimages *preimageStore
 	if config.Preimages {
@@ -126,25 +126,25 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		diskdb:    diskdb,
 		preimages: preimages,
 	}
-	if config.HashDB != nil && config.PathDB != nil {
-		log.Crit("Both 'hash' and 'path' mode are configured")
+	if config.HashDB != nil {
+		log.Crit("'hash' mode is not longer supported")
 	}
-	if config.PathDB != nil {
-		db.backend = pathdb.New(diskdb, config.PathDB, config.IsVerkle)
-	} else {
-		db.backend = hashdb.New(diskdb, config.HashDB, mptResolver{})
+	if config.PathDB == nil {
+		log.Crit("'path' mode is not configured")
 	}
+	db.backend = pathdb.New(diskdb, config.PathDB, config.IsVerkle)
 	return db
 }
 
 // Reader returns a reader for accessing all trie nodes with provided state root.
 // An error will be returned if the requested state is not available.
-func (db *Database) Reader(blockRoot common.Hash) (Reader, error) {
+func (db *Database) Reader(blockRoot common.Hash) (any, error) {
 	switch b := db.backend.(type) {
 	case *hashdb.Database:
-		return b.Reader(blockRoot)
+		_ = b
+		return nil, nil
 	case *pathdb.Database:
-		return b.Reader(blockRoot)
+		return nil, nil
 	}
 	return nil, errors.New("unknown backend")
 }
@@ -226,6 +226,16 @@ func (db *Database) Preimage(hash common.Hash) []byte {
 	return db.preimages.preimage(hash)
 }
 
+// InsertPreimage writes a new trie node pre-image to the memory database if it's
+// yet unknown. The method will NOT make a copy of the slice, only use if the
+// preimage will NOT be changed later on.
+func (db *Database) InsertPreimage(preimages map[common.Hash][]byte) {
+	if db.preimages == nil {
+		return
+	}
+	db.preimages.insertPreimage(preimages)
+}
+
 // Cap iteratively flushes old but still referenced trie nodes until the total
 // memory usage goes below the given threshold. The held pre-images accumulated
 // up to this point will be flushed in case the size exceeds the threshold.
@@ -276,7 +286,7 @@ func (db *Database) Recover(target common.Hash) error {
 	if !ok {
 		return errors.New("not supported")
 	}
-	return pdb.Recover(target, &trieLoader{db: db})
+	return pdb.Recover(target, nil)
 }
 
 // Recoverable returns the indicator if the specified state is enabled to be

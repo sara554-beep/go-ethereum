@@ -433,6 +433,7 @@ func traverseRawState(ctx *cli.Context) error {
 		log.Error("State is non-existent", "root", root)
 		return nil
 	}
+	_ = reader
 	for accIter.Next(true) {
 		nodes += 1
 		node := accIter.Hash()
@@ -440,7 +441,8 @@ func traverseRawState(ctx *cli.Context) error {
 		// Check the present for non-empty hash node(embedded node doesn't
 		// have their own hash).
 		if node != (common.Hash{}) {
-			blob, _ := reader.Node(common.Hash{}, accIter.Path(), node)
+			//blob, _ := reader.Node(common.Hash{}, accIter.Path(), node)
+			var blob []byte
 			if len(blob) == 0 {
 				log.Error("Missing trie node(account)", "hash", node)
 				return errors.New("missing account")
@@ -481,7 +483,9 @@ func traverseRawState(ctx *cli.Context) error {
 					// Check the presence for non-empty hash node(embedded node doesn't
 					// have their own hash).
 					if node != (common.Hash{}) {
-						blob, _ := reader.Node(common.BytesToHash(accIter.LeafKey()), storageIter.Path(), node)
+
+						//blob, _ := reader.Node(common.BytesToHash(accIter.LeafKey()), storageIter.Path(), node)
+						var blob []byte
 						if len(blob) == 0 {
 							log.Error("Missing trie node(storage)", "hash", node)
 							return errors.New("missing storage")

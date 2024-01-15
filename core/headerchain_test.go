@@ -19,6 +19,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"testing"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 func verifyUnbrokenCanonchain(hc *HeaderChain) error {
@@ -73,7 +73,7 @@ func TestHeaderInsertion(t *testing.T) {
 		db    = rawdb.NewMemoryDatabase()
 		gspec = &Genesis{BaseFee: big.NewInt(params.InitialBaseFee), Config: params.AllEthashProtocolChanges}
 	)
-	gspec.Commit(db, trie.NewDatabase(db, nil))
+	gspec.Commit(db, triedb.NewDatabase(db, nil))
 	hc, err := NewHeaderChain(db, gspec.Config, ethash.NewFaker(), func() bool { return false })
 	if err != nil {
 		t.Fatal(err)

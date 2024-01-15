@@ -17,6 +17,7 @@
 package core
 
 import (
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -29,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 // CurrentHeader retrieves the current head header of the canonical chain. The
@@ -383,7 +383,7 @@ func (bc *BlockChain) TxLookupLimit() uint64 {
 }
 
 // TrieDB retrieves the low level trie database used for data storage.
-func (bc *BlockChain) TrieDB() *trie.Database {
+func (bc *BlockChain) TrieDB() *triedb.Database {
 	return bc.triedb
 }
 

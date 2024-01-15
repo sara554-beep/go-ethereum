@@ -19,6 +19,7 @@ package miner
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"testing"
 	"time"
@@ -300,7 +301,7 @@ func createMiner(t *testing.T) (*Miner, *event.TypeMux, func(skipMiner bool)) {
 	}
 	// Create chainConfig
 	chainDB := rawdb.NewMemoryDatabase()
-	triedb := trie.NewDatabase(chainDB, nil)
+	triedb := triedb.NewDatabase(chainDB, nil)
 	genesis := minerTestGenesisBlock(15, 11_500_000, common.HexToAddress("12345"))
 	chainConfig, _, err := core.SetupGenesisBlock(chainDB, triedb, genesis)
 	if err != nil {
