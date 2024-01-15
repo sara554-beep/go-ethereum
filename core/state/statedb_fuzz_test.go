@@ -21,7 +21,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
+	"github.com/ethereum/go-ethereum/triedb/state"
 	"math"
 	"math/big"
 	"math/rand"
@@ -37,8 +39,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // A stateTest checks that the state changes are correctly captured. Instances
@@ -177,7 +177,7 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *triestate.Set) {
+		onCommit    = func(states *state.Set) {
 			accountList = append(accountList, copySet(states.Accounts))
 			storageList = append(storageList, copy2DSet(states.Storages))
 		}

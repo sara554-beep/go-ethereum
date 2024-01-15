@@ -14,19 +14,17 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package triestate
+package pathdb
 
 import (
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"golang.org/x/crypto/sha3"
 )
 
 // Trie is an Ethereum state trie, can be implemented by Ethereum Merkle Patricia
@@ -55,43 +53,6 @@ type TrieLoader interface {
 	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
 }
 
-// Set represents a collection of mutated states during a state transition.
-// The value refers to the original content of state before the transition
-// is made. Nil means that the state was not present previously.
-type Set struct {
-	Accounts   map[common.Address][]byte                 // Mutated account set, nil means the account was not present
-	Storages   map[common.Address]map[common.Hash][]byte // Mutated storage set, nil means the slot was not present
-	Incomplete map[common.Address]struct{}               // Indicator whether the storage is incomplete due to large deletion
-	size       common.StorageSize                        // Approximate size of set
-}
-
-// New constructs the state set with provided data.
-func New(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, incomplete map[common.Address]struct{}) *Set {
-	return &Set{
-		Accounts:   accounts,
-		Storages:   storages,
-		Incomplete: incomplete,
-	}
-}
-
-// Size returns the approximate memory size occupied by the set.
-func (s *Set) Size() common.StorageSize {
-	if s.size != 0 {
-		return s.size
-	}
-	for _, account := range s.Accounts {
-		s.size += common.StorageSize(common.AddressLength + len(account))
-	}
-	for _, slots := range s.Storages {
-		for _, val := range slots {
-			s.size += common.StorageSize(common.HashLength + len(val))
-		}
-		s.size += common.StorageSize(common.AddressLength)
-	}
-	s.size += common.StorageSize(common.AddressLength * len(s.Incomplete))
-	return s.size
-}
-
 // context wraps all fields for executing state diffs.
 type context struct {
 	prevRoot    common.Hash
@@ -102,10 +63,10 @@ type context struct {
 	nodes       *trienode.MergedNodeSet
 }
 
-// Apply traverses the provided state diffs, apply them in the associated
+// revert traverses the provided state diffs, apply them in the associated
 // post-state and return the generated dirty trie nodes. The state can be
 // loaded via the provided trie loader.
-func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, loader TrieLoader) (map[common.Hash]map[string]*trienode.Node, error) {
+func revert(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, loader *trie.MerkleLoader) (map[common.Hash]map[string]*trienode.Node, error) {
 	tr, err := loader.OpenTrie(postRoot)
 	if err != nil {
 		return nil, err
@@ -145,7 +106,7 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Addre
 // updateAccount the account was present in prev-state, and may or may not
 // existent in post-state. Apply the reverse diff and verify if the storage
 // root matches the one in prev-state account.
-func updateAccount(ctx *context, loader TrieLoader, addr common.Address) error {
+func updateAccount(ctx *context, loader *trie.MerkleLoader, addr common.Address) error {
 	// The account was present in prev-state, decode it from the
 	// 'slim-rlp' format bytes.
 	h := newHasher()
@@ -209,7 +170,7 @@ func updateAccount(ctx *context, loader TrieLoader, addr common.Address) error {
 // deleteAccount the account was not present in prev-state, and is expected
 // to be existent in post-state. Apply the reverse diff and verify if the
 // account and storage is wiped out correctly.
-func deleteAccount(ctx *context, loader TrieLoader, addr common.Address) error {
+func deleteAccount(ctx *context, loader *trie.MerkleLoader, addr common.Address) error {
 	// The account must be existent in post-state, load the account.
 	h := newHasher()
 	defer h.release()
@@ -254,23 +215,4 @@ func deleteAccount(ctx *context, loader TrieLoader, addr common.Address) error {
 	}
 	// Delete the post-state account from the main trie.
 	return ctx.accountTrie.Delete(addrHash.Bytes())
-}
-
-// hasher is used to compute the sha256 hash of the provided data.
-type hasher struct{ sha crypto.KeccakState }
-
-var hasherPool = sync.Pool{
-	New: func() interface{} { return &hasher{sha: sha3.NewLegacyKeccak256().(crypto.KeccakState)} },
-}
-
-func newHasher() *hasher {
-	return hasherPool.Get().(*hasher)
-}
-
-func (h *hasher) hash(data []byte) common.Hash {
-	return crypto.HashData(h.sha, data)
-}
-
-func (h *hasher) release() {
-	hasherPool.Put(h)
 }

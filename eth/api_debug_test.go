@@ -19,7 +19,7 @@ package eth
 import (
 	"bytes"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"reflect"
 	"strings"

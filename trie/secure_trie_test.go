@@ -19,6 +19,7 @@ package trie
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/triedb"
 	"runtime"
 	"sync"
 	"testing"
@@ -27,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 

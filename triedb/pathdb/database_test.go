@@ -31,7 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie/testutil"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 func updateTrie(addrHash common.Hash, root common.Hash, dirties, cleans map[common.Hash][]byte) (common.Hash, *trienode.NodeSet) {
@@ -209,7 +209,7 @@ func (t *tester) clearStorage(ctx *genctx, addr common.Address, root common.Hash
 	return root
 }
 
-func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *triestate.Set) {
+func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *state.Set) {
 	var (
 		ctx     = newCtx()
 		dirties = make(map[common.Hash]struct{})
@@ -299,7 +299,7 @@ func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNode
 			}
 		}
 	}
-	return root, ctx.nodes, triestate.New(ctx.accountOrigin, ctx.storageOrigin, nil)
+	return root, ctx.nodes, state.New(ctx.accountOrigin, ctx.storageOrigin, nil)
 }
 
 // lastRoot returns the latest root hash, or empty if nothing is cached.

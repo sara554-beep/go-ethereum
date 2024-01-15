@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"io"
 
 	"github.com/ethereum/go-ethereum/common"

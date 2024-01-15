@@ -21,7 +21,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"

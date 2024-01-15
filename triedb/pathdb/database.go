@@ -29,8 +29,9 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 const (
@@ -76,7 +77,7 @@ type layer interface {
 	// the provided dirty trie nodes along with the state change set.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *triestate.Set) *diffLayer
+	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *state.Set) *diffLayer
 
 	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
@@ -223,7 +224,7 @@ func (db *Database) Reader(root common.Hash) (layer, error) {
 //
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *state.Set) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -332,7 +333,7 @@ func (db *Database) Enable(root common.Hash) error {
 // Recover rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding trie histories are existent.
-func (db *Database) Recover(root common.Hash, loader triestate.TrieLoader) error {
+func (db *Database) Recover(root common.Hash, loader *trie.MerkleLoader) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 

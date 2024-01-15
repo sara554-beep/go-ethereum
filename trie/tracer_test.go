@@ -18,12 +18,12 @@ package trie
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/triedb"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 

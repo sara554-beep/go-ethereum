@@ -26,8 +26,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/state"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -161,7 +162,7 @@ func (dl *diskLayer) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 
 // update implements the layer interface, returning a new diff layer on top
 // with the given state set.
-func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *triestate.Set) *diffLayer {
+func (dl *diskLayer) update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *state.Set) *diffLayer {
 	return newDiffLayer(dl, root, id, block, nodes, states)
 }
 
@@ -235,7 +236,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 }
 
 // revert applies the given state history and return a reverted disk layer.
-func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer, error) {
+func (dl *diskLayer) revert(h *history, loader *trie.MerkleLoader) (*diskLayer, error) {
 	if h.meta.root != dl.rootHash() {
 		return nil, errUnexpectedHistory
 	}
@@ -251,7 +252,7 @@ func (dl *diskLayer) revert(h *history, loader triestate.TrieLoader) (*diskLayer
 	// Apply the reverse state changes upon the current state. This must
 	// be done before holding the lock in order to access state in "this"
 	// layer.
-	nodes, err := triestate.Apply(h.meta.parent, h.meta.root, h.accounts, h.storages, loader)
+	nodes, err := revert(h.meta.parent, h.meta.root, h.accounts, h.storages, loader)
 	if err != nil {
 		return nil, err
 	}

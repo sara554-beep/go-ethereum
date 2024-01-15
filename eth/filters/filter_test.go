@@ -19,7 +19,7 @@ package filters
 import (
 	"context"
 	"encoding/json"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"strings"
 	"testing"

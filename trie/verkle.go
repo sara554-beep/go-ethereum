@@ -25,7 +25,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/gballet/go-verkle"
@@ -46,7 +45,7 @@ type VerkleTrie struct {
 }
 
 // NewVerkleTrie constructs a verkle tree based on the specified root hash.
-func NewVerkleTrie(root common.Hash, db *triedb.Database, cache *utils.PointCache) (*VerkleTrie, error) {
+func NewVerkleTrie(root common.Hash, db Database, cache *utils.PointCache) (*VerkleTrie, error) {
 	reader, err := newTrieReader(root, common.Hash{}, db)
 	if err != nil {
 		return nil, err

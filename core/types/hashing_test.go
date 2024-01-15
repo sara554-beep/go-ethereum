@@ -19,7 +19,7 @@ package types_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"io"
 	"math/big"
 	mrand "math/rand"

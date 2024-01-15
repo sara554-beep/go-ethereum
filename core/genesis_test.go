@@ -19,7 +19,8 @@ package core
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"math/big"
 	"reflect"
 	"testing"
@@ -31,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 )
 
 func TestInvalidCliqueConfig(t *testing.T) {

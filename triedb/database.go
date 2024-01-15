@@ -18,14 +18,15 @@ package triedb
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/triedb/hashdb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
+	"github.com/ethereum/go-ethereum/triedb/state"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
-	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 // Config defines all necessary options for database.
@@ -66,7 +67,7 @@ type backend interface {
 	//
 	// The passed in maps(nodes, states) will be retained to avoid copying
 	// everything. Therefore, these maps must not be changed afterwards.
-	Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error
+	Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *state.Set) error
 
 	// Commit writes all relevant trie nodes belonging to the specified state
 	// to disk. Report specifies whether logs will be displayed in info level.
@@ -108,7 +109,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 	if config.PathDB != nil {
 		db.backend = pathdb.New(diskdb, config.PathDB)
 	} else {
-		db.backend = hashdb.New(diskdb, config.HashDB, nil)
+		db.backend = hashdb.New(diskdb, config.HashDB)
 	}
 	return db
 }
@@ -147,7 +148,7 @@ func (db *Database) ReaderAny(blockRoot common.Hash) (any, error) {
 //
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
-func (db *Database) Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+func (db *Database) Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *state.Set) error {
 	if db.preimages != nil {
 		db.preimages.commit(false)
 	}
@@ -271,7 +272,7 @@ func (db *Database) Recover(target common.Hash) error {
 	if !ok {
 		return errors.New("not supported")
 	}
-	return pdb.Recover(target, nil)
+	return pdb.Recover(target, trie.NewMerkleTrieLoader(db))
 }
 
 // Recoverable returns the indicator if the specified state is enabled to be

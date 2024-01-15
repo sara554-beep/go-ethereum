@@ -31,8 +31,9 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 var (
@@ -131,7 +132,7 @@ func (n *cachedNode) forChildren(resolver ChildResolver, onChild func(hash commo
 }
 
 // New initializes the hash-based node database.
-func New(diskdb ethdb.Database, config *Config, resolver ChildResolver) *Database {
+func New(diskdb ethdb.Database, config *Config) *Database {
 	if config == nil {
 		config = Defaults
 	}
@@ -141,7 +142,7 @@ func New(diskdb ethdb.Database, config *Config, resolver ChildResolver) *Databas
 	}
 	return &Database{
 		diskdb:   diskdb,
-		resolver: resolver,
+		resolver: trie.MerkleResolver{},
 		cleans:   cleans,
 		dirties:  make(map[common.Hash]*cachedNode),
 	}
@@ -548,7 +549,7 @@ func (db *Database) Initialized(genesisRoot common.Hash) bool {
 
 // Update inserts the dirty nodes in provided nodeset into database and link the
 // account trie with multiple storage tries if necessary.
-func (db *Database) Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+func (db *Database) Update(root common.Hash, parent common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *state.Set) error {
 	// Ensure the parent state is present and signal a warning if not.
 	if parent != types.EmptyRootHash {
 		if blob, _ := db.node(parent); len(blob) == 0 {

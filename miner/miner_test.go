@@ -19,7 +19,7 @@ package miner
 
 import (
 	"errors"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"testing"
 	"time"

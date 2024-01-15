@@ -20,7 +20,7 @@ package downloader
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"sync"
 	"sync/atomic"

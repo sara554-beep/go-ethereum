@@ -19,7 +19,7 @@ package state
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"testing"
 

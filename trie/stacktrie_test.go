@@ -18,6 +18,7 @@ package trie
 
 import (
 	"bytes"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"math/rand"
 	"testing"
@@ -26,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie/testutil"
-	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/slices"
 )

@@ -18,7 +18,7 @@ package downloader
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 	"sync"
 	"time"

@@ -24,7 +24,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 	"golang.org/x/exp/slices"
 )
 
@@ -146,11 +145,11 @@ func newHashLoader(accounts map[common.Hash][]byte, storages map[common.Hash]map
 }
 
 // OpenTrie opens the main account trie.
-func (l *hashLoader) OpenTrie(root common.Hash) (triestate.Trie, error) {
+func (l *hashLoader) OpenTrie(root common.Hash) (Trie, error) {
 	return newTestHasher(common.Hash{}, root, l.accounts)
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (l *hashLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (triestate.Trie, error) {
+func (l *hashLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error) {
 	return newTestHasher(addrHash, root, l.storages[addrHash])
 }

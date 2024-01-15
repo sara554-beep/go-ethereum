@@ -18,7 +18,7 @@ package snapshot
 
 import (
 	"bytes"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"sync"
 
 	"github.com/VictoriaMetrics/fastcache"

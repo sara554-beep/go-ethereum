@@ -18,7 +18,7 @@ package t8ntool
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/trie/triedb"
+	"github.com/ethereum/go-ethereum/triedb"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
