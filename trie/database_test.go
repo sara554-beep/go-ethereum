@@ -19,13 +19,14 @@ package trie
 import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 )
 
 // newTestDatabase initializes the trie database with specified scheme.
-func newTestDatabase(diskdb ethdb.Database, scheme string) *Database {
-	config := &Config{Preimages: false}
+func newTestDatabase(diskdb ethdb.Database, scheme string) *triedb.Database {
+	config := &triedb.Config{Preimages: false}
 	if scheme == rawdb.HashScheme {
 		config.HashDB = &hashdb.Config{
 			CleanCacheSize: 0,
@@ -36,5 +37,5 @@ func newTestDatabase(diskdb ethdb.Database, scheme string) *Database {
 			DirtyCacheSize: 0,
 		} // disable clean/dirty cache
 	}
-	return NewDatabase(diskdb, config)
+	return triedb.NewDatabase(diskdb, config)
 }

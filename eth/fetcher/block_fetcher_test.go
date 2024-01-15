@@ -18,6 +18,7 @@ package fetcher
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -44,7 +45,7 @@ var (
 		Alloc:   core.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000000000)}},
 		BaseFee: big.NewInt(params.InitialBaseFee),
 	}
-	genesis      = gspec.MustCommit(testdb, trie.NewDatabase(testdb, trie.HashDefaults))
+	genesis      = gspec.MustCommit(testdb, triedb.NewDatabase(testdb, triedb.HashDefaults))
 	unknownBlock = types.NewBlock(&types.Header{Root: types.EmptyRootHash, GasLimit: params.GenesisGasLimit, BaseFee: big.NewInt(params.InitialBaseFee)}, nil, nil, nil, trie.NewStackTrie(nil))
 )
 

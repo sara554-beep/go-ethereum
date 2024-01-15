@@ -18,6 +18,7 @@ package t8ntool
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -354,7 +355,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 }
 
 func MakePreState(db ethdb.Database, accounts core.GenesisAlloc) *state.StateDB {
-	sdb := state.NewDatabaseWithConfig(db, &trie.Config{Preimages: true})
+	sdb := state.NewDatabaseWithConfig(db, &triedb.Config{Preimages: true})
 	statedb, _ := state.New(types.EmptyRootHash, sdb, nil)
 	for addr, a := range accounts {
 		statedb.SetCode(addr, a.Code)

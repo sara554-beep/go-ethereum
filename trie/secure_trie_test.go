@@ -27,18 +27,19 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
 func newEmptySecure() *StateTrie {
-	trie, _ := NewStateTrie(TrieID(types.EmptyRootHash), NewDatabase(rawdb.NewMemoryDatabase(), nil))
+	trie, _ := NewStateTrie(TrieID(types.EmptyRootHash), triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	return trie
 }
 
 // makeTestStateTrie creates a large enough secure trie for testing.
-func makeTestStateTrie() (*Database, *StateTrie, map[string][]byte) {
+func makeTestStateTrie() (*triedb.Database, *StateTrie, map[string][]byte) {
 	// Create an empty trie
-	triedb := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	triedb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie, _ := NewStateTrie(TrieID(types.EmptyRootHash), triedb)
 
 	// Fill it with some arbitrary data

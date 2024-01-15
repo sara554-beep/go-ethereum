@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package triedb
 
 import (
 	"sync"
@@ -41,7 +41,7 @@ func newPreimageStore(disk ethdb.KeyValueStore) *preimageStore {
 }
 
 // insertPreimage writes a new trie node pre-image to the memory database if it's
-// yet unknown. The method will NOT make a copy of the slice, only use if the
+// yet unknown. The method will NOT make a copy of the slice, only use as the
 // preimage will NOT be changed later on.
 func (store *preimageStore) insertPreimage(preimages map[common.Hash][]byte) {
 	store.lock.Lock()

@@ -23,6 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
@@ -61,7 +62,7 @@ func TestTrieTracer(t *testing.T) {
 // Tests if the trie diffs are tracked correctly. Tracer should capture
 // all non-leaf dirty nodes, no matter the node is embedded or not.
 func testTrieTracer(t *testing.T, vals []struct{ k, v string }) {
-	db := NewDatabase(rawdb.NewMemoryDatabase(), nil)
+	db := triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 	trie := NewEmpty(db)
 
 	// Determine all new nodes are tracked
@@ -104,7 +105,7 @@ func TestTrieTracerNoop(t *testing.T) {
 }
 
 func testTrieTracerNoop(t *testing.T, vals []struct{ k, v string }) {
-	trie := NewEmpty(NewDatabase(rawdb.NewMemoryDatabase(), nil))
+	trie := NewEmpty(triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil))
 	for _, val := range vals {
 		trie.MustUpdate([]byte(val.k), []byte(val.v))
 	}
@@ -128,7 +129,7 @@ func TestAccessList(t *testing.T) {
 
 func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 	var (
-		db   = NewDatabase(rawdb.NewMemoryDatabase(), nil)
+		db   = triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		trie = NewEmpty(db)
 		orig = trie.Copy()
 	)
@@ -211,7 +212,7 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 // Tests origin values won't be tracked in Iterator or Prover
 func TestAccessListLeak(t *testing.T) {
 	var (
-		db   = NewDatabase(rawdb.NewMemoryDatabase(), nil)
+		db   = triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		trie = NewEmpty(db)
 	)
 	// Create trie from scratch
@@ -262,7 +263,7 @@ func TestAccessListLeak(t *testing.T) {
 // in its parent due to the smaller size of the original tree node.
 func TestTinyTree(t *testing.T) {
 	var (
-		db   = NewDatabase(rawdb.NewMemoryDatabase(), nil)
+		db   = triedb.NewDatabase(rawdb.NewMemoryDatabase(), nil)
 		trie = NewEmpty(db)
 	)
 	for _, val := range tiny {
@@ -312,7 +313,7 @@ func forNodes(tr *Trie) map[string][]byte {
 	return nodes
 }
 
-func iterNodes(db *Database, root common.Hash) map[string][]byte {
+func iterNodes(db *triedb.Database, root common.Hash) map[string][]byte {
 	tr, _ := New(TrieID(root), db)
 	return forNodes(tr)
 }

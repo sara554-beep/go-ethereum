@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	"github.com/ethereum/go-ethereum/trie/utils"
 )
@@ -57,7 +58,7 @@ var (
 )
 
 func TestVerkleTreeReadWrite(t *testing.T) {
-	db := NewDatabase(rawdb.NewMemoryDatabase(), &Config{
+	db := triedb.NewDatabase(rawdb.NewMemoryDatabase(), &triedb.Config{
 		IsVerkle: true,
 		PathDB:   pathdb.Defaults,
 	})

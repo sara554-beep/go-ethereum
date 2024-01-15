@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/gballet/go-verkle"
@@ -40,13 +41,12 @@ var (
 // interface so that Verkle trees can be reused verbatim.
 type VerkleTrie struct {
 	root   verkle.VerkleNode
-	db     *Database
 	cache  *utils.PointCache
 	reader *trieReader
 }
 
 // NewVerkleTrie constructs a verkle tree based on the specified root hash.
-func NewVerkleTrie(root common.Hash, db *Database, cache *utils.PointCache) (*VerkleTrie, error) {
+func NewVerkleTrie(root common.Hash, db *triedb.Database, cache *utils.PointCache) (*VerkleTrie, error) {
 	reader, err := newTrieReader(root, common.Hash{}, db)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,6 @@ func NewVerkleTrie(root common.Hash, db *Database, cache *utils.PointCache) (*Ve
 	}
 	return &VerkleTrie{
 		root:   node,
-		db:     db,
 		cache:  cache,
 		reader: reader,
 	}, nil
@@ -262,7 +261,6 @@ func (t *VerkleTrie) Prove(key []byte, proofDb ethdb.KeyValueWriter) error {
 func (t *VerkleTrie) Copy() *VerkleTrie {
 	return &VerkleTrie{
 		root:   t.root.Copy(),
-		db:     t.db,
 		cache:  t.cache,
 		reader: t.reader,
 	}

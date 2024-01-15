@@ -19,6 +19,7 @@ package eth
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/trie/triedb"
 	"math/big"
 	"reflect"
 	"strings"
@@ -30,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/exp/slices"
 )
 
@@ -63,7 +63,7 @@ func TestAccountRange(t *testing.T) {
 	t.Parallel()
 
 	var (
-		statedb = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
+		statedb = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &triedb.Config{Preimages: true})
 		sdb, _  = state.New(types.EmptyRootHash, statedb, nil)
 		addrs   = [AccountRangeMaxResults * 2]common.Address{}
 		m       = map[common.Address]bool{}
@@ -160,7 +160,7 @@ func TestStorageRangeAt(t *testing.T) {
 
 	// Create a state where account 0x010000... has a few storage entries.
 	var (
-		db     = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
+		db     = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &triedb.Config{Preimages: true})
 		sdb, _ = state.New(types.EmptyRootHash, db, nil)
 		addr   = common.Address{0x01}
 		keys   = []common.Hash{ // hashes of Keys of storage
