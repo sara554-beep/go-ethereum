@@ -66,7 +66,7 @@ func (b *EthAPIBackend) SetHead(number uint64) {
 func (b *EthAPIBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	// Pending block is only known by the miner
 	if number == rpc.PendingBlockNumber {
-		block := b.eth.miner.PendingBlock()
+		block, _ := b.eth.miner.Pending()
 		if block == nil {
 			return nil, errors.New("pending block is not available")
 		}
@@ -117,7 +117,7 @@ func (b *EthAPIBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*ty
 func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
 	// Pending block is only known by the miner
 	if number == rpc.PendingBlockNumber {
-		block := b.eth.miner.PendingBlock()
+		block, _ := b.eth.miner.Pending()
 		if block == nil {
 			return nil, errors.New("pending block is not available")
 		}

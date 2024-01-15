@@ -64,6 +64,9 @@ var DefaultConfig = Config{
 	Recommit: 2 * time.Second,
 }
 
+// Update the pending block at most every second.
+const pendingTimeout = 1 * time.Second
+
 // Miner is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type Miner struct {
@@ -126,17 +129,6 @@ func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
 	return block.block, block.stateDB
 }
 
-// PendingBlock returns the currently pending block. The returned block can be
-// nil in case the pending block is not initialized.
-//
-// Note, to access both the pending block and the pending state
-// simultaneously, please use Pending(), as the pending state can
-// change between multiple method calls
-func (miner *Miner) PendingBlock() *types.Block {
-	block := miner.pending()
-	return block.block
-}
-
 // PendingBlockAndReceipts returns the currently pending block and corresponding receipts.
 // The returned values can be nil in case the pending block is not initialized.
 func (miner *Miner) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
@@ -179,7 +171,7 @@ func (miner *Miner) pending() *newPayloadResult {
 	// Lock pending block
 	miner.pendingMu.Lock()
 	defer miner.pendingMu.Unlock()
-	if time.Since(miner.cacheTime) < time.Second && coinbase == miner.pendingCache.block.Coinbase() {
+	if time.Since(miner.cacheTime) < pendingTimeout && coinbase == miner.pendingCache.block.Coinbase() {
 		return miner.pendingCache
 	}
 	pending := miner.generateWork(&generateParams{
