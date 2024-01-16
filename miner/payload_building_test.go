@@ -57,7 +57,7 @@ var (
 	pendingTxs []*types.Transaction
 	newTxs     []*types.Transaction
 
-	testConfig = &Config{
+	testConfig = Config{
 		Recommit: time.Second,
 		GasCeil:  params.GenesisGasLimit,
 	}
