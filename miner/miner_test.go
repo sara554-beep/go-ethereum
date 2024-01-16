@@ -168,8 +168,8 @@ func createMiner(t *testing.T) *Miner {
 	pool := legacypool.New(testTxPoolConfig, blockchain)
 	txpool, _ := txpool.New(new(big.Int).SetUint64(testTxPoolConfig.PriceLimit), blockchain, []txpool.SubPool{pool})
 
-	backend := NewMockBackend(bc, txpool)
 	// Create Miner
-	miner := New(backend, &config, engine)
+	backend := NewMockBackend(bc, txpool)
+	miner := New(backend, config, engine)
 	return miner
 }

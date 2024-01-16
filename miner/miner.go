@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -48,8 +47,7 @@ type Config struct {
 	ExtraData hexutil.Bytes  `toml:",omitempty"` // Block extra data set by the miner
 	GasCeil   uint64         // Target gas ceiling for mined blocks.
 	GasPrice  *big.Int       // Minimum gas price for mining a transaction
-
-	Recommit time.Duration // The time interval for miner to re-create mining work.
+	Recommit  time.Duration  // The time interval for miner to re-create mining work.
 }
 
 // DefaultConfig contains default settings for miner.
@@ -64,90 +62,75 @@ var DefaultConfig = Config{
 	Recommit: 2 * time.Second,
 }
 
-// Update the pending block at most every second.
-const pendingTimeout = 1 * time.Second
-
 // Miner is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type Miner struct {
-	confMu      sync.RWMutex // The lock used to protect the config
-	config      *Config
-	chainConfig *params.ChainConfig
-	engine      consensus.Engine
-	txpool      *txpool.TxPool
-	chain       *core.BlockChain
-
-	pendingMu    sync.Mutex // The lock used to protect the pending cache
-	pendingCache *newPayloadResult
-	cacheTime    time.Time
-
-	// Feeds
+	confMu          sync.RWMutex // The lock used to protect the config
+	config          *Config
+	chainConfig     *params.ChainConfig
+	engine          consensus.Engine
+	txpool          *txpool.TxPool
+	chain           *core.BlockChain
+	pending         *pending
 	pendingLogsFeed event.Feed
-
-	running atomic.Bool
 }
 
-// New creates a new miner.
-func New(eth Backend, config *Config, engine consensus.Engine) *Miner {
-	if config == nil {
-		config = &DefaultConfig
-	}
-	worker := &Miner{
-		config:      config,
+// New creates a new miner with provided config.
+func New(eth Backend, config Config, engine consensus.Engine) *Miner {
+	return &Miner{
+		config:      &config,
 		chainConfig: eth.BlockChain().Config(),
 		engine:      engine,
 		txpool:      eth.TxPool(),
 		chain:       eth.BlockChain(),
+		pending:     &pending{},
 	}
-	worker.running.Store(true)
-	return worker
-}
-
-func (miner *Miner) Close() {
-	miner.running.Store(false)
-}
-
-func (miner *Miner) Mining() bool {
-	return miner.running.Load()
-}
-
-// setExtra sets the content used to initialize the block extra field.
-func (miner *Miner) SetExtra(extra []byte) error {
-	if uint64(len(extra)) > params.MaximumExtraDataSize {
-		return fmt.Errorf("extra exceeds max length. %d > %v", len(extra), params.MaximumExtraDataSize)
-	}
-	miner.confMu.Lock()
-	defer miner.confMu.Unlock()
-	miner.config.ExtraData = extra
-	return nil
 }
 
 // Pending returns the currently pending block and associated state. The returned
 // values can be nil in case the pending block is not initialized
 func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
-	block := miner.pending()
-	return block.block, block.stateDB
+	pending := miner.getPending()
+	if pending == nil {
+		return nil, nil
+	}
+	return pending.block, pending.stateDB.Copy()
 }
 
 // PendingBlockAndReceipts returns the currently pending block and corresponding receipts.
 // The returned values can be nil in case the pending block is not initialized.
 func (miner *Miner) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	block := miner.pending()
-	return block.block, block.receipts
+	pending := miner.getPending()
+	if pending == nil {
+		return nil, nil
+	}
+	return pending.block, pending.receipts
 }
 
+// SetExtra sets the content used to initialize the block extra field.
+func (miner *Miner) SetExtra(extra []byte) error {
+	if uint64(len(extra)) > params.MaximumExtraDataSize {
+		return fmt.Errorf("extra exceeds max length. %d > %v", len(extra), params.MaximumExtraDataSize)
+	}
+	miner.confMu.Lock()
+	miner.config.ExtraData = extra
+	miner.confMu.Unlock()
+	return nil
+}
+
+// SetEtherbase sets the address of fee recipient.
 func (miner *Miner) SetEtherbase(addr common.Address) {
 	miner.confMu.Lock()
-	defer miner.confMu.Unlock()
 	miner.config.Etherbase = addr
+	miner.confMu.Unlock()
 }
 
 // SetGasCeil sets the gaslimit to strive for when mining blocks post 1559.
 // For pre-1559 blocks, it sets the ceiling.
 func (miner *Miner) SetGasCeil(ceil uint64) {
 	miner.confMu.Lock()
-	defer miner.confMu.Unlock()
 	miner.config.GasCeil = ceil
+	miner.confMu.Unlock()
 }
 
 // SubscribePendingLogs starts delivering logs from pending transactions
@@ -161,35 +144,30 @@ func (miner *Miner) BuildPayload(args *BuildPayloadArgs) (*Payload, error) {
 	return miner.buildPayload(args)
 }
 
-// pending returns the pending state and corresponding block. The returned
-// values can be nil in case the pending block is not initialized.
-func (miner *Miner) pending() *newPayloadResult {
-	// Read config
+// getPending retrieves the pending block based on the current head block.
+// The result might be nil if pending generation is failed.
+func (miner *Miner) getPending() *newPayloadResult {
 	miner.confMu.RLock()
 	coinbase := miner.config.Etherbase
 	miner.confMu.RUnlock()
-	// Lock pending block
-	miner.pendingMu.Lock()
-	defer miner.pendingMu.Unlock()
-	if time.Since(miner.cacheTime) < pendingTimeout && coinbase == miner.pendingCache.block.Coinbase() {
-		return miner.pendingCache
+
+	header := miner.chain.CurrentHeader()
+	if cached := miner.pending.resolve(header, coinbase); cached != nil {
+		return cached
 	}
-	pending := miner.generateWork(&generateParams{
+	ret := miner.generateWork(&generateParams{
 		timestamp:   uint64(time.Now().Unix()),
 		forceTime:   true,
-		parentHash:  miner.chain.CurrentBlock().Hash(),
+		parentHash:  header.Hash(),
 		coinbase:    coinbase,
 		random:      common.Hash{},
 		withdrawals: nil,
 		beaconRoot:  nil,
 		noTxs:       false,
 	})
-	if pending.err != nil {
-		// force subsequent calls to recreate pending block
-		miner.cacheTime = time.Time{}
-		return &newPayloadResult{}
+	if ret.err != nil {
+		return nil
 	}
-	miner.pendingCache = pending
-	miner.cacheTime = time.Now()
-	return pending
+	miner.pending.update(header, coinbase, ret)
+	return ret
 }
