@@ -54,7 +54,6 @@ type environment struct {
 	txs      []*types.Transaction
 	receipts []*types.Receipt
 	sidecars []*types.BlobTxSidecar
-	logs     [][]*types.Log
 	blobs    int
 }
 
@@ -73,7 +72,6 @@ type newPayloadResult struct {
 	sidecars []*types.BlobTxSidecar // collected blobs of blob transactions
 	stateDB  *state.StateDB         // StateDB after executing the transactions
 	receipts []*types.Receipt       // Receipts collected during construction
-	logs     [][]*types.Log         // EVM logs collected during execution
 }
 
 // generateParams wraps various of settings for generating sealing task.
@@ -116,7 +114,6 @@ func (miner *Miner) generateWork(params *generateParams) *newPayloadResult {
 		sidecars: work.sidecars,
 		stateDB:  work.state,
 		receipts: work.receipts,
-		logs:     work.logs,
 	}
 }
 
@@ -230,9 +227,6 @@ func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) e
 	}
 	env.txs = append(env.txs, tx)
 	env.receipts = append(env.receipts, receipt)
-	if len(receipt.Logs) > 0 {
-		env.logs = append(env.logs, receipt.Logs)
-	}
 	env.tcount++
 	return nil
 }
@@ -255,9 +249,6 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 	}
 	env.txs = append(env.txs, tx.WithoutBlobTxSidecar())
 	env.receipts = append(env.receipts, receipt)
-	if len(receipt.Logs) > 0 {
-		env.logs = append(env.logs, receipt.Logs)
-	}
 	env.sidecars = append(env.sidecars, sc)
 	env.blobs += len(sc.Blobs)
 	*env.header.BlobGasUsed += receipt.BlobGasUsed

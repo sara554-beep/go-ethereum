@@ -912,8 +912,8 @@ func (fb *filterBackend) GetBody(ctx context.Context, hash common.Hash, number r
 	return nil, errors.New("block body not found")
 }
 
-func (fb *filterBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	return fb.backend.pendingBlock, fb.backend.pendingReceipts
+func (fb *filterBackend) Pending() (*types.Block, types.Receipts, *state.StateDB) {
+	return fb.backend.pendingBlock, fb.backend.pendingReceipts, fb.backend.pendingState.Copy()
 }
 
 func (fb *filterBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
@@ -947,10 +947,6 @@ func (fb *filterBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEve
 
 func (fb *filterBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	return fb.bc.SubscribeLogsEvent(ch)
-}
-
-func (fb *filterBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return nullSubscription()
 }
 
 func (fb *filterBackend) BloomStatus() (uint64, uint64) { return 4096, 0 }

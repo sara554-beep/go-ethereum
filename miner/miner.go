@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -65,14 +64,13 @@ var DefaultConfig = Config{
 // Miner is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type Miner struct {
-	confMu          sync.RWMutex // The lock used to protect the config
-	config          *Config
-	chainConfig     *params.ChainConfig
-	engine          consensus.Engine
-	txpool          *txpool.TxPool
-	chain           *core.BlockChain
-	pending         *pending
-	pendingLogsFeed event.Feed
+	confMu      sync.RWMutex // The lock used to protect the config
+	config      *Config
+	chainConfig *params.ChainConfig
+	engine      consensus.Engine
+	txpool      *txpool.TxPool
+	chain       *core.BlockChain
+	pending     *pending
 }
 
 // New creates a new miner with provided config.
@@ -87,24 +85,15 @@ func New(eth Backend, config Config, engine consensus.Engine) *Miner {
 	}
 }
 
-// Pending returns the currently pending block and associated state. The returned
-// values can be nil in case the pending block is not initialized
-func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
+// Pending returns the currently pending block and associated receipts, logs
+// and statedb. The returned values can be nil in case the pending block is
+// not initialized.
+func (miner *Miner) Pending() (*types.Block, types.Receipts, *state.StateDB) {
 	pending := miner.getPending()
 	if pending == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return pending.block, pending.stateDB.Copy()
-}
-
-// PendingBlockAndReceipts returns the currently pending block and corresponding receipts.
-// The returned values can be nil in case the pending block is not initialized.
-func (miner *Miner) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	pending := miner.getPending()
-	if pending == nil {
-		return nil, nil
-	}
-	return pending.block, pending.receipts
+	return pending.block, pending.receipts, pending.stateDB.Copy()
 }
 
 // SetExtra sets the content used to initialize the block extra field.
@@ -131,12 +120,6 @@ func (miner *Miner) SetGasCeil(ceil uint64) {
 	miner.confMu.Lock()
 	miner.config.GasCeil = ceil
 	miner.confMu.Unlock()
-}
-
-// SubscribePendingLogs starts delivering logs from pending transactions
-// to the given channel.
-func (miner *Miner) SubscribePendingLogs(ch chan<- []*types.Log) event.Subscription {
-	return miner.pendingLogsFeed.Subscribe(ch)
 }
 
 // BuildPayload builds the payload according to the provided parameters.

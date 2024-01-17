@@ -66,10 +66,9 @@ func main() {
 	signal.Notify(interruptCh, os.Interrupt)
 
 	var (
-		stacks  []*node.Node
-		nodes   []*eth.Ethereum
-		enodes  []*enode.Node
-		beacons []*catalyst.SimulatedBeacon
+		stacks []*node.Node
+		nodes  []*eth.Ethereum
+		enodes []*enode.Node
 	)
 	for _, sealer := range sealers {
 		// Start the node and wait until it's up
@@ -107,8 +106,6 @@ func main() {
 			panic(err)
 		}
 		beacon.Start()
-
-		beacons = append(beacons, beacon)
 	}
 
 	// Iterate over all the nodes and start signing on them

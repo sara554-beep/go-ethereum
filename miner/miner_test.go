@@ -95,19 +95,12 @@ func (bc *testBlockChain) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent)
 func TestBuildPendingBlocks(t *testing.T) {
 	miner := createMiner(t)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		block, state := miner.Pending()
-		if block == nil || state == nil {
+		block, receipts, state := miner.Pending()
+		if block == nil || state == nil || receipts == nil {
 			t.Error("Pending failed")
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		block, _ := miner.PendingBlockAndReceipts()
-		if block == nil {
-			t.Error("PendingBlockAndReceipts failed")
 		}
 	}()
 	wg.Wait()
