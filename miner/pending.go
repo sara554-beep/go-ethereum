@@ -31,11 +31,10 @@ const pendingTTL = 2 * time.Second
 
 // pending wraps a pending block with additional metadata.
 type pending struct {
-	created  time.Time
-	parent   *types.Header
-	coinbase common.Address
-	result   *newPayloadResult
-	lock     sync.Mutex
+	created time.Time
+	parent  *types.Header
+	result  *newPayloadResult
+	lock    sync.Mutex
 }
 
 // resolve retrieves the cached pending result if it's available. Nothing will be
@@ -49,7 +48,10 @@ func (p *pending) resolve(parent *types.Header, coinbase common.Address) *newPay
 	if p.result == nil || p.parent == nil {
 		return nil
 	}
-	if parent.Hash() != p.parent.Hash() || p.coinbase != coinbase {
+	if parent.Hash() != p.parent.Hash() {
+		return nil
+	}
+	if p.result.block.Coinbase() != coinbase {
 		return nil
 	}
 	if time.Since(p.created) > pendingTTL {
@@ -59,12 +61,11 @@ func (p *pending) resolve(parent *types.Header, coinbase common.Address) *newPay
 }
 
 // update refreshes the cached pending block with newly created one.
-func (p *pending) update(parent *types.Header, coinbase common.Address, result *newPayloadResult) {
+func (p *pending) update(parent *types.Header, result *newPayloadResult) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	p.parent = parent
-	p.coinbase = coinbase
 	p.result = result
 	p.created = time.Now()
 }

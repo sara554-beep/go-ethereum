@@ -151,6 +151,6 @@ func (miner *Miner) getPending() *newPayloadResult {
 	if ret.err != nil {
 		return nil
 	}
-	miner.pending.update(header, coinbase, ret)
+	miner.pending.update(header, ret)
 	return ret
 }
