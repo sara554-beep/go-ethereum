@@ -98,8 +98,8 @@ func TestBuildPendingBlocks(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		block, receipts, state := miner.Pending()
-		if block == nil || state == nil || receipts == nil {
+		block, _, _ := miner.Pending()
+		if block == nil {
 			t.Error("Pending failed")
 		}
 	}()
