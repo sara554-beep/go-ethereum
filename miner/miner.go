@@ -61,8 +61,8 @@ var DefaultConfig = Config{
 	Recommit: 2 * time.Second,
 }
 
-// Miner is the main object which takes care of submitting new work to consensus engine
-// and gathering the sealing result.
+// Miner is the main object which takes care of submitting new work to consensus
+// engine and gathering the sealing result.
 type Miner struct {
 	confMu      sync.RWMutex // The lock used to protect the config
 	config      *Config
@@ -138,13 +138,20 @@ func (miner *Miner) getPending() *newPayloadResult {
 	if cached := miner.pending.resolve(header, coinbase); cached != nil {
 		return cached
 	}
+	var (
+		timestamp  = uint64(time.Now().Unix())
+		withdrawal types.Withdrawals
+	)
+	if miner.chainConfig.IsShanghai(new(big.Int).Add(header.Number, big.NewInt(1)), timestamp) {
+		withdrawal = []*types.Withdrawal{}
+	}
 	ret := miner.generateWork(&generateParams{
-		timestamp:   uint64(time.Now().Unix()),
+		timestamp:   timestamp,
 		forceTime:   true,
 		parentHash:  header.Hash(),
 		coinbase:    coinbase,
 		random:      common.Hash{},
-		withdrawals: nil,
+		withdrawals: withdrawal,
 		beaconRoot:  nil,
 		noTxs:       false,
 	})
