@@ -38,11 +38,18 @@ type Config struct {
 	PathDB    *pathdb.Config // Configs for experimental path-based scheme
 }
 
-// HashDefaults represents a config for using hash-based scheme with
-// default settings.
-var HashDefaults = &Config{
-	Preimages: false,
-	HashDB:    hashdb.Defaults,
+// sanitize validates the provided config.
+func (config *Config) sanitize() error {
+	if config == nil {
+		return errors.New("config is nil")
+	}
+	if config.HashDB != nil && config.PathDB != nil {
+		return errors.New("both 'hash' and 'path' mode are configured")
+	}
+	if config.HashDB == nil && config.PathDB == nil {
+		return errors.New("neither 'hash' nor 'path' mode is configured")
+	}
+	return nil
 }
 
 // backend defines the methods needed to access/update trie nodes in different
@@ -91,9 +98,8 @@ type Database struct {
 // NewDatabase initializes the trie database with default settings, note
 // the legacy hash-based scheme is used by default.
 func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
-	// Sanitize the config and use the default one if it's not specified.
-	if config == nil {
-		config = HashDefaults
+	if err := config.sanitize(); err != nil {
+		log.Crit("Database config is invalid", "error", err)
 	}
 	var preimages *preimageStore
 	if config.Preimages {
@@ -104,32 +110,22 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		diskdb:    diskdb,
 		preimages: preimages,
 	}
-	if config.HashDB != nil && config.PathDB != nil {
-		log.Crit("Both 'hash' and 'path' mode are configured")
-	}
 	if config.PathDB != nil {
 		db.backend = pathdb.New(diskdb, config.PathDB)
 	} else {
-		var resolver hashdb.ChildResolver
-		if config.IsVerkle {
-			// TODO define verkle resolver
-			log.Crit("Verkle node resolver is not defined")
-		} else {
-			resolver = trie.MerkleResolver{}
-		}
-		db.backend = hashdb.New(diskdb, config.HashDB, resolver)
+		db.backend = hashdb.New(diskdb, config.HashDB)
 	}
 	return db
 }
 
-// Reader returns a reader for accessing all trie nodes with provided state root.
-// An error will be returned if the requested state is not available.
-func (db *Database) Reader(blockRoot common.Hash) (database.Reader, error) {
+// NodeReader returns a reader for accessing all trie nodes with provided state
+// root. An error will be returned if the requested state is not available.
+func (db *Database) NodeReader(blockRoot common.Hash) (database.NodeReader, error) {
 	switch b := db.backend.(type) {
 	case *hashdb.Database:
-		return b.Reader(blockRoot)
+		return b.NodeReader(blockRoot)
 	case *pathdb.Database:
-		return b.Reader(blockRoot)
+		return b.NodeReader(blockRoot)
 	}
 	return nil, errors.New("unknown backend")
 }
