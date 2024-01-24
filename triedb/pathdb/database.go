@@ -37,8 +37,8 @@ const (
 	// maxDiffLayers is the maximum diff layers allowed in the layer tree.
 	maxDiffLayers = 128
 
-	// defaultCleanSize is the default memory allowance of clean cache.
-	defaultCleanSize = 16 * 1024 * 1024
+	// DefaultCleanSize is the default memory allowance of clean cache.
+	DefaultCleanSize = 16 * 1024 * 1024
 
 	// maxBufferSize is the maximum memory allowance of node buffer.
 	// Too large nodebuffer will cause the system to pause for a long
@@ -94,19 +94,22 @@ type Config struct {
 
 // sanitize checks the provided user configurations and changes anything that's
 // unreasonable or unworkable.
-func (c *Config) sanitize() *Config {
+func (c *Config) sanitize() (*Config, error) {
+	if c == nil {
+		return nil, errors.New("pathdb config is nil")
+	}
 	conf := *c
 	if conf.DirtyCacheSize > maxBufferSize {
 		log.Warn("Sanitizing invalid node buffer size", "provided", common.StorageSize(conf.DirtyCacheSize), "updated", common.StorageSize(maxBufferSize))
 		conf.DirtyCacheSize = maxBufferSize
 	}
-	return &conf
+	return &conf, nil
 }
 
 // Defaults contains default settings for Ethereum mainnet.
 var Defaults = &Config{
 	StateHistory:   params.FullImmutabilityThreshold,
-	CleanCacheSize: defaultCleanSize,
+	CleanCacheSize: DefaultCleanSize,
 	DirtyCacheSize: DefaultBufferSize,
 }
 
@@ -142,11 +145,11 @@ type Database struct {
 // store (with a number of memory layers from a journal). If the journal is not
 // matched with the base persistent layer, all the recorded diff layers are discarded.
 func New(diskdb ethdb.Database, config *Config) *Database {
-	if config == nil {
-		config = Defaults
+	var err error
+	config, err = config.sanitize()
+	if err != nil {
+		log.Crit("Path database config is invalid", "err", err)
 	}
-	config = config.sanitize()
-
 	db := &Database{
 		readOnly:   config.ReadOnly,
 		bufferSize: config.DirtyCacheSize,
@@ -207,8 +210,8 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 	return db
 }
 
-// Reader retrieves a layer belonging to the given state root.
-func (db *Database) Reader(root common.Hash) (layer, error) {
+// NodeReader retrieves a layer belonging to the given state root.
+func (db *Database) NodeReader(root common.Hash) (layer, error) {
 	l := db.tree.get(root)
 	if l == nil {
 		return nil, fmt.Errorf("state %#x is not available", root)

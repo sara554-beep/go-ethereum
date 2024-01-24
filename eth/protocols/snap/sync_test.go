@@ -38,7 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie/testutil"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/pathdb"
+	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"github.com/holiman/uint256"
 	"golang.org/x/crypto/sha3"
 	"golang.org/x/exp/slices"
@@ -1970,7 +1970,7 @@ func TestSlotEstimation(t *testing.T) {
 
 func newDbConfig(scheme string) *triedb.Config {
 	if scheme == rawdb.HashScheme {
-		return &triedb.Config{}
+		return &dbconfig.HashDefaults
 	}
-	return &triedb.Config{PathDB: pathdb.Defaults}
+	return &dbconfig.PathDefaults
 }
