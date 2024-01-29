@@ -24,7 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/ethstate"
 	"golang.org/x/exp/slices"
 )
 
@@ -134,11 +134,11 @@ func hash(states map[common.Hash][]byte) (common.Hash, []byte) {
 }
 
 type hashLoader struct {
-	accounts map[common.Hash][]byte
-	storages map[common.Hash]map[common.Hash][]byte
+	accounts map[common.Hash]map[common.Hash][]byte
+	storages map[common.Hash]map[common.Hash]map[common.Hash][]byte
 }
 
-func newHashLoader(accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte) *hashLoader {
+func newHashLoader(accounts map[common.Hash]map[common.Hash][]byte, storages map[common.Hash]map[common.Hash]map[common.Hash][]byte) *hashLoader {
 	return &hashLoader{
 		accounts: accounts,
 		storages: storages,
@@ -146,11 +146,11 @@ func newHashLoader(accounts map[common.Hash][]byte, storages map[common.Hash]map
 }
 
 // OpenTrie opens the main account trie.
-func (l *hashLoader) OpenTrie(root common.Hash) (triestate.Trie, error) {
-	return newTestHasher(common.Hash{}, root, l.accounts)
+func (l *hashLoader) OpenTrie(root common.Hash) (ethstate.Trie, error) {
+	return newTestHasher(common.Hash{}, root, l.accounts[root])
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (l *hashLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (triestate.Trie, error) {
-	return newTestHasher(addrHash, root, l.storages[addrHash])
+func (l *hashLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (ethstate.Trie, error) {
+	return newTestHasher(addrHash, root, l.storages[stateRoot][addrHash])
 }

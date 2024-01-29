@@ -39,7 +39,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
-	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 )
 
@@ -803,10 +802,7 @@ func testMissingTrieNodes(t *testing.T, scheme string) {
 		memDb = rawdb.NewMemoryDatabase()
 	)
 	if scheme == rawdb.PathScheme {
-		tdb = triedb.NewDatabase(memDb, &triedb.Config{PathDB: &pathdb.Config{
-			CleanCacheSize: 0,
-			DirtyCacheSize: 0,
-		}}) // disable caching
+		tdb = triedb.NewDatabase(memDb, &dbconfig.PathDefaults) // disable caching
 	} else {
 		tdb = triedb.NewDatabase(memDb, &dbconfig.HashDefaults) // cache is disabled by default
 	}

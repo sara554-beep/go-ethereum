@@ -20,8 +20,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 	"github.com/ethereum/go-ethereum/triedb/database"
+	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
 
 // trieReader is a wrapper of the underlying node reader. It's not safe
@@ -75,20 +75,20 @@ func (r *trieReader) node(path []byte, hash common.Hash) ([]byte, error) {
 
 // MerkleLoader implements triestate.TrieLoader for constructing tries.
 type MerkleLoader struct {
-	db database.Database
+	db database.NodeDatabase
 }
 
 // NewMerkleLoader creates the merkle trie loader.
-func NewMerkleLoader(db database.Database) *MerkleLoader {
+func NewMerkleLoader(db database.NodeDatabase) ethstate.TrieLoader {
 	return &MerkleLoader{db: db}
 }
 
 // OpenTrie opens the main account trie.
-func (l *MerkleLoader) OpenTrie(root common.Hash) (triestate.Trie, error) {
+func (l *MerkleLoader) OpenTrie(root common.Hash) (ethstate.Trie, error) {
 	return New(TrieID(root), l.db)
 }
 
 // OpenStorageTrie opens the storage trie of an account.
-func (l *MerkleLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (triestate.Trie, error) {
+func (l *MerkleLoader) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (ethstate.Trie, error) {
 	return New(StorageTrieID(stateRoot, addrHash, root), l.db)
 }

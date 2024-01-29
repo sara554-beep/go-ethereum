@@ -30,7 +30,8 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie/testutil"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/database"
+	"github.com/ethereum/go-ethereum/triedb/ethstate"
 	"github.com/holiman/uint256"
 )
 
@@ -98,22 +99,27 @@ type tester struct {
 
 func newTester(t *testing.T, historyLimit uint64) *tester {
 	var (
-		disk, _ = rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), t.TempDir(), "", false)
-		db      = New(disk, &Config{
+		snapAccounts = make(map[common.Hash]map[common.Hash][]byte)
+		snapStorages = make(map[common.Hash]map[common.Hash]map[common.Hash][]byte)
+		disk, _      = rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), t.TempDir(), "", false)
+		db           = New(disk, &Config{
 			StateHistory:   historyLimit,
-			CleanCacheSize: 256 * 1024,
-			DirtyCacheSize: 256 * 1024,
+			CleanCacheSize: 16 * 1024,
+			DirtyCacheSize: 16 * 1024,
+			TrieLoader: func(db database.NodeDatabase) ethstate.TrieLoader {
+				return newHashLoader(snapAccounts, snapStorages)
+			},
 		})
 		obj = &tester{
 			db:           db,
 			preimages:    make(map[common.Hash]common.Address),
 			accounts:     make(map[common.Hash][]byte),
 			storages:     make(map[common.Hash]map[common.Hash][]byte),
-			snapAccounts: make(map[common.Hash]map[common.Hash][]byte),
-			snapStorages: make(map[common.Hash]map[common.Hash]map[common.Hash][]byte),
+			snapAccounts: snapAccounts,
+			snapStorages: snapStorages,
 		}
 	)
-	for i := 0; i < 2*128; i++ {
+	for i := 0; i < 16; i++ {
 		var parent = types.EmptyRootHash
 		if len(obj.roots) != 0 {
 			parent = obj.roots[len(obj.roots)-1]
@@ -209,7 +215,7 @@ func (t *tester) clearStorage(ctx *genctx, addr common.Address, root common.Hash
 	return root
 }
 
-func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *triestate.Set) {
+func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *ethstate.Origin) {
 	var (
 		ctx     = newCtx()
 		dirties = make(map[common.Hash]struct{})
@@ -299,7 +305,7 @@ func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNode
 			}
 		}
 	}
-	return root, ctx.nodes, triestate.New(ctx.accountOrigin, ctx.storageOrigin, nil)
+	return root, ctx.nodes, ethstate.NewOrigin(ctx.accountOrigin, ctx.storageOrigin, nil)
 }
 
 // lastRoot returns the latest root hash, or empty if nothing is cached.
@@ -379,6 +385,10 @@ func (t *tester) bottomIndex() int {
 }
 
 func TestDatabaseRollback(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	// Verify state histories
 	tester := newTester(t, 0)
 	defer tester.release()
@@ -388,13 +398,11 @@ func TestDatabaseRollback(t *testing.T) {
 	}
 	// Revert database from top to bottom
 	for i := tester.bottomIndex(); i >= 0; i-- {
-		root := tester.roots[i]
 		parent := types.EmptyRootHash
 		if i > 0 {
 			parent = tester.roots[i-1]
 		}
-		loader := newHashLoader(tester.snapAccounts[root], tester.snapStorages[root])
-		if err := tester.db.Recover(parent, loader); err != nil {
+		if err := tester.db.Recover(parent); err != nil {
 			t.Fatalf("Failed to revert db, err: %v", err)
 		}
 		tester.verifyState(parent)
@@ -405,6 +413,10 @@ func TestDatabaseRollback(t *testing.T) {
 }
 
 func TestDatabaseRecoverable(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	var (
 		tester = newTester(t, 0)
 		index  = tester.bottomIndex()
@@ -444,6 +456,10 @@ func TestDatabaseRecoverable(t *testing.T) {
 }
 
 func TestDisable(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	tester := newTester(t, 0)
 	defer tester.release()
 
@@ -455,7 +471,7 @@ func TestDisable(t *testing.T) {
 		t.Fatalf("Invalid activation should be rejected")
 	}
 	if err := tester.db.Enable(stored); err != nil {
-		t.Fatal("Failed to activate database")
+		t.Fatalf("Failed to activate database, %v", err)
 	}
 
 	// Ensure journal is deleted from disk
@@ -480,6 +496,10 @@ func TestDisable(t *testing.T) {
 }
 
 func TestCommit(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	tester := newTester(t, 0)
 	defer tester.release()
 
@@ -504,6 +524,10 @@ func TestCommit(t *testing.T) {
 }
 
 func TestJournal(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	tester := newTester(t, 0)
 	defer tester.release()
 
@@ -511,7 +535,7 @@ func TestJournal(t *testing.T) {
 		t.Errorf("Failed to journal, err: %v", err)
 	}
 	tester.db.Close()
-	tester.db = New(tester.db.diskdb, nil)
+	tester.db = New(tester.db.diskdb, tester.db.config)
 
 	// Verify states including disk layer and all diff on top.
 	for i := 0; i < len(tester.roots); i++ {
@@ -528,6 +552,10 @@ func TestJournal(t *testing.T) {
 }
 
 func TestCorruptedJournal(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	tester := newTester(t, 0)
 	defer tester.release()
 
@@ -543,7 +571,7 @@ func TestCorruptedJournal(t *testing.T) {
 	rawdb.WriteTrieJournal(tester.db.diskdb, blob)
 
 	// Verify states, all not-yet-written states should be discarded
-	tester.db = New(tester.db.diskdb, nil)
+	tester.db = New(tester.db.diskdb, tester.db.config)
 	for i := 0; i < len(tester.roots); i++ {
 		if tester.roots[i] == root {
 			if err := tester.verifyState(root); err != nil {
@@ -570,11 +598,15 @@ func TestCorruptedJournal(t *testing.T) {
 // truncating the tail histories. This ensures that the ID of the persistent state
 // always falls within the range of [oldest-history-id, latest-history-id].
 func TestTailTruncateHistory(t *testing.T) {
+	maxDiffLayers = 4
+	defer func() {
+		maxDiffLayers = 128
+	}()
 	tester := newTester(t, 10)
 	defer tester.release()
 
 	tester.db.Close()
-	tester.db = New(tester.db.diskdb, &Config{StateHistory: 10})
+	tester.db = New(tester.db.diskdb, &Config{StateHistory: 10, TrieLoader: func(db database.NodeDatabase) ethstate.TrieLoader { return nil }})
 
 	head, err := tester.db.freezer.Ancients()
 	if err != nil {

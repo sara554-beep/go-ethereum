@@ -28,15 +28,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/database"
+	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
 
 const (
-	// maxDiffLayers is the maximum diff layers allowed in the layer tree.
-	maxDiffLayers = 128
-
 	// DefaultCleanSize is the default memory allowance of clean cache.
 	DefaultCleanSize = 16 * 1024 * 1024
 
@@ -53,6 +50,9 @@ const (
 	// pause time will increase when the database writes happen.
 	DefaultBufferSize = 64 * 1024 * 1024
 )
+
+// maxDiffLayers is the maximum diff layers allowed in the layer tree.
+var maxDiffLayers = 128
 
 // layer is the interface implemented by all state layers which includes some
 // public methods and some additional methods for internal usage.
@@ -76,7 +76,7 @@ type layer interface {
 	// the provided dirty trie nodes along with the state change set.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *triestate.Set) *diffLayer
+	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *ethstate.Origin) *diffLayer
 
 	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
@@ -86,10 +86,11 @@ type layer interface {
 
 // Config contains the settings for database.
 type Config struct {
-	StateHistory   uint64 // Number of recent blocks to maintain state history for
-	CleanCacheSize int    // Maximum memory allowance (in bytes) for caching clean nodes
-	DirtyCacheSize int    // Maximum memory allowance (in bytes) for caching dirty nodes
-	ReadOnly       bool   // Flag whether the database is opened in read only mode.
+	StateHistory   uint64                                             // Number of recent blocks to maintain state history for
+	CleanCacheSize int                                                // Maximum memory allowance (in bytes) for caching clean nodes
+	DirtyCacheSize int                                                // Maximum memory allowance (in bytes) for caching dirty nodes
+	ReadOnly       bool                                               // Flag whether the database is opened in read only mode.
+	TrieLoader     func(db database.NodeDatabase) ethstate.TrieLoader // Function to create trie loader for trie state transition
 }
 
 // sanitize checks the provided user configurations and changes anything that's
@@ -98,6 +99,9 @@ func (c *Config) sanitize() (*Config, error) {
 	if c == nil {
 		return nil, errors.New("pathdb config is nil")
 	}
+	if c.TrieLoader == nil {
+		return nil, errors.New("trie loader is not configured")
+	}
 	conf := *c
 	if conf.DirtyCacheSize > maxBufferSize {
 		log.Warn("Sanitizing invalid node buffer size", "provided", common.StorageSize(conf.DirtyCacheSize), "updated", common.StorageSize(maxBufferSize))
@@ -105,16 +109,6 @@ func (c *Config) sanitize() (*Config, error) {
 	}
 	return &conf, nil
 }
-
-// Defaults contains default settings for Ethereum mainnet.
-var Defaults = &Config{
-	StateHistory:   params.FullImmutabilityThreshold,
-	CleanCacheSize: DefaultCleanSize,
-	DirtyCacheSize: DefaultBufferSize,
-}
-
-// ReadOnly is the config in order to open database in read only mode.
-var ReadOnly = &Config{ReadOnly: true}
 
 // Database is a multiple-layered structure for maintaining in-memory trie nodes.
 // It consists of one persistent base layer backed by a key-value store, on top
@@ -211,7 +205,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 }
 
 // NodeReader retrieves a layer belonging to the given state root.
-func (db *Database) NodeReader(root common.Hash) (layer, error) {
+func (db *Database) NodeReader(root common.Hash) (database.NodeReader, error) {
 	l := db.tree.get(root)
 	if l == nil {
 		return nil, fmt.Errorf("state %#x is not available", root)
@@ -226,7 +220,7 @@ func (db *Database) NodeReader(root common.Hash) (layer, error) {
 //
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *ethstate.Origin) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -335,7 +329,7 @@ func (db *Database) Enable(root common.Hash) error {
 // Recover rollbacks the database to a specified historical point.
 // The state is supported as the rollback destination only if it's
 // canonical state and the corresponding trie histories are existent.
-func (db *Database) Recover(root common.Hash, loader triestate.TrieLoader) error {
+func (db *Database) Recover(root common.Hash) error {
 	db.lock.Lock()
 	defer db.lock.Unlock()
 
@@ -353,8 +347,9 @@ func (db *Database) Recover(root common.Hash, loader triestate.TrieLoader) error
 	}
 	// Apply the state histories upon the disk layer in order.
 	var (
-		start = time.Now()
-		dl    = db.tree.bottom()
+		start  = time.Now()
+		dl     = db.tree.bottom()
+		loader = db.config.TrieLoader(db)
 	)
 	for dl.rootHash() != root {
 		h, err := readHistory(db.freezer, dl.stateID())

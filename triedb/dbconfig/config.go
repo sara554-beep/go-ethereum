@@ -46,13 +46,15 @@ var PathDefaults = triedb.Config{
 	Preimages: false,
 	IsVerkle:  false,
 	PathDB: &pathdb.Config{
-		StateHistory: params.FullImmutabilityThreshold,
-
 		// Explicitly set clean cache size to 0 to avoid creating fastcache,
 		// otherwise database must be closed when it's no longer needed to
 		// prevent memory leak.
 		CleanCacheSize: 0,
 		DirtyCacheSize: pathdb.DefaultBufferSize,
+		StateHistory:   params.FullImmutabilityThreshold,
+
+		// Merkle trie loader is used as the default trie loader.
+		TrieLoader: trie.NewMerkleLoader,
 	},
 }
 
