@@ -35,9 +35,9 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
+	"github.com/ethereum/go-ethereum/triedb/ethstate"
 	"github.com/holiman/uint256"
 )
 
@@ -177,7 +177,7 @@ func (test *stateTest) run() bool {
 		roots       []common.Hash
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
-		onCommit    = func(states *triestate.Set) {
+		onCommit    = func(states *ethstate.Origin) {
 			accountList = append(accountList, copySet(states.Accounts))
 			storageList = append(storageList, copy2DSet(states.Storages))
 		}

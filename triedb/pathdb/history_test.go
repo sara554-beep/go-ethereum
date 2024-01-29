@@ -28,11 +28,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie/testutil"
-	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
 
 // randomStateSet generates a random state change set.
-func randomStateSet(n int) *triestate.Set {
+func randomStateSet(n int) *ethstate.Origin {
 	var (
 		accounts = make(map[common.Address][]byte)
 		storages = make(map[common.Address]map[common.Hash][]byte)
@@ -47,7 +47,7 @@ func randomStateSet(n int) *triestate.Set {
 		account := generateAccount(types.EmptyRootHash)
 		accounts[addr] = types.SlimAccountRLP(account)
 	}
-	return triestate.New(accounts, storages, nil)
+	return ethstate.NewOrigin(accounts, storages, nil)
 }
 
 func makeHistory() *history {
