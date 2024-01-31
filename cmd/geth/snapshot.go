@@ -801,12 +801,17 @@ func findDeployable(ctx *cli.Context) error {
 
 func findZeroNonceWhale(ctx *cli.Context) error {
 	var (
-		count  int
-		hashes []common.Hash
-		funds  = uint256.NewInt(0)
+		count   int
+		hashes  []common.Hash
+		funds   = uint256.NewInt(0)
+		maxFund = uint256.NewInt(0)
+		maxHash common.Hash
 	)
 	onAccount := func(hash common.Hash, account *types.StateAccount) {
 		if account.Nonce != 0 || account.Balance.Sign() == 0 {
+			return
+		}
+		if !bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes()) {
 			return
 		}
 		fundInEther := new(big.Float).Quo(
@@ -818,6 +823,10 @@ func findZeroNonceWhale(ctx *cli.Context) error {
 
 		if fundInEther.Cmp(big.NewFloat(3000)) > 0 {
 			hashes = append(hashes, hash)
+		}
+		if account.Balance.Cmp(maxFund) > 0 {
+			maxFund = new(uint256.Int).Set(account.Balance)
+			maxHash = hash
 		}
 	}
 	if err := iterateAccounts(ctx, onAccount); err != nil {
@@ -831,7 +840,17 @@ func findZeroNonceWhale(ctx *cli.Context) error {
 		fundInEther,
 		big.NewFloat(float64(count)),
 	)
-	log.Info("Iterated state", "whale", count, "totalfunds", fundInEther, "averagefunds", fundInAverage)
+	maxInEther := new(big.Float).Quo(
+		new(big.Float).SetInt(maxFund.ToBig()),
+		big.NewFloat(params.Ether),
+	)
+	log.Info("Iterated state",
+		"whale", count,
+		"totalfunds", fundInEther,
+		"averagefunds", fundInAverage,
+		"maxfunds", maxInEther,
+		"maxHash", maxHash.Hex(),
+	)
 	for _, hash := range hashes {
 		log.Info("Zero-nonce whales", "hash", hash.Hex())
 	}
