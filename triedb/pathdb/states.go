@@ -19,6 +19,8 @@ package pathdb
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/rlp"
+	"io"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -254,6 +256,105 @@ func (s *stateSet) revert(accountOrigin map[common.Hash][]byte, storageOrigin ma
 	return nil
 }
 
+// encode serializes the content of state set into the provided writer.
+func (s *stateSet) encode(w io.Writer) error {
+	// Encode destructs
+	destructs := make([]common.Hash, 0, len(s.destructSet))
+	for hash := range s.destructSet {
+		destructs = append(destructs, hash)
+	}
+	if err := rlp.Encode(w, destructs); err != nil {
+		return err
+	}
+
+	// Encode accounts
+	type Account struct {
+		Hash common.Hash
+		Blob []byte
+	}
+	accounts := make([]Account, 0, len(s.accountData))
+	for hash, blob := range s.accountData {
+		accounts = append(accounts, Account{Hash: hash, Blob: blob})
+	}
+	if err := rlp.Encode(w, accounts); err != nil {
+		return err
+	}
+
+	// Encode storages
+	type Storage struct {
+		Hash  common.Hash
+		Keys  []common.Hash
+		Blobs [][]byte
+	}
+	storages := make([]Storage, 0, len(s.storageData))
+	for hash, slots := range s.storageData {
+		keys := make([]common.Hash, 0, len(slots))
+		vals := make([][]byte, 0, len(slots))
+		for key, val := range slots {
+			keys = append(keys, key)
+			vals = append(vals, val)
+		}
+		storages = append(storages, Storage{Hash: hash, Keys: keys, Blobs: vals})
+	}
+	return rlp.Encode(w, storages)
+}
+
+func (s *stateSet) decode(r *rlp.Stream) error {
+	// Decode destructs
+	var (
+		destructs   []common.Hash
+		destructSet = make(map[common.Hash]struct{})
+	)
+	if err := r.Decode(&destructs); err != nil {
+		return fmt.Errorf("load diff destructs: %v", err)
+	}
+	for _, hash := range destructs {
+		destructSet[hash] = struct{}{}
+	}
+	s.destructSet = destructSet
+
+	// Decode accounts
+	type Account struct {
+		Hash common.Hash
+		Blob []byte
+	}
+	var (
+		accounts   []Account
+		accountSet = make(map[common.Hash][]byte)
+	)
+	if err := r.Decode(&accounts); err != nil {
+		return fmt.Errorf("load diff accounts: %v", err)
+	}
+	for _, account := range accounts {
+		accountSet[account.Hash] = account.Blob
+	}
+	s.accountData = accountSet
+
+	// Decode storages
+	type Storage struct {
+		Hash  common.Hash
+		Keys  []common.Hash
+		Blobs [][]byte
+	}
+	var (
+		storages   []Storage
+		storageSet = make(map[common.Hash]map[common.Hash][]byte)
+	)
+	if err := r.Decode(&storages); err != nil {
+		return fmt.Errorf("load diff storage: %v", err)
+	}
+	for _, storage := range storages {
+		storageSet[storage.Hash] = make(map[common.Hash][]byte)
+		for i := 0; i < len(storage.Keys); i++ {
+			storageSet[storage.Hash][storage.Keys[i]] = storage.Blobs[i]
+		}
+	}
+	s.storageData = storageSet
+	s.storageList = make(map[common.Hash][]common.Hash)
+	s.journal = &journal{}
+	return nil
+}
+
 // write flushes the accumulated state mutations into provided database batch.
 func (s *stateSet) write(db ethdb.KeyValueStore, batch ethdb.Batch) {
 	for addrHash := range s.destructSet {
@@ -317,4 +418,88 @@ func newStateSetWithOrigin(states *ethstate.Update) *stateSetWithOrigin {
 		accountOrigin: states.Origin.Accounts,
 		storageOrigin: states.Origin.Storages,
 	}
+}
+
+// encode serializes the content of state set into the provided writer.
+func (s *stateSetWithOrigin) encode(w io.Writer) error {
+	// Encode state set
+	if err := s.stateSet.encode(w); err != nil {
+		return err
+	}
+
+	// Encode accounts
+	type Account struct {
+		Address common.Address
+		Blob    []byte
+	}
+	accounts := make([]Account, 0, len(s.accountOrigin))
+	for address, blob := range s.accountOrigin {
+		accounts = append(accounts, Account{Address: address, Blob: blob})
+	}
+	if err := rlp.Encode(w, accounts); err != nil {
+		return err
+	}
+
+	// Encode storages
+	type Storage struct {
+		Address common.Address
+		Keys    []common.Hash
+		Blobs   [][]byte
+	}
+	storages := make([]Storage, 0, len(s.storageOrigin))
+	for address, slots := range s.storageOrigin {
+		keys := make([]common.Hash, 0, len(slots))
+		vals := make([][]byte, 0, len(slots))
+		for key, val := range slots {
+			keys = append(keys, key)
+			vals = append(vals, val)
+		}
+		storages = append(storages, Storage{Address: address, Keys: keys, Blobs: vals})
+	}
+	return rlp.Encode(w, storages)
+}
+
+func (s *stateSetWithOrigin) decode(r *rlp.Stream) error {
+	if err := s.stateSet.decode(r); err != nil {
+		return err
+	}
+	// Decode account origin
+	type Account struct {
+		Address common.Address
+		Blob    []byte
+	}
+	var (
+		accounts   []Account
+		accountSet = make(map[common.Address][]byte)
+	)
+	if err := r.Decode(&accounts); err != nil {
+		return fmt.Errorf("load diff account origin set: %v", err)
+	}
+	for _, account := range accounts {
+		accountSet[account.Address] = account.Blob
+	}
+	s.accountOrigin = accountSet
+
+	// Decode storage origin
+	type Storage struct {
+		Address common.Address
+		Keys    []common.Hash
+		Blobs   [][]byte
+	}
+	var (
+		storages   []Storage
+		storageSet = make(map[common.Address]map[common.Hash][]byte)
+	)
+	if err := r.Decode(&storages); err != nil {
+		return fmt.Errorf("load diff storage origin: %v", err)
+	}
+	for _, storage := range storages {
+		storageSet[storage.Address] = make(map[common.Hash][]byte)
+		for i := 0; i < len(storage.Keys); i++ {
+			storageSet[storage.Address][storage.Keys[i]] = storage.Blobs[i]
+		}
+	}
+	s.storageOrigin = storageSet
+
+	return nil
 }
