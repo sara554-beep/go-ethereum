@@ -127,9 +127,8 @@ func newTester(t *testing.T, historyLimit uint64) *tester {
 		if len(obj.roots) != 0 {
 			parent = obj.roots[len(obj.roots)-1]
 		}
-		root, nodes, states := obj.generate(parent)
-		_ = states // TOO FIX
-		if err := db.Update(root, parent, uint64(i), nodes, nil); err != nil {
+		root, nodes, update := obj.generate(parent)
+		if err := db.Update(root, parent, uint64(i), nodes, update); err != nil {
 			panic(fmt.Errorf("failed to update state changes, err: %w", err))
 		}
 		obj.roots = append(obj.roots, root)
@@ -219,7 +218,7 @@ func (t *tester) clearStorage(ctx *genctx, addr common.Address, root common.Hash
 	return root
 }
 
-func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *ethstate.Origin) {
+func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNodeSet, *ethstate.Update) {
 	var (
 		ctx     = newCtx()
 		dirties = make(map[common.Hash]struct{})
@@ -309,7 +308,7 @@ func (t *tester) generate(parent common.Hash) (common.Hash, *trienode.MergedNode
 			}
 		}
 	}
-	return root, ctx.nodes, ethstate.NewOrigin(ctx.accountOrigin, ctx.storageOrigin)
+	return root, ctx.nodes, &ethstate.Update{}
 }
 
 // lastRoot returns the latest root hash, or empty if nothing is cached.

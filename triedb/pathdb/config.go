@@ -45,7 +45,7 @@ func (c *Config) sanitize() (*Config, error) {
 		return nil, errors.New("trie loader is not configured")
 	}
 	if c.Hasher == nil {
-		return nil, errors.New("data nodeHasher is not configured")
+		return nil, errors.New("data hasher is not configured")
 	}
 	conf := *c
 	if conf.DirtyCacheSize > maxBufferSize {

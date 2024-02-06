@@ -178,8 +178,8 @@ func (test *stateTest) run() bool {
 		accountList []map[common.Address][]byte
 		storageList []map[common.Address]map[common.Hash][]byte
 		onCommit    = func(states *ethstate.Update) {
-			accountList = append(accountList, copySet(states.Origin.Accounts))
-			storageList = append(storageList, copy2DSet(states.Origin.Storages))
+			accountList = append(accountList, copySet(states.AccountOrigin))
+			storageList = append(storageList, copy2DSet(states.StorageOrigin))
 		}
 		disk      = rawdb.NewMemoryDatabase()
 		tdb       = triedb.NewDatabase(disk, &dbconfig.PathDefaults)

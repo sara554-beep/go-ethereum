@@ -19,26 +19,14 @@ package pathdb
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/rlp"
 	"io"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
-
-// stat stores sizes and count for a parameter.
-type stat struct {
-	size  uint64
-	count int
-}
-
-// add size to the stat and increase the counter.
-func (s *stat) add(size uint64) {
-	s.size += size
-	s.count++
-}
 
 // destruct represents the record of destruct set modification.
 type destruct struct {
@@ -82,19 +70,11 @@ type stateSet struct {
 	destructSet map[common.Hash]struct{}               // Keyed markers for deleted (and potentially) recreated accounts
 	accountData map[common.Hash][]byte                 // Keyed accounts for direct retrieval (nil is not expected)
 	storageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
-
-	accountList []common.Hash                 // List of account for iteration. If it exists, it's sorted, otherwise it's nil
-	storageList map[common.Hash][]common.Hash // List of storage slots for iterated retrievals, one per account. Any existing lists are sorted if non-nil
-
-	journal *journal // Track the modifications to destructSet, used for reversal
+	journal     *journal                               // Track the modifications to destructSet, used for reversal
 }
 
 // newStates constructs the state set with the provided data.
 func newStates(destructs map[common.Hash]struct{}, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte) *stateSet {
-	var (
-		accountStat stat
-		storageStat stat
-	)
 	// Don't panic for the lazy callers, initialize the nil maps instead.
 	if destructs == nil {
 		destructs = make(map[common.Hash]struct{})
@@ -110,25 +90,16 @@ func newStates(destructs map[common.Hash]struct{}, accounts map[common.Hash][]by
 		if blob == nil {
 			panic(fmt.Sprintf("account %#x nil", accountHash))
 		}
-		// Determine memory size and track the dirty writes
-		accountStat.add(uint64(common.HashLength + len(blob)))
 	}
 	for accountHash, slots := range storages {
 		if slots == nil {
 			panic(fmt.Sprintf("storage %#x nil", accountHash))
 		}
-		// Determine memory size and track the dirty writes
-		for _, data := range slots {
-			storageStat.add(uint64(common.HashLength + len(data)))
-		}
 	}
-	accountStat.add(uint64(len(destructs) * common.HashLength))
-
 	return &stateSet{
 		destructSet: destructs,
 		accountData: accounts,
 		storageData: storages,
-		storageList: make(map[common.Hash][]common.Hash),
 		journal:     &journal{},
 	}
 }
@@ -350,7 +321,6 @@ func (s *stateSet) decode(r *rlp.Stream) error {
 		}
 	}
 	s.storageData = storageSet
-	s.storageList = make(map[common.Hash][]common.Hash)
 	s.journal = &journal{}
 	return nil
 }
@@ -389,9 +359,6 @@ func (s *stateSet) reset() {
 	s.destructSet = make(map[common.Hash]struct{})
 	s.accountData = make(map[common.Hash][]byte)
 	s.storageData = make(map[common.Hash]map[common.Hash][]byte)
-
-	s.accountList = nil
-	s.storageList = make(map[common.Hash][]common.Hash)
 	s.journal.reset()
 }
 
@@ -415,8 +382,8 @@ type stateSetWithOrigin struct {
 func newStateSetWithOrigin(states *ethstate.Update) *stateSetWithOrigin {
 	return &stateSetWithOrigin{
 		stateSet:      newStates(states.DestructSet, states.AccountData, states.StorageData),
-		accountOrigin: states.Origin.Accounts,
-		storageOrigin: states.Origin.Storages,
+		accountOrigin: states.AccountOrigin,
+		storageOrigin: states.StorageOrigin,
 	}
 }
 

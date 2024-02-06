@@ -18,51 +18,20 @@ package ethstate
 
 import "github.com/ethereum/go-ethereum/common"
 
-// Origin represents the prev-state for a state transition.
-type Origin struct {
-	size common.StorageSize // Approximate size of set
-
-	// Accounts represents the account data before the state transition, keyed
-	// by the account address. The nil value means the account was not present
-	// before.
-	Accounts map[common.Address][]byte
-
-	// Storages represents the storage data before the state transition, keyed
-	// by the account address and slot key hash. The nil value means the slot
-	// was not present.
-	Storages map[common.Address]map[common.Hash][]byte
-}
-
-// NewOrigin constructs the state set with provided data.
-func NewOrigin(accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte) *Origin {
-	return &Origin{
-		Accounts: accounts,
-		Storages: storages,
-	}
-}
-
-// Size returns the approximate memory size occupied by the set.
-func (s *Origin) Size() common.StorageSize {
-	if s.size != 0 {
-		return s.size
-	}
-	for _, account := range s.Accounts {
-		s.size += common.StorageSize(common.AddressLength + len(account))
-	}
-	for _, slots := range s.Storages {
-		for _, val := range slots {
-			s.size += common.StorageSize(common.HashLength + len(val))
-		}
-		s.size += common.StorageSize(common.AddressLength)
-	}
-	return s.size
-}
-
 // Update encapsulates information about state mutations, including both the changes
 // made and their original values, within the context of a state transition.
 type Update struct {
-	Origin      *Origin                                // Associated original value before state transition
 	DestructSet map[common.Hash]struct{}               // Keyed markers for deleted (and potentially) recreated accounts
 	AccountData map[common.Hash][]byte                 // Keyed accounts for direct retrieval (nil is not expected)
 	StorageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
+
+	// AccountOrigin represents the account data before the state transition,
+	// keyed by the account address. The nil value means the account was not
+	// present before.
+	AccountOrigin map[common.Address][]byte
+
+	// StorageOrigin represents the storage data before the state transition,
+	// keyed by the account address and slot key hash. The nil value means the
+	// slot was not present.
+	StorageOrigin map[common.Address]map[common.Hash][]byte
 }

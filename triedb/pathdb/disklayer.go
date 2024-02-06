@@ -20,37 +20,29 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
 
 // diskLayer is a low level persistent layer built on top of a key-value store.
 type diskLayer struct {
-	root   common.Hash      // Immutable, root hash to which this layer was made for
-	id     uint64           // Immutable, corresponding state id
-	db     *Database        // Path-based trie database
-	cleans *fastcache.Cache // GC friendly memory cache of clean node RLPs
-	buffer *buffer          // Node buffer to aggregate writes
-	stale  bool             // Signals that the layer became stale (state progressed)
-	lock   sync.RWMutex     // Lock used to protect stale flag
+	root   common.Hash  // Immutable, root hash to which this layer was made for
+	id     uint64       // Immutable, corresponding state id
+	db     *Database    // Path-based trie database
+	buffer *buffer      // Node buffer to aggregate writes
+	stale  bool         // Signals that the layer became stale (state progressed)
+	lock   sync.RWMutex // Lock used to protect stale flag
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
-func newDiskLayer(root common.Hash, id uint64, db *Database, cleans *fastcache.Cache, buffer *buffer) *diskLayer {
-	// Initialize a clean cache if the memory allowance is not zero
-	// or reuse the provided cache if it is not nil (inherited from
-	// the original disk layer).
-	if cleans == nil && db.config.CleanCacheSize != 0 {
-		cleans = fastcache.New(db.config.CleanCacheSize)
-	}
+func newDiskLayer(root common.Hash, id uint64, db *Database, buffer *buffer) *diskLayer {
 	return &diskLayer{
 		root:   root,
 		id:     id,
 		db:     db,
-		cleans: cleans,
 		buffer: buffer,
 	}
 }
@@ -113,28 +105,12 @@ func (dl *diskLayer) node(owner common.Hash, path []byte, depth int) ([]byte, *n
 	}
 	dirtyMissMeter.Mark(1)
 
-	// Try to retrieve the trie node from the clean memory cache
-	key := cacheKey(owner, path)
-	if dl.cleans != nil {
-		if blob := dl.cleans.Get(nil, key); len(blob) > 0 {
-			cleanHitMeter.Mark(1)
-			cleanReadMeter.Mark(int64(len(blob)))
-			dirtyNodeHitDepthHist.Update(int64(depth))
-			return blob, &nodeLoc{loc: locCleanCache, depth: depth}, nil
-		}
-		cleanMissMeter.Mark(1)
-	}
 	// Try to retrieve the trie node from the disk.
 	var blob []byte
 	if owner == (common.Hash{}) {
 		blob = rawdb.ReadAccountTrieNode(dl.db.diskdb, path)
 	} else {
 		blob = rawdb.ReadStorageTrieNode(dl.db.diskdb, owner, path)
-	}
-	if dl.cleans != nil && len(blob) > 0 {
-		dl.cleans.Set(key, blob)
-		cleanWriteMeter.Mark(int64(len(blob)))
-		dirtyNodeHitDepthHist.Update(int64(depth))
 	}
 	return blob, &nodeLoc{loc: locDisk, depth: depth}, nil
 }
@@ -233,7 +209,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct a new disk layer by merging the nodes from the provided diff
 	// layer, and flush the content in disk layer if there are too many nodes
 	// cached. The clean cache is inherited from the original disk layer.
-	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.cleans, dl.buffer.commit(bottom.nodes, bottom.states.stateSet))
+	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.buffer.commit(bottom.nodes, bottom.states.stateSet))
 
 	// In a unique scenario where the ID of the oldest history object (after tail
 	// truncation) surpasses the persisted state ID, we take the necessary action
@@ -242,7 +218,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	if !force && rawdb.ReadPersistentStateID(dl.db.diskdb) < oldest {
 		force = true
 	}
-	if err := ndl.buffer.flush(ndl.db.diskdb, ndl.cleans, ndl.id, force); err != nil {
+	if err := ndl.buffer.flush(ndl.db.diskdb, ndl.id, force); err != nil {
 		return nil, err
 	}
 	// To remove outdated history objects from the end, we set the 'tail' parameter
@@ -265,10 +241,20 @@ func (dl *diskLayer) revert(h *history) (*diskLayer, error) {
 	if dl.id == 0 {
 		return nil, fmt.Errorf("%w: zero state id", errStateUnrecoverable)
 	}
+	var (
+		accounts = make(map[common.Hash][]byte)
+		storages = make(map[common.Hash]map[common.Hash][]byte)
+	)
+	for addr, blob := range h.accounts {
+		accounts[crypto.Keccak256Hash(addr.Bytes())] = blob
+	}
+	for addr, storage := range h.storages {
+		storages[crypto.Keccak256Hash(addr.Bytes())] = storage
+	}
 	// Apply the reverse state changes upon the current state. This must
 	// be done before holding the lock in order to access state in "this"
 	// layer.
-	nodes, err := ethstate.Apply(h.meta.parent, h.meta.root, h.accounts, h.storages, dl.db.trieOpener)
+	nodes, err := ethstate.Apply(h.meta.parent, h.meta.root, accounts, storages, dl.db.trieOpener)
 	if err != nil {
 		return nil, err
 	}
@@ -283,33 +269,37 @@ func (dl *diskLayer) revert(h *history) (*diskLayer, error) {
 	// buffer is not empty, it means that the state transition that
 	// needs to be reverted is not yet flushed and cached in node
 	// buffer, otherwise, manipulate persistent state directly.
-	//
-	// TODO persistent states should be reverted too.
 	if !dl.buffer.empty() {
-		err := dl.buffer.revert(dl.db.diskdb, nodes, nil, nil)
+		err := dl.buffer.revert(dl.db.diskdb, nodes, accounts, storages)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		batch := dl.db.diskdb.NewBatch()
-		writeNodes(batch, nodes, dl.cleans)
+		writeNodes(batch, nodes)
+
+		for addrHash, blob := range accounts {
+			if len(blob) == 0 {
+				rawdb.DeleteAccountSnapshot(batch, addrHash)
+			} else {
+				rawdb.WriteAccountSnapshot(batch, addrHash, blob)
+			}
+		}
+		for addrHash, storages := range storages {
+			for storageHash, blob := range storages {
+				if len(blob) == 0 {
+					rawdb.DeleteStorageSnapshot(batch, addrHash, storageHash)
+				} else {
+					rawdb.WriteStorageSnapshot(batch, addrHash, storageHash, blob)
+				}
+			}
+		}
 		rawdb.WritePersistentStateID(batch, dl.id-1)
 		if err := batch.Write(); err != nil {
 			log.Crit("Failed to write states", "err", err)
 		}
 	}
-	return newDiskLayer(h.meta.parent, dl.id-1, dl.db, dl.cleans, dl.buffer), nil
-}
-
-// refreshBufferSize sets the node buffer size to the provided value.
-func (dl *diskLayer) refreshBufferSize() error {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	if dl.stale {
-		return errSnapshotStale
-	}
-	return dl.buffer.setSize(dl.db.config.DirtyCacheSize, dl.db.diskdb, dl.cleans, dl.id)
+	return newDiskLayer(h.meta.parent, dl.id-1, dl.db, dl.buffer), nil
 }
 
 // size returns the approximate size of cached nodes in the disk layer.
@@ -321,18 +311,4 @@ func (dl *diskLayer) size() common.StorageSize {
 		return 0
 	}
 	return common.StorageSize(dl.buffer.size)
-}
-
-// resetCache releases the memory held by clean cache to prevent memory leak.
-func (dl *diskLayer) resetCache() {
-	dl.lock.RLock()
-	defer dl.lock.RUnlock()
-
-	// Stale disk layer loses the ownership of clean cache.
-	if dl.stale {
-		return
-	}
-	if dl.cleans != nil {
-		dl.cleans.Reset()
-	}
 }

@@ -1235,13 +1235,11 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	if root != origin {
 		start := time.Now()
 		states := &ethstate.Update{
-			DestructSet: s.convertAccountSet(s.stateObjectsDestruct),
-			AccountData: s.accounts,
-			StorageData: s.storages,
-			Origin: &ethstate.Origin{
-				Accounts: s.accountsOrigin,
-				Storages: s.storagesOrigin,
-			},
+			DestructSet:   s.convertAccountSet(s.stateObjectsDestruct),
+			AccountData:   s.accounts,
+			StorageData:   s.storages,
+			AccountOrigin: s.accountsOrigin,
+			StorageOrigin: s.storagesOrigin,
 		}
 		if err := s.db.TrieDB().Update(root, origin, block, nodes, states); err != nil {
 			return common.Hash{}, err

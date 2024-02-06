@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -213,14 +212,14 @@ func (b *buffer) empty() bool {
 
 // setSize sets the buffer size to the provided number, and invokes a flush
 // operation if the current memory usage exceeds the new limit.
-func (b *buffer) setSize(size int, db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64) error {
+func (b *buffer) setSize(size int, db ethdb.KeyValueStore, id uint64) error {
 	b.limit = uint64(size)
-	return b.flush(db, clean, id, false)
+	return b.flush(db, id, false)
 }
 
 // flush persists the in-memory dirty trie node into the disk if the configured
 // memory threshold is reached. Note, all data must be written atomically.
-func (b *buffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64, force bool) error {
+func (b *buffer) flush(db ethdb.KeyValueStore, id uint64, force bool) error {
 	if b.size <= b.limit && !force {
 		return nil
 	}
@@ -233,7 +232,7 @@ func (b *buffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64
 		start = time.Now()
 		batch = db.NewBatchWithSize(int(b.size))
 	)
-	nodes := writeNodes(batch, b.nodes, clean)
+	nodes := writeNodes(batch, b.nodes)
 	b.states.write(db, batch)
 	rawdb.WritePersistentStateID(batch, id)
 
@@ -253,7 +252,7 @@ func (b *buffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64
 // writeNodes writes the trie nodes into the provided database batch.
 // Note this function will also inject all the newly written nodes
 // into clean cache.
-func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string][]byte, clean *fastcache.Cache) (total int) {
+func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string][]byte) (total int) {
 	for owner, subset := range nodes {
 		for path, n := range subset {
 			if len(n) == 0 {
@@ -262,29 +261,15 @@ func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string][]byte, clea
 				} else {
 					rawdb.DeleteStorageTrieNode(batch, owner, []byte(path))
 				}
-				if clean != nil {
-					clean.Del(cacheKey(owner, []byte(path)))
-				}
 			} else {
 				if owner == (common.Hash{}) {
 					rawdb.WriteAccountTrieNode(batch, []byte(path), n)
 				} else {
 					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), n)
 				}
-				if clean != nil {
-					clean.Set(cacheKey(owner, []byte(path)), n)
-				}
 			}
 		}
 		total += len(subset)
 	}
 	return total
-}
-
-// cacheKey constructs the unique key of clean cache.
-func cacheKey(owner common.Hash, path []byte) []byte {
-	if owner == (common.Hash{}) {
-		return path
-	}
-	return append(owner.Bytes(), path...)
 }

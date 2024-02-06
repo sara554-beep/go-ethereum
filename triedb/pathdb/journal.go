@@ -43,8 +43,9 @@ var (
 // Changelog:
 //
 // - Version 0: initial version
-// - Version 1: add post-state journal
-const journalVersion uint64 = 1
+// - Version 1: remove incomplete flag
+// - Version 2: add state journal
+const journalVersion uint64 = 2
 
 // journalNode represents a trie node persisted in the journal.
 type journalNode struct {
@@ -57,19 +58,6 @@ type journalNode struct {
 type journalNodes struct {
 	Owner common.Hash
 	Nodes []journalNode
-}
-
-// journalAccounts represents a list accounts belong to the layer.
-type journalAccounts struct {
-	Addresses []common.Address
-	Accounts  [][]byte
-}
-
-// journalStorage represents a list of storage slots belong to an account.
-type journalStorage struct {
-	Account common.Address
-	Hashes  []common.Hash
-	Slots   [][]byte
 }
 
 // loadJournal tries to parse the layer journal from the disk.
@@ -133,7 +121,7 @@ func (db *Database) loadLayers() layer {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Return single layer with persistent state.
-	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, newBuffer(db.config.DirtyCacheSize, nil, nil, 0))
+	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, newBuffer(db.config.DirtyCacheSize, nil, nil, 0))
 }
 
 // loadDiskLayer reads the binary blob from the layer journal, reconstructing
@@ -172,8 +160,12 @@ func (db *Database) loadDiskLayer(r *rlp.Stream) (layer, error) {
 		}
 		nodes[entry.Owner] = subset
 	}
+	var states stateSet
+	if err := states.decode(r); err != nil {
+		return nil, err
+	}
 	// Calculate the internal state transitions by id difference.
-	base := newDiskLayer(root, id, db, nil, newBuffer(db.config.DirtyCacheSize, nodes, nil, id-stored))
+	base := newDiskLayer(root, id, db, newBuffer(db.config.DirtyCacheSize, nodes, &states, id-stored))
 	return base, nil
 }
 
@@ -211,34 +203,11 @@ func (db *Database) loadDiffLayer(parent layer, r *rlp.Stream) (layer, error) {
 		nodes[entry.Owner] = subset
 	}
 	// Read state changes from journal
-	var (
-		jaccounts journalAccounts
-		jstorages []journalStorage
-		accounts  = make(map[common.Address][]byte)
-		storages  = make(map[common.Address]map[common.Hash][]byte)
-	)
-	if err := r.Decode(&jaccounts); err != nil {
-		return nil, fmt.Errorf("load diff accounts: %v", err)
+	var stateSet stateSetWithOrigin
+	if err := stateSet.decode(r); err != nil {
+		return nil, err
 	}
-	for i, addr := range jaccounts.Addresses {
-		accounts[addr] = jaccounts.Accounts[i]
-	}
-	if err := r.Decode(&jstorages); err != nil {
-		return nil, fmt.Errorf("load diff storages: %v", err)
-	}
-	for _, entry := range jstorages {
-		set := make(map[common.Hash][]byte)
-		for i, h := range entry.Hashes {
-			if len(entry.Slots[i]) > 0 {
-				set[h] = entry.Slots[i]
-			} else {
-				set[h] = nil
-			}
-		}
-		storages[entry.Account] = set
-	}
-	// TODO resolve state
-	return db.loadDiffLayer(newDiffLayer(parent, root, parent.stateID()+1, block, nodes, nil), r)
+	return db.loadDiffLayer(newDiffLayer(parent, root, parent.stateID()+1, block, nodes, &stateSet), r)
 }
 
 // journal implements the layer interface, marshaling the un-flushed trie nodes
@@ -269,6 +238,9 @@ func (dl *diskLayer) journal(w io.Writer) error {
 		nodes = append(nodes, entry)
 	}
 	if err := rlp.Encode(w, nodes); err != nil {
+		return err
+	}
+	if err := dl.buffer.states.encode(w); err != nil {
 		return err
 	}
 	log.Debug("Journaled pathdb disk layer", "root", dl.root, "nodes", len(dl.buffer.nodes))
@@ -304,25 +276,7 @@ func (dl *diffLayer) journal(w io.Writer) error {
 	if err := rlp.Encode(w, nodes); err != nil {
 		return err
 	}
-	// Write the accumulated state changes into buffer
-	var jacct journalAccounts
-	for addr, account := range dl.states.accountOrigin {
-		jacct.Addresses = append(jacct.Addresses, addr)
-		jacct.Accounts = append(jacct.Accounts, account)
-	}
-	if err := rlp.Encode(w, jacct); err != nil {
-		return err
-	}
-	storage := make([]journalStorage, 0, len(dl.states.storageOrigin))
-	for addr, slots := range dl.states.storageOrigin {
-		entry := journalStorage{Account: addr}
-		for slotHash, slot := range slots {
-			entry.Hashes = append(entry.Hashes, slotHash)
-			entry.Slots = append(entry.Slots, slot)
-		}
-		storage = append(storage, entry)
-	}
-	if err := rlp.Encode(w, storage); err != nil {
+	if err := dl.states.encode(w); err != nil {
 		return err
 	}
 	log.Debug("Journaled pathdb diff layer", "root", dl.root, "parent", dl.parent.rootHash(), "id", dl.stateID(), "block", dl.block, "nodes", len(dl.nodes))

@@ -19,14 +19,11 @@ package ethstate
 import (
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"golang.org/x/crypto/sha3"
 )
 
 // Trie is an Ethereum state trie, can be implemented by Ethereum Merkle Patricia
@@ -59,8 +56,8 @@ type TrieOpener interface {
 type context struct {
 	prevRoot    common.Hash
 	postRoot    common.Hash
-	accounts    map[common.Address][]byte
-	storages    map[common.Address]map[common.Hash][]byte
+	accounts    map[common.Hash][]byte
+	storages    map[common.Hash]map[common.Hash][]byte
 	accountTrie Trie
 	nodes       *trienode.MergedNodeSet
 }
@@ -68,7 +65,7 @@ type context struct {
 // Apply traverses the provided state diffs, apply them in the associated
 // post-state and return the generated dirty trie nodes. The state can be
 // loaded via the provided trie loader.
-func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Address][]byte, storages map[common.Address]map[common.Hash][]byte, loader TrieOpener) (map[common.Hash]map[string][]byte, error) {
+func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, loader TrieOpener) (map[common.Hash]map[string][]byte, error) {
 	tr, err := loader.OpenTrie(postRoot)
 	if err != nil {
 		return nil, err
@@ -81,12 +78,12 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Addre
 		accountTrie: tr,
 		nodes:       trienode.NewMergedNodeSet(),
 	}
-	for addr, account := range accounts {
+	for addrHash, account := range accounts {
 		var err error
 		if len(account) == 0 {
-			err = deleteAccount(ctx, loader, addr)
+			err = deleteAccount(ctx, loader, addrHash)
 		} else {
-			err = updateAccount(ctx, loader, addr)
+			err = updateAccount(ctx, loader, addrHash)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to revert state, err: %w", err)
@@ -108,14 +105,10 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Addre
 // updateAccount the account was present in prev-state, and may or may not
 // existent in post-state. Apply the reverse diff and verify if the storage
 // root matches the one in prev-state account.
-func updateAccount(ctx *context, loader TrieOpener, addr common.Address) error {
+func updateAccount(ctx *context, loader TrieOpener, addrHash common.Hash) error {
 	// The account was present in prev-state, decode it from the
 	// 'slim-rlp' format bytes.
-	h := newHasher()
-	defer h.release()
-
-	addrHash := h.hash(addr.Bytes())
-	prev, err := types.FullAccount(ctx.accounts[addr])
+	prev, err := types.FullAccount(ctx.accounts[addrHash])
 	if err != nil {
 		return err
 	}
@@ -136,7 +129,7 @@ func updateAccount(ctx *context, loader TrieOpener, addr common.Address) error {
 	if err != nil {
 		return err
 	}
-	for key, val := range ctx.storages[addr] {
+	for key, val := range ctx.storages[addrHash] {
 		var err error
 		if len(val) == 0 {
 			err = st.Delete(key.Bytes())
@@ -172,12 +165,8 @@ func updateAccount(ctx *context, loader TrieOpener, addr common.Address) error {
 // deleteAccount the account was not present in prev-state, and is expected
 // to be existent in post-state. Apply the reverse diff and verify if the
 // account and storage is wiped out correctly.
-func deleteAccount(ctx *context, loader TrieOpener, addr common.Address) error {
+func deleteAccount(ctx *context, loader TrieOpener, addrHash common.Hash) error {
 	// The account must be existent in post-state, load the account.
-	h := newHasher()
-	defer h.release()
-
-	addrHash := h.hash(addr.Bytes())
 	blob, err := ctx.accountTrie.Get(addrHash.Bytes())
 	if err != nil {
 		return err
@@ -193,7 +182,7 @@ func deleteAccount(ctx *context, loader TrieOpener, addr common.Address) error {
 	if err != nil {
 		return err
 	}
-	for key, val := range ctx.storages[addr] {
+	for key, val := range ctx.storages[addrHash] {
 		if len(val) != 0 {
 			return errors.New("expect storage deletion")
 		}
@@ -217,23 +206,4 @@ func deleteAccount(ctx *context, loader TrieOpener, addr common.Address) error {
 	}
 	// Delete the post-state account from the main trie.
 	return ctx.accountTrie.Delete(addrHash.Bytes())
-}
-
-// hasher is used to compute the sha256 hash of the provided data.
-type hasher struct{ sha crypto.KeccakState }
-
-var hasherPool = sync.Pool{
-	New: func() interface{} { return &hasher{sha: sha3.NewLegacyKeccak256().(crypto.KeccakState)} },
-}
-
-func newHasher() *hasher {
-	return hasherPool.Get().(*hasher)
-}
-
-func (h *hasher) hash(data []byte) common.Hash {
-	return crypto.HashData(h.sha, data)
-}
-
-func (h *hasher) release() {
-	hasherPool.Put(h)
 }

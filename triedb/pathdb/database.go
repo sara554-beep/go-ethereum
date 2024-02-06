@@ -332,7 +332,7 @@ func (db *Database) Enable(root common.Hash) error {
 	}
 	// Re-construct a new disk layer backed by persistent state
 	// with **empty clean cache and node buffer**.
-	db.tree.reset(newDiskLayer(root, 0, db, nil, newBuffer(db.config.DirtyCacheSize, nil, nil, 0)))
+	db.tree.reset(newDiskLayer(root, 0, db, newBuffer(db.config.DirtyCacheSize, nil, nil, 0)))
 
 	// Re-enable the database as the final step.
 	db.waitSync = false
@@ -424,9 +424,6 @@ func (db *Database) Close() error {
 	// following mutations.
 	db.readOnly = true
 
-	// Release the memory held by clean cache.
-	db.tree.bottom().resetCache()
-
 	// Close the attached state history freezer.
 	if db.freezer == nil {
 		return nil
@@ -461,20 +458,6 @@ func (db *Database) Initialized(genesisRoot common.Hash) bool {
 		inited = rawdb.ReadSnapSyncStatusFlag(db.diskdb) != rawdb.StateSyncUnknown
 	}
 	return inited
-}
-
-// SetBufferSize sets the node buffer size to the provided value(in bytes).
-func (db *Database) SetBufferSize(size int) error {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	if size > maxBufferSize {
-		log.Info("Capped node buffer size", "provided", common.StorageSize(size), "adjusted", common.StorageSize(maxBufferSize))
-		size = maxBufferSize
-	}
-	db.config.DirtyCacheSize = size
-
-	return db.tree.bottom().refreshBufferSize()
 }
 
 // modifyAllowed returns the indicator if mutation is allowed. This function
