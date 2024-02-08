@@ -17,13 +17,16 @@
 package pathdb
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/triedb/ethstate"
 )
 
@@ -35,16 +38,51 @@ type diskLayer struct {
 	buffer *buffer      // Node buffer to aggregate writes
 	stale  bool         // Signals that the layer became stale (state progressed)
 	lock   sync.RWMutex // Lock used to protect stale flag
+
+	genMarker  []byte                    // Marker for the state that's indexed during initial layer generation
+	genPending chan struct{}             // Notification channel when generation is done (test synchronicity)
+	genAbort   chan chan *generatorStats // Notification channel to abort generating the snapshot in this layer
 }
 
 // newDiskLayer creates a new disk layer based on the passing arguments.
 func newDiskLayer(root common.Hash, id uint64, db *Database, buffer *buffer) *diskLayer {
-	return &diskLayer{
+	layer := &diskLayer{
 		root:   root,
 		id:     id,
 		db:     db,
 		buffer: buffer,
 	}
+	// Retrieve the disk layer generator. It must exist, no matter the
+	// snapshot is fully generated or not. Otherwise the entire disk
+	// layer is invalid.
+	prog := &stateProgress{
+		Done:   false,
+		Marker: []byte{},
+	}
+	if blob := rawdb.ReadSnapshotGenerator(db.diskdb); len(blob) != 0 {
+		if err := rlp.DecodeBytes(blob, &prog); err != nil {
+			log.Error("Failed to decode state progress", "err", err)
+		}
+	}
+	layer.genMarker = prog.Marker
+
+	if !prog.Done {
+		layer.genPending = make(chan struct{})
+		layer.genAbort = make(chan chan *generatorStats)
+
+		var origin uint64
+		if len(prog.Marker) >= 8 {
+			origin = binary.BigEndian.Uint64(prog.Marker)
+		}
+		go layer.generate(&generatorStats{
+			origin:   origin,
+			start:    time.Now(),
+			accounts: prog.Accounts,
+			slots:    prog.Slots,
+			storage:  common.StorageSize(prog.Storage),
+		})
+	}
+	return layer
 }
 
 // root implements the layer interface, returning root hash of corresponding state.

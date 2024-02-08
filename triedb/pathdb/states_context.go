@@ -20,6 +20,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"github.com/ethereum/go-ethereum/rlp"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -230,4 +232,46 @@ func (ctx *generatorContext) removeStorageLeft() {
 		}
 	}
 	ctx.stats.dangling += count
+}
+
+// stateProgress is a disk layer entry containing the generator progress marker.
+type stateProgress struct {
+	Done     bool // Whether the generator finished creating the snapshot
+	Marker   []byte
+	Accounts uint64
+	Slots    uint64
+	Storage  uint64
+}
+
+// journalProgress persists the generator stats into the database to resume later.
+func storeProgress(db ethdb.KeyValueWriter, marker []byte, stats *generatorStats) {
+	// Write out the generator marker. Note it's a standalone disk layer generator
+	// which is not mixed with journal. It's ok if the generator is persisted while
+	// journal is not.
+	entry := stateProgress{
+		Done:   marker == nil,
+		Marker: marker,
+	}
+	if stats != nil {
+		entry.Accounts = stats.accounts
+		entry.Slots = stats.slots
+		entry.Storage = uint64(stats.storage)
+	}
+	blob, err := rlp.EncodeToBytes(entry)
+	if err != nil {
+		panic(err) // Cannot happen, here to catch dev errors
+	}
+	var logstr string
+	switch {
+	case marker == nil:
+		logstr = "done"
+	case bytes.Equal(marker, []byte{}):
+		logstr = "empty"
+	case len(marker) == common.HashLength:
+		logstr = fmt.Sprintf("%#x", marker)
+	default:
+		logstr = fmt.Sprintf("%#x:%#x", marker[:common.HashLength], marker[common.HashLength:])
+	}
+	log.Debug("Journalled generator progress", "progress", logstr)
+	rawdb.WriteSnapshotGenerator(db, blob)
 }
