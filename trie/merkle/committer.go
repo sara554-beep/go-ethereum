@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"fmt"
@@ -24,15 +24,14 @@ import (
 )
 
 // committer is the tool used for the trie Commit operation. The committer will
-// capture all dirty nodes during the commit process and keep them cached in
-// insertion order.
+// capture all dirty nodes during the commit process.
 type committer struct {
 	nodes       *trienode.NodeSet
 	tracer      *tracer
 	collectLeaf bool
 }
 
-// newCommitter creates a new committer or picks one from the pool.
+// newCommitter creates a new committer.
 func newCommitter(nodeset *trienode.NodeSet, tracer *tracer, collectLeaf bool) *committer {
 	return &committer{
 		nodes:       nodeset,
@@ -48,7 +47,7 @@ func (c *committer) Commit(n node) hashNode {
 
 // commit collapses a node down into a hash node and returns it.
 func (c *committer) commit(path []byte, n node) node {
-	// if this path is clean, use available cached data
+	// If this path is clean, use available cached data
 	hash, dirty := n.cache()
 	if hash != nil && !dirty {
 		return hash
@@ -90,7 +89,7 @@ func (c *committer) commit(path []byte, n node) node {
 	}
 }
 
-// commitChildren commits the children of the given fullnode
+// commitChildren commits the children of the given fullNode.
 func (c *committer) commitChildren(path []byte, n *fullNode) [17]node {
 	var children [17]node
 	for i := 0; i < 16; i++ {
@@ -110,7 +109,7 @@ func (c *committer) commitChildren(path []byte, n *fullNode) [17]node {
 		// possible the type is not hashNode.
 		children[i] = c.commit(append(path, byte(i)), child)
 	}
-	// For the 17th child, it's possible the type is valuenode.
+	// For the 17th child, it's possible the type is valueNode.
 	if n.Children[16] != nil {
 		children[16] = n.Children[16]
 	}
@@ -154,13 +153,13 @@ func (c *committer) store(path []byte, n node) node {
 	return hash
 }
 
-// MerkleResolver decodes the provided node and traverses the children inside.
-func MerkleResolver(node []byte, onChild func(common.Hash)) {
+// Resolver decodes the provided node and traverses the children inside.
+func Resolver(node []byte, onChild func(common.Hash)) {
 	forGatherChildren(mustDecodeNodeUnsafe(nil, node), onChild)
 }
 
 // forGatherChildren traverses the node hierarchy and invokes the callback
-// for all the hashnode children.
+// for all the hashNode children.
 func forGatherChildren(n node, onChild func(hash common.Hash)) {
 	switch n := n.(type) {
 	case *shortNode:

@@ -25,7 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 )
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
@@ -300,7 +300,7 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 		log.Warn("Propagated block has invalid uncles", "have", hash, "exp", ann.Block.UncleHash())
 		return nil // TODO(karalabe): return error eventually, but wait a few releases
 	}
-	if hash := types.DeriveSha(ann.Block.Transactions(), trie.NewStackTrie(nil)); hash != ann.Block.TxHash() {
+	if hash := types.DeriveSha(ann.Block.Transactions(), merkle.NewStackTrie(nil)); hash != ann.Block.TxHash() {
 		log.Warn("Propagated block has invalid body", "have", hash, "exp", ann.Block.TxHash())
 		return nil // TODO(karalabe): return error eventually, but wait a few releases
 	}
@@ -345,7 +345,7 @@ func handleBlockBodies(backend Backend, msg Decoder, peer *Peer) error {
 			uncleHashes      = make([]common.Hash, len(res.BlockBodiesResponse))
 			withdrawalHashes = make([]common.Hash, len(res.BlockBodiesResponse))
 		)
-		hasher := trie.NewStackTrie(nil)
+		hasher := merkle.NewStackTrie(nil)
 		for i, body := range res.BlockBodiesResponse {
 			txsHashes[i] = types.DeriveSha(types.Transactions(body.Transactions), hasher)
 			uncleHashes[i] = types.CalcUncleHash(body.Uncles)
@@ -369,7 +369,7 @@ func handleReceipts(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 	metadata := func() interface{} {
-		hasher := trie.NewStackTrie(nil)
+		hasher := merkle.NewStackTrie(nil)
 		hashes := make([]common.Hash, len(res.ReceiptsResponse))
 		for i, receipt := range res.ReceiptsResponse {
 			hashes[i] = types.DeriveSha(types.Receipts(receipt), hasher)

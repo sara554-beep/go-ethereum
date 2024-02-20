@@ -35,7 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"github.com/holiman/uint256"
 	"golang.org/x/crypto/sha3"
@@ -327,8 +327,8 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 	}
 	execRs := &ExecutionResult{
 		StateRoot:   root,
-		TxRoot:      types.DeriveSha(includedTxs, trie.NewStackTrie(nil)),
-		ReceiptRoot: types.DeriveSha(receipts, trie.NewStackTrie(nil)),
+		TxRoot:      types.DeriveSha(includedTxs, merkle.NewStackTrie(nil)),
+		ReceiptRoot: types.DeriveSha(receipts, merkle.NewStackTrie(nil)),
 		Bloom:       types.CreateBloom(receipts),
 		LogsHash:    rlpHash(statedb.Logs()),
 		Receipts:    receipts,
@@ -338,7 +338,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		BaseFee:     (*math.HexOrDecimal256)(vmContext.BaseFee),
 	}
 	if pre.Env.Withdrawals != nil {
-		h := types.DeriveSha(types.Withdrawals(pre.Env.Withdrawals), trie.NewStackTrie(nil))
+		h := types.DeriveSha(types.Withdrawals(pre.Env.Withdrawals), merkle.NewStackTrie(nil))
 		execRs.WithdrawalsRoot = &h
 	}
 	if vmContext.BlobBaseFee != nil {

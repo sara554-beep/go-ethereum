@@ -23,7 +23,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 )
 
 // PayloadVersion denotes the version of PayloadAttributes used to request the
@@ -230,7 +230,7 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 	// Withdrawals as the json null value.
 	var withdrawalsRoot *common.Hash
 	if params.Withdrawals != nil {
-		h := types.DeriveSha(types.Withdrawals(params.Withdrawals), trie.NewStackTrie(nil))
+		h := types.DeriveSha(types.Withdrawals(params.Withdrawals), merkle.NewStackTrie(nil))
 		withdrawalsRoot = &h
 	}
 	header := &types.Header{
@@ -238,7 +238,7 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		UncleHash:        types.EmptyUncleHash,
 		Coinbase:         params.FeeRecipient,
 		Root:             params.StateRoot,
-		TxHash:           types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
+		TxHash:           types.DeriveSha(types.Transactions(txs), merkle.NewStackTrie(nil)),
 		ReceiptHash:      params.ReceiptsRoot,
 		Bloom:            types.BytesToBloom(params.LogsBloom),
 		Difficulty:       common.Big0,

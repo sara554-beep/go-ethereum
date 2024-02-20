@@ -33,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 )
 
 // DebugAPI is the collection of Ethereum full node APIs for debugging the
@@ -235,7 +236,7 @@ func storageRangeAt(statedb *state.StateDB, root common.Hash, address common.Add
 		return StorageRangeResult{}, nil // empty storage
 	}
 	id := trie.StorageTrieID(root, crypto.Keccak256Hash(address.Bytes()), storageRoot)
-	tr, err := trie.NewStateTrie(id, statedb.Database().TrieDB())
+	tr, err := merkle.NewStateTrie(id, statedb.Database().TrieDB())
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
@@ -243,7 +244,7 @@ func storageRangeAt(statedb *state.StateDB, root common.Hash, address common.Add
 	if err != nil {
 		return StorageRangeResult{}, err
 	}
-	it := trie.NewIterator(trieIt)
+	it := merkle.NewIterator(trieIt)
 	result := StorageRangeResult{Storage: storageMap{}}
 	for i := 0; i < maxResult && it.Next(); i++ {
 		_, content, _, err := rlp.Split(it.Value)
@@ -326,11 +327,11 @@ func (api *DebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]c
 	}
 	triedb := api.eth.BlockChain().TrieDB()
 
-	oldTrie, err := trie.NewStateTrie(trie.StateTrieID(startBlock.Root()), triedb)
+	oldTrie, err := merkle.NewStateTrie(trie.StateTrieID(startBlock.Root()), triedb)
 	if err != nil {
 		return nil, err
 	}
-	newTrie, err := trie.NewStateTrie(trie.StateTrieID(endBlock.Root()), triedb)
+	newTrie, err := merkle.NewStateTrie(trie.StateTrieID(endBlock.Root()), triedb)
 	if err != nil {
 		return nil, err
 	}
@@ -342,8 +343,8 @@ func (api *DebugAPI) getModifiedAccounts(startBlock, endBlock *types.Block) ([]c
 	if err != nil {
 		return nil, err
 	}
-	diff, _ := trie.NewDifferenceIterator(oldIt, newIt)
-	iter := trie.NewIterator(diff)
+	diff, _ := merkle.NewDifferenceIterator(oldIt, newIt)
+	iter := merkle.NewIterator(diff)
 
 	var dirty []common.Address
 	for iter.Next() {

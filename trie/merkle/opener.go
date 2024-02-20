@@ -14,51 +14,31 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
-	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/triedb/database"
+	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
-func nodeToBytes(n node) []byte {
-	w := rlp.NewEncoderBuffer(nil)
-	n.encode(w)
-	result := w.ToBytes()
-	w.Flush()
-	return result
+// Opener implements state.TrieOpener for constructing tries.
+type Opener struct {
+	db database.NodeDatabase
 }
 
-func (n *fullNode) encode(w rlp.EncoderBuffer) {
-	offset := w.List()
-	for _, c := range n.Children {
-		if c != nil {
-			c.encode(w)
-		} else {
-			w.Write(rlp.EmptyString)
-		}
-	}
-	w.ListEnd(offset)
+// NewOpener creates the merkle trie opener.
+func NewOpener(db database.NodeDatabase) state.TrieOpener {
+	return &Opener{db: db}
 }
 
-func (n *shortNode) encode(w rlp.EncoderBuffer) {
-	offset := w.List()
-	w.WriteBytes(n.Key)
-	if n.Val != nil {
-		n.Val.encode(w)
-	} else {
-		w.Write(rlp.EmptyString)
-	}
-	w.ListEnd(offset)
+// OpenTrie opens the main account trie.
+func (o *Opener) OpenTrie(root common.Hash) (state.Trie, error) {
+	return New(trie.TrieID(root), o.db)
 }
 
-func (n hashNode) encode(w rlp.EncoderBuffer) {
-	w.WriteBytes(n)
-}
-
-func (n valueNode) encode(w rlp.EncoderBuffer) {
-	w.WriteBytes(n)
-}
-
-func (n rawNode) encode(w rlp.EncoderBuffer) {
-	w.Write(n)
+// OpenStorageTrie opens the storage trie of an account.
+func (o *Opener) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (state.Trie, error) {
+	return New(trie.StorageTrieID(stateRoot, addrHash, root), o.db)
 }

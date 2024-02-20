@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
@@ -119,12 +120,12 @@ func journalProgress(db ethdb.KeyValueWriter, marker []byte, stats *generatorSta
 // proofResult contains the output of range proving which can be used
 // for further processing regardless if it is successful or not.
 type proofResult struct {
-	keys     [][]byte   // The key set of all elements being iterated, even proving is failed
-	vals     [][]byte   // The val set of all elements being iterated, even proving is failed
-	diskMore bool       // Set when the database has extra snapshot states since last iteration
-	trieMore bool       // Set when the trie has extra snapshot states(only meaningful for successful proving)
-	proofErr error      // Indicator whether the given state range is valid or not
-	tr       *trie.Trie // The trie, in case the trie was resolved by the prover (may be nil)
+	keys     [][]byte     // The key set of all elements being iterated, even proving is failed
+	vals     [][]byte     // The val set of all elements being iterated, even proving is failed
+	diskMore bool         // Set when the database has extra snapshot states since last iteration
+	trieMore bool         // Set when the trie has extra snapshot states(only meaningful for successful proving)
+	proofErr error        // Indicator whether the given state range is valid or not
+	tr       *merkle.Trie // The trie, in case the trie was resolved by the prover (may be nil)
 }
 
 // valid returns the indicator that range proof is successful or not.
@@ -230,7 +231,7 @@ func (dl *diskLayer) proveRange(ctx *generatorContext, trieId *trie.ID, prefix [
 	// The snap state is exhausted, pass the entire key/val set for verification
 	root := trieId.Root
 	if origin == nil && !diskMore {
-		stackTr := trie.NewStackTrie(nil)
+		stackTr := merkle.NewStackTrie(nil)
 		for i, key := range keys {
 			if err := stackTr.Update(key, vals[i]); err != nil {
 				return nil, err
@@ -246,7 +247,7 @@ func (dl *diskLayer) proveRange(ctx *generatorContext, trieId *trie.ID, prefix [
 		return &proofResult{keys: keys, vals: vals}, nil
 	}
 	// Snap state is chunked, generate edge proofs for verification.
-	tr, err := trie.New(trieId, dl.triedb)
+	tr, err := merkle.New(trieId, dl.triedb)
 	if err != nil {
 		ctx.stats.Log("Trie missing, state snapshotting paused", dl.root, dl.genMarker)
 		return nil, errMissingTrie
@@ -279,7 +280,7 @@ func (dl *diskLayer) proveRange(ctx *generatorContext, trieId *trie.ID, prefix [
 	}
 	// Verify the snapshot segment with range prover, ensure that all flat states
 	// in this range correspond to merkle trie.
-	cont, err := trie.VerifyRangeProof(root, origin, keys, vals, proof)
+	cont, err := merkle.VerifyRangeProof(root, origin, keys, vals, proof)
 	return &proofResult{
 			keys:     keys,
 			vals:     vals,
@@ -357,7 +358,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 		mdb := rawdb.NewMemoryDatabase()
 		tdb := triedb.NewDatabase(mdb, &dbconfig.HashDefaults)
 		defer tdb.Close()
-		snapTrie := trie.NewEmpty(tdb)
+		snapTrie := merkle.NewEmpty(tdb)
 		for i, key := range result.keys {
 			snapTrie.Update(key, result.vals[i])
 		}
@@ -377,7 +378,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 	// if it's already opened with some nodes resolved.
 	tr := result.tr
 	if tr == nil {
-		tr, err = trie.New(trieId, dl.triedb)
+		tr, err = merkle.New(trieId, dl.triedb)
 		if err != nil {
 			ctx.stats.Log("Trie missing, state snapshotting paused", dl.root, dl.genMarker)
 			return false, nil, errMissingTrie
@@ -403,7 +404,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 		return false, nil, err
 	}
 	nodeIt.AddResolver(resolver)
-	iter := trie.NewIterator(nodeIt)
+	iter := merkle.NewIterator(nodeIt)
 
 	for iter.Next() {
 		if last != nil && bytes.Compare(iter.Key, last) > 0 {

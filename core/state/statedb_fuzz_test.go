@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"github.com/ethereum/go-ethereum/triedb/state"
@@ -253,7 +254,7 @@ func (test *stateTest) run() bool {
 // - the account was indeed not present in trie
 // - the account is present in new trie, nil->nil is regarded as invalid
 // - the slots transition is correct
-func (test *stateTest) verifyAccountCreation(next common.Hash, db *triedb.Database, otr, ntr *trie.Trie, addr common.Address, slots map[common.Hash][]byte) error {
+func (test *stateTest) verifyAccountCreation(next common.Hash, db *triedb.Database, otr, ntr *merkle.Trie, addr common.Address, slots map[common.Hash][]byte) error {
 	// Verify account change
 	addrHash := crypto.Keccak256Hash(addr.Bytes())
 	oBlob, err := otr.Get(addrHash.Bytes())
@@ -284,7 +285,7 @@ func (test *stateTest) verifyAccountCreation(next common.Hash, db *triedb.Databa
 		return nil
 	}
 	// Account has slots, ensure all new slots are contained
-	st, err := trie.New(trie.StorageTrieID(next, addrHash, nAcct.Root), db)
+	st, err := merkle.New(trie.StorageTrieID(next, addrHash, nAcct.Root), db)
 	if err != nil {
 		return err
 	}
@@ -304,7 +305,7 @@ func (test *stateTest) verifyAccountCreation(next common.Hash, db *triedb.Databa
 // - the account was indeed present in trie
 // - the account in old trie matches the provided value
 // - the slots transition is correct
-func (test *stateTest) verifyAccountUpdate(next common.Hash, db *triedb.Database, otr, ntr *trie.Trie, addr common.Address, origin []byte, slots map[common.Hash][]byte) error {
+func (test *stateTest) verifyAccountUpdate(next common.Hash, db *triedb.Database, otr, ntr *merkle.Trie, addr common.Address, origin []byte, slots map[common.Hash][]byte) error {
 	// Verify account change
 	addrHash := crypto.Keccak256Hash(addr.Bytes())
 	oBlob, err := otr.Get(addrHash.Bytes())
@@ -345,7 +346,7 @@ func (test *stateTest) verifyAccountUpdate(next common.Hash, db *triedb.Database
 	}
 
 	// Verify storage
-	st, err := trie.New(trie.StorageTrieID(next, addrHash, nRoot), db)
+	st, err := merkle.New(trie.StorageTrieID(next, addrHash, nRoot), db)
 	if err != nil {
 		return err
 	}
@@ -359,11 +360,11 @@ func (test *stateTest) verifyAccountUpdate(next common.Hash, db *triedb.Database
 }
 
 func (test *stateTest) verify(root common.Hash, next common.Hash, db *triedb.Database, accountsOrigin map[common.Address][]byte, storagesOrigin map[common.Address]map[common.Hash][]byte) error {
-	otr, err := trie.New(trie.StateTrieID(root), db)
+	otr, err := merkle.New(trie.StateTrieID(root), db)
 	if err != nil {
 		return err
 	}
-	ntr, err := trie.New(trie.StateTrieID(next), db)
+	ntr, err := merkle.New(trie.StateTrieID(next), db)
 	if err != nil {
 		return err
 	}

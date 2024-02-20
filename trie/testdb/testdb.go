@@ -14,20 +14,21 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package testdb
 
 import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/database"
 )
 
-// testReader implements database.NodeReader interface, providing function to
+// reader implements database.NodeReader interface, providing function to
 // access trie nodes.
-type testReader struct {
+type reader struct {
 	db     ethdb.Database
 	scheme string
 	nodes  []*trienode.MergedNodeSet // sorted from new to old
@@ -35,7 +36,7 @@ type testReader struct {
 
 // Node implements database.NodeReader interface, retrieving trie node with
 // all available cached layers.
-func (r *testReader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
+func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte, error) {
 	// Check the node presence with the cached layer, from latest to oldest.
 	for _, nodes := range r.nodes {
 		if _, ok := nodes.Sets[owner]; !ok {
@@ -46,7 +47,7 @@ func (r *testReader) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 			continue
 		}
 		if n.IsDeleted() || n.Hash != hash {
-			return nil, &MissingNodeError{Owner: owner, Path: path, NodeHash: hash}
+			return nil, &trie.MissingNodeError{Owner: owner, Path: path, NodeHash: hash}
 		}
 		return n.Blob, nil
 	}
@@ -54,8 +55,8 @@ func (r *testReader) Node(owner common.Hash, path []byte, hash common.Hash) ([]b
 	return rawdb.ReadTrieNode(r.db, owner, path, hash, r.scheme), nil
 }
 
-// testDb implements database.Database interface, using for testing purpose.
-type testDb struct {
+// Database implements database.Database interface, using for testing purpose.
+type Database struct {
 	disk    ethdb.Database
 	root    common.Hash
 	scheme  string
@@ -63,8 +64,8 @@ type testDb struct {
 	parents map[common.Hash]common.Hash
 }
 
-func newTestDatabase(diskdb ethdb.Database, scheme string) *testDb {
-	return &testDb{
+func New(diskdb ethdb.Database, scheme string) *Database {
+	return &Database{
 		disk:    diskdb,
 		root:    types.EmptyRootHash,
 		scheme:  scheme,
@@ -73,22 +74,22 @@ func newTestDatabase(diskdb ethdb.Database, scheme string) *testDb {
 	}
 }
 
-func (db *testDb) NodeReader(stateRoot common.Hash) (database.NodeReader, error) {
+func (db *Database) NodeReader(stateRoot common.Hash) (database.NodeReader, error) {
 	nodes, _ := db.dirties(stateRoot, true)
-	return &testReader{db: db.disk, scheme: db.scheme, nodes: nodes}, nil
+	return &reader{db: db.disk, scheme: db.scheme, nodes: nodes}, nil
 }
 
-func (db *testDb) Preimage(hash common.Hash) []byte {
+func (db *Database) Preimage(hash common.Hash) []byte {
 	return rawdb.ReadPreimage(db.disk, hash)
 }
 
-func (db *testDb) InsertPreimage(preimages map[common.Hash][]byte) {
+func (db *Database) InsertPreimage(preimages map[common.Hash][]byte) {
 	rawdb.WritePreimages(db.disk, preimages)
 }
 
-func (db *testDb) Scheme() string { return db.scheme }
+func (db *Database) Scheme() string { return db.scheme }
 
-func (db *testDb) Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet) error {
+func (db *Database) Update(root common.Hash, parent common.Hash, nodes *trienode.MergedNodeSet) error {
 	if root == parent {
 		return nil
 	}
@@ -100,7 +101,7 @@ func (db *testDb) Update(root common.Hash, parent common.Hash, nodes *trienode.M
 	return nil
 }
 
-func (db *testDb) dirties(root common.Hash, topToBottom bool) ([]*trienode.MergedNodeSet, []common.Hash) {
+func (db *Database) dirties(root common.Hash, topToBottom bool) ([]*trienode.MergedNodeSet, []common.Hash) {
 	var (
 		pending []*trienode.MergedNodeSet
 		roots   []common.Hash
@@ -125,7 +126,7 @@ func (db *testDb) dirties(root common.Hash, topToBottom bool) ([]*trienode.Merge
 	return pending, roots
 }
 
-func (db *testDb) Commit(root common.Hash) error {
+func (db *Database) Commit(root common.Hash) error {
 	if root == db.root {
 		return nil
 	}

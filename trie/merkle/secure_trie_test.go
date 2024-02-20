@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"bytes"
@@ -27,19 +27,21 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/testdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
 func newEmptySecure() *StateTrie {
-	trie, _ := NewStateTrie(TrieID(types.EmptyRootHash), newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme))
+	trie, _ := NewStateTrie(trie.TrieID(types.EmptyRootHash), testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme))
 	return trie
 }
 
 // makeTestStateTrie creates a large enough secure trie for testing.
-func makeTestStateTrie() (*testDb, *StateTrie, map[string][]byte) {
+func makeTestStateTrie() (*testdb.Database, *StateTrie, map[string][]byte) {
 	// Create an empty trie
-	triedb := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-	trie, _ := NewStateTrie(TrieID(types.EmptyRootHash), triedb)
+	triedb := testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+	tr, _ := NewStateTrie(trie.TrieID(types.EmptyRootHash), triedb)
 
 	// Fill it with some arbitrary data
 	content := make(map[string][]byte)
@@ -47,26 +49,26 @@ func makeTestStateTrie() (*testDb, *StateTrie, map[string][]byte) {
 		// Map the same data under multiple keys
 		key, val := common.LeftPadBytes([]byte{1, i}, 32), []byte{i}
 		content[string(key)] = val
-		trie.MustUpdate(key, val)
+		tr.MustUpdate(key, val)
 
 		key, val = common.LeftPadBytes([]byte{2, i}, 32), []byte{i}
 		content[string(key)] = val
-		trie.MustUpdate(key, val)
+		tr.MustUpdate(key, val)
 
 		// Add some other data to inflate the trie
 		for j := byte(3); j < 13; j++ {
 			key, val = common.LeftPadBytes([]byte{j, i}, 32), []byte{j, i}
 			content[string(key)] = val
-			trie.MustUpdate(key, val)
+			tr.MustUpdate(key, val)
 		}
 	}
-	root, nodes, _ := trie.Commit(false)
+	root, nodes, _ := tr.Commit(false)
 	if err := triedb.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(nodes)); err != nil {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
 	// Re-create the trie based on the new state
-	trie, _ = NewStateTrie(TrieID(root), triedb)
-	return triedb, trie, content
+	tr, _ = NewStateTrie(trie.TrieID(root), triedb)
+	return triedb, tr, content
 }
 
 func TestSecureDelete(t *testing.T) {

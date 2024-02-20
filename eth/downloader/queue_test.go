@@ -31,7 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"golang.org/x/exp/slog"
 )
 
@@ -333,7 +333,7 @@ func XTestDelivery(t *testing.T) {
 					txsHashes   = make([]common.Hash, len(txset))
 					uncleHashes = make([]common.Hash, len(uncleset))
 				)
-				hasher := trie.NewStackTrie(nil)
+				hasher := merkle.NewStackTrie(nil)
 				for i, txs := range txset {
 					txsHashes[i] = types.DeriveSha(types.Transactions(txs), hasher)
 				}
@@ -362,7 +362,7 @@ func XTestDelivery(t *testing.T) {
 				for _, hdr := range f.Headers {
 					rcs = append(rcs, world.getReceipts(hdr.Number.Uint64()))
 				}
-				hasher := trie.NewStackTrie(nil)
+				hasher := merkle.NewStackTrie(nil)
 				hashes := make([]common.Hash, len(rcs))
 				for i, receipt := range rcs {
 					hashes[i] = types.DeriveSha(types.Receipts(receipt), hasher)

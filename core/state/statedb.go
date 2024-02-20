@@ -30,7 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/state"
 	"github.com/holiman/uint256"
@@ -961,12 +961,12 @@ func (s *StateDB) fastDeleteStorage(addrHash common.Hash, root common.Hash) (boo
 		nodes = trienode.NewNodeSet(addrHash)
 		slots = make(map[common.Hash][]byte)
 	)
-	options := trie.NewStackTrieOptions()
+	options := merkle.NewStackTrieOptions()
 	options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 		nodes.AddNode(path, trienode.NewDeleted())
 		size += common.StorageSize(len(path))
 	})
-	stack := trie.NewStackTrie(options)
+	stack := merkle.NewStackTrie(options)
 	for iter.Next() {
 		if size > storageDeleteLimit {
 			return true, size, nil, nil, nil

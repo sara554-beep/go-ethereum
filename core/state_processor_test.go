@@ -33,7 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/holiman/uint256"
 	"golang.org/x/crypto/sha3"
 )
@@ -418,7 +418,7 @@ func GenerateBadBlock(parent *types.Block, engine consensus.Engine, txs types.Tr
 	}
 	// Assemble and return the final block for sealing
 	if config.IsShanghai(header.Number, header.Time) {
-		return types.NewBlockWithWithdrawals(header, txs, nil, receipts, []*types.Withdrawal{}, trie.NewStackTrie(nil))
+		return types.NewBlockWithWithdrawals(header, txs, nil, receipts, []*types.Withdrawal{}, merkle.NewStackTrie(nil))
 	}
-	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil))
+	return types.NewBlock(header, txs, nil, receipts, merkle.NewStackTrie(nil))
 }

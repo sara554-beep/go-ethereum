@@ -39,7 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/holiman/uint256"
 )
 
@@ -920,7 +920,7 @@ func testFastVsFullChains(t *testing.T, scheme string) {
 		}
 		if fblock, arblock, anblock := fast.GetBlockByHash(hash), archive.GetBlockByHash(hash), ancient.GetBlockByHash(hash); fblock.Hash() != arblock.Hash() || anblock.Hash() != arblock.Hash() {
 			t.Errorf("block #%d [%x]: block mismatch: fastdb %v, ancientdb %v, archivedb %v", num, hash, fblock, anblock, arblock)
-		} else if types.DeriveSha(fblock.Transactions(), trie.NewStackTrie(nil)) != types.DeriveSha(arblock.Transactions(), trie.NewStackTrie(nil)) || types.DeriveSha(anblock.Transactions(), trie.NewStackTrie(nil)) != types.DeriveSha(arblock.Transactions(), trie.NewStackTrie(nil)) {
+		} else if types.DeriveSha(fblock.Transactions(), merkle.NewStackTrie(nil)) != types.DeriveSha(arblock.Transactions(), merkle.NewStackTrie(nil)) || types.DeriveSha(anblock.Transactions(), merkle.NewStackTrie(nil)) != types.DeriveSha(arblock.Transactions(), merkle.NewStackTrie(nil)) {
 			t.Errorf("block #%d [%x]: transactions mismatch: fastdb %v, ancientdb %v, archivedb %v", num, hash, fblock.Transactions(), anblock.Transactions(), arblock.Transactions())
 		} else if types.CalcUncleHash(fblock.Uncles()) != types.CalcUncleHash(arblock.Uncles()) || types.CalcUncleHash(anblock.Uncles()) != types.CalcUncleHash(arblock.Uncles()) {
 			t.Errorf("block #%d [%x]: uncles mismatch: fastdb %v, ancientdb %v, archivedb %v", num, hash, fblock.Uncles(), anblock, arblock.Uncles())
@@ -930,7 +930,7 @@ func testFastVsFullChains(t *testing.T, scheme string) {
 		freceipts := rawdb.ReadReceipts(fastDb, hash, num, time, fast.Config())
 		anreceipts := rawdb.ReadReceipts(ancientDb, hash, num, time, fast.Config())
 		areceipts := rawdb.ReadReceipts(archiveDb, hash, num, time, fast.Config())
-		if types.DeriveSha(freceipts, trie.NewStackTrie(nil)) != types.DeriveSha(areceipts, trie.NewStackTrie(nil)) {
+		if types.DeriveSha(freceipts, merkle.NewStackTrie(nil)) != types.DeriveSha(areceipts, merkle.NewStackTrie(nil)) {
 			t.Errorf("block #%d [%x]: receipts mismatch: fastdb %v, ancientdb %v, archivedb %v", num, hash, freceipts, anreceipts, areceipts)
 		}
 

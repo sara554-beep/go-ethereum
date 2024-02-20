@@ -14,12 +14,13 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/database"
 )
@@ -31,7 +32,7 @@ type SecureTrie = StateTrie
 // NewSecure creates a new StateTrie.
 // Deprecated: use NewStateTrie.
 func NewSecure(stateRoot common.Hash, owner common.Hash, root common.Hash, db database.Database) (*SecureTrie, error) {
-	id := &ID{
+	id := &trie.ID{
 		StateRoot: stateRoot,
 		Owner:     owner,
 		Root:      root,
@@ -62,9 +63,9 @@ type StateTrie struct {
 // If root is the zero hash or the sha3 hash of an empty string, the
 // trie is initially empty. Otherwise, New will panic if db is nil
 // and returns MissingNodeError if the root node cannot be found.
-func NewStateTrie(id *ID, db database.Database) (*StateTrie, error) {
+func NewStateTrie(id *trie.ID, db database.Database) (*StateTrie, error) {
 	if db == nil {
-		panic("trie.NewStateTrie called without a database")
+		panic("NewStateTrie called without a database")
 	}
 	trie, err := New(id, db)
 	if err != nil {
@@ -252,13 +253,13 @@ func (t *StateTrie) Copy() *StateTrie {
 
 // NodeIterator returns an iterator that returns nodes of the underlying trie.
 // Iteration starts at the key after the given start key.
-func (t *StateTrie) NodeIterator(start []byte) (NodeIterator, error) {
+func (t *StateTrie) NodeIterator(start []byte) (trie.NodeIterator, error) {
 	return t.trie.NodeIterator(start)
 }
 
 // MustNodeIterator is a wrapper of NodeIterator and will omit any encountered
 // error but just print out an error message.
-func (t *StateTrie) MustNodeIterator(start []byte) NodeIterator {
+func (t *StateTrie) MustNodeIterator(start []byte) trie.NodeIterator {
 	return t.trie.MustNodeIterator(start)
 }
 

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"bytes"
@@ -28,15 +28,17 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/testdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
 // makeTestTrie create a sample test trie to test node-wise reconstruction.
-func makeTestTrie(scheme string) (ethdb.Database, *testDb, *StateTrie, map[string][]byte) {
+func makeTestTrie(scheme string) (ethdb.Database, *testdb.Database, *StateTrie, map[string][]byte) {
 	// Create an empty trie
 	db := rawdb.NewMemoryDatabase()
-	triedb := newTestDatabase(db, scheme)
-	trie, _ := NewStateTrie(TrieID(types.EmptyRootHash), triedb)
+	triedb := testdb.New(db, scheme)
+	tr, _ := NewStateTrie(trie.TrieID(types.EmptyRootHash), triedb)
 
 	// Fill it with some arbitrary data
 	content := make(map[string][]byte)
@@ -44,20 +46,20 @@ func makeTestTrie(scheme string) (ethdb.Database, *testDb, *StateTrie, map[strin
 		// Map the same data under multiple keys
 		key, val := common.LeftPadBytes([]byte{1, i}, 32), []byte{i}
 		content[string(key)] = val
-		trie.MustUpdate(key, val)
+		tr.MustUpdate(key, val)
 
 		key, val = common.LeftPadBytes([]byte{2, i}, 32), []byte{i}
 		content[string(key)] = val
-		trie.MustUpdate(key, val)
+		tr.MustUpdate(key, val)
 
 		// Add some other data to inflate the trie
 		for j := byte(3); j < 13; j++ {
 			key, val = common.LeftPadBytes([]byte{j, i}, 32), []byte{j, i}
 			content[string(key)] = val
-			trie.MustUpdate(key, val)
+			tr.MustUpdate(key, val)
 		}
 	}
-	root, nodes, _ := trie.Commit(false)
+	root, nodes, _ := tr.Commit(false)
 	if err := triedb.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(nodes)); err != nil {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
@@ -65,15 +67,15 @@ func makeTestTrie(scheme string) (ethdb.Database, *testDb, *StateTrie, map[strin
 		panic(err)
 	}
 	// Re-create the trie based on the new state
-	trie, _ = NewStateTrie(TrieID(root), triedb)
-	return db, triedb, trie, content
+	tr, _ = NewStateTrie(trie.TrieID(root), triedb)
+	return db, triedb, tr, content
 }
 
 // checkTrieContents cross references a reconstructed trie with an expected data
 // content map.
 func checkTrieContents(t *testing.T, db ethdb.Database, scheme string, root []byte, content map[string][]byte, rawTrie bool) {
 	// Check root availability and trie contents
-	ndb := newTestDatabase(db, scheme)
+	ndb := testdb.New(db, scheme)
 	if err := checkTrieConsistency(db, scheme, common.BytesToHash(root), rawTrie); err != nil {
 		t.Fatalf("inconsistent trie at %x: %v", root, err)
 	}
@@ -82,13 +84,13 @@ func checkTrieContents(t *testing.T, db ethdb.Database, scheme string, root []by
 	}
 	var r reader
 	if rawTrie {
-		trie, err := New(TrieID(common.BytesToHash(root)), ndb)
+		trie, err := New(trie.TrieID(common.BytesToHash(root)), ndb)
 		if err != nil {
 			t.Fatalf("failed to create trie at %x: %v", root, err)
 		}
 		r = trie
 	} else {
-		trie, err := NewStateTrie(TrieID(common.BytesToHash(root)), ndb)
+		trie, err := NewStateTrie(trie.TrieID(common.BytesToHash(root)), ndb)
 		if err != nil {
 			t.Fatalf("failed to create trie at %x: %v", root, err)
 		}
@@ -103,16 +105,16 @@ func checkTrieContents(t *testing.T, db ethdb.Database, scheme string, root []by
 
 // checkTrieConsistency checks that all nodes in a trie are indeed present.
 func checkTrieConsistency(db ethdb.Database, scheme string, root common.Hash, rawTrie bool) error {
-	ndb := newTestDatabase(db, scheme)
-	var it NodeIterator
+	ndb := testdb.New(db, scheme)
+	var it trie.NodeIterator
 	if rawTrie {
-		trie, err := New(TrieID(root), ndb)
+		trie, err := New(trie.TrieID(root), ndb)
 		if err != nil {
 			return nil // Consider a non existent state consistent
 		}
 		it = trie.MustNodeIterator(nil)
 	} else {
-		trie, err := NewStateTrie(TrieID(root), ndb)
+		trie, err := NewStateTrie(trie.TrieID(root), ndb)
 		if err != nil {
 			return nil // Consider a non existent state consistent
 		}
@@ -132,18 +134,18 @@ type trieElement struct {
 
 // Tests that an empty trie is not scheduled for syncing.
 func TestEmptySync(t *testing.T) {
-	dbA := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-	dbB := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-	dbC := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
-	dbD := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
+	dbA := testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+	dbB := testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+	dbC := testdb.New(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
+	dbD := testdb.New(rawdb.NewMemoryDatabase(), rawdb.PathScheme)
 
 	emptyA := NewEmpty(dbA)
-	emptyB, _ := New(TrieID(types.EmptyRootHash), dbB)
+	emptyB, _ := New(trie.TrieID(types.EmptyRootHash), dbB)
 	emptyC := NewEmpty(dbC)
-	emptyD, _ := New(TrieID(types.EmptyRootHash), dbD)
+	emptyD, _ := New(trie.TrieID(types.EmptyRootHash), dbD)
 
 	for i, trie := range []*Trie{emptyA, emptyB, emptyC, emptyD} {
-		sync := NewSync(trie.Hash(), memorydb.New(), nil, []*testDb{dbA, dbB, dbC, dbD}[i].Scheme())
+		sync := NewSync(trie.Hash(), memorydb.New(), nil, []*testdb.Database{dbA, dbB, dbC, dbD}[i].Scheme())
 		if paths, nodes, codes := sync.Missing(1); len(paths) != 0 || len(nodes) != 0 || len(codes) != 0 {
 			t.Errorf("test %d: content requested for empty trie: %v, %v, %v", i, paths, nodes, codes)
 		}
@@ -684,11 +686,11 @@ func testSyncOrdering(t *testing.T, scheme string) {
 		}
 	}
 }
-func syncWith(t *testing.T, root common.Hash, db ethdb.Database, srcDb *testDb) {
+func syncWith(t *testing.T, root common.Hash, db ethdb.Database, srcDb *testdb.Database) {
 	syncWithHookWriter(t, root, db, srcDb, nil)
 }
 
-func syncWithHookWriter(t *testing.T, root common.Hash, db ethdb.Database, srcDb *testDb, hookWriter ethdb.KeyValueWriter) {
+func syncWithHookWriter(t *testing.T, root common.Hash, db ethdb.Database, srcDb *testdb.Database, hookWriter ethdb.KeyValueWriter) {
 	// Create a destination trie and sync with the scheduler
 	sched := NewSync(root, db, nil, srcDb.Scheme())
 
@@ -778,7 +780,7 @@ func testSyncMovingTarget(t *testing.T, scheme string) {
 		panic(err)
 	}
 	preRoot = root
-	srcTrie, _ = NewStateTrie(TrieID(root), srcDb)
+	srcTrie, _ = NewStateTrie(trie.TrieID(root), srcDb)
 
 	syncWith(t, srcTrie.Hash(), diskdb, srcDb)
 	checkTrieContents(t, diskdb, srcDb.Scheme(), srcTrie.Hash().Bytes(), diff, false)
@@ -802,7 +804,7 @@ func testSyncMovingTarget(t *testing.T, scheme string) {
 	if err := srcDb.Commit(root); err != nil {
 		panic(err)
 	}
-	srcTrie, _ = NewStateTrie(TrieID(root), srcDb)
+	srcTrie, _ = NewStateTrie(trie.TrieID(root), srcDb)
 
 	syncWith(t, srcTrie.Hash(), diskdb, srcDb)
 	checkTrieContents(t, diskdb, srcDb.Scheme(), srcTrie.Hash().Bytes(), reverted, false)
@@ -819,8 +821,8 @@ func TestPivotMove(t *testing.T) {
 func testPivotMove(t *testing.T, scheme string, tiny bool) {
 	var (
 		srcDisk    = rawdb.NewMemoryDatabase()
-		srcTrieDB  = newTestDatabase(srcDisk, scheme)
-		srcTrie, _ = New(TrieID(types.EmptyRootHash), srcTrieDB)
+		srcTrieDB  = testdb.New(srcDisk, scheme)
+		srcTrie, _ = New(trie.TrieID(types.EmptyRootHash), srcTrieDB)
 
 		deleteFn = func(key []byte, tr *Trie, states map[string][]byte) {
 			tr.Delete(key)
@@ -867,7 +869,7 @@ func testPivotMove(t *testing.T, scheme string, tiny bool) {
 
 	// Delete element to collapse trie
 	stateB := copyStates(stateA)
-	srcTrie, _ = New(TrieID(rootA), srcTrieDB)
+	srcTrie, _ = New(trie.TrieID(rootA), srcTrieDB)
 	deleteFn([]byte{0x02, 0x34}, srcTrie, stateB)
 	deleteFn([]byte{0x13, 0x44}, srcTrie, stateB)
 	writeFn([]byte{0x01, 0x24}, nil, srcTrie, stateB)
@@ -884,7 +886,7 @@ func testPivotMove(t *testing.T, scheme string, tiny bool) {
 
 	// Add elements to expand trie
 	stateC := copyStates(stateB)
-	srcTrie, _ = New(TrieID(rootB), srcTrieDB)
+	srcTrie, _ = New(trie.TrieID(rootB), srcTrieDB)
 
 	writeFn([]byte{0x01, 0x24}, stateA[string([]byte{0x01, 0x24})], srcTrie, stateC)
 	writeFn([]byte{0x02, 0x34}, nil, srcTrie, stateC)
@@ -927,8 +929,8 @@ func (w *hookWriter) Delete(key []byte) error {
 func testSyncAbort(t *testing.T, scheme string) {
 	var (
 		srcDisk    = rawdb.NewMemoryDatabase()
-		srcTrieDB  = newTestDatabase(srcDisk, scheme)
-		srcTrie, _ = New(TrieID(types.EmptyRootHash), srcTrieDB)
+		srcTrieDB  = testdb.New(srcDisk, scheme)
+		srcTrie, _ = New(trie.TrieID(types.EmptyRootHash), srcTrieDB)
 
 		deleteFn = func(key []byte, tr *Trie, states map[string][]byte) {
 			tr.Delete(key)
@@ -973,7 +975,7 @@ func testSyncAbort(t *testing.T, scheme string) {
 
 	// Delete the element from the trie
 	stateB := copyStates(stateA)
-	srcTrie, _ = New(TrieID(rootA), srcTrieDB)
+	srcTrie, _ = New(trie.TrieID(rootA), srcTrieDB)
 	deleteFn(key, srcTrie, stateB)
 
 	rootB, nodesB, _ := srcTrie.Commit(false)
@@ -1000,7 +1002,7 @@ func testSyncAbort(t *testing.T, scheme string) {
 
 	// Add elements to expand trie
 	stateC := copyStates(stateB)
-	srcTrie, _ = New(TrieID(rootB), srcTrieDB)
+	srcTrie, _ = New(trie.TrieID(rootB), srcTrieDB)
 
 	writeFn(key, val, srcTrie, stateC)
 	rootC, nodesC, _ := srcTrie.Commit(false)

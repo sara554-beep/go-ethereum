@@ -18,7 +18,7 @@ package dbconfig
 
 import (
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
@@ -36,7 +36,7 @@ var HashDefaults = triedb.Config{
 		CleanCacheSize: 0,
 
 		// Merkle trie resolver is used as the default node resolver.
-		ChildResolver: trie.MerkleResolver,
+		ChildResolver: merkle.Resolver,
 	},
 }
 
@@ -55,6 +55,6 @@ var PathDefaults = triedb.Config{
 		DirtyCacheSize: pathdb.DefaultBufferSize,
 
 		// Merkle trie loader is used as the default trie loader.
-		TrieOpener: trie.NewMerkleOpener,
+		TrieOpener: merkle.NewOpener,
 	},
 }

@@ -26,7 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 )
 
 // DumpConfig is a set of options to control what portions of the state will be
@@ -132,7 +132,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 		log.Error("Trie dumping error", "err", err)
 		return nil
 	}
-	it := trie.NewIterator(trieIt)
+	it := merkle.NewIterator(trieIt)
 	for it.Next() {
 		var data types.StateAccount
 		if err := rlp.DecodeBytes(it.Value, &data); err != nil {
@@ -176,7 +176,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 				log.Error("Failed to create trie iterator", "err", err)
 				continue
 			}
-			storageIt := trie.NewIterator(trieIt)
+			storageIt := merkle.NewIterator(trieIt)
 			for storageIt.Next() {
 				_, content, _, err := rlp.Split(storageIt.Value)
 				if err != nil {

@@ -32,7 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
-	beaconConsensus "github.com/ethereum/go-ethereum/consensus/beacon"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -47,7 +47,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/mattn/go-colorable"
 )
 
@@ -63,11 +63,11 @@ var (
 
 func generateMergeChain(n int, merged bool) (*core.Genesis, []*types.Block) {
 	config := *params.AllEthashProtocolChanges
-	engine := consensus.Engine(beaconConsensus.New(ethash.NewFaker()))
+	engine := consensus.Engine(beacon.New(ethash.NewFaker()))
 	if merged {
 		config.TerminalTotalDifficulty = common.Big0
 		config.TerminalTotalDifficultyPassed = true
-		engine = beaconConsensus.NewFaker()
+		engine = beacon.NewFaker()
 	}
 	genesis := &core.Genesis{
 		Config: &config,
@@ -769,7 +769,7 @@ func setBlockhash(data *engine.ExecutableData) *engine.ExecutableData {
 		UncleHash:   types.EmptyUncleHash,
 		Coinbase:    data.FeeRecipient,
 		Root:        data.StateRoot,
-		TxHash:      types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
+		TxHash:      types.DeriveSha(types.Transactions(txs), merkle.NewStackTrie(nil)),
 		ReceiptHash: data.ReceiptsRoot,
 		Bloom:       types.BytesToBloom(data.LogsBloom),
 		Difficulty:  common.Big0,
@@ -926,7 +926,7 @@ func TestNewPayloadOnInvalidTerminalBlock(t *testing.T) {
 		UncleHash:   types.EmptyUncleHash,
 		Coinbase:    data.FeeRecipient,
 		Root:        data.StateRoot,
-		TxHash:      types.DeriveSha(types.Transactions(txs), trie.NewStackTrie(nil)),
+		TxHash:      types.DeriveSha(types.Transactions(txs), merkle.NewStackTrie(nil)),
 		ReceiptHash: data.ReceiptsRoot,
 		Bloom:       types.BytesToBloom(data.LogsBloom),
 		Difficulty:  common.Big0,
@@ -1559,7 +1559,7 @@ func TestBlockToPayloadWithBlobs(t *testing.T) {
 		},
 	}
 
-	block := types.NewBlock(&header, txs, nil, nil, trie.NewStackTrie(nil))
+	block := types.NewBlock(&header, txs, nil, nil, merkle.NewStackTrie(nil))
 	envelope := engine.BlockToExecutableData(block, nil, sidecars)
 	var want int
 	for _, tx := range txs {
