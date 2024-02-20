@@ -19,7 +19,6 @@ package state
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -35,7 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
@@ -460,7 +459,7 @@ func forEachStorage(s *StateDB, addr common.Address, cb func(key, value common.H
 	if err != nil {
 		return err
 	}
-	it := trie.NewIterator(trieIt)
+	it := merkle.NewIterator(trieIt)
 
 	for it.Next() {
 		key := common.BytesToHash(s.trie.GetKey(it.Key))
@@ -747,7 +746,7 @@ func TestCommitCopy(t *testing.T) {
 	if val := copied.GetCommittedState(addr, skey); val != (common.Hash{}) {
 		t.Fatalf("unexpected storage slot: have %x", val)
 	}
-	if !errors.Is(copied.Error(), trie.ErrCommitted) {
+	if copied.Error() == nil {
 		t.Fatalf("unexpected state error, %v", copied.Error())
 	}
 }

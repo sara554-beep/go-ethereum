@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"sync"
@@ -25,7 +25,7 @@ import (
 )
 
 // hasher is a type used for the trie Hash operation. A hasher has some
-// internal preallocated temp space
+// internal preallocated temp space.
 type hasher struct {
 	sha      crypto.KeccakState
 	tmp      []byte
@@ -33,7 +33,7 @@ type hasher struct {
 	parallel bool // Whether to use parallel threads when hashing
 }
 
-// hasherPool holds pureHashers
+// hasherPool holds pure hashers.
 var hasherPool = sync.Pool{
 	New: func() interface{} {
 		return &hasher{
@@ -66,8 +66,9 @@ func (h *hasher) hash(n node, force bool) (hashed node, cached node) {
 	case *shortNode:
 		collapsed, cached := h.hashShortNodeChildren(n)
 		hashed := h.shortnodeToHash(collapsed, force)
-		// We need to retain the possibly _not_ hashed node, in case it was too
-		// small to be hashed
+
+		// We need to retain the possibly _not_ hashed node, in case
+		// it was too small to be hashed.
 		if hn, ok := hashed.(hashNode); ok {
 			cached.flags.hash = hn
 		} else {
@@ -77,6 +78,9 @@ func (h *hasher) hash(n node, force bool) (hashed node, cached node) {
 	case *fullNode:
 		collapsed, cached := h.hashFullNodeChildren(n)
 		hashed = h.fullnodeToHash(collapsed, force)
+
+		// We need to retain the possibly _not_ hashed node, in case
+		// it was too small to be hashed.
 		if hn, ok := hashed.(hashNode); ok {
 			cached.flags.hash = hn
 		} else {
@@ -94,11 +98,13 @@ func (h *hasher) hash(n node, force bool) (hashed node, cached node) {
 func (h *hasher) hashShortNodeChildren(n *shortNode) (collapsed, cached *shortNode) {
 	// Hash the short node's child, caching the newly hashed subtree
 	collapsed, cached = n.copy(), n.copy()
+
 	// Previously, we did copy this one. We don't seem to need to actually
 	// do that, since we don't overwrite/reuse keys
 	// cached.Key = common.CopyBytes(n.Key)
 	collapsed.Key = hexToCompact(n.Key)
-	// Unless the child is a valuenode or hashnode, hash it
+
+	// Unless the child is a valueNode or hashNode, hash it
 	switch n.Val.(type) {
 	case *fullNode, *shortNode:
 		collapsed.Val, cached.Val = h.hash(n.Val, false)

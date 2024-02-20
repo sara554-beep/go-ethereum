@@ -24,7 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// Node is a wrapper which contains the encoded blob of the trie node and its
+// Node is a wrapper containing the encoded blob of the trie node and its
 // node hash. It is general enough that can be used to represent trie node
 // corresponding to different trie implementations.
 type Node struct {
@@ -128,16 +128,6 @@ func (set *NodeSet) AddLeaf(parent common.Hash, blob []byte) {
 // Size returns the number of dirty nodes in set.
 func (set *NodeSet) Size() (int, int) {
 	return set.updates, set.deletes
-}
-
-// Hashes returns the hashes of all updated nodes. TODO(rjl493456442) how can
-// we get rid of it?
-func (set *NodeSet) Hashes() []common.Hash {
-	var ret []common.Hash
-	for _, node := range set.Nodes {
-		ret = append(ret, node.Hash)
-	}
-	return ret
 }
 
 // Summary returns a string-representation of the NodeSet.

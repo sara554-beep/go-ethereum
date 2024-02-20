@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"bytes"
@@ -23,6 +23,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/testdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
@@ -61,16 +63,16 @@ func TestTrieTracer(t *testing.T) {
 // Tests if the trie diffs are tracked correctly. Tracer should capture
 // all non-leaf dirty nodes, no matter the node is embedded or not.
 func testTrieTracer(t *testing.T, vals []struct{ k, v string }) {
-	db := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-	trie := NewEmpty(db)
+	db := testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+	tr := NewEmpty(db)
 
 	// Determine all new nodes are tracked
 	for _, val := range vals {
-		trie.MustUpdate([]byte(val.k), []byte(val.v))
+		tr.MustUpdate([]byte(val.k), []byte(val.v))
 	}
-	insertSet := copySet(trie.tracer.inserts) // copy before commit
-	deleteSet := copySet(trie.tracer.deletes) // copy before commit
-	root, nodes, _ := trie.Commit(false)
+	insertSet := copySet(tr.tracer.inserts) // copy before commit
+	deleteSet := copySet(tr.tracer.deletes) // copy before commit
+	root, nodes, _ := tr.Commit(false)
 	db.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(nodes))
 
 	seen := setKeys(iterNodes(db, root))
@@ -82,11 +84,11 @@ func testTrieTracer(t *testing.T, vals []struct{ k, v string }) {
 	}
 
 	// Determine all deletions are tracked
-	trie, _ = New(TrieID(root), db)
+	tr, _ = New(trie.TrieID(root), db)
 	for _, val := range vals {
-		trie.MustDelete([]byte(val.k))
+		tr.MustDelete([]byte(val.k))
 	}
-	insertSet, deleteSet = copySet(trie.tracer.inserts), copySet(trie.tracer.deletes)
+	insertSet, deleteSet = copySet(tr.tracer.inserts), copySet(tr.tracer.deletes)
 	if !compareSet(insertSet, nil) {
 		t.Fatal("Unexpected insertion set")
 	}
@@ -104,7 +106,7 @@ func TestTrieTracerNoop(t *testing.T) {
 }
 
 func testTrieTracerNoop(t *testing.T, vals []struct{ k, v string }) {
-	db := newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+	db := testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
 	trie := NewEmpty(db)
 	for _, val := range vals {
 		trie.MustUpdate([]byte(val.k), []byte(val.v))
@@ -129,82 +131,82 @@ func TestAccessList(t *testing.T) {
 
 func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 	var (
-		db   = newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-		trie = NewEmpty(db)
-		orig = trie.Copy()
+		db   = testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+		tr   = NewEmpty(db)
+		orig = tr.Copy()
 	)
 	// Create trie from scratch
 	for _, val := range vals {
-		trie.MustUpdate([]byte(val.k), []byte(val.v))
+		tr.MustUpdate([]byte(val.k), []byte(val.v))
 	}
-	root, nodes, _ := trie.Commit(false)
+	root, nodes, _ := tr.Commit(false)
 	db.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(nodes))
 
-	trie, _ = New(TrieID(root), db)
-	if err := verifyAccessList(orig, trie, nodes); err != nil {
+	tr, _ = New(trie.TrieID(root), db)
+	if err := verifyAccessList(orig, tr, nodes); err != nil {
 		t.Fatalf("Invalid accessList %v", err)
 	}
 
 	// Update trie
 	parent := root
-	trie, _ = New(TrieID(root), db)
-	orig = trie.Copy()
+	tr, _ = New(trie.TrieID(root), db)
+	orig = tr.Copy()
 	for _, val := range vals {
-		trie.MustUpdate([]byte(val.k), randBytes(32))
+		tr.MustUpdate([]byte(val.k), randBytes(32))
 	}
-	root, nodes, _ = trie.Commit(false)
+	root, nodes, _ = tr.Commit(false)
 	db.Update(root, parent, trienode.NewWithNodeSet(nodes))
 
-	trie, _ = New(TrieID(root), db)
-	if err := verifyAccessList(orig, trie, nodes); err != nil {
+	tr, _ = New(trie.TrieID(root), db)
+	if err := verifyAccessList(orig, tr, nodes); err != nil {
 		t.Fatalf("Invalid accessList %v", err)
 	}
 
 	// Add more new nodes
 	parent = root
-	trie, _ = New(TrieID(root), db)
-	orig = trie.Copy()
+	tr, _ = New(trie.TrieID(root), db)
+	orig = tr.Copy()
 	var keys []string
 	for i := 0; i < 30; i++ {
 		key := randBytes(32)
 		keys = append(keys, string(key))
-		trie.MustUpdate(key, randBytes(32))
+		tr.MustUpdate(key, randBytes(32))
 	}
-	root, nodes, _ = trie.Commit(false)
+	root, nodes, _ = tr.Commit(false)
 	db.Update(root, parent, trienode.NewWithNodeSet(nodes))
 
-	trie, _ = New(TrieID(root), db)
-	if err := verifyAccessList(orig, trie, nodes); err != nil {
+	tr, _ = New(trie.TrieID(root), db)
+	if err := verifyAccessList(orig, tr, nodes); err != nil {
 		t.Fatalf("Invalid accessList %v", err)
 	}
 
 	// Partial deletions
 	parent = root
-	trie, _ = New(TrieID(root), db)
-	orig = trie.Copy()
+	tr, _ = New(trie.TrieID(root), db)
+	orig = tr.Copy()
 	for _, key := range keys {
-		trie.MustUpdate([]byte(key), nil)
+		tr.MustUpdate([]byte(key), nil)
 	}
-	root, nodes, _ = trie.Commit(false)
+	root, nodes, _ = tr.Commit(false)
 	db.Update(root, parent, trienode.NewWithNodeSet(nodes))
 
-	trie, _ = New(TrieID(root), db)
-	if err := verifyAccessList(orig, trie, nodes); err != nil {
+	tr, _ = New(trie.TrieID(root), db)
+	if err := verifyAccessList(orig, tr, nodes); err != nil {
 		t.Fatalf("Invalid accessList %v", err)
 	}
 
 	// Delete all
 	parent = root
-	trie, _ = New(TrieID(root), db)
-	orig = trie.Copy()
+	tr, _ = New(trie.TrieID(root), db)
+	orig = tr.Copy()
 	for _, val := range vals {
-		trie.MustUpdate([]byte(val.k), nil)
+		tr.MustUpdate([]byte(val.k), nil)
 	}
-	root, nodes, _ = trie.Commit(false)
+	root, nodes, _ = tr.Commit(false)
 	db.Update(root, parent, trienode.NewWithNodeSet(nodes))
 
-	trie, _ = New(TrieID(root), db)
-	if err := verifyAccessList(orig, trie, nodes); err != nil {
+	tr, _ = New(trie.TrieID(root), db)
+	if err := verifyAccessList(orig, tr, nodes); err != nil {
 		t.Fatalf("Invalid accessList %v", err)
 	}
 }
@@ -212,14 +214,14 @@ func testAccessList(t *testing.T, vals []struct{ k, v string }) {
 // Tests origin values won't be tracked in Iterator or Prover
 func TestAccessListLeak(t *testing.T) {
 	var (
-		db   = newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-		trie = NewEmpty(db)
+		db = testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+		tr = NewEmpty(db)
 	)
 	// Create trie from scratch
 	for _, val := range standard {
-		trie.MustUpdate([]byte(val.k), []byte(val.v))
+		tr.MustUpdate([]byte(val.k), []byte(val.v))
 	}
-	root, nodes, _ := trie.Commit(false)
+	root, nodes, _ := tr.Commit(false)
 	db.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(nodes))
 
 	var cases = []struct {
@@ -248,10 +250,10 @@ func TestAccessListLeak(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		trie, _ = New(TrieID(root), db)
-		n1 := len(trie.tracer.accessList)
-		c.op(trie)
-		n2 := len(trie.tracer.accessList)
+		tr, _ = New(trie.TrieID(root), db)
+		n1 := len(tr.tracer.accessList)
+		c.op(tr)
+		n2 := len(tr.tracer.accessList)
 
 		if n1 != n2 {
 			t.Fatalf("AccessList is leaked, prev %d after %d", n1, n2)
@@ -263,26 +265,26 @@ func TestAccessListLeak(t *testing.T) {
 // in its parent due to the smaller size of the original tree node.
 func TestTinyTree(t *testing.T) {
 	var (
-		db   = newTestDatabase(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
-		trie = NewEmpty(db)
+		db = testdb.New(rawdb.NewMemoryDatabase(), rawdb.HashScheme)
+		tr = NewEmpty(db)
 	)
 	for _, val := range tiny {
-		trie.MustUpdate([]byte(val.k), randBytes(32))
+		tr.MustUpdate([]byte(val.k), randBytes(32))
 	}
-	root, set, _ := trie.Commit(false)
+	root, set, _ := tr.Commit(false)
 	db.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(set))
 
 	parent := root
-	trie, _ = New(TrieID(root), db)
-	orig := trie.Copy()
+	tr, _ = New(trie.TrieID(root), db)
+	orig := tr.Copy()
 	for _, val := range tiny {
-		trie.MustUpdate([]byte(val.k), []byte(val.v))
+		tr.MustUpdate([]byte(val.k), []byte(val.v))
 	}
-	root, set, _ = trie.Commit(false)
+	root, set, _ = tr.Commit(false)
 	db.Update(root, parent, trienode.NewWithNodeSet(set))
 
-	trie, _ = New(TrieID(root), db)
-	if err := verifyAccessList(orig, trie, set); err != nil {
+	tr, _ = New(trie.TrieID(root), db)
+	if err := verifyAccessList(orig, tr, set); err != nil {
 		t.Fatalf("Invalid accessList %v", err)
 	}
 }
@@ -313,8 +315,8 @@ func forNodes(tr *Trie) map[string][]byte {
 	return nodes
 }
 
-func iterNodes(db *testDb, root common.Hash) map[string][]byte {
-	tr, _ := New(TrieID(root), db)
+func iterNodes(db *testdb.Database, root common.Hash) map[string][]byte {
+	tr, _ := New(trie.TrieID(root), db)
 	return forNodes(tr)
 }
 

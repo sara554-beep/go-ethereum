@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 )
@@ -411,7 +412,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 	if genesis == nil {
 		return errors.New("missing genesis block")
 	}
-	t, err := trie.NewStateTrie(trie.StateTrieID(genesis.Root()), triedb.NewDatabase(db, &dbconfig.HashDefaults))
+	t, err := merkle.NewStateTrie(trie.StateTrieID(genesis.Root()), triedb.NewDatabase(db, &dbconfig.HashDefaults))
 	if err != nil {
 		return err
 	}
@@ -435,7 +436,7 @@ func extractGenesis(db ethdb.Database, stateBloom *stateBloom) error {
 			}
 			if acc.Root != types.EmptyRootHash {
 				id := trie.StorageTrieID(genesis.Root(), common.BytesToHash(accIter.LeafKey()), acc.Root)
-				storageTrie, err := trie.NewStateTrie(id, triedb.NewDatabase(db, &dbconfig.HashDefaults))
+				storageTrie, err := merkle.NewStateTrie(id, triedb.NewDatabase(db, &dbconfig.HashDefaults))
 				if err != nil {
 					return err
 				}

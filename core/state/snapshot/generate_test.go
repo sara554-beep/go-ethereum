@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
@@ -156,7 +157,7 @@ func checkSnapRoot(t *testing.T, snap *diskLayer, trieRoot common.Hash) {
 type testHelper struct {
 	diskdb  ethdb.Database
 	triedb  *triedb.Database
-	accTrie *trie.StateTrie
+	accTrie *merkle.StateTrie
 	nodes   *trienode.MergedNodeSet
 }
 
@@ -169,7 +170,7 @@ func newHelper(scheme string) *testHelper {
 	}
 	diskdb := rawdb.NewMemoryDatabase()
 	triedb := triedb.NewDatabase(diskdb, &config)
-	accTrie, _ := trie.NewStateTrie(trie.StateTrieID(types.EmptyRootHash), triedb)
+	accTrie, _ := merkle.NewStateTrie(trie.StateTrieID(types.EmptyRootHash), triedb)
 	return &testHelper{
 		diskdb:  diskdb,
 		triedb:  triedb,
@@ -202,7 +203,7 @@ func (t *testHelper) addSnapStorage(accKey string, keys []string, vals []string)
 
 func (t *testHelper) makeStorageTrie(owner common.Hash, keys []string, vals []string, commit bool) common.Hash {
 	id := trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash)
-	stTrie, _ := trie.NewStateTrie(id, t.triedb)
+	stTrie, _ := merkle.NewStateTrie(id, t.triedb)
 	for i, k := range keys {
 		stTrie.MustUpdate([]byte(k), []byte(vals[i]))
 	}

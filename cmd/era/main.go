@@ -32,7 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/urfave/cli/v2"
 )
 
@@ -280,12 +280,12 @@ func checkAccumulator(e *era.Era) error {
 			return fmt.Errorf("error reading block %d: %w", it.Number(), err)
 		}
 		// 2) recompute tx root and verify against header.
-		tr := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil))
+		tr := types.DeriveSha(block.Transactions(), merkle.NewStackTrie(nil))
 		if tr != block.TxHash() {
 			return fmt.Errorf("tx root in block %d mismatch: want %s, got %s", block.NumberU64(), block.TxHash(), tr)
 		}
 		// 3) recompute receipt root and check value against block.
-		rr := types.DeriveSha(receipts, trie.NewStackTrie(nil))
+		rr := types.DeriveSha(receipts, merkle.NewStackTrie(nil))
 		if rr != block.ReceiptHash() {
 			return fmt.Errorf("receipt root in block %d mismatch: want %s, got %s", block.NumberU64(), block.ReceiptHash(), rr)
 		}

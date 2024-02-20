@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -299,7 +300,7 @@ func traverseState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	t, err := trie.NewStateTrie(trie.StateTrieID(root), triedb)
+	t, err := merkle.NewStateTrie(trie.StateTrieID(root), triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
 		return err
@@ -316,7 +317,7 @@ func traverseState(ctx *cli.Context) error {
 		log.Error("Failed to open iterator", "root", root, "err", err)
 		return err
 	}
-	accIter := trie.NewIterator(acctIt)
+	accIter := merkle.NewIterator(acctIt)
 	for accIter.Next() {
 		accounts += 1
 		var acc types.StateAccount
@@ -326,7 +327,7 @@ func traverseState(ctx *cli.Context) error {
 		}
 		if acc.Root != types.EmptyRootHash {
 			id := trie.StorageTrieID(root, common.BytesToHash(accIter.Key), acc.Root)
-			storageTrie, err := trie.NewStateTrie(id, triedb)
+			storageTrie, err := merkle.NewStateTrie(id, triedb)
 			if err != nil {
 				log.Error("Failed to open storage trie", "root", acc.Root, "err", err)
 				return err
@@ -336,7 +337,7 @@ func traverseState(ctx *cli.Context) error {
 				log.Error("Failed to open storage iterator", "root", acc.Root, "err", err)
 				return err
 			}
-			storageIter := trie.NewIterator(storageIt)
+			storageIter := merkle.NewIterator(storageIt)
 			for storageIter.Next() {
 				slots += 1
 
@@ -408,7 +409,7 @@ func traverseRawState(ctx *cli.Context) error {
 		root = headBlock.Root()
 		log.Info("Start traversing the state", "root", root, "number", headBlock.NumberU64())
 	}
-	t, err := trie.NewStateTrie(trie.StateTrieID(root), triedb)
+	t, err := merkle.NewStateTrie(trie.StateTrieID(root), triedb)
 	if err != nil {
 		log.Error("Failed to open trie", "root", root, "err", err)
 		return err
@@ -464,7 +465,7 @@ func traverseRawState(ctx *cli.Context) error {
 			}
 			if acc.Root != types.EmptyRootHash {
 				id := trie.StorageTrieID(root, common.BytesToHash(accIter.LeafKey()), acc.Root)
-				storageTrie, err := trie.NewStateTrie(id, triedb)
+				storageTrie, err := merkle.NewStateTrie(id, triedb)
 				if err != nil {
 					log.Error("Failed to open storage trie", "root", acc.Root, "err", err)
 					return errors.New("missing storage trie")

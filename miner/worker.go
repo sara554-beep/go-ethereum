@@ -36,7 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/holiman/uint256"
 )
 
@@ -745,7 +745,7 @@ func (w *worker) updateSnapshot(env *environment) {
 		env.txs,
 		nil,
 		env.receipts,
-		trie.NewStackTrie(nil),
+		merkle.NewStackTrie(nil),
 	)
 	w.snapshotReceipts = copyReceipts(env.receipts)
 	w.snapshotState = env.state.Copy()

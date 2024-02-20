@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie/reader"
 )
 
 // Prove constructs a merkle proof for key. The result contains all encoded nodes
@@ -36,7 +37,7 @@ import (
 func (t *Trie) Prove(key []byte, proofDb ethdb.KeyValueWriter) error {
 	// Short circuit if the trie is already committed and not usable.
 	if t.committed {
-		return ErrCommitted
+		return errCommitted
 	}
 	// Collect all nodes on the path to key.
 	var (
@@ -68,7 +69,7 @@ func (t *Trie) Prove(key []byte, proofDb ethdb.KeyValueWriter) error {
 			// loaded blob will be tracked, while it's not required here since
 			// all loaded nodes won't be linked to trie at all and track nodes
 			// may lead to out-of-memory issue.
-			blob, err := t.reader.node(prefix, common.BytesToHash(n))
+			blob, err := t.reader.Node(prefix, common.BytesToHash(n))
 			if err != nil {
 				log.Error("Unhandled trie error in Trie.Prove", "err", err)
 				return err
@@ -567,7 +568,7 @@ func VerifyRangeProof(rootHash common.Hash, firstKey []byte, keys [][]byte, valu
 	}
 	// Rebuild the trie with the leaf stream, the shape of trie
 	// should be same with the original one.
-	tr := &Trie{root: root, reader: newEmptyReader(), tracer: newTracer()}
+	tr := &Trie{root: root, reader: reader.NewEmpty(), tracer: newTracer()}
 	if empty {
 		tr.root = nil
 	}

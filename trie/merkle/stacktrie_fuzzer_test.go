@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package trie
+package merkle
 
 import (
 	"bytes"
@@ -26,6 +26,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/testdb"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"golang.org/x/crypto/sha3"
 	"golang.org/x/exp/slices"
@@ -42,10 +44,10 @@ func fuzz(data []byte, debugging bool) {
 	var (
 		input   = bytes.NewReader(data)
 		spongeA = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
-		dbA     = newTestDatabase(rawdb.NewDatabase(spongeA), rawdb.HashScheme)
+		dbA     = testdb.New(rawdb.NewDatabase(spongeA), rawdb.HashScheme)
 		trieA   = NewEmpty(dbA)
 		spongeB = &spongeDb{sponge: sha3.NewLegacyKeccak256()}
-		dbB     = newTestDatabase(rawdb.NewDatabase(spongeB), rawdb.HashScheme)
+		dbB     = testdb.New(rawdb.NewDatabase(spongeB), rawdb.HashScheme)
 
 		options = NewStackTrieOptions().WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 			rawdb.WriteTrieNode(spongeB, common.Hash{}, path, hash, blob, dbB.Scheme())
@@ -131,7 +133,7 @@ func fuzz(data []byte, debugging bool) {
 	if rootA != rootC {
 		panic(fmt.Sprintf("roots differ: (trie) %x != %x (stacktrie)", rootA, rootC))
 	}
-	trieA, _ = New(TrieID(rootA), dbA)
+	trieA, _ = New(trie.TrieID(rootA), dbA)
 	iterA := trieA.MustNodeIterator(nil)
 	for iterA.Next(true) {
 		if iterA.Hash() == (common.Hash{}) {

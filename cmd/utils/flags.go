@@ -69,7 +69,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
@@ -2163,7 +2163,7 @@ func MakeTrieDatabase(ctx *cli.Context, disk ethdb.Database, preimage bool, read
 		// please config it if read mode is implemented.
 		config.HashDB = &hashdb.Config{
 			CleanCacheSize: 16 * 1024 * 1024,
-			ChildResolver:  trie.MerkleResolver,
+			ChildResolver:  merkle.Resolver,
 		}
 		return triedb.NewDatabase(disk, config)
 	}
@@ -2171,7 +2171,7 @@ func MakeTrieDatabase(ctx *cli.Context, disk ethdb.Database, preimage bool, read
 		StateHistory:   params.FullImmutabilityThreshold,
 		CleanCacheSize: pathdb.DefaultCleanSize,
 		DirtyCacheSize: pathdb.DefaultBufferSize,
-		TrieOpener:     trie.NewMerkleOpener,
+		TrieOpener:     merkle.NewOpener,
 	}
 	if readOnly {
 		config.PathDB.ReadOnly = true

@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-// Package trie implements Merkle Patricia Tries.
-package trie
+// Package merkle implements Merkle Patricia Tries.
+package merkle
 
 import (
 	"bytes"
@@ -25,9 +25,16 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/reader"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/database"
 )
+
+// errCommitted is returned when a already committed trie is requested for usage.
+// The potential usages can be `Get`, `Update`, `Delete`, `NodeIterator`, `Prove`
+// and so on.
+var errCommitted = errors.New("trie is already committed")
 
 // Trie is a Merkle Patricia Trie. Use New to create a trie that sits on
 // top of a database. Whenever trie performs a commit operation, the generated
@@ -50,7 +57,7 @@ type Trie struct {
 	unhashed int
 
 	// reader is the handler trie can retrieve nodes from.
-	reader *trieReader
+	reader *reader.Reader
 
 	// tracer is the tool to track the trie changes.
 	// It will be reset after each commit operation.
@@ -80,8 +87,8 @@ func (t *Trie) Copy() *Trie {
 // zero hash or the sha3 hash of an empty string, then trie is initially
 // empty, otherwise, the root node must be present in database or returns
 // a MissingNodeError if not.
-func New(id *ID, db database.NodeDatabase) (*Trie, error) {
-	reader, err := newTrieReader(id.StateRoot, id.Owner, db)
+func New(id *trie.ID, db database.NodeDatabase) (*Trie, error) {
+	reader, err := reader.New(id.StateRoot, id.Owner, db)
 	if err != nil {
 		return nil, err
 	}
@@ -102,13 +109,13 @@ func New(id *ID, db database.NodeDatabase) (*Trie, error) {
 
 // NewEmpty is a shortcut to create empty tree. It's mostly used in tests.
 func NewEmpty(db database.Database) *Trie {
-	tr, _ := New(TrieID(types.EmptyRootHash), db)
+	tr, _ := New(trie.TrieID(types.EmptyRootHash), db)
 	return tr
 }
 
 // MustNodeIterator is a wrapper of NodeIterator and will omit any encountered
 // error but just print out an error message.
-func (t *Trie) MustNodeIterator(start []byte) NodeIterator {
+func (t *Trie) MustNodeIterator(start []byte) trie.NodeIterator {
 	it, err := t.NodeIterator(start)
 	if err != nil {
 		log.Error("Unhandled trie error in Trie.NodeIterator", "err", err)
@@ -118,10 +125,10 @@ func (t *Trie) MustNodeIterator(start []byte) NodeIterator {
 
 // NodeIterator returns an iterator that returns nodes of the trie. Iteration starts at
 // the key after the given start key.
-func (t *Trie) NodeIterator(start []byte) (NodeIterator, error) {
+func (t *Trie) NodeIterator(start []byte) (trie.NodeIterator, error) {
 	// Short circuit if the trie is already committed and not usable.
 	if t.committed {
-		return nil, ErrCommitted
+		return nil, errCommitted
 	}
 	return newNodeIterator(t, start), nil
 }
@@ -144,7 +151,7 @@ func (t *Trie) MustGet(key []byte) []byte {
 func (t *Trie) Get(key []byte) ([]byte, error) {
 	// Short circuit if the trie is already committed and not usable.
 	if t.committed {
-		return nil, ErrCommitted
+		return nil, errCommitted
 	}
 	value, newroot, didResolve, err := t.get(t.root, keybytesToHex(key), 0)
 	if err == nil && didResolve {
@@ -207,7 +214,7 @@ func (t *Trie) MustGetNode(path []byte) ([]byte, int) {
 func (t *Trie) GetNode(path []byte) ([]byte, int, error) {
 	// Short circuit if the trie is already committed and not usable.
 	if t.committed {
-		return nil, 0, ErrCommitted
+		return nil, 0, errCommitted
 	}
 	item, newroot, resolved, err := t.getNode(t.root, compactToHex(path), 0)
 	if err != nil {
@@ -241,7 +248,7 @@ func (t *Trie) getNode(origNode node, path []byte, pos int) (item []byte, newnod
 		if hash == nil {
 			return nil, origNode, 0, errors.New("non-consensus node")
 		}
-		blob, err := t.reader.node(path, common.BytesToHash(hash))
+		blob, err := t.reader.Node(path, common.BytesToHash(hash))
 		return blob, origNode, 1, err
 	}
 	// Path still needs to be traversed, descend into children
@@ -303,7 +310,7 @@ func (t *Trie) MustUpdate(key, value []byte) {
 func (t *Trie) Update(key, value []byte) error {
 	// Short circuit if the trie is already committed and not usable.
 	if t.committed {
-		return ErrCommitted
+		return errCommitted
 	}
 	return t.update(key, value)
 }
@@ -421,7 +428,7 @@ func (t *Trie) MustDelete(key []byte) {
 func (t *Trie) Delete(key []byte) error {
 	// Short circuit if the trie is already committed and not usable.
 	if t.committed {
-		return ErrCommitted
+		return errCommitted
 	}
 	t.unhashed++
 	k := keybytesToHex(key)
@@ -586,7 +593,7 @@ func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 // node's original value. The rlp-encoded blob is preferred to be loaded from
 // database because it's easy to decode node while complex to encode node to blob.
 func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
-	blob, err := t.reader.node(prefix, common.BytesToHash(n))
+	blob, err := t.reader.Node(prefix, common.BytesToHash(n))
 	if err != nil {
 		return nil, err
 	}

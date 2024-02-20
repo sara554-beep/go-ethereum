@@ -40,7 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/msgrate"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"golang.org/x/crypto/sha3"
 )
@@ -312,8 +312,8 @@ type accountTask struct {
 	codeTasks  map[common.Hash]struct{}    // Code hashes that need retrieval
 	stateTasks map[common.Hash]common.Hash // Account hashes->roots that need full state retrieval
 
-	genBatch ethdb.Batch     // Batch used by the node generator
-	genTrie  *trie.StackTrie // Node generator from storage slots
+	genBatch ethdb.Batch       // Batch used by the node generator
+	genTrie  *merkle.StackTrie // Node generator from storage slots
 
 	done bool // Flag whether the task can be removed
 }
@@ -327,15 +327,15 @@ type storageTask struct {
 	root common.Hash     // Storage root hash for this instance
 	req  *storageRequest // Pending request to fill this task
 
-	genBatch ethdb.Batch     // Batch used by the node generator
-	genTrie  *trie.StackTrie // Node generator from storage slots
+	genBatch ethdb.Batch       // Batch used by the node generator
+	genTrie  *merkle.StackTrie // Node generator from storage slots
 
 	done bool // Flag whether the task can be removed
 }
 
 // healTask represents the sync task for healing the snap-synced chunk boundaries.
 type healTask struct {
-	scheduler *trie.Sync // State trie sync scheduler defining the tasks
+	scheduler *merkle.Sync // State trie sync scheduler defining the tasks
 
 	trieTasks map[string]common.Hash   // Set of trie node tasks currently queued for retrieval, indexed by node path
 	codeTasks map[common.Hash]struct{} // Set of byte code tasks currently queued for retrieval, indexed by code hash
@@ -751,7 +751,7 @@ func (s *Syncer) loadSyncStatus() {
 						s.accountBytes += common.StorageSize(len(key) + len(value))
 					},
 				}
-				options := trie.NewStackTrieOptions()
+				options := merkle.NewStackTrieOptions()
 				options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 					rawdb.WriteTrieNode(task.genBatch, common.Hash{}, path, hash, blob, s.scheme)
 				})
@@ -766,7 +766,7 @@ func (s *Syncer) loadSyncStatus() {
 					// Skip the right boundary if it's not the last range.
 					options = options.WithSkipBoundary(task.Next != (common.Hash{}), task.Last != common.MaxHash, boundaryAccountNodesGauge)
 				}
-				task.genTrie = trie.NewStackTrie(options)
+				task.genTrie = merkle.NewStackTrie(options)
 				for accountHash, subtasks := range task.SubTasks {
 					for _, subtask := range subtasks {
 						subtask := subtask // closure for subtask.genBatch in the stacktrie writer callback
@@ -778,7 +778,7 @@ func (s *Syncer) loadSyncStatus() {
 							},
 						}
 						owner := accountHash // local assignment for stacktrie writer closure
-						options := trie.NewStackTrieOptions()
+						options := merkle.NewStackTrieOptions()
 						options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 							rawdb.WriteTrieNode(subtask.genBatch, owner, path, hash, blob, s.scheme)
 						})
@@ -793,7 +793,7 @@ func (s *Syncer) loadSyncStatus() {
 							// Skip the right boundary if it's not the last range.
 							options = options.WithSkipBoundary(subtask.Next != common.Hash{}, subtask.Last != common.MaxHash, boundaryStorageNodesGauge)
 						}
-						subtask.genTrie = trie.NewStackTrie(options)
+						subtask.genTrie = merkle.NewStackTrie(options)
 					}
 				}
 			}
@@ -845,7 +845,7 @@ func (s *Syncer) loadSyncStatus() {
 				s.accountBytes += common.StorageSize(len(key) + len(value))
 			},
 		}
-		options := trie.NewStackTrieOptions()
+		options := merkle.NewStackTrieOptions()
 		options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 			rawdb.WriteTrieNode(batch, common.Hash{}, path, hash, blob, s.scheme)
 		})
@@ -865,7 +865,7 @@ func (s *Syncer) loadSyncStatus() {
 			Last:     last,
 			SubTasks: make(map[common.Hash][]*storageTask),
 			genBatch: batch,
-			genTrie:  trie.NewStackTrie(options),
+			genTrie:  merkle.NewStackTrie(options),
 		})
 		log.Debug("Created account sync task", "from", next, "last", last)
 		next = common.BigToHash(new(big.Int).Add(last.Big(), common.Big1))
@@ -2063,7 +2063,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 						},
 					}
 					owner := account // local assignment for stacktrie writer closure
-					options := trie.NewStackTrieOptions()
+					options := merkle.NewStackTrieOptions()
 					options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 						rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
 					})
@@ -2080,7 +2080,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 						Last:     r.End(),
 						root:     acc.Root,
 						genBatch: batch,
-						genTrie:  trie.NewStackTrie(options),
+						genTrie:  merkle.NewStackTrie(options),
 					})
 					for r.Next() {
 						batch := ethdb.HookedBatch{
@@ -2089,7 +2089,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 								s.storageBytes += common.StorageSize(len(key) + len(value))
 							},
 						}
-						options := trie.NewStackTrieOptions()
+						options := merkle.NewStackTrieOptions()
 						options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 							rawdb.WriteTrieNode(batch, owner, path, hash, blob, s.scheme)
 						})
@@ -2109,7 +2109,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 							Last:     r.End(),
 							root:     acc.Root,
 							genBatch: batch,
-							genTrie:  trie.NewStackTrie(options),
+							genTrie:  merkle.NewStackTrie(options),
 						})
 					}
 					for _, task := range tasks {
@@ -2155,7 +2155,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 
 		if i < len(res.hashes)-1 || res.subTask == nil {
 			// no need to make local reassignment of account: this closure does not outlive the loop
-			options := trie.NewStackTrieOptions()
+			options := merkle.NewStackTrieOptions()
 			options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
 				rawdb.WriteTrieNode(batch, account, path, hash, blob, s.scheme)
 			})
@@ -2170,7 +2170,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 					s.cleanPath(batch, account, path)
 				})
 			}
-			tr := trie.NewStackTrie(options)
+			tr := merkle.NewStackTrie(options)
 			for j := 0; j < len(res.hashes[i]); j++ {
 				tr.Update(res.hashes[i][j][:], res.slots[i][j])
 			}
@@ -2256,12 +2256,12 @@ func (s *Syncer) processTrienodeHealResponse(res *trienodeHealResponse) {
 		s.trienodeHealSynced++
 		s.trienodeHealBytes += common.StorageSize(len(node))
 
-		err := s.healer.scheduler.ProcessNode(trie.NodeSyncResult{Path: res.paths[i], Data: node})
+		err := s.healer.scheduler.ProcessNode(merkle.NodeSyncResult{Path: res.paths[i], Data: node})
 		switch err {
 		case nil:
-		case trie.ErrAlreadyProcessed:
+		case merkle.ErrAlreadyProcessed:
 			s.trienodeHealDups++
-		case trie.ErrNotRequested:
+		case merkle.ErrNotRequested:
 			s.trienodeHealNops++
 		default:
 			log.Error("Invalid trienode processed", "hash", hash, "err", err)
@@ -2343,12 +2343,12 @@ func (s *Syncer) processBytecodeHealResponse(res *bytecodeHealResponse) {
 		s.bytecodeHealSynced++
 		s.bytecodeHealBytes += common.StorageSize(len(node))
 
-		err := s.healer.scheduler.ProcessCode(trie.CodeSyncResult{Hash: hash, Data: node})
+		err := s.healer.scheduler.ProcessCode(merkle.CodeSyncResult{Hash: hash, Data: node})
 		switch err {
 		case nil:
-		case trie.ErrAlreadyProcessed:
+		case merkle.ErrAlreadyProcessed:
 			s.bytecodeHealDups++
-		case trie.ErrNotRequested:
+		case merkle.ErrNotRequested:
 			s.bytecodeHealNops++
 		default:
 			log.Error("Invalid bytecode processed", "hash", hash, "err", err)
@@ -2499,7 +2499,7 @@ func (s *Syncer) OnAccounts(peer SyncPeer, id uint64, hashes []common.Hash, acco
 	for i, node := range proof {
 		nodes[i] = node
 	}
-	cont, err := trie.VerifyRangeProof(root, req.origin[:], keys, accounts, nodes.Set())
+	cont, err := merkle.VerifyRangeProof(root, req.origin[:], keys, accounts, nodes.Set())
 	if err != nil {
 		logger.Warn("Account range failed proof", "err", err)
 		// Signal this request as failed, and ready for rescheduling
@@ -2751,7 +2751,7 @@ func (s *Syncer) OnStorage(peer SyncPeer, id uint64, hashes [][]common.Hash, slo
 		if len(nodes) == 0 {
 			// No proof has been attached, the response must cover the entire key
 			// space and hash to the origin root.
-			_, err = trie.VerifyRangeProof(req.roots[i], nil, keys, slots[i], nil)
+			_, err = merkle.VerifyRangeProof(req.roots[i], nil, keys, slots[i], nil)
 			if err != nil {
 				s.scheduleRevertStorageRequest(req) // reschedule request
 				logger.Warn("Storage slots failed proof", "err", err)
@@ -2762,7 +2762,7 @@ func (s *Syncer) OnStorage(peer SyncPeer, id uint64, hashes [][]common.Hash, slo
 			// returned data is indeed part of the storage trie
 			proofdb := nodes.Set()
 
-			cont, err = trie.VerifyRangeProof(req.roots[i], req.origin[:], keys, slots[i], proofdb)
+			cont, err = merkle.VerifyRangeProof(req.roots[i], req.origin[:], keys, slots[i], proofdb)
 			if err != nil {
 				s.scheduleRevertStorageRequest(req) // reschedule request
 				logger.Warn("Storage range failed proof", "err", err)
@@ -3135,7 +3135,7 @@ func (s *capacitySort) Swap(i, j int) {
 type healRequestSort struct {
 	paths     []string
 	hashes    []common.Hash
-	syncPaths []trie.SyncPath
+	syncPaths []merkle.SyncPath
 }
 
 func (t *healRequestSort) Len() int {
@@ -3198,10 +3198,10 @@ func (t *healRequestSort) Merge() []TrieNodePathSet {
 
 // sortByAccountPath takes hashes and paths, and sorts them. After that, it generates
 // the TrieNodePaths and merges paths which belongs to the same account path.
-func sortByAccountPath(paths []string, hashes []common.Hash) ([]string, []common.Hash, []trie.SyncPath, []TrieNodePathSet) {
-	var syncPaths []trie.SyncPath
+func sortByAccountPath(paths []string, hashes []common.Hash) ([]string, []common.Hash, []merkle.SyncPath, []TrieNodePathSet) {
+	var syncPaths []merkle.SyncPath
 	for _, path := range paths {
-		syncPaths = append(syncPaths, trie.NewSyncPath([]byte(path)))
+		syncPaths = append(syncPaths, merkle.NewSyncPath([]byte(path)))
 	}
 	n := &healRequestSort{paths, hashes, syncPaths}
 	sort.Sort(n)

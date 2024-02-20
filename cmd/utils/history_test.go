@@ -35,7 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/era"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 )
@@ -149,13 +149,13 @@ func TestHistoryImportAndExport(t *testing.T) {
 				if want.Hash() != block.Hash() {
 					t.Fatalf("block hash mismatch %d: want %s, got %s", n, want.Hash().Hex(), block.Hash().Hex())
 				}
-				if got := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil)); got != want.TxHash() {
+				if got := types.DeriveSha(block.Transactions(), merkle.NewStackTrie(nil)); got != want.TxHash() {
 					t.Fatalf("tx hash %d mismatch: want %s, got %s", n, want.TxHash(), got)
 				}
 				if got := types.CalcUncleHash(block.Uncles()); got != want.UncleHash() {
 					t.Fatalf("uncle hash %d mismatch: want %s, got %s", n, want.UncleHash(), got)
 				}
-				if got := types.DeriveSha(receipts, trie.NewStackTrie(nil)); got != want.ReceiptHash() {
+				if got := types.DeriveSha(receipts, merkle.NewStackTrie(nil)); got != want.ReceiptHash() {
 					t.Fatalf("receipt root %d mismatch: want %s, got %s", n, want.ReceiptHash(), got)
 				}
 			}

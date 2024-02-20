@@ -47,7 +47,7 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
@@ -155,7 +155,7 @@ func (c *CacheConfig) triedbConfig() *triedb.Config {
 	if c.StateScheme == rawdb.HashScheme {
 		config.HashDB = &hashdb.Config{
 			CleanCacheSize: c.TrieCleanLimit * 1024 * 1024,
-			ChildResolver:  trie.MerkleResolver,
+			ChildResolver:  merkle.Resolver,
 		}
 	}
 	if c.StateScheme == rawdb.PathScheme {
@@ -163,7 +163,7 @@ func (c *CacheConfig) triedbConfig() *triedb.Config {
 			StateHistory:   c.StateHistory,
 			CleanCacheSize: c.TrieCleanLimit * 1024 * 1024,
 			DirtyCacheSize: c.TrieDirtyLimit * 1024 * 1024,
-			TrieOpener:     trie.NewMerkleOpener,
+			TrieOpener:     merkle.NewOpener,
 		}
 	}
 	return config

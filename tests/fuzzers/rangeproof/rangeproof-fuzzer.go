@@ -25,7 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"golang.org/x/exp/slices"
@@ -57,8 +57,8 @@ func (f *fuzzer) readInt() uint64 {
 	return x
 }
 
-func (f *fuzzer) randomTrie(n int) (*trie.Trie, map[string]*kv) {
-	trie := trie.NewEmpty(triedb.NewDatabase(rawdb.NewMemoryDatabase(), &dbconfig.HashDefaults))
+func (f *fuzzer) randomTrie(n int) (*merkle.Trie, map[string]*kv) {
+	trie := merkle.NewEmpty(triedb.NewDatabase(rawdb.NewMemoryDatabase(), &dbconfig.HashDefaults))
 	vals := make(map[string]*kv)
 	size := f.readInt()
 	// Fill it with some fluff
@@ -167,7 +167,7 @@ func (f *fuzzer) fuzz() int {
 		}
 		ok = 1
 		//nodes, subtrie
-		hasMore, err := trie.VerifyRangeProof(tr.Hash(), first, keys, vals, proof)
+		hasMore, err := merkle.VerifyRangeProof(tr.Hash(), first, keys, vals, proof)
 		if err != nil {
 			if hasMore {
 				panic("err != nil && hasMore == true")

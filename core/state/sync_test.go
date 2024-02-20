@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 	"github.com/holiman/uint256"
@@ -183,7 +184,7 @@ type stateElement struct {
 	path     string
 	hash     common.Hash
 	code     common.Hash
-	syncPath trie.SyncPath
+	syncPath merkle.SyncPath
 }
 
 func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, scheme string) {
@@ -192,7 +193,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 	if commit {
 		ndb.Commit(srcRoot, false)
 	}
-	srcTrie, _ := trie.New(trie.StateTrieID(srcRoot), ndb)
+	srcTrie, _ := merkle.New(trie.StateTrieID(srcRoot), ndb)
 
 	// Create a destination state and sync with the scheduler
 	dstDb := rawdb.NewMemoryDatabase()
@@ -207,7 +208,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 		nodeElements = append(nodeElements, stateElement{
 			path:     paths[i],
 			hash:     nodes[i],
-			syncPath: trie.NewSyncPath([]byte(paths[i])),
+			syncPath: merkle.NewSyncPath([]byte(paths[i])),
 		})
 	}
 	for i := 0; i < len(codes); i++ {
@@ -219,15 +220,15 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 	}
 	for len(nodeElements)+len(codeElements) > 0 {
 		var (
-			nodeResults = make([]trie.NodeSyncResult, len(nodeElements))
-			codeResults = make([]trie.CodeSyncResult, len(codeElements))
+			nodeResults = make([]merkle.NodeSyncResult, len(nodeElements))
+			codeResults = make([]merkle.CodeSyncResult, len(codeElements))
 		)
 		for i, element := range codeElements {
 			data, err := srcDb.ContractCode(common.Address{}, element.code)
 			if err != nil {
 				t.Fatalf("failed to retrieve contract bytecode for hash %x", element.code)
 			}
-			codeResults[i] = trie.CodeSyncResult{Hash: element.code, Data: data}
+			codeResults[i] = merkle.CodeSyncResult{Hash: element.code, Data: data}
 		}
 		for i, node := range nodeElements {
 			if bypath {
@@ -236,14 +237,14 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 					if err != nil {
 						t.Fatalf("failed to retrieve node data for path %x: %v", node.syncPath[0], err)
 					}
-					nodeResults[i] = trie.NodeSyncResult{Path: node.path, Data: data}
+					nodeResults[i] = merkle.NodeSyncResult{Path: node.path, Data: data}
 				} else {
 					var acc types.StateAccount
 					if err := rlp.DecodeBytes(srcTrie.MustGet(node.syncPath[0]), &acc); err != nil {
 						t.Fatalf("failed to decode account on path %x: %v", node.syncPath[0], err)
 					}
 					id := trie.StorageTrieID(srcRoot, common.BytesToHash(node.syncPath[0]), acc.Root)
-					stTrie, err := trie.New(id, ndb)
+					stTrie, err := merkle.New(id, ndb)
 					if err != nil {
 						t.Fatalf("failed to retrieve storage trie for path %x: %v", node.syncPath[1], err)
 					}
@@ -251,15 +252,15 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 					if err != nil {
 						t.Fatalf("failed to retrieve node data for path %x: %v", node.syncPath[1], err)
 					}
-					nodeResults[i] = trie.NodeSyncResult{Path: node.path, Data: data}
+					nodeResults[i] = merkle.NodeSyncResult{Path: node.path, Data: data}
 				}
 			} else {
-				owner, inner := trie.ResolvePath([]byte(node.path))
+				owner, inner := merkle.ResolvePath([]byte(node.path))
 				data, err := reader.Node(owner, inner, node.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for key %v", []byte(node.path))
 				}
-				nodeResults[i] = trie.NodeSyncResult{Path: node.path, Data: data}
+				nodeResults[i] = merkle.NodeSyncResult{Path: node.path, Data: data}
 			}
 		}
 		for _, result := range codeResults {
@@ -284,7 +285,7 @@ func testIterativeStateSync(t *testing.T, count int, commit bool, bypath bool, s
 			nodeElements = append(nodeElements, stateElement{
 				path:     paths[i],
 				hash:     nodes[i],
-				syncPath: trie.NewSyncPath([]byte(paths[i])),
+				syncPath: merkle.NewSyncPath([]byte(paths[i])),
 			})
 		}
 		codeElements = codeElements[:0]
@@ -326,7 +327,7 @@ func testIterativeDelayedStateSync(t *testing.T, scheme string) {
 		nodeElements = append(nodeElements, stateElement{
 			path:     paths[i],
 			hash:     nodes[i],
-			syncPath: trie.NewSyncPath([]byte(paths[i])),
+			syncPath: merkle.NewSyncPath([]byte(paths[i])),
 		})
 	}
 	for i := 0; i < len(codes); i++ {
@@ -341,13 +342,13 @@ func testIterativeDelayedStateSync(t *testing.T, scheme string) {
 		var nodeProcessed int
 		var codeProcessed int
 		if len(codeElements) > 0 {
-			codeResults := make([]trie.CodeSyncResult, len(codeElements)/2+1)
+			codeResults := make([]merkle.CodeSyncResult, len(codeElements)/2+1)
 			for i, element := range codeElements[:len(codeResults)] {
 				data, err := srcDb.ContractCode(common.Address{}, element.code)
 				if err != nil {
 					t.Fatalf("failed to retrieve contract bytecode for %x", element.code)
 				}
-				codeResults[i] = trie.CodeSyncResult{Hash: element.code, Data: data}
+				codeResults[i] = merkle.CodeSyncResult{Hash: element.code, Data: data}
 			}
 			for _, result := range codeResults {
 				if err := sched.ProcessCode(result); err != nil {
@@ -357,14 +358,14 @@ func testIterativeDelayedStateSync(t *testing.T, scheme string) {
 			codeProcessed = len(codeResults)
 		}
 		if len(nodeElements) > 0 {
-			nodeResults := make([]trie.NodeSyncResult, len(nodeElements)/2+1)
+			nodeResults := make([]merkle.NodeSyncResult, len(nodeElements)/2+1)
 			for i, element := range nodeElements[:len(nodeResults)] {
-				owner, inner := trie.ResolvePath([]byte(element.path))
+				owner, inner := merkle.ResolvePath([]byte(element.path))
 				data, err := reader.Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve contract bytecode for %x", element.code)
 				}
-				nodeResults[i] = trie.NodeSyncResult{Path: element.path, Data: data}
+				nodeResults[i] = merkle.NodeSyncResult{Path: element.path, Data: data}
 			}
 			for _, result := range nodeResults {
 				if err := sched.ProcessNode(result); err != nil {
@@ -385,7 +386,7 @@ func testIterativeDelayedStateSync(t *testing.T, scheme string) {
 			nodeElements = append(nodeElements, stateElement{
 				path:     paths[i],
 				hash:     nodes[i],
-				syncPath: trie.NewSyncPath([]byte(paths[i])),
+				syncPath: merkle.NewSyncPath([]byte(paths[i])),
 			})
 		}
 		codeElements = codeElements[codeProcessed:]
@@ -430,7 +431,7 @@ func testIterativeRandomStateSync(t *testing.T, count int, scheme string) {
 		nodeQueue[path] = stateElement{
 			path:     path,
 			hash:     nodes[i],
-			syncPath: trie.NewSyncPath([]byte(path)),
+			syncPath: merkle.NewSyncPath([]byte(path)),
 		}
 	}
 	for _, hash := range codes {
@@ -443,13 +444,13 @@ func testIterativeRandomStateSync(t *testing.T, count int, scheme string) {
 	for len(nodeQueue)+len(codeQueue) > 0 {
 		// Fetch all the queued nodes in a random order
 		if len(codeQueue) > 0 {
-			results := make([]trie.CodeSyncResult, 0, len(codeQueue))
+			results := make([]merkle.CodeSyncResult, 0, len(codeQueue))
 			for hash := range codeQueue {
 				data, err := srcDb.ContractCode(common.Address{}, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", hash)
 				}
-				results = append(results, trie.CodeSyncResult{Hash: hash, Data: data})
+				results = append(results, merkle.CodeSyncResult{Hash: hash, Data: data})
 			}
 			for _, result := range results {
 				if err := sched.ProcessCode(result); err != nil {
@@ -458,14 +459,14 @@ func testIterativeRandomStateSync(t *testing.T, count int, scheme string) {
 			}
 		}
 		if len(nodeQueue) > 0 {
-			results := make([]trie.NodeSyncResult, 0, len(nodeQueue))
+			results := make([]merkle.NodeSyncResult, 0, len(nodeQueue))
 			for path, element := range nodeQueue {
-				owner, inner := trie.ResolvePath([]byte(element.path))
+				owner, inner := merkle.ResolvePath([]byte(element.path))
 				data, err := reader.Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x %v %v", element.hash, []byte(element.path), element.path)
 				}
-				results = append(results, trie.NodeSyncResult{Path: path, Data: data})
+				results = append(results, merkle.NodeSyncResult{Path: path, Data: data})
 			}
 			for _, result := range results {
 				if err := sched.ProcessNode(result); err != nil {
@@ -486,7 +487,7 @@ func testIterativeRandomStateSync(t *testing.T, count int, scheme string) {
 			nodeQueue[path] = stateElement{
 				path:     path,
 				hash:     nodes[i],
-				syncPath: trie.NewSyncPath([]byte(path)),
+				syncPath: merkle.NewSyncPath([]byte(path)),
 			}
 		}
 		for _, hash := range codes {
@@ -523,7 +524,7 @@ func testIterativeRandomDelayedStateSync(t *testing.T, scheme string) {
 		nodeQueue[path] = stateElement{
 			path:     path,
 			hash:     nodes[i],
-			syncPath: trie.NewSyncPath([]byte(path)),
+			syncPath: merkle.NewSyncPath([]byte(path)),
 		}
 	}
 	for _, hash := range codes {
@@ -536,7 +537,7 @@ func testIterativeRandomDelayedStateSync(t *testing.T, scheme string) {
 	for len(nodeQueue)+len(codeQueue) > 0 {
 		// Sync only half of the scheduled nodes, even those in random order
 		if len(codeQueue) > 0 {
-			results := make([]trie.CodeSyncResult, 0, len(codeQueue)/2+1)
+			results := make([]merkle.CodeSyncResult, 0, len(codeQueue)/2+1)
 			for hash := range codeQueue {
 				delete(codeQueue, hash)
 
@@ -544,7 +545,7 @@ func testIterativeRandomDelayedStateSync(t *testing.T, scheme string) {
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", hash)
 				}
-				results = append(results, trie.CodeSyncResult{Hash: hash, Data: data})
+				results = append(results, merkle.CodeSyncResult{Hash: hash, Data: data})
 
 				if len(results) >= cap(results) {
 					break
@@ -557,16 +558,16 @@ func testIterativeRandomDelayedStateSync(t *testing.T, scheme string) {
 			}
 		}
 		if len(nodeQueue) > 0 {
-			results := make([]trie.NodeSyncResult, 0, len(nodeQueue)/2+1)
+			results := make([]merkle.NodeSyncResult, 0, len(nodeQueue)/2+1)
 			for path, element := range nodeQueue {
 				delete(nodeQueue, path)
 
-				owner, inner := trie.ResolvePath([]byte(element.path))
+				owner, inner := merkle.ResolvePath([]byte(element.path))
 				data, err := reader.Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", element.hash)
 				}
-				results = append(results, trie.NodeSyncResult{Path: path, Data: data})
+				results = append(results, merkle.NodeSyncResult{Path: path, Data: data})
 
 				if len(results) >= cap(results) {
 					break
@@ -590,7 +591,7 @@ func testIterativeRandomDelayedStateSync(t *testing.T, scheme string) {
 			nodeQueue[path] = stateElement{
 				path:     path,
 				hash:     nodes[i],
-				syncPath: trie.NewSyncPath([]byte(path)),
+				syncPath: merkle.NewSyncPath([]byte(path)),
 			}
 		}
 		for _, hash := range codes {
@@ -645,7 +646,7 @@ func testIncompleteStateSync(t *testing.T, scheme string) {
 		nodeQueue[path] = stateElement{
 			path:     path,
 			hash:     nodes[i],
-			syncPath: trie.NewSyncPath([]byte(path)),
+			syncPath: merkle.NewSyncPath([]byte(path)),
 		}
 	}
 	for _, hash := range codes {
@@ -654,13 +655,13 @@ func testIncompleteStateSync(t *testing.T, scheme string) {
 	for len(nodeQueue)+len(codeQueue) > 0 {
 		// Fetch a batch of state nodes
 		if len(codeQueue) > 0 {
-			results := make([]trie.CodeSyncResult, 0, len(codeQueue))
+			results := make([]merkle.CodeSyncResult, 0, len(codeQueue))
 			for hash := range codeQueue {
 				data, err := srcDb.ContractCode(common.Address{}, hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", hash)
 				}
-				results = append(results, trie.CodeSyncResult{Hash: hash, Data: data})
+				results = append(results, merkle.CodeSyncResult{Hash: hash, Data: data})
 				addedCodes = append(addedCodes, hash)
 			}
 			// Process each of the state nodes
@@ -671,14 +672,14 @@ func testIncompleteStateSync(t *testing.T, scheme string) {
 			}
 		}
 		if len(nodeQueue) > 0 {
-			results := make([]trie.NodeSyncResult, 0, len(nodeQueue))
+			results := make([]merkle.NodeSyncResult, 0, len(nodeQueue))
 			for path, element := range nodeQueue {
-				owner, inner := trie.ResolvePath([]byte(element.path))
+				owner, inner := merkle.ResolvePath([]byte(element.path))
 				data, err := reader.Node(owner, inner, element.hash)
 				if err != nil {
 					t.Fatalf("failed to retrieve node data for %x", element.hash)
 				}
-				results = append(results, trie.NodeSyncResult{Path: path, Data: data})
+				results = append(results, merkle.NodeSyncResult{Path: path, Data: data})
 
 				if element.hash != srcRoot {
 					addedPaths = append(addedPaths, element.path)
@@ -706,7 +707,7 @@ func testIncompleteStateSync(t *testing.T, scheme string) {
 			nodeQueue[path] = stateElement{
 				path:     path,
 				hash:     nodes[i],
-				syncPath: trie.NewSyncPath([]byte(path)),
+				syncPath: merkle.NewSyncPath([]byte(path)),
 			}
 		}
 		for _, hash := range codes {
@@ -727,7 +728,7 @@ func testIncompleteStateSync(t *testing.T, scheme string) {
 		rawdb.WriteCode(dstDb, node, val)
 	}
 	for i, path := range addedPaths {
-		owner, inner := trie.ResolvePath([]byte(path))
+		owner, inner := merkle.ResolvePath([]byte(path))
 		hash := addedHashes[i]
 		val := rawdb.ReadTrieNode(dstDb, owner, inner, hash, scheme)
 		if val == nil {

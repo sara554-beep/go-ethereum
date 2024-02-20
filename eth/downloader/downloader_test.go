@@ -39,7 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 )
 
 // downloadTester is a test simulator for mocking out local block chain.
@@ -276,7 +276,7 @@ func (dlp *downloadTesterPeer) RequestBodies(hashes []common.Hash, sink chan *et
 		uncleHashes      = make([]common.Hash, len(bodies))
 		withdrawalHashes = make([]common.Hash, len(bodies))
 	)
-	hasher := trie.NewStackTrie(nil)
+	hasher := merkle.NewStackTrie(nil)
 	for i, body := range bodies {
 		txsHashes[i] = types.DeriveSha(types.Transactions(body.Transactions), hasher)
 		uncleHashes[i] = types.CalcUncleHash(body.Uncles)
@@ -307,7 +307,7 @@ func (dlp *downloadTesterPeer) RequestReceipts(hashes []common.Hash, sink chan *
 	for i, blob := range blobs {
 		rlp.DecodeBytes(blob, &receipts[i])
 	}
-	hasher := trie.NewStackTrie(nil)
+	hasher := merkle.NewStackTrie(nil)
 	hashes = make([]common.Hash, len(receipts))
 	for i, receipt := range receipts {
 		hashes[i] = types.DeriveSha(types.Receipts(receipt), hasher)

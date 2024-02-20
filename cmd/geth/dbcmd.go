@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/olekukonko/tablewriter"
 	"github.com/urfave/cli/v2"
 )
@@ -553,7 +554,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 		}
 	}
 	id := trie.StorageTrieID(common.BytesToHash(state), common.BytesToHash(account), common.BytesToHash(storage))
-	theTrie, err := trie.New(id, triedb)
+	theTrie, err := merkle.New(id, triedb)
 	if err != nil {
 		return err
 	}
@@ -562,7 +563,7 @@ func dbDumpTrie(ctx *cli.Context) error {
 		return err
 	}
 	var count int64
-	it := trie.NewIterator(trieIt)
+	it := merkle.NewIterator(trieIt)
 	for it.Next() {
 		if max > 0 && count == max {
 			fmt.Printf("Exiting after %d values\n", count)

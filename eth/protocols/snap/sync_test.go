@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/dbconfig"
@@ -130,9 +131,9 @@ type testPeer struct {
 	test          *testing.T
 	remote        *Syncer
 	logger        log.Logger
-	accountTrie   *trie.Trie
+	accountTrie   *merkle.Trie
 	accountValues []*kv
-	storageTries  map[common.Hash]*trie.Trie
+	storageTries  map[common.Hash]*merkle.Trie
 	storageValues map[common.Hash][]*kv
 
 	accountRequestHandler accountHandlerFunc
@@ -164,8 +165,8 @@ func newTestPeer(id string, t *testing.T, term func()) *testPeer {
 	return peer
 }
 
-func (t *testPeer) setStorageTries(tries map[common.Hash]*trie.Trie) {
-	t.storageTries = make(map[common.Hash]*trie.Trie)
+func (t *testPeer) setStorageTries(tries map[common.Hash]*merkle.Trie) {
+	t.storageTries = make(map[common.Hash]*merkle.Trie)
 	for root, trie := range tries {
 		t.storageTries[root] = trie.Copy()
 	}
@@ -1503,10 +1504,10 @@ func getCodeByHash(hash common.Hash) []byte {
 }
 
 // makeAccountTrieNoStorage spits out a trie, along with the leafs
-func makeAccountTrieNoStorage(n int, scheme string) (string, *trie.Trie, []*kv) {
+func makeAccountTrieNoStorage(n int, scheme string) (string, *merkle.Trie, []*kv) {
 	var (
 		db      = triedb.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
-		accTrie = trie.NewEmpty(db)
+		accTrie = merkle.NewEmpty(db)
 		entries []*kv
 	)
 	for i := uint64(1); i <= uint64(n); i++ {
@@ -1528,20 +1529,20 @@ func makeAccountTrieNoStorage(n int, scheme string) (string, *trie.Trie, []*kv) 
 	root, nodes, _ := accTrie.Commit(false)
 	db.Update(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes), nil)
 
-	accTrie, _ = trie.New(trie.StateTrieID(root), db)
+	accTrie, _ = merkle.New(trie.StateTrieID(root), db)
 	return db.Scheme(), accTrie, entries
 }
 
 // makeBoundaryAccountTrie constructs an account trie. Instead of filling
 // accounts normally, this function will fill a few accounts which have
 // boundary hash.
-func makeBoundaryAccountTrie(scheme string, n int) (string, *trie.Trie, []*kv) {
+func makeBoundaryAccountTrie(scheme string, n int) (string, *merkle.Trie, []*kv) {
 	var (
 		entries    []*kv
 		boundaries []common.Hash
 
 		db      = triedb.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
-		accTrie = trie.NewEmpty(db)
+		accTrie = merkle.NewEmpty(db)
 	)
 	// Initialize boundaries
 	var next common.Hash
@@ -1590,19 +1591,19 @@ func makeBoundaryAccountTrie(scheme string, n int) (string, *trie.Trie, []*kv) {
 	root, nodes, _ := accTrie.Commit(false)
 	db.Update(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes), nil)
 
-	accTrie, _ = trie.New(trie.StateTrieID(root), db)
+	accTrie, _ = merkle.New(trie.StateTrieID(root), db)
 	return db.Scheme(), accTrie, entries
 }
 
 // makeAccountTrieWithStorageWithUniqueStorage creates an account trie where each accounts
 // has a unique storage set.
-func makeAccountTrieWithStorageWithUniqueStorage(scheme string, accounts, slots int, code bool) (string, *trie.Trie, []*kv, map[common.Hash]*trie.Trie, map[common.Hash][]*kv) {
+func makeAccountTrieWithStorageWithUniqueStorage(scheme string, accounts, slots int, code bool) (string, *merkle.Trie, []*kv, map[common.Hash]*merkle.Trie, map[common.Hash][]*kv) {
 	var (
 		db             = triedb.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
-		accTrie        = trie.NewEmpty(db)
+		accTrie        = merkle.NewEmpty(db)
 		entries        []*kv
 		storageRoots   = make(map[common.Hash]common.Hash)
-		storageTries   = make(map[common.Hash]*trie.Trie)
+		storageTries   = make(map[common.Hash]*merkle.Trie)
 		storageEntries = make(map[common.Hash][]*kv)
 		nodes          = trienode.NewMergedNodeSet()
 	)
@@ -1640,24 +1641,24 @@ func makeAccountTrieWithStorageWithUniqueStorage(scheme string, accounts, slots 
 	db.Update(root, types.EmptyRootHash, 0, nodes, nil)
 
 	// Re-create tries with new root
-	accTrie, _ = trie.New(trie.StateTrieID(root), db)
+	accTrie, _ = merkle.New(trie.StateTrieID(root), db)
 	for i := uint64(1); i <= uint64(accounts); i++ {
 		key := key32(i)
 		id := trie.StorageTrieID(root, common.BytesToHash(key), storageRoots[common.BytesToHash(key)])
-		trie, _ := trie.New(id, db)
+		trie, _ := merkle.New(id, db)
 		storageTries[common.BytesToHash(key)] = trie
 	}
 	return db.Scheme(), accTrie, entries, storageTries, storageEntries
 }
 
 // makeAccountTrieWithStorage spits out a trie, along with the leafs
-func makeAccountTrieWithStorage(scheme string, accounts, slots int, code, boundary bool, uneven bool) (*trie.Trie, []*kv, map[common.Hash]*trie.Trie, map[common.Hash][]*kv) {
+func makeAccountTrieWithStorage(scheme string, accounts, slots int, code, boundary bool, uneven bool) (*merkle.Trie, []*kv, map[common.Hash]*merkle.Trie, map[common.Hash][]*kv) {
 	var (
 		db             = triedb.NewDatabase(rawdb.NewMemoryDatabase(), newDbConfig(scheme))
-		accTrie        = trie.NewEmpty(db)
+		accTrie        = merkle.NewEmpty(db)
 		entries        []*kv
 		storageRoots   = make(map[common.Hash]common.Hash)
-		storageTries   = make(map[common.Hash]*trie.Trie)
+		storageTries   = make(map[common.Hash]*merkle.Trie)
 		storageEntries = make(map[common.Hash][]*kv)
 		nodes          = trienode.NewMergedNodeSet()
 	)
@@ -1707,14 +1708,14 @@ func makeAccountTrieWithStorage(scheme string, accounts, slots int, code, bounda
 	db.Update(root, types.EmptyRootHash, 0, nodes, nil)
 
 	// Re-create tries with new root
-	accTrie, err := trie.New(trie.StateTrieID(root), db)
+	accTrie, err := merkle.New(trie.StateTrieID(root), db)
 	if err != nil {
 		panic(err)
 	}
 	for i := uint64(1); i <= uint64(accounts); i++ {
 		key := key32(i)
 		id := trie.StorageTrieID(root, common.BytesToHash(key), storageRoots[common.BytesToHash(key)])
-		trie, err := trie.New(id, db)
+		trie, err := merkle.New(id, db)
 		if err != nil {
 			panic(err)
 		}
@@ -1727,7 +1728,7 @@ func makeAccountTrieWithStorage(scheme string, accounts, slots int, code, bounda
 // not-yet-committed trie and the sorted entries. The seeds can be used to ensure
 // that tries are unique.
 func makeStorageTrieWithSeed(owner common.Hash, n, seed uint64, db *triedb.Database) (common.Hash, *trienode.NodeSet, []*kv) {
-	trie, _ := trie.New(trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash), db)
+	trie, _ := merkle.New(trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash), db)
 	var entries []*kv
 	for i := uint64(1); i <= n; i++ {
 		// store 'x' at slot 'x'
@@ -1753,7 +1754,7 @@ func makeBoundaryStorageTrie(owner common.Hash, n int, db *triedb.Database) (com
 	var (
 		entries    []*kv
 		boundaries []common.Hash
-		trie, _    = trie.New(trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash), db)
+		trie, _    = merkle.New(trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash), db)
 	)
 	// Initialize boundaries
 	var next common.Hash
@@ -1802,7 +1803,7 @@ func makeBoundaryStorageTrie(owner common.Hash, n int, db *triedb.Database) (com
 func makeUnevenStorageTrie(owner common.Hash, slots int, db *triedb.Database) (common.Hash, *trienode.NodeSet, []*kv) {
 	var (
 		entries []*kv
-		tr, _   = trie.New(trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash), db)
+		tr, _   = merkle.New(trie.StorageTrieID(types.EmptyRootHash, owner, types.EmptyRootHash), db)
 		chosen  = make(map[byte]struct{})
 	)
 	for i := 0; i < 3; i++ {
@@ -1832,12 +1833,12 @@ func makeUnevenStorageTrie(owner common.Hash, slots int, db *triedb.Database) (c
 func verifyTrie(scheme string, db ethdb.KeyValueStore, root common.Hash, t *testing.T) {
 	t.Helper()
 	triedb := triedb.NewDatabase(rawdb.NewDatabase(db), newDbConfig(scheme))
-	accTrie, err := trie.New(trie.StateTrieID(root), triedb)
+	accTrie, err := merkle.New(trie.StateTrieID(root), triedb)
 	if err != nil {
 		t.Fatal(err)
 	}
 	accounts, slots := 0, 0
-	accIt := trie.NewIterator(accTrie.MustNodeIterator(nil))
+	accIt := merkle.NewIterator(accTrie.MustNodeIterator(nil))
 	for accIt.Next() {
 		var acc struct {
 			Nonce    uint64
@@ -1851,11 +1852,11 @@ func verifyTrie(scheme string, db ethdb.KeyValueStore, root common.Hash, t *test
 		accounts++
 		if acc.Root != types.EmptyRootHash {
 			id := trie.StorageTrieID(root, common.BytesToHash(accIt.Key), acc.Root)
-			storeTrie, err := trie.NewStateTrie(id, triedb)
+			storeTrie, err := merkle.NewStateTrie(id, triedb)
 			if err != nil {
 				t.Fatal(err)
 			}
-			storeIt := trie.NewIterator(storeTrie.MustNodeIterator(nil))
+			storeIt := merkle.NewIterator(storeTrie.MustNodeIterator(nil))
 			for storeIt.Next() {
 				slots++
 			}
