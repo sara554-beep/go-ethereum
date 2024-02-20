@@ -21,8 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/params"
-	"github.com/holiman/uint256"
 	"math/big"
 	"os"
 	"time"
@@ -37,8 +35,10 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 	cli "github.com/urfave/cli/v2"
 )
 
@@ -121,6 +121,16 @@ geth snapshot find-deployable finds all deployable accounts for debugging purpos
 				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
 				Description: `
 geth snapshot find-zerononce-whale finds all zero-nonce accounts with a lot of funds.
+`,
+			},
+			{
+				Name:      "find-zerononce-contract",
+				Usage:     "",
+				ArgsUsage: "",
+				Action:    findZeroNonceContract,
+				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Description: `
+geth snapshot find-zerononce-contract finds all zero-nonce contracts.
 `,
 			},
 			{
@@ -853,6 +863,34 @@ func findZeroNonceWhale(ctx *cli.Context) error {
 	)
 	for _, hash := range hashes {
 		log.Info("Zero-nonce whales", "hash", hash.Hex())
+	}
+	return nil
+}
+
+func findZeroNonceContract(ctx *cli.Context) error {
+	var (
+		total int
+		list  []common.Hash
+	)
+	onAccount := func(hash common.Hash, account *types.StateAccount) {
+		if account.Nonce != 0 {
+			return
+		}
+		if bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes()) && account.Root == types.EmptyRootHash {
+			return
+		}
+		total += 1
+
+		if len(list) < 10 {
+			list = append(list, hash)
+		}
+	}
+	if err := iterateAccounts(ctx, onAccount); err != nil {
+		return err
+	}
+	log.Info("Iterated state", "total", total)
+	for _, hash := range list {
+		log.Info("Zero nonce contract", "hash", hash.Hex())
 	}
 	return nil
 }
