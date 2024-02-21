@@ -17,10 +17,8 @@
 package merkle
 
 import (
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb/database"
-	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 // Opener implements state.TrieOpener for constructing tries.
@@ -29,16 +27,11 @@ type Opener struct {
 }
 
 // NewOpener creates the merkle trie opener.
-func NewOpener(db database.NodeDatabase) state.TrieOpener {
+func NewOpener(db database.NodeDatabase) trie.Opener {
 	return &Opener{db: db}
 }
 
-// OpenTrie opens the main account trie.
-func (o *Opener) OpenTrie(root common.Hash) (state.Trie, error) {
-	return New(trie.TrieID(root), o.db)
-}
-
-// OpenStorageTrie opens the storage trie of an account.
-func (o *Opener) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (state.Trie, error) {
-	return New(trie.StorageTrieID(stateRoot, addrHash, root), o.db)
+// Open opens the trie specified by the id.
+func (o *Opener) Open(id *trie.ID) (trie.Trie, error) {
+	return New(id, o.db)
 }

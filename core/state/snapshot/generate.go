@@ -32,9 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/merkle"
-	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/dbconfig"
 )
 
 var (
@@ -72,7 +70,7 @@ func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *triedb.Database, cache
 	}
 	base := &diskLayer{
 		diskdb:     diskdb,
-		triedb:     triedb,
+		opener:     merkle.NewOpener(triedb),
 		root:       root,
 		cache:      fastcache.New(cache * 1024 * 1024),
 		genMarker:  genMarker,
@@ -120,12 +118,12 @@ func journalProgress(db ethdb.KeyValueWriter, marker []byte, stats *generatorSta
 // proofResult contains the output of range proving which can be used
 // for further processing regardless if it is successful or not.
 type proofResult struct {
-	keys     [][]byte     // The key set of all elements being iterated, even proving is failed
-	vals     [][]byte     // The val set of all elements being iterated, even proving is failed
-	diskMore bool         // Set when the database has extra snapshot states since last iteration
-	trieMore bool         // Set when the trie has extra snapshot states(only meaningful for successful proving)
-	proofErr error        // Indicator whether the given state range is valid or not
-	tr       *merkle.Trie // The trie, in case the trie was resolved by the prover (may be nil)
+	keys     [][]byte  // The key set of all elements being iterated, even proving is failed
+	vals     [][]byte  // The val set of all elements being iterated, even proving is failed
+	diskMore bool      // Set when the database has extra snapshot states since last iteration
+	trieMore bool      // Set when the trie has extra snapshot states(only meaningful for successful proving)
+	proofErr error     // Indicator whether the given state range is valid or not
+	tr       trie.Trie // The trie, in case the trie was resolved by the prover (may be nil)
 }
 
 // valid returns the indicator that range proof is successful or not.
@@ -166,7 +164,6 @@ func (dl *diskLayer) proveRange(ctx *generatorContext, trieId *trie.ID, prefix [
 	var (
 		keys     [][]byte
 		vals     [][]byte
-		proof    = rawdb.NewMemoryDatabase()
 		diskMore = false
 		iter     = ctx.iterator(kind)
 		start    = time.Now()
@@ -228,67 +225,21 @@ func (dl *diskLayer) proveRange(ctx *generatorContext, trieId *trie.ID, prefix [
 		}
 	}(time.Now())
 
-	// The snap state is exhausted, pass the entire key/val set for verification
-	root := trieId.Root
-	if origin == nil && !diskMore {
-		stackTr := merkle.NewStackTrie(nil)
-		for i, key := range keys {
-			if err := stackTr.Update(key, vals[i]); err != nil {
-				return nil, err
-			}
-		}
-		if gotRoot := stackTr.Hash(); gotRoot != root {
-			return &proofResult{
-				keys:     keys,
-				vals:     vals,
-				proofErr: fmt.Errorf("wrong root: have %#x want %#x", gotRoot, root),
-			}, nil
-		}
-		return &proofResult{keys: keys, vals: vals}, nil
-	}
-	// Snap state is chunked, generate edge proofs for verification.
-	tr, err := merkle.New(trieId, dl.triedb)
+	// Verify if the states are matched with the trie.
+	tr, err := dl.opener.Open(trieId)
 	if err != nil {
 		ctx.stats.Log("Trie missing, state snapshotting paused", dl.root, dl.genMarker)
 		return nil, errMissingTrie
 	}
-	// Generate the Merkle proofs for the first and last element
-	if origin == nil {
-		origin = common.Hash{}.Bytes()
-	}
-	if err := tr.Prove(origin, proof); err != nil {
-		log.Debug("Failed to prove range", "kind", kind, "origin", origin, "err", err)
-		return &proofResult{
-			keys:     keys,
-			vals:     vals,
-			diskMore: diskMore,
-			proofErr: err,
-			tr:       tr,
-		}, nil
-	}
-	if len(keys) > 0 {
-		if err := tr.Prove(keys[len(keys)-1], proof); err != nil {
-			log.Debug("Failed to prove range", "kind", kind, "last", keys[len(keys)-1], "err", err)
-			return &proofResult{
-				keys:     keys,
-				vals:     vals,
-				diskMore: diskMore,
-				proofErr: err,
-				tr:       tr,
-			}, nil
-		}
-	}
-	// Verify the snapshot segment with range prover, ensure that all flat states
-	// in this range correspond to merkle trie.
-	cont, err := merkle.VerifyRangeProof(root, origin, keys, vals, proof)
+	cont, err := tr.VerifyRange(origin, keys, vals, origin == nil && !diskMore)
 	return &proofResult{
-			keys:     keys,
-			vals:     vals,
-			diskMore: diskMore,
-			trieMore: cont,
-			proofErr: err,
-			tr:       tr},
-		nil
+		keys:     keys,
+		vals:     vals,
+		diskMore: diskMore,
+		trieMore: cont,
+		proofErr: err,
+		tr:       tr,
+	}, nil
 }
 
 // onStateCallback is a function that is called by generateRange, when processing a range of
@@ -353,32 +304,32 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 	}
 	// We use the snap data to build up a cache which can be used by the
 	// main account trie as a primary lookup when resolving hashes
-	var resolver trie.NodeResolver
-	if len(result.keys) > 0 {
-		mdb := rawdb.NewMemoryDatabase()
-		tdb := triedb.NewDatabase(mdb, &dbconfig.HashDefaults)
-		defer tdb.Close()
-		snapTrie := merkle.NewEmpty(tdb)
-		for i, key := range result.keys {
-			snapTrie.Update(key, result.vals[i])
-		}
-		root, nodes, err := snapTrie.Commit(false)
-		if err != nil {
-			return false, nil, err
-		}
-		if nodes != nil {
-			tdb.Update(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes), nil)
-			tdb.Commit(root, false)
-		}
-		resolver = func(owner common.Hash, path []byte, hash common.Hash) []byte {
-			return rawdb.ReadTrieNode(mdb, owner, path, hash, tdb.Scheme())
-		}
-	}
+	//var resolver trie.NodeResolver
+	//if len(result.keys) > 0 {
+	//	mdb := rawdb.NewMemoryDatabase()
+	//	tdb := triedb.NewDatabase(mdb, &dbconfig.HashDefaults)
+	//	defer tdb.Close()
+	//	snapTrie := merkle.NewEmpty(tdb)
+	//	for i, key := range result.keys {
+	//		snapTrie.Update(key, result.vals[i])
+	//	}
+	//	root, nodes, err := snapTrie.Commit(false)
+	//	if err != nil {
+	//		return false, nil, err
+	//	}
+	//	if nodes != nil {
+	//		tdb.Update(root, types.EmptyRootHash, 0, trienode.NewWithNodeSet(nodes), nil)
+	//		tdb.Commit(root, false)
+	//	}
+	//	resolver = func(owner common.Hash, path []byte, hash common.Hash) []byte {
+	//		return rawdb.ReadTrieNode(mdb, owner, path, hash, tdb.Scheme())
+	//	}
+	//}
 	// Construct the trie for state iteration, reuse the trie
 	// if it's already opened with some nodes resolved.
 	tr := result.tr
 	if tr == nil {
-		tr, err = merkle.New(trieId, dl.triedb)
+		tr, err = dl.opener.Open(trieId)
 		if err != nil {
 			ctx.stats.Log("Trie missing, state snapshotting paused", dl.root, dl.genMarker)
 			return false, nil, errMissingTrie
@@ -399,15 +350,15 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 		start    = time.Now()
 		internal time.Duration
 	)
-	nodeIt, err := tr.NodeIterator(origin)
+	iter, err := tr.NodeIterator(origin)
 	if err != nil {
 		return false, nil, err
 	}
-	nodeIt.AddResolver(resolver)
-	iter := merkle.NewIterator(nodeIt)
-
-	for iter.Next() {
-		if last != nil && bytes.Compare(iter.Key, last) > 0 {
+	for iter.Next(true) {
+		if !iter.Leaf() {
+			continue
+		}
+		if last != nil && bytes.Compare(iter.LeafKey(), last) > 0 {
 			trieMore = true
 			break
 		}
@@ -415,7 +366,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 		write := true
 		created++
 		for len(kvkeys) > 0 {
-			if cmp := bytes.Compare(kvkeys[0], iter.Key); cmp < 0 {
+			if cmp := bytes.Compare(kvkeys[0], iter.LeafKey()); cmp < 0 {
 				// delete the key
 				istart := time.Now()
 				if err := onState(kvkeys[0], nil, false, true); err != nil {
@@ -429,7 +380,7 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 			} else if cmp == 0 {
 				// the snapshot key can be overwritten
 				created--
-				if write = !bytes.Equal(kvvals[0], iter.Value); write {
+				if write = !bytes.Equal(kvvals[0], iter.LeafBlob()); write {
 					updated++
 				} else {
 					untouched++
@@ -440,17 +391,17 @@ func (dl *diskLayer) generateRange(ctx *generatorContext, trieId *trie.ID, prefi
 			break
 		}
 		istart := time.Now()
-		if err := onState(iter.Key, iter.Value, write, false); err != nil {
+		if err := onState(iter.LeafKey(), iter.LeafBlob(), write, false); err != nil {
 			return false, nil, err
 		}
 		internal += time.Since(istart)
 	}
-	if iter.Err != nil {
+	if iter.Error() != nil {
 		// Trie errors should never happen. Still, in case of a bug, expose the
 		// error here, as the outer code will presume errors are interrupts, not
 		// some deeper issues.
-		log.Error("State snapshotter failed to iterate trie", "err", iter.Err)
-		return false, nil, iter.Err
+		log.Error("State snapshotter failed to iterate trie", "err", iter.Error())
+		return false, nil, iter.Error()
 	}
 	// Delete all stale snapshot states remaining
 	istart := time.Now()
