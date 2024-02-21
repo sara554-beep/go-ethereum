@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/triedb"
 )
 
@@ -134,7 +135,7 @@ func loadSnapshot(diskdb ethdb.KeyValueStore, triedb *triedb.Database, root comm
 	}
 	base := &diskLayer{
 		diskdb: diskdb,
-		triedb: triedb,
+		opener: merkle.NewOpener(triedb),
 		cache:  fastcache.New(cache * 1024 * 1024),
 		root:   baseRoot,
 	}

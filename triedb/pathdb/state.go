@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package state
+package pathdb
 
 import (
 	"errors"
@@ -23,34 +23,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
-
-// Trie is an Ethereum state trie, can be implemented by Ethereum Merkle Patricia
-// tree or Verkle tree.
-type Trie interface {
-	// Get returns the value for key stored in the trie.
-	Get(key []byte) ([]byte, error)
-
-	// Update associates key with value in the trie.
-	Update(key, value []byte) error
-
-	// Delete removes any existing value for key from the trie.
-	Delete(key []byte) error
-
-	// Commit the trie and returns a set of dirty nodes generated along with
-	// the new root hash.
-	Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, error)
-}
-
-// TrieOpener wraps functions to load tries.
-type TrieOpener interface {
-	// OpenTrie opens the main account trie.
-	OpenTrie(root common.Hash) (Trie, error)
-
-	// OpenStorageTrie opens the storage trie of an account.
-	OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (Trie, error)
-}
 
 // context wraps all fields for executing state diffs.
 type context struct {
@@ -58,14 +33,14 @@ type context struct {
 	postRoot    common.Hash
 	accounts    map[common.Hash][]byte
 	storages    map[common.Hash]map[common.Hash][]byte
-	accountTrie Trie
+	accountTrie trie.Trie
 	nodes       *trienode.MergedNodeSet
 }
 
-// Apply traverses the provided state diffs, applying them in the associated
+// apply traverses the provided state diffs, applying them in the associated
 // post-state and return the produced trie changes.
-func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, opener TrieOpener) (map[common.Hash]map[string]*trienode.Node, error) {
-	tr, err := opener.OpenTrie(postRoot)
+func apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash][]byte, storages map[common.Hash]map[common.Hash][]byte, opener trie.Opener) (map[common.Hash]map[string]*trienode.Node, error) {
+	tr, err := opener.Open(trie.StateTrieID(postRoot))
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +79,7 @@ func Apply(prevRoot common.Hash, postRoot common.Hash, accounts map[common.Hash]
 // updateAccount the account was present in prev-state, and may or may not
 // existent in post-state. Apply the reverse diff and verify if the storage
 // root matches the one in prev-state account.
-func updateAccount(ctx *context, opener TrieOpener, addrHash common.Hash) error {
+func updateAccount(ctx *context, opener trie.Opener, addrHash common.Hash) error {
 	// The account was present in prev-state, decode it from the
 	// 'slim-rlp' format bytes.
 	prev, err := types.FullAccount(ctx.accounts[addrHash])
@@ -124,7 +99,7 @@ func updateAccount(ctx *context, opener TrieOpener, addrHash common.Hash) error 
 		}
 	}
 	// Apply all storage changes into the post-state storage trie.
-	st, err := opener.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
+	st, err := opener.Open(trie.StorageTrieID(ctx.postRoot, addrHash, post.Root))
 	if err != nil {
 		return err
 	}
@@ -164,7 +139,7 @@ func updateAccount(ctx *context, opener TrieOpener, addrHash common.Hash) error 
 // deleteAccount the account was not present in prev-state, and is expected
 // to be existent in post-state. Apply the reverse diff and verify if the
 // account and storage is wiped out correctly.
-func deleteAccount(ctx *context, opener TrieOpener, addrHash common.Hash) error {
+func deleteAccount(ctx *context, opener trie.Opener, addrHash common.Hash) error {
 	// The account must be existent in post-state, load the account.
 	blob, err := ctx.accountTrie.Get(addrHash.Bytes())
 	if err != nil {
@@ -177,7 +152,7 @@ func deleteAccount(ctx *context, opener TrieOpener, addrHash common.Hash) error 
 	if err := rlp.DecodeBytes(blob, &post); err != nil {
 		return err
 	}
-	st, err := opener.OpenStorageTrie(ctx.postRoot, addrHash, post.Root)
+	tr, err := opener.Open(trie.StorageTrieID(ctx.postRoot, addrHash, post.Root))
 	if err != nil {
 		return err
 	}
@@ -185,11 +160,11 @@ func deleteAccount(ctx *context, opener TrieOpener, addrHash common.Hash) error 
 		if len(val) != 0 {
 			return errors.New("expect storage deletion")
 		}
-		if err := st.Delete(key.Bytes()); err != nil {
+		if err := tr.Delete(key.Bytes()); err != nil {
 			return err
 		}
 	}
-	root, result, err := st.Commit(false)
+	root, result, err := tr.Commit(false)
 	if err != nil {
 		return err
 	}

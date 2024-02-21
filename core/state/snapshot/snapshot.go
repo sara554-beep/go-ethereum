@@ -647,7 +647,7 @@ func diffToDisk(bottom *diffLayer) *diskLayer {
 		root:       bottom.root,
 		cache:      base.cache,
 		diskdb:     base.diskdb,
-		triedb:     base.triedb,
+		opener:     base.opener,
 		genMarker:  base.genMarker,
 		genPending: base.genPending,
 	}

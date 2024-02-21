@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/internal/testrand"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/database"
 	"github.com/ethereum/go-ethereum/triedb/state"
@@ -106,7 +107,7 @@ func newTester(t *testing.T, historyLimit uint64) *tester {
 			StateHistory:   historyLimit,
 			CleanCacheSize: 16 * 1024,
 			DirtyCacheSize: 16 * 1024,
-			TrieOpener: func(db database.NodeDatabase) state.TrieOpener {
+			TrieOpener: func(db database.NodeDatabase) trie.Opener {
 				return newHashOpener(snapAccounts, snapStorages)
 			},
 		})
@@ -606,7 +607,7 @@ func TestTailTruncateHistory(t *testing.T) {
 	defer tester.release()
 
 	tester.db.Close()
-	tester.db = New(tester.db.diskdb, &Config{StateHistory: 10, TrieOpener: func(db database.NodeDatabase) state.TrieOpener { return nil }})
+	tester.db = New(tester.db.diskdb, &Config{StateHistory: 10, TrieOpener: func(db database.NodeDatabase) trie.Opener { return nil }})
 
 	head, err := tester.db.freezer.Ancients()
 	if err != nil {

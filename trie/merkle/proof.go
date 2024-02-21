@@ -22,6 +22,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie/reader"
@@ -614,4 +615,38 @@ func get(tn node, key []byte, skipResolved bool) ([]byte, node) {
 			panic(fmt.Sprintf("%T: invalid node: %v", tn, tn))
 		}
 	}
+}
+
+// VerifyRange verifies whether the given consequent states are matched with
+// the trie or not. And a flag will be returned indicating if there are more
+// state elements after the batch exists in the trie.
+func (t *Trie) VerifyRange(origin []byte, keys [][]byte, values [][]byte, complete bool) (bool, error) {
+	// If the provided state batch is claimed as complete, directly
+	// complete the root of the batch instead of proving ranges.
+	if complete {
+		tr := NewStackTrie(nil)
+		for i, key := range keys {
+			if err := tr.Update(key, values[i]); err != nil {
+				return false, err
+			}
+		}
+		if gotRoot := tr.Hash(); gotRoot != t.Hash() {
+			return false, errors.New("hash is not matched")
+		}
+		return false, nil // no more elements in trie for sure
+	}
+	// Prove the provided state range using range proof as it's chunked.
+	if origin == nil {
+		origin = common.Hash{}.Bytes()
+	}
+	proof := rawdb.NewMemoryDatabase()
+	if err := t.Prove(origin, proof); err != nil {
+		return false, err
+	}
+	if len(keys) > 0 {
+		if err := t.Prove(keys[len(keys)-1], proof); err != nil {
+			return false, err
+		}
+	}
+	return VerifyRangeProof(t.Hash(), origin, keys, values, proof)
 }

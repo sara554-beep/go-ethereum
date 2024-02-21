@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/database"
 	"github.com/ethereum/go-ethereum/triedb/state"
@@ -106,7 +107,7 @@ type Database struct {
 	diskdb     ethdb.Database           // Persistent storage for matured trie nodes
 	tree       *layerTree               // The group for all known layers
 	freezer    *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
-	trieOpener state.TrieOpener         // Trie loader to open trie for state recovering
+	trieOpener trie.Opener              // Trie opener to construct trie
 	lock       sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 

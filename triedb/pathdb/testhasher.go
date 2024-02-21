@@ -23,8 +23,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/triedb/state"
 	"golang.org/x/exp/slices"
 )
 
@@ -111,6 +112,24 @@ func (h *testHasher) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet, e
 	return root, set, nil
 }
 
+// NodeIterator returns an iterator that returns nodes of the trie. Iteration
+// starts at the key after the given start key. And error will be returned
+// if fails to create node iterator.
+func (h *testHasher) NodeIterator(start []byte) (trie.NodeIterator, error) { panic("implement me") }
+
+// Prove constructs a Merkle proof for key. The result contains all encoded nodes
+// on the path to the value at key. The value itself is also included in the last
+// node and can be retrieved by verifying the proof.
+//
+// If the trie does not contain a value for key, the returned proof contains all
+// nodes of the longest existing prefix of the key (at least the root), ending
+// with the node that proves the absence of the key.
+func (h *testHasher) Prove(key []byte, proofDb ethdb.KeyValueWriter) error { panic("implement me") }
+
+func (h *testHasher) VerifyRange(origin []byte, keys [][]byte, values [][]byte, complete bool) (bool, error) {
+	panic("implement me")
+}
+
 // hash performs the hash computation upon the provided states.
 func hash(states map[common.Hash][]byte) (common.Hash, []byte) {
 	var hs []common.Hash
@@ -145,12 +164,10 @@ func newHashOpener(accounts map[common.Hash]map[common.Hash][]byte, storages map
 	}
 }
 
-// OpenTrie opens the main account trie.
-func (l *hashOpener) OpenTrie(root common.Hash) (state.Trie, error) {
-	return newTestHasher(common.Hash{}, root, l.accounts[root])
-}
-
-// OpenStorageTrie opens the storage trie of an account.
-func (l *hashOpener) OpenStorageTrie(stateRoot common.Hash, addrHash, root common.Hash) (state.Trie, error) {
-	return newTestHasher(addrHash, root, l.storages[stateRoot][addrHash])
+// Open opens the trie specified by the id
+func (l *hashOpener) Open(id *trie.ID) (trie.Trie, error) {
+	if id.Owner == (common.Hash{}) {
+		return newTestHasher(common.Hash{}, id.StateRoot, l.accounts[id.StateRoot])
+	}
+	return newTestHasher(id.Owner, id.Root, l.storages[id.StateRoot][id.Owner])
 }

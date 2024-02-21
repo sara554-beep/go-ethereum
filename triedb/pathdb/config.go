@@ -21,17 +21,17 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb/database"
-	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 // Config contains the settings for database.
 type Config struct {
-	StateHistory   uint64                                          // Number of recent blocks to maintain state history for
-	CleanCacheSize int                                             // Maximum memory allowance (in bytes) for caching clean nodes
-	DirtyCacheSize int                                             // Maximum memory allowance (in bytes) for caching dirty nodes
-	ReadOnly       bool                                            // Flag whether the database is opened in read only mode.
-	TrieOpener     func(db database.NodeDatabase) state.TrieOpener // Function to create trie loader for trie state transition
+	StateHistory   uint64                                     // Number of recent blocks to maintain state history for
+	CleanCacheSize int                                        // Maximum memory allowance (in bytes) for caching clean nodes
+	DirtyCacheSize int                                        // Maximum memory allowance (in bytes) for caching dirty nodes
+	ReadOnly       bool                                       // Flag whether the database is opened in read only mode.
+	TrieOpener     func(db database.NodeDatabase) trie.Opener // Function to create trie opener
 }
 
 // sanitize checks the provided user configurations and changes anything that's
