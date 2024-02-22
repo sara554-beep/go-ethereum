@@ -90,7 +90,7 @@ func NewDatabase(diskdb ethdb.Database, config *Config) *Database {
 		preimages: preimages,
 	}
 	if config.PathDB != nil {
-		db.backend = pathdb.New(diskdb, config.PathDB, config.IsVerkle)
+		db.backend = pathdb.New(diskdb, config.PathDB)
 	} else {
 		db.backend = hashdb.New(diskdb, config.HashDB)
 	}

@@ -197,6 +197,40 @@ func TestStateRevert(t *testing.T) {
 	}
 }
 
+func compareStates(a, b *stateSet) bool {
+	if !reflect.DeepEqual(a.destructSet, b.destructSet) {
+		return false
+	}
+	if !reflect.DeepEqual(a.accountData, b.accountData) {
+		return false
+	}
+	if !reflect.DeepEqual(a.storageData, b.storageData) {
+		return false
+	}
+	if len(a.journal.destructs) != len(b.journal.destructs) {
+		return false
+	}
+	for i := 0; i < len(a.journal.destructs); i++ {
+		if !reflect.DeepEqual(a.journal.destructs[i], b.journal.destructs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func compareStatesWithOrigin(a, b *stateSetWithOrigin) bool {
+	if !compareStates(a.stateSet, b.stateSet) {
+		return false
+	}
+	if !reflect.DeepEqual(a.accountOrigin, b.accountOrigin) {
+		return false
+	}
+	if !reflect.DeepEqual(a.storageOrigin, b.storageOrigin) {
+		return false
+	}
+	return true
+}
+
 func TestStateEncode(t *testing.T) {
 	s := newStates(
 		map[common.Hash]struct{}{
@@ -211,6 +245,14 @@ func TestStateEncode(t *testing.T) {
 			},
 		},
 	)
+	s.journal.add([]destruct{
+		{common.Hash{0x1}, true},
+		{common.Hash{0x2}, false},
+	})
+	s.journal.add([]destruct{
+		{common.Hash{0x3}, true},
+		{common.Hash{0x4}, false},
+	})
 	buf := bytes.NewBuffer(nil)
 	if err := s.encode(buf); err != nil {
 		t.Fatalf("Failed to encode states, %v", err)
@@ -219,8 +261,8 @@ func TestStateEncode(t *testing.T) {
 	if err := dec.decode(rlp.NewStream(buf, 0)); err != nil {
 		t.Fatalf("Failed to decode states, %v", err)
 	}
-	if !reflect.DeepEqual(s, &dec) {
-		t.Fatal("Unexpected content")
+	if !compareStates(s, &dec) {
+		t.Fatalf("Unexpected content")
 	}
 }
 
@@ -254,7 +296,7 @@ func TestStateWithOriginEncode(t *testing.T) {
 	if err := dec.decode(rlp.NewStream(buf, 0)); err != nil {
 		t.Fatalf("Failed to decode states, %v", err)
 	}
-	if !reflect.DeepEqual(s, &dec) {
+	if !compareStatesWithOrigin(s, &dec) {
 		t.Fatal("Unexpected content")
 	}
 }

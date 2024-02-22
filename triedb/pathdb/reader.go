@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/triedb/database"
 )
 
@@ -42,17 +43,11 @@ func (loc *nodeLoc) string() string {
 	return fmt.Sprintf("loc: %s, depth: %d", loc.loc, loc.depth)
 }
 
-// readOption contains the configurations for reader.
-type readOption struct {
-	checkHash bool
-	hasher    func([]byte) common.Hash
-}
-
 // reader implements the Reader interface, providing the functionalities to
 // retrieve trie nodes by wrapping the internal state layer.
 type reader struct {
 	layer  layer
-	option *readOption
+	hasher crypto.KeccakState
 }
 
 // Node implements trie.Reader interface, retrieving the node with specified
@@ -63,13 +58,7 @@ func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	// Skip the hash comparison if it's disabled. Normally it will be configured
-	// in the verkle context because slim format is used in verkle which doesn't
-	// store the node hash at all to reduce read/write amplification.
-	if !r.option.checkHash {
-		return blob, nil
-	}
-	if got := r.option.hasher(blob); got != hash {
+	if got := crypto.HashData(r.hasher, blob); got != hash {
 		switch loc.loc {
 		case locCleanCache:
 			cleanFalseMeter.Mark(1)
@@ -113,7 +102,7 @@ func (db *Database) NodeReader(root common.Hash) (database.NodeReader, error) {
 	if layer == nil {
 		return nil, fmt.Errorf("state %#x is not available", root)
 	}
-	return &reader{layer: layer, option: db.readOption}, nil
+	return &reader{layer: layer, hasher: crypto.NewKeccakState()}, nil
 }
 
 // StateReader retrieves a layer belonging to the given state root.
@@ -122,5 +111,5 @@ func (db *Database) StateReader(root common.Hash) (database.StateReader, error) 
 	if layer == nil {
 		return nil, fmt.Errorf("state %#x is not available", root)
 	}
-	return &reader{layer: layer, option: db.readOption}, nil
+	return &reader{layer: layer, hasher: crypto.NewKeccakState()}, nil
 }

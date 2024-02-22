@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -107,7 +108,7 @@ func (db *Database) loadLayers() layer {
 	// Retrieve the root node of persistent state.
 	var root = types.EmptyRootHash
 	if blob := rawdb.ReadAccountTrieNode(db.diskdb, nil); len(blob) > 0 {
-		root = db.config.Hasher(blob)
+		root = crypto.Keccak256Hash(blob)
 	}
 	// Load the layers by resolving the journal
 	head, err := db.loadJournal(root)
@@ -318,7 +319,7 @@ func (db *Database) Journal(root common.Hash) error {
 	// on top are continuous with disk.
 	diskRoot := types.EmptyRootHash
 	if blob := rawdb.ReadAccountTrieNode(db.diskdb, nil); len(blob) > 0 {
-		diskRoot = db.config.Hasher(blob)
+		diskRoot = crypto.Keccak256Hash(blob)
 	}
 	if err := rlp.Encode(journal, diskRoot); err != nil {
 		return err

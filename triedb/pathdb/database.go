@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
@@ -128,33 +129,23 @@ type Database struct {
 	tree       *layerTree               // The group for all known layers
 	freezer    *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
 	trieOpener trie.Opener              // Trie opener to construct trie
-	readOption *readOption              // Options for constructing reader.
 	lock       sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 
 // New attempts to load an already existing layer from a persistent key-value
 // store (with a number of memory layers from a journal). If the journal is not
 // matched with the base persistent layer, all the recorded diff layers are discarded.
-func New(diskdb ethdb.Database, config *Config, verkle bool) *Database {
+func New(diskdb ethdb.Database, config *Config) *Database {
 	var err error
 	config, err = config.sanitize()
 	if err != nil {
 		log.Crit("Path database config is invalid", "err", err)
-	}
-	// Establish a dedicated database namespace tailored for verkle-specific
-	// data, ensuring the isolation of both verkle and merkle tree data. It's
-	// important to note that the introduction of a prefix won't lead to
-	// substantial storage overhead, as the underlying database will efficiently
-	// compress the shared key prefix.
-	if verkle {
-		diskdb = rawdb.NewTable(diskdb, string(rawdb.VerklePrefix))
 	}
 	db := &Database{
 		readOnly:   config.ReadOnly,
 		bufferSize: config.DirtyCacheSize,
 		config:     config,
 		diskdb:     diskdb,
-		readOption: &readOption{checkHash: !verkle, hasher: config.Hasher},
 	}
 	// Construct the layer tree by resolving the in-disk singleton state
 	// and in-memory layer journal.
@@ -168,7 +159,7 @@ func New(diskdb ethdb.Database, config *Config, verkle bool) *Database {
 	// mechanism also ensures that at most one **non-readOnly** database
 	// is opened at the same time to prevent accidental mutation.
 	if ancient, err := diskdb.AncientDatadir(); err == nil && ancient != "" && !db.readOnly {
-		freezer, err := rawdb.NewStateFreezer(ancient, verkle, false)
+		freezer, err := rawdb.NewStateFreezer(ancient, false)
 		if err != nil {
 			log.Crit("Failed to open state history freezer", "err", err)
 		}
@@ -292,7 +283,7 @@ func (db *Database) Enable(root common.Hash) error {
 	}
 	// Ensure the provided state root matches the stored one.
 	root = types.TrieRootHash(root)
-	stored := db.config.Hasher(rawdb.ReadAccountTrieNode(db.diskdb, nil))
+	stored := crypto.Keccak256Hash(rawdb.ReadAccountTrieNode(db.diskdb, nil))
 	if stored != root {
 		return fmt.Errorf("state root mismatch: stored %x, synced %x", stored, root)
 	}

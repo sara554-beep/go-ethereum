@@ -271,7 +271,7 @@ func TestTruncateOutOfRange(t *testing.T) {
 
 // openFreezer initializes the freezer instance for storing state histories.
 func openFreezer(datadir string, readOnly bool) (*rawdb.ResettableFreezer, error) {
-	return rawdb.NewStateFreezer(datadir, false, readOnly)
+	return rawdb.NewStateFreezer(datadir, readOnly)
 }
 
 func compareSet[k comparable](a, b map[k][]byte) bool {

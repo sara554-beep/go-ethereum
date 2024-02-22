@@ -30,8 +30,8 @@ import (
 
 // destruct represents the record of destruct set modification.
 type destruct struct {
-	hash  common.Hash
-	exist bool
+	Hash  common.Hash
+	Exist bool
 }
 
 // journal contains the list of modifications applied for destruct set.
@@ -55,6 +55,19 @@ func (j *journal) pop() ([]destruct, error) {
 
 func (j *journal) reset() {
 	j.destructs = nil
+}
+
+func (j *journal) encode(w io.Writer) error {
+	return rlp.Encode(w, j.destructs)
+}
+
+func (j *journal) decode(r *rlp.Stream) error {
+	var dec [][]destruct
+	if err := r.Decode(&dec); err != nil {
+		return err
+	}
+	j.destructs = dec
+	return nil
 }
 
 // stateSet represents a collection of state modifications belonging to a
@@ -149,8 +162,8 @@ func (s *stateSet) merge(set *stateSet) {
 		// merge operation.
 		_, exist := s.destructSet[accountHash]
 		destructs = append(destructs, destruct{
-			hash:  accountHash,
-			exist: exist,
+			Hash:  accountHash,
+			Exist: exist,
 		})
 		s.destructSet[accountHash] = struct{}{}
 	}
@@ -194,10 +207,10 @@ func (s *stateSet) revert(accountOrigin map[common.Hash][]byte, storageOrigin ma
 	}
 	// Revert the modifications to the destructSet by journal.
 	for _, entry := range destructs {
-		if entry.exist {
+		if entry.Exist {
 			continue
 		}
-		delete(s.destructSet, entry.hash)
+		delete(s.destructSet, entry.Hash)
 	}
 	// Overwrite the account data with original value blindly.
 	for addrHash, blob := range accountOrigin {
@@ -267,7 +280,12 @@ func (s *stateSet) encode(w io.Writer) error {
 		}
 		storages = append(storages, Storage{Hash: hash, Keys: keys, Blobs: vals})
 	}
-	return rlp.Encode(w, storages)
+	if err := rlp.Encode(w, storages); err != nil {
+		return err
+	}
+
+	// Encode journal
+	return s.journal.encode(w)
 }
 
 func (s *stateSet) decode(r *rlp.Stream) error {
@@ -321,8 +339,10 @@ func (s *stateSet) decode(r *rlp.Stream) error {
 		}
 	}
 	s.storageData = storageSet
+
+	// Decode journal
 	s.journal = &journal{}
-	return nil
+	return s.journal.decode(r)
 }
 
 // write flushes the accumulated state mutations into provided database batch.

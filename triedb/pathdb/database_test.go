@@ -112,10 +112,7 @@ func newTester(t *testing.T, historyLimit uint64) *tester {
 			TrieOpener: func(db database.NodeDatabase) trie.Opener {
 				return newHashOpener(snapAccounts, snapStorages)
 			},
-			Hasher: func(blob []byte) common.Hash {
-				return crypto.Keccak256Hash(blob)
-			},
-		}, false)
+		})
 		obj = &tester{
 			db:           db,
 			preimages:    make(map[common.Hash]common.Address),
@@ -555,7 +552,7 @@ func TestJournal(t *testing.T) {
 		t.Errorf("Failed to journal, err: %v", err)
 	}
 	tester.db.Close()
-	tester.db = New(tester.db.diskdb, tester.db.config, false)
+	tester.db = New(tester.db.diskdb, tester.db.config)
 
 	// Verify states including disk layer and all diff on top.
 	for i := 0; i < len(tester.roots); i++ {
@@ -593,7 +590,7 @@ func TestCorruptedJournal(t *testing.T) {
 	rawdb.WriteTrieJournal(tester.db.diskdb, blob)
 
 	// Verify states, all not-yet-written states should be discarded
-	tester.db = New(tester.db.diskdb, tester.db.config, false)
+	tester.db = New(tester.db.diskdb, tester.db.config)
 	for i := 0; i < len(tester.roots); i++ {
 		if tester.roots[i] == root {
 			if err := tester.verifyState(root); err != nil {
@@ -631,10 +628,7 @@ func TestTailTruncateHistory(t *testing.T) {
 	tester.db = New(tester.db.diskdb, &Config{
 		StateHistory: 10,
 		TrieOpener:   func(db database.NodeDatabase) trie.Opener { return nil },
-		Hasher: func(blob []byte) common.Hash {
-			return crypto.Keccak256Hash(blob)
-		},
-	}, false)
+	})
 
 	head, err := tester.db.freezer.Ancients()
 	if err != nil {
