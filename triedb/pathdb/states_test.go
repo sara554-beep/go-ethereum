@@ -18,12 +18,12 @@ package pathdb
 
 import (
 	"bytes"
-	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/ethereum/go-ethereum/triedb/state"
 	"reflect"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
 func TestStatesMerge(t *testing.T) {

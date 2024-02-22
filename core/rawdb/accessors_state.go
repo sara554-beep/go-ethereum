@@ -305,10 +305,16 @@ func DeleteStorageState(db ethdb.KeyValueWriter, accountHash, storageHash common
 	}
 }
 
+// IterateAccountStates returns an iterator for walking the entire storage
+// space of a specific account.
+func IterateAccountStates(db ethdb.Iteratee) ethdb.Iterator {
+	return NewKeyLengthIterator(db.NewIterator(StateAccountPrefix, nil), len(StateAccountPrefix)+common.HashLength)
+}
+
 // IterateStorageStates returns an iterator for walking the entire storage
 // space of a specific account.
 func IterateStorageStates(db ethdb.Iteratee, accountHash common.Hash) ethdb.Iterator {
-	return NewKeyLengthIterator(db.NewIterator(storageStatesKey(accountHash), nil), len(stateStoragePrefix)+2*common.HashLength)
+	return NewKeyLengthIterator(db.NewIterator(storageStatesKey(accountHash), nil), len(StateStoragePrefix)+2*common.HashLength)
 }
 
 // ReadStateGenerator retrieves the serialized snapshot generator saved at

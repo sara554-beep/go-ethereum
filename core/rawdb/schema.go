@@ -118,8 +118,8 @@ var (
 	// Path-based storage scheme of merkle patricia trie.
 	trieNodeAccountPrefix = []byte("A") // trieNodeAccountPrefix + hexPath -> trie node
 	trieNodeStoragePrefix = []byte("O") // trieNodeStoragePrefix + accountHash + hexPath -> trie node
-	stateAccountPrefix    = []byte("W") // stateAccountPrefix + account hash -> account value
-	stateStoragePrefix    = []byte("Y") // stateStoragePrefix + account hash + storage hash -> storage value
+	StateAccountPrefix    = []byte("W") // StateAccountPrefix + account hash -> account value
+	StateStoragePrefix    = []byte("Y") // StateStoragePrefix + account hash + storage hash -> storage value
 	stateIDPrefix         = []byte("L") // stateIDPrefix + state root -> state id
 
 	// VerklePrefix is the prefix of verkle states(verkle trie nodes,
@@ -225,23 +225,23 @@ func storageSnapshotsKey(accountHash common.Hash) []byte {
 	return append(SnapshotStoragePrefix, accountHash.Bytes()...)
 }
 
-// accountStateKey = stateAccountPrefix + hash
+// accountStateKey = StateAccountPrefix + hash
 func accountStateKey(hash common.Hash) []byte {
-	return append(stateAccountPrefix, hash.Bytes()...)
+	return append(StateAccountPrefix, hash.Bytes()...)
 }
 
-// storageStateKey = stateStoragePrefix + account hash + storage hash
+// storageStateKey = StateStoragePrefix + account hash + storage hash
 func storageStateKey(accountHash, storageHash common.Hash) []byte {
-	buf := make([]byte, len(stateStoragePrefix)+common.HashLength+common.HashLength)
-	n := copy(buf, stateStoragePrefix)
+	buf := make([]byte, len(StateStoragePrefix)+common.HashLength+common.HashLength)
+	n := copy(buf, StateStoragePrefix)
 	n += copy(buf[n:], accountHash.Bytes())
 	copy(buf[n:], storageHash.Bytes())
 	return buf
 }
 
-// storageStatesKey = stateStoragePrefix + account hash + storage hash
+// storageStatesKey = StateStoragePrefix + account hash + storage hash
 func storageStatesKey(accountHash common.Hash) []byte {
-	return append(stateStoragePrefix, accountHash.Bytes()...)
+	return append(StateStoragePrefix, accountHash.Bytes()...)
 }
 
 // bloomBitsKey = bloomBitsPrefix + bit (uint16 big endian) + section (uint64 big endian) + hash

@@ -533,9 +533,9 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			accountSnaps.Add(size)
 		case bytes.HasPrefix(key, SnapshotStoragePrefix) && len(key) == (len(SnapshotStoragePrefix)+2*common.HashLength):
 			storageSnaps.Add(size)
-		case bytes.HasPrefix(key, stateAccountPrefix) && len(key) == (len(stateAccountPrefix)+common.HashLength):
+		case bytes.HasPrefix(key, StateAccountPrefix) && len(key) == (len(StateAccountPrefix)+common.HashLength):
 			accountStates.Add(size)
-		case bytes.HasPrefix(key, stateStoragePrefix) && len(key) == (len(stateStoragePrefix)+2*common.HashLength):
+		case bytes.HasPrefix(key, StateStoragePrefix) && len(key) == (len(StateStoragePrefix)+2*common.HashLength):
 			storageStates.Add(size)
 		case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
 			preimages.Add(size)
