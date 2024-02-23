@@ -31,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 	"github.com/ethereum/go-ethereum/triedb/state"
 )
 
@@ -183,7 +184,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 		} else {
 			// Truncate the extra state histories above in freezer in case
 			// it's not aligned with the disk layer.
-			pruned, err := truncateFromHead(db.diskdb, freezer, diskLayerID)
+			pruned, err := history.TruncateHead(db.diskdb, freezer, diskLayerID)
 			if err != nil {
 				log.Crit("Failed to truncate extra state histories", "err", err)
 			}
@@ -340,7 +341,7 @@ func (db *Database) Recover(root common.Hash) error {
 		dl    = db.tree.bottom()
 	)
 	for dl.rootHash() != root {
-		h, err := readHistory(db.freezer, dl.stateID())
+		h, err := history.Read(db.freezer, dl.stateID())
 		if err != nil {
 			return err
 		}
@@ -354,7 +355,7 @@ func (db *Database) Recover(root common.Hash) error {
 		db.tree.reset(dl)
 	}
 	rawdb.DeleteTrieJournal(db.diskdb)
-	_, err := truncateFromHead(db.diskdb, db.freezer, dl.stateID())
+	_, err := history.TruncateHead(db.diskdb, db.freezer, dl.stateID())
 	if err != nil {
 		return err
 	}
@@ -363,10 +364,10 @@ func (db *Database) Recover(root common.Hash) error {
 }
 
 // Recoverable returns the indicator if the specified state is recoverable.
-func (db *Database) Recoverable(root common.Hash) bool {
+func (db *Database) Recoverable(dest common.Hash) bool {
 	// Ensure the requested state is a known state.
-	root = types.TrieRootHash(root)
-	id := rawdb.ReadStateID(db.diskdb, root)
+	dest = types.TrieRootHash(dest)
+	id := rawdb.ReadStateID(db.diskdb, dest)
 	if id == nil {
 		return false
 	}
@@ -379,11 +380,11 @@ func (db *Database) Recoverable(root common.Hash) bool {
 	}
 	// Ensure the requested state is a canonical state and all state
 	// histories in range [id+1, disklayer.ID] are reachable.
-	return checkHistories(db.freezer, *id+1, dl.stateID()-*id, func(m *meta) error {
-		if m.parent != root {
+	return history.ReadMetaBatch(db.freezer, *id+1, dl.stateID()-*id, func(parent, root common.Hash) error {
+		if parent != dest {
 			return errors.New("unexpected state history")
 		}
-		root = m.root
+		dest = root
 		return nil
 	}) == nil
 }

@@ -14,11 +14,12 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
 
-package pathdb
+package history
 
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"testing"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/testrand"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/holiman/uint256"
 )
 
 // randomStateSet generates a random state change set.
@@ -43,26 +45,31 @@ func randomStateSet(n int) (map[common.Address][]byte, map[common.Address]map[co
 			v, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(testrand.Bytes(32)))
 			storages[addr][testrand.Hash()] = v
 		}
-		account := generateAccount(types.EmptyRootHash)
+		account := types.StateAccount{
+			Nonce:    uint64(rand.Intn(100)),
+			Balance:  uint256.NewInt(rand.Uint64()),
+			CodeHash: testrand.Bytes(32),
+			Root:     types.EmptyRootHash,
+		}
 		accounts[addr] = types.SlimAccountRLP(account)
 	}
 	return accounts, storages
 }
 
-func makeHistory() *history {
+func makeHistory() *History {
 	accounts, storages := randomStateSet(3)
-	return newHistory(testrand.Hash(), types.EmptyRootHash, 0, accounts, storages)
+	return New(testrand.Hash(), types.EmptyRootHash, 0, accounts, storages)
 }
 
-func makeHistories(n int) []*history {
+func makeHistories(n int) []*History {
 	var (
 		parent = types.EmptyRootHash
-		result []*history
+		result []*History
 	)
 	for i := 0; i < n; i++ {
 		root := testrand.Hash()
 		accounts, storages := randomStateSet(3)
-		h := newHistory(root, parent, uint64(i), accounts, storages)
+		h := New(root, parent, uint64(i), accounts, storages)
 		parent = root
 		result = append(result, h)
 	}
@@ -72,7 +79,7 @@ func makeHistories(n int) []*history {
 func TestEncodeDecodeHistory(t *testing.T) {
 	var (
 		m   meta
-		dec history
+		dec History
 		obj = makeHistory()
 	)
 	// check if meta data can be correctly encode/decode
@@ -141,7 +148,7 @@ func TestTruncateHeadHistory(t *testing.T) {
 		roots = append(roots, hs[i].meta.root)
 	}
 	for size := len(hs); size > 0; size-- {
-		pruned, err := truncateFromHead(db, freezer, uint64(size-1))
+		pruned, err := TruncateHead(db, freezer, uint64(size-1))
 		if err != nil {
 			t.Fatalf("Failed to truncate from head %v", err)
 		}
@@ -169,7 +176,7 @@ func TestTruncateTailHistory(t *testing.T) {
 		roots = append(roots, hs[i].meta.root)
 	}
 	for newTail := 1; newTail < len(hs); newTail++ {
-		pruned, _ := truncateFromTail(db, freezer, uint64(newTail))
+		pruned, _ := TruncateTail(db, freezer, uint64(newTail))
 		if pruned != 1 {
 			t.Error("Unexpected pruned items", "want", 1, "got", pruned)
 		}
@@ -211,7 +218,7 @@ func TestTruncateTailHistories(t *testing.T) {
 			rawdb.WriteStateID(db, hs[i].meta.root, uint64(i+1))
 			roots = append(roots, hs[i].meta.root)
 		}
-		pruned, _ := truncateFromTail(db, freezer, uint64(10)-c.limit)
+		pruned, _ := TruncateTail(db, freezer, uint64(10)-c.limit)
 		if pruned != c.expPruned {
 			t.Error("Unexpected pruned items", "want", c.expPruned, "got", pruned)
 		}
@@ -238,7 +245,7 @@ func TestTruncateOutOfRange(t *testing.T) {
 		rawdb.WriteStateHistory(freezer, uint64(i+1), hs[i].meta.encode(), accountIndex, storageIndex, accountData, storageData)
 		rawdb.WriteStateID(db, hs[i].meta.root, uint64(i+1))
 	}
-	truncateFromTail(db, freezer, uint64(len(hs)/2))
+	TruncateTail(db, freezer, uint64(len(hs)/2))
 
 	// Ensure of-out-range truncations are rejected correctly.
 	head, _ := freezer.Ancients()
@@ -259,9 +266,9 @@ func TestTruncateOutOfRange(t *testing.T) {
 	for _, c := range cases {
 		var gotErr error
 		if c.mode == 0 {
-			_, gotErr = truncateFromHead(db, freezer, c.target)
+			_, gotErr = TruncateHead(db, freezer, c.target)
 		} else {
-			_, gotErr = truncateFromTail(db, freezer, c.target)
+			_, gotErr = TruncateTail(db, freezer, c.target)
 		}
 		if !reflect.DeepEqual(gotErr, c.expErr) {
 			t.Errorf("Unexpected error, want: %v, got: %v", c.expErr, gotErr)

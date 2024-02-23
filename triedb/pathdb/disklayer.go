@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 )
 
 // diskLayer is a low level persistent layer built on top of a key-value store.
@@ -203,7 +204,8 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 		oldest   uint64
 	)
 	if dl.db.freezer != nil {
-		err := writeHistory(dl.db.freezer, bottom)
+		h := history.New(bottom.root, bottom.parent.rootHash(), bottom.block, bottom.states.accountOrigin, bottom.states.storageOrigin)
+		err := history.Write(dl.db.freezer, bottom.stateID(), h)
 		if err != nil {
 			return nil, err
 		}
@@ -248,7 +250,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// To remove outdated history objects from the end, we set the 'tail' parameter
 	// to 'oldest-1' due to the offset between the freezer index and the history ID.
 	if overflow {
-		pruned, err := truncateFromTail(ndl.db.diskdb, ndl.db.freezer, oldest-1)
+		pruned, err := history.TruncateTail(ndl.db.diskdb, ndl.db.freezer, oldest-1)
 		if err != nil {
 			return nil, err
 		}
@@ -258,8 +260,8 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 }
 
 // revert applies the given state history and return a reverted disk layer.
-func (dl *diskLayer) revert(h *history) (*diskLayer, error) {
-	if h.meta.root != dl.rootHash() {
+func (dl *diskLayer) revert(h *history.History) (*diskLayer, error) {
+	if h.Root() != dl.rootHash() {
 		return nil, errUnexpectedHistory
 	}
 	if dl.id == 0 {
@@ -270,16 +272,16 @@ func (dl *diskLayer) revert(h *history) (*diskLayer, error) {
 		accounts = make(map[common.Hash][]byte)
 		storages = make(map[common.Hash]map[common.Hash][]byte)
 	)
-	for addr, blob := range h.accounts {
+	for addr, blob := range h.AccountData() {
 		accounts[crypto.HashData(hasher, addr.Bytes())] = blob
 	}
-	for addr, storage := range h.storages {
+	for addr, storage := range h.StorageData() {
 		storages[crypto.HashData(hasher, addr.Bytes())] = storage
 	}
 	// Apply the reverse state changes upon the current state. This must
 	// be done before holding the lock in order to access state in "this"
 	// layer.
-	nodes, err := apply(h.meta.parent, h.meta.root, accounts, storages, dl.db.trieOpener)
+	nodes, err := apply(h.Parent(), h.Root(), accounts, storages, dl.db.trieOpener)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +326,7 @@ func (dl *diskLayer) revert(h *history) (*diskLayer, error) {
 			log.Crit("Failed to write states", "err", err)
 		}
 	}
-	return newDiskLayer(h.meta.parent, dl.id-1, dl.db, dl.cleans, dl.buffer), nil
+	return newDiskLayer(h.Parent(), dl.id-1, dl.db, dl.cleans, dl.buffer), nil
 }
 
 // setBufferSize sets the node buffer size to the provided value.

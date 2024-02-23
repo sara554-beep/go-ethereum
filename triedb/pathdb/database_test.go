@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/triedb/database"
+	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 	"github.com/ethereum/go-ethereum/triedb/state"
 	"github.com/holiman/uint256"
 )
@@ -364,7 +365,7 @@ func (t *tester) verifyHistory() error {
 	for i, root := range t.roots {
 		// The state history related to the state above disk layer should not exist.
 		if i > bottom {
-			_, err := readHistory(t.db.freezer, uint64(i+1))
+			_, err := history.Read(t.db.freezer, uint64(i+1))
 			if err == nil {
 				return errors.New("unexpected state history")
 			}
@@ -372,7 +373,7 @@ func (t *tester) verifyHistory() error {
 		}
 		// The state history related to the state below or equal to the disk layer
 		// should exist.
-		obj, err := readHistory(t.db.freezer, uint64(i+1))
+		obj, err := history.Read(t.db.freezer, uint64(i+1))
 		if err != nil {
 			return err
 		}
@@ -380,11 +381,11 @@ func (t *tester) verifyHistory() error {
 		if i != 0 {
 			parent = t.roots[i-1]
 		}
-		if obj.meta.parent != parent {
-			return fmt.Errorf("unexpected parent, want: %x, got: %x", parent, obj.meta.parent)
+		if obj.Parent() != parent {
+			return fmt.Errorf("unexpected parent, want: %x, got: %x", parent, obj.Parent())
 		}
-		if obj.meta.root != root {
-			return fmt.Errorf("unexpected root, want: %x, got: %x", root, obj.meta.root)
+		if obj.Root() != root {
+			return fmt.Errorf("unexpected root, want: %x, got: %x", root, obj.Root())
 		}
 	}
 	return nil
