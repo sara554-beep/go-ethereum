@@ -130,6 +130,7 @@ type Database struct {
 	tree       *layerTree               // The group for all known layers
 	freezer    *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
 	trieOpener trie.Opener              // Trie opener to construct trie
+	indexer    *history.Indexer         // History indexer
 	lock       sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
 
@@ -192,6 +193,7 @@ func New(diskdb ethdb.Database, config *Config) *Database {
 				log.Warn("Truncated extra state histories", "number", pruned)
 			}
 		}
+		db.indexer = history.NewIndexer(diskdb, db.freezer, db.tree.bottom().stateID())
 	}
 	// Disable database in case node is still in the initial state sync stage.
 	if rawdb.ReadSnapSyncStatusFlag(diskdb) == rawdb.StateSyncRunning && !db.readOnly {

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 	"os"
 	"time"
 
@@ -80,17 +81,20 @@ In other words, this command does the snapshot to trie conversion.
 `,
 			},
 			{
-				Name:      "verify-state-2",
-				Usage:     "Recalculate state hash based on the snapshot for verification",
-				ArgsUsage: "<root>",
-				Action:    verifyState2,
-				Flags:     flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
-				Description: `
-geth snapshot verify-state <state-root>
-will traverse the whole accounts and storages set based on the specified
-snapshot and recalculate the root hash of state for verification.
-In other words, this command does the snapshot to trie conversion.
-`,
+				Name:        "verify-state-2",
+				Usage:       "Recalculate state hash based on the snapshot for verification",
+				ArgsUsage:   "<root>",
+				Action:      verifyState2,
+				Flags:       flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Description: ``,
+			},
+			{
+				Name:        "verify-history",
+				Usage:       "Recalculate state hash based on the snapshot for verification",
+				ArgsUsage:   "<root>",
+				Action:      verifyHistory,
+				Flags:       flags.Merge(utils.NetworkFlags, utils.DatabaseFlags),
+				Description: ``,
 			},
 			{
 				Name:      "check-dangling-storage",
@@ -283,6 +287,23 @@ func verifyState2(ctx *cli.Context) error {
 		return err
 	}
 	log.Info("Verified the state", "root", root)
+	return nil
+}
+
+func verifyHistory(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	chaindb := utils.MakeChainDatabase(ctx, stack, true)
+	defer chaindb.Close()
+
+	dir, _ := chaindb.AncientDatadir()
+	freezer, err := rawdb.NewStateFreezer(dir, true)
+	if err != nil {
+		log.Error("Failed to open freezer", "err", err)
+		return err
+	}
+	history.NewTraverser(chaindb, freezer).Traverse()
 	return nil
 }
 

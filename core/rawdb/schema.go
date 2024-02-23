@@ -79,6 +79,9 @@ var (
 	// trieJournalKey tracks the in-memory trie node layers across restarts.
 	trieJournalKey = []byte("TrieJournal")
 
+	// stateIndexHeadKey tracks the id of the latest state history has been indexed.
+	stateIndexHeadKey = []byte("StateIndexHead")
+
 	// txIndexTailKey tracks the oldest block whose transactions have been indexed.
 	txIndexTailKey = []byte("TransactionIndexTail")
 
@@ -121,10 +124,7 @@ var (
 	StateAccountPrefix    = []byte("W") // StateAccountPrefix + account hash -> account value
 	StateStoragePrefix    = []byte("Y") // StateStoragePrefix + account hash + storage hash -> storage value
 	stateIDPrefix         = []byte("L") // stateIDPrefix + state root -> state id
-
-	// VerklePrefix is the prefix of verkle states(verkle trie nodes,
-	// trie journal, persistent state id, state id lookups).
-	VerklePrefix = []byte("v")
+	stateIndexPrefix      = []byte("M") // stateIndexPrefix + account address or (account address + slotHash) -> index
 
 	PreimagePrefix = []byte("secure-key-")       // PreimagePrefix + hash -> preimage
 	configPrefix   = []byte("ethereum-config-")  // config prefix for the db
@@ -293,14 +293,44 @@ func stateIDKey(root common.Hash) []byte {
 	return append(stateIDPrefix, root.Bytes()...)
 }
 
+// stateIndexKey = stateIndexPrefix + owner + state
+func stateIndexKey(address common.Address, state common.Hash) []byte {
+	if state == (common.Hash{}) {
+		return append(stateIndexPrefix, address.Bytes()...)
+	}
+	return append(append(stateIndexPrefix, address.Bytes()...), state.Bytes()...)
+}
+
+// stateIndexBlockKey = stateIndexPrefix + owner + state + id
+func stateIndexBlockKey(address common.Address, state common.Hash, id uint32) []byte {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], id)
+	if state == (common.Hash{}) {
+		return append(append(stateIndexPrefix, address.Bytes()...), buf[:]...)
+	}
+	return append(append(append(stateIndexPrefix, address.Bytes()...), state.Bytes()...), buf[:]...)
+}
+
+// isStateIndexKey reports if the provided database key belongs to state index.
+func isStateIndexKey(key []byte) bool {
+	if !bytes.HasPrefix(key, stateIndexPrefix) {
+		return false
+	}
+	if len(key) == len(stateIndexPrefix)+common.AddressLength {
+		return true
+	}
+	if len(key) == len(stateIndexPrefix)+common.AddressLength+4 {
+		return true
+	}
+	if len(key) == len(stateIndexPrefix)+common.AddressLength+common.HashLength {
+		return true
+	}
+	return len(key) == len(stateIndexPrefix)+common.HashLength+common.AddressLength+4
+}
+
 // accountTrieNodeKey = trieNodeAccountPrefix + nodePath.
 func accountTrieNodeKey(path []byte) []byte {
 	return append(trieNodeAccountPrefix, path...)
-}
-
-// verkleTrieNodeKey = verklePrefix + trieNodeAccountPrefix + nodePath.
-func verkleTrieNodeKey(path []byte) []byte {
-	return append(VerklePrefix, append(trieNodeAccountPrefix, path...)...)
 }
 
 // storageTrieNodeKey = trieNodeStoragePrefix + accountHash + nodePath.

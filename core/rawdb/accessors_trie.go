@@ -277,9 +277,6 @@ func ReadStateScheme(db ethdb.Reader) string {
 	// Check if state in path-based scheme is present, it can be either
 	// merkle tree or verkle tree.
 	blob := ReadAccountTrieNode(db, nil)
-	if len(blob) == 0 {
-		blob, _ = db.Get(verkleTrieNodeKey(nil)) // FIX HACK(rjl493456442)
-	}
 	if len(blob) != 0 {
 		return PathScheme
 	}

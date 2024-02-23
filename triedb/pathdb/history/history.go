@@ -59,7 +59,7 @@ import (
 // all history objects from n+1 up to the current disk layer are existent. The
 // history objects are applied to the state in reverse order, starting from the
 // current disk layer.
-
+//
 // Each state history entry is consisted of five elements:
 //
 // # metadata
@@ -418,19 +418,28 @@ func Read(freezer *rawdb.ResettableFreezer, id uint64) (*History, error) {
 	return &dec, nil
 }
 
-// Write persists the state history with the provided state set.
-func Write(freezer *rawdb.ResettableFreezer, id uint64, history *History) error {
-	accountData, storageData, accountIndex, storageIndex := history.encode()
-	dataSize := common.StorageSize(len(accountData) + len(storageData))
-	indexSize := common.StorageSize(len(accountIndex) + len(storageIndex))
-
-	// Write history data into five freezer table respectively.
-	rawdb.WriteStateHistory(freezer, id, history.meta.encode(), accountIndex, storageIndex, accountData, storageData)
-
-	historyDataBytesMeter.Mark(int64(dataSize))
-	historyIndexBytesMeter.Mark(int64(indexSize))
-	log.Debug("Stored state history", "id", id, "block", history.Block(), "data", dataSize, "index", indexSize)
-	return nil
+func ReadBatch(freezer *rawdb.ResettableFreezer, start uint64, count uint64) ([]*History, error) {
+	metaList, aIndexList, sIndexList, aDataList, sDataList, err := rawdb.ReadStateHistoryList(freezer, start, count)
+	if err != nil {
+		return nil, err
+	}
+	number := len(metaList)
+	if number != len(aIndexList) || number != len(sIndexList) || number != len(aDataList) || number != len(sDataList) {
+		return nil, errors.New("corrupted state history")
+	}
+	var result []*History
+	for i := 0; i < number; i++ {
+		var m meta
+		if err := m.decode(metaList[i]); err != nil {
+			return nil, err
+		}
+		dec := History{meta: &m}
+		if err := dec.decode(aDataList[i], sDataList[i], aIndexList[i], sIndexList[i]); err != nil {
+			return nil, err
+		}
+		result = append(result, &dec)
+	}
+	return result, nil
 }
 
 // ReadMetaBatch retrieves a batch of meta objects with the specified range
@@ -457,6 +466,21 @@ func ReadMetaBatch(freezer *rawdb.ResettableFreezer, start, count uint64, check 
 		count -= uint64(len(blobs))
 		start += uint64(len(blobs))
 	}
+	return nil
+}
+
+// Write persists the state history with the provided state set.
+func Write(freezer *rawdb.ResettableFreezer, id uint64, history *History) error {
+	accountData, storageData, accountIndex, storageIndex := history.encode()
+	dataSize := common.StorageSize(len(accountData) + len(storageData))
+	indexSize := common.StorageSize(len(accountIndex) + len(storageIndex))
+
+	// Write history data into five freezer table respectively.
+	rawdb.WriteStateHistory(freezer, id, history.meta.encode(), accountIndex, storageIndex, accountData, storageData)
+
+	historyDataBytesMeter.Mark(int64(dataSize))
+	historyIndexBytesMeter.Mark(int64(indexSize))
+	log.Debug("Stored state history", "id", id, "block", history.Block(), "data", dataSize, "index", indexSize)
 	return nil
 }
 

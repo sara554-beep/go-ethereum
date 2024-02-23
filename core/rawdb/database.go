@@ -469,6 +469,7 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		hashNumPairings stat
 		legacyTries     stat
 		stateLookups    stat
+		stateIndices    stat
 		accountTries    stat
 		storageTries    stat
 		codes           stat
@@ -481,10 +482,6 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		bloomBits       stat
 		beaconHeaders   stat
 		cliqueSnaps     stat
-
-		// Verkle statistics
-		verkleTries        stat
-		verkleStateLookups stat
 
 		// Les statistic
 		chtTrieNodes   stat
@@ -537,6 +534,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			accountStates.Add(size)
 		case bytes.HasPrefix(key, StateStoragePrefix) && len(key) == (len(StateStoragePrefix)+2*common.HashLength):
 			storageStates.Add(size)
+		case isStateIndexKey(key):
+			stateIndices.Add(size)
 		case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
 			preimages.Add(size)
 		case bytes.HasPrefix(key, configPrefix) && len(key) == (len(configPrefix)+common.HashLength):
@@ -559,20 +558,6 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			bytes.HasPrefix(key, BloomTrieIndexPrefix) ||
 			bytes.HasPrefix(key, BloomTriePrefix): // Bloomtrie sub
 			bloomTrieNodes.Add(size)
-		case bytes.HasPrefix(key, VerklePrefix):
-			remain := key[len(VerklePrefix):]
-			switch {
-			case IsAccountTrieNode(remain):
-				verkleTries.Add(size)
-			case bytes.HasPrefix(remain, stateIDPrefix) && len(remain) == len(stateIDPrefix)+common.HashLength:
-				verkleStateLookups.Add(size)
-			case bytes.Equal(remain, persistentStateIDKey):
-				metadata.Add(size)
-			case bytes.Equal(remain, trieJournalKey):
-				metadata.Add(size)
-			case bytes.Equal(remain, snapshotSyncStatusKey):
-				metadata.Add(size)
-			}
 		default:
 			var accounted bool
 			for _, meta := range [][]byte{
@@ -618,11 +603,10 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Storage snapshot", storageSnaps.Size(), storageSnaps.Count()},
 		{"Key-Value store", "Account state", accountStates.Size(), accountStates.Count()},
 		{"Key-Value store", "Storage state", storageStates.Size(), storageStates.Count()},
+		{"Key-Value store", "State indices", stateIndices.Size(), stateIndices.Count()},
 		{"Key-Value store", "Beacon sync headers", beaconHeaders.Size(), beaconHeaders.Count()},
 		{"Key-Value store", "Clique snapshots", cliqueSnaps.Size(), cliqueSnaps.Count()},
 		{"Key-Value store", "Singleton metadata", metadata.Size(), metadata.Count()},
-		{"Key-Value store", "Verkle trie nodes", verkleTries.Size(), verkleTries.Count()},
-		{"Key-Value store", "Verkle trie state lookups", verkleStateLookups.Size(), verkleStateLookups.Count()},
 		{"Light client", "CHT trie nodes", chtTrieNodes.Size(), chtTrieNodes.Count()},
 		{"Light client", "Bloom trie nodes", bloomTrieNodes.Size(), bloomTrieNodes.Count()},
 	}

@@ -52,8 +52,4 @@ var (
 	//diffLayerAccountCountMeter = metrics.NewRegisteredMeter("pathdb/diff/account/count", nil)
 	//diffLayerStorageBytesMeter = metrics.NewRegisteredMeter("pathdb/diff/storage/bytes", nil)
 	//diffLayerStorageCountMeter = metrics.NewRegisteredMeter("pathdb/diff/storage/count", nil)
-
-	historyBuildTimeMeter  = metrics.NewRegisteredTimer("pathdb/history/time", nil)
-	historyDataBytesMeter  = metrics.NewRegisteredMeter("pathdb/history/bytes/data", nil)
-	historyIndexBytesMeter = metrics.NewRegisteredMeter("pathdb/history/bytes/index", nil)
 )
