@@ -204,7 +204,13 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 		oldest   uint64
 	)
 	if dl.db.freezer != nil {
-		h := history.New(bottom.root, bottom.parent.rootHash(), bottom.block, bottom.states.accountOrigin, bottom.states.storageOrigin)
+		h := history.New(
+			bottom.rootHash(),
+			bottom.parent.rootHash(),
+			bottom.block,
+			bottom.states.accountOrigin,
+			bottom.states.storageOrigin,
+		)
 		err := history.Write(dl.db.freezer, bottom.stateID(), h)
 		if err != nil {
 			return nil, err
@@ -221,7 +227,7 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 			oldest = bottom.stateID() - limit + 1 // track the id of history **after truncation**
 		}
 		if dl.db.indexer != nil {
-			dl.db.indexer.Notify(tail, bottom.stateID())
+			dl.db.indexer.Notify(bottom.stateID())
 		}
 	}
 	// Mark the diskLayer as stale before applying any mutations on top.

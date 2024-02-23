@@ -35,8 +35,8 @@ type NodeDatabase interface {
 
 // StateReader wraps the Account and Storage method of a backing state reader.
 type StateReader interface {
-	Account(hash common.Hash) ([]byte, error)
-	Storage(accountHash, storageHash common.Hash) ([]byte, error)
+	Account(address common.Address) ([]byte, error)
+	Storage(address common.Address, key common.Hash) ([]byte, error)
 }
 
 // StateDatabase warps the methods of a backing trie store.

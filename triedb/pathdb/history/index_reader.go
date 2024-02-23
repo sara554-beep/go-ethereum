@@ -79,7 +79,7 @@ func newBlockReader(disk ethdb.KeyValueReader, addr common.Address, state common
 	}, nil
 }
 
-func (br *blockReader) readLessThan(id uint64) (uint64, error) {
+func (br *blockReader) readGreaterThan(id uint64) (uint64, error) {
 	var err error
 	index := sort.Search(len(br.restarts), func(i int) bool {
 		item, n := binary.Uvarint(br.buf[br.restarts[i]:])
@@ -164,7 +164,7 @@ func newIndexReader(disk ethdb.KeyValueReader, owner common.Address, state commo
 	}, nil
 }
 
-func (r *indexReader) readLessThan(id uint64) (uint64, error) {
+func (r *indexReader) readGreaterThan(id uint64) (uint64, error) {
 	index := sort.Search(len(r.descList), func(i int) bool {
 		return id < r.descList[i].max
 	})
@@ -182,26 +182,24 @@ func (r *indexReader) readLessThan(id uint64) (uint64, error) {
 		}
 		r.readers[desc.id] = br
 	}
-	return br.readLessThan(id)
+	return br.readGreaterThan(id)
 }
 
-type reader struct {
+type Reader struct {
 	disk    ethdb.KeyValueReader
 	freezer *rawdb.ResettableFreezer
 	readers map[string]*indexReader
 }
 
-func newReader(disk ethdb.KeyValueReader, freezer *rawdb.ResettableFreezer) *reader {
-	return &reader{
+func NewReader(disk ethdb.KeyValueReader, freezer *rawdb.ResettableFreezer) *Reader {
+	return &Reader{
 		disk:    disk,
 		freezer: freezer,
 		readers: make(map[string]*indexReader),
 	}
 }
 
-var _ = newReader(nil, nil)
-
-func (r *reader) findAccount(account common.Address, id uint64, resolve func([]byte)) error {
+func (r *Reader) findAccount(account common.Address, id uint64, resolve func([]byte)) error {
 	blob := rawdb.ReadStateAccountIndex(r.freezer, id)
 	if len(blob)%accountIndexSize != 0 {
 		return errors.New("corrupted account index")
@@ -222,7 +220,7 @@ func (r *reader) findAccount(account common.Address, id uint64, resolve func([]b
 	return nil
 }
 
-func (r *reader) findStorage(storageHash common.Hash, id uint64, slotOffset, slotLength int, resolve func([]byte)) error {
+func (r *Reader) findStorage(storageHash common.Hash, id uint64, slotOffset, slotLength int, resolve func([]byte)) error {
 	blob := rawdb.ReadStateStorageIndex(r.freezer, id)
 	if len(blob)%slotIndexSize != 0 {
 		return errors.New("storage indices are not corrupted")
@@ -246,7 +244,7 @@ func (r *reader) findStorage(storageHash common.Hash, id uint64, slotOffset, slo
 	return nil
 }
 
-func (r *reader) resolveAccount(accountHash common.Address, id uint64) ([]byte, error) {
+func (r *Reader) resolveAccount(accountHash common.Address, id uint64) ([]byte, error) {
 	var (
 		offset int
 		length int
@@ -266,7 +264,7 @@ func (r *reader) resolveAccount(accountHash common.Address, id uint64) ([]byte, 
 	return data[offset : offset+length], nil
 }
 
-func (r *reader) resolveStorage(account common.Address, storageHash common.Hash, id uint64) ([]byte, error) {
+func (r *Reader) resolveStorage(account common.Address, storageHash common.Hash, id uint64) ([]byte, error) {
 	var (
 		slotOffset int
 		slotLength int
@@ -274,8 +272,8 @@ func (r *reader) resolveStorage(account common.Address, storageHash common.Hash,
 		length     int
 	)
 	err := r.findAccount(account, id, func(blob []byte) {
-		slotOffset = int(binary.BigEndian.Uint32(blob[common.HashLength+5 : common.HashLength+9]))
-		slotLength = int(binary.BigEndian.Uint32(blob[common.HashLength+9 : common.HashLength+13]))
+		slotOffset = int(binary.BigEndian.Uint32(blob[common.AddressLength+5 : common.AddressLength+9]))
+		slotLength = int(binary.BigEndian.Uint32(blob[common.AddressLength+9 : common.AddressLength+13]))
 	})
 	if err != nil {
 		return nil, err
@@ -295,22 +293,27 @@ func (r *reader) resolveStorage(account common.Address, storageHash common.Hash,
 	return data[offset : offset+length], nil
 }
 
-func (r *reader) resolve(owner common.Address, state common.Hash, id uint64) ([]byte, error) {
+func (r *Reader) resolve(owner common.Address, state common.Hash, id uint64) ([]byte, error) {
 	if state == (common.Hash{}) {
 		return r.resolveAccount(owner, id)
 	}
 	return r.resolveStorage(owner, state, id)
 }
 
-func (r *reader) read(owner common.Address, state common.Hash, id uint64) ([]byte, error) {
+func (r *Reader) Read(owner common.Address, state common.Hash, id uint64, latest uint64) ([]byte, error) {
 	tail, err := r.freezer.Tail()
 	if err != nil {
 		return nil, err
 	}
+	// id == tail is allowed, as the first history object preserved is tail+1
 	if id < tail {
 		return nil, errors.New("historic state is pruned")
 	}
 	head := rawdb.ReadStateIndexHead(r.disk)
+
+	/*
+		the available range of histories is [tail+1, head]
+	*/
 	if head == nil || *head <= id {
 		return nil, errors.New("state is not indexed")
 	}
@@ -322,13 +325,15 @@ func (r *reader) read(owner common.Address, state common.Hash, id uint64) ([]byt
 		}
 		r.readers[owner.Hex()+state.Hex()] = ir
 	}
-	id, err = ir.readLessThan(id)
+	id, err = ir.readGreaterThan(id)
 	if err != nil {
 		return nil, err
 	}
 	if id == math.MaxUint64 {
-		// TODO return the latest state
-		return nil, errors.New("undefined")
+		if *head < latest {
+			return nil, errors.New("state history is not fully indexed")
+		}
+		return nil, errors.New("not found")
 	}
 	return r.resolve(owner, state, id)
 }

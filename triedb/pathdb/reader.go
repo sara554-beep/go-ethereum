@@ -20,8 +20,10 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/triedb/database"
+	"github.com/ethereum/go-ethereum/triedb/pathdb/history"
 )
 
 const (
@@ -81,8 +83,8 @@ func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte,
 // Note:
 // - the returned account is not a copy, please don't modify it.
 // - no error will be returned if the requested account is not found in database.
-func (r *reader) Account(hash common.Hash) ([]byte, error) {
-	return r.layer.account(hash, 0)
+func (r *reader) Account(address common.Address) ([]byte, error) {
+	return r.layer.account(crypto.Keccak256Hash(address.Bytes()), 0)
 }
 
 // Storage directly retrieves the storage data associated with a particular hash,
@@ -92,8 +94,60 @@ func (r *reader) Account(hash common.Hash) ([]byte, error) {
 // Note:
 // - the returned storage data is not a copy, please don't modify it.
 // - no error will be returned if the requested slot is not found in database.
-func (r *reader) Storage(accountHash, storageHash common.Hash) ([]byte, error) {
-	return r.layer.storage(accountHash, storageHash, 0)
+func (r *reader) Storage(address common.Address, key common.Hash) ([]byte, error) {
+	return r.layer.storage(crypto.Keccak256Hash(address.Bytes()), crypto.Keccak256Hash(key.Bytes()), 0)
+}
+
+type historicReader struct {
+	db     *Database
+	reader *history.Reader
+	id     uint64
+}
+
+// Account directly retrieves the account RLP associated with a particular
+// hash in the slim data format. An error will be returned if the read
+// operation exits abnormally. Specifically, if the layer is already stale.
+//
+// Note:
+// - the returned account is not a copy, please don't modify it.
+// - no error will be returned if the requested account is not found in database.
+func (r *historicReader) Account(address common.Address) ([]byte, error) {
+	bottom := r.db.tree.bottom()
+	latest, err := bottom.account(crypto.Keccak256Hash(address.Bytes()), 0)
+	if err != nil {
+		return nil, err
+	}
+	account, err := r.reader.Read(address, common.Hash{}, r.id, bottom.stateID())
+	if err != nil && err.Error() != "not found" {
+		return nil, err
+	}
+	if len(account) != 0 {
+		return account, nil
+	}
+	return latest, nil
+}
+
+// Storage directly retrieves the storage data associated with a particular hash,
+// within a particular account. An error will be returned if the read operation
+// exits abnormally. Specifically, if the layer is already stale.
+//
+// Note:
+// - the returned storage data is not a copy, please don't modify it.
+// - no error will be returned if the requested slot is not found in database.
+func (r *historicReader) Storage(address common.Address, key common.Hash) ([]byte, error) {
+	bottom := r.db.tree.bottom()
+	latest, err := bottom.storage(crypto.Keccak256Hash(address.Bytes()), crypto.Keccak256Hash(key.Bytes()), 0)
+	if err != nil {
+		return nil, err
+	}
+	slot, err := r.reader.Read(address, crypto.Keccak256Hash(key.Bytes()), r.id, bottom.stateID())
+	if err != nil && err.Error() != "not found" {
+		return nil, err
+	}
+	if len(slot) != 0 {
+		return slot, nil
+	}
+	return latest, nil
 }
 
 // NodeReader retrieves a layer belonging to the given state root.
@@ -107,9 +161,16 @@ func (db *Database) NodeReader(root common.Hash) (database.NodeReader, error) {
 
 // StateReader retrieves a layer belonging to the given state root.
 func (db *Database) StateReader(root common.Hash) (database.StateReader, error) {
-	layer := db.tree.get(root)
-	if layer == nil {
+	if layer := db.tree.get(root); layer != nil {
+		return &reader{layer: layer, hasher: crypto.NewKeccakState()}, nil
+	}
+	id := rawdb.ReadStateID(db.diskdb, root)
+	if id == nil {
 		return nil, fmt.Errorf("state %#x is not available", root)
 	}
-	return &reader{layer: layer, hasher: crypto.NewKeccakState()}, nil
+	return &historicReader{
+		id:     *id,
+		db:     db,
+		reader: history.NewReader(db.diskdb, db.freezer),
+	}, nil
 }

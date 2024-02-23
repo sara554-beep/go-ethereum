@@ -103,6 +103,14 @@ func (db *Database) NodeReader(blockRoot common.Hash) (database.NodeReader, erro
 	return db.backend.NodeReader(blockRoot)
 }
 
+func (db *Database) StateReader(blockRoot common.Hash) (database.StateReader, error) {
+	pdb, ok := db.backend.(*pathdb.Database)
+	if !ok {
+		return nil, errors.New("not supported")
+	}
+	return pdb.StateReader(blockRoot)
+}
+
 // Update performs a state transition by committing dirty nodes contained in the
 // given set in order to update state from the specified parent to the specified
 // root. The held pre-images accumulated up to this point will be flushed in case

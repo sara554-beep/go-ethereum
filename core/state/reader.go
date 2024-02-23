@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie/merkle"
 	"github.com/ethereum/go-ethereum/trie/verkle"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/database"
 )
 
 // snapReader is a wrapper over the state snapshot and implements the Reader
@@ -201,4 +202,55 @@ func (r *trieReader) Copy() Reader {
 		mainTrie: mustCopyTrie(r.mainTrie),
 		subTries: tries,
 	}
+}
+
+type archiveReader struct {
+	db database.StateReader
+}
+
+// trieReader constructs a trie reader of the specific state. An error will be returned
+// if the associated trie specified by root is not existent.
+func newArchiveReader(root common.Hash, db *triedb.Database) (*archiveReader, error) {
+	reader, err := db.StateReader(root)
+	if err != nil {
+		return nil, err
+	}
+	return &archiveReader{db: reader}, nil
+}
+
+// Account retrieves the account associated with a particular address.
+//
+// (a) A nil account is returned if it's not existent
+// (b) An error is returned if any unexpected error occurs
+// (c) The returned account is safe to modify
+func (r *archiveReader) Account(addr common.Address) (*types.StateAccount, error) {
+	blob, err := r.db.Account(addr)
+	if err != nil {
+		return nil, err
+	}
+	if len(blob) == 0 {
+		return nil, nil
+	}
+	return types.FullAccount(blob)
+}
+
+func (r *archiveReader) Storage(addr common.Address, storageRoot common.Hash, key common.Hash) (common.Hash, error) {
+	blob, err := r.db.Storage(addr, key)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	if len(blob) == 0 {
+		return common.Hash{}, nil
+	}
+	_, content, _, err := rlp.Split(blob)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	var slot common.Hash
+	slot.SetBytes(content)
+	return slot, nil
+}
+
+func (r *archiveReader) Copy() Reader {
+	return &archiveReader{db: r.db}
 }

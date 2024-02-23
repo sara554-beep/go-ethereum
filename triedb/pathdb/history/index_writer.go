@@ -253,7 +253,7 @@ func (w *indexWriter) finish(batch ethdb.Batch) error {
 type writer struct {
 	accounts map[common.Address][]uint64
 	storages map[common.Address]map[common.Hash][]uint64
-	states   int
+	total    int
 }
 
 func newWriter() *writer {
@@ -264,18 +264,18 @@ func newWriter() *writer {
 }
 
 func (w *writer) reset() {
-	w.states = 0
+	w.total = 0
 	w.accounts = make(map[common.Address][]uint64)
 	w.storages = make(map[common.Address]map[common.Hash][]uint64)
 }
 
 func (w *writer) addAccount(addr common.Address, number uint64) {
-	w.states += 1
+	w.total += 1
 	w.accounts[addr] = append(w.accounts[addr], number)
 }
 
 func (w *writer) addSlot(addr common.Address, hash common.Hash, number uint64) {
-	w.states += 1
+	w.total += 1
 	if _, ok := w.storages[addr]; !ok {
 		w.storages[addr] = make(map[common.Hash][]uint64)
 	}
@@ -283,7 +283,7 @@ func (w *writer) addSlot(addr common.Address, hash common.Hash, number uint64) {
 }
 
 func (w *writer) finish(db ethdb.KeyValueStore, force bool, head uint64) error {
-	if !force && w.states < stateWriteBatch {
+	if !force && w.total < stateWriteBatch {
 		return nil
 	}
 	var (

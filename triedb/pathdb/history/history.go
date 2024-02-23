@@ -128,10 +128,9 @@ import (
 //                +-------------+
 
 // History represents a set of state changes belong to a block along with
-// the metadata including the state roots involved in the state transition.
-// State history objects in disk are linked with each other by a unique id
-// (8-bytes integer), the oldest state history object can be pruned on demand
-// in order to control the storage size.
+// the metadata. State history objects in disk are linked with each other
+// by a unique id (8-bytes integer), the oldest state history object can
+// be pruned on demand in order to control the storage size.
 type History struct {
 	meta        *meta                                     // Meta data of history
 	accounts    map[common.Address][]byte                 // Account data keyed by its address hash

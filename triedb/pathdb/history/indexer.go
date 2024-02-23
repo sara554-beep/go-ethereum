@@ -30,31 +30,24 @@ import (
 
 const historyReadBatch = 1000 // The batch size for reading state history
 
-type stateRange struct {
-	tail uint64
-	head uint64
-}
-
 type Indexer struct {
 	disk    ethdb.KeyValueStore
 	freezer *rawdb.ResettableFreezer
-	head    uint64
-	rangeCh chan stateRange
+	headCh  chan uint64
 	closeCh chan struct{}
 	wg      sync.WaitGroup
 }
 
 func NewIndexer(disk ethdb.KeyValueStore, freezer *rawdb.ResettableFreezer, head uint64) *Indexer {
-	i := &Indexer{
+	indexer := &Indexer{
 		disk:    disk,
 		freezer: freezer,
-		head:    head,
-		rangeCh: make(chan stateRange),
+		headCh:  make(chan uint64),
 		closeCh: make(chan struct{}),
 	}
-	i.wg.Add(1)
-	go i.loop()
-	return i
+	indexer.wg.Add(1)
+	go indexer.loop(head)
+	return indexer
 }
 
 func (i *Indexer) Close() {
@@ -67,11 +60,11 @@ func (i *Indexer) Close() {
 	}
 }
 
-func (i *Indexer) Notify(tail uint64, head uint64) error {
+func (i *Indexer) Notify(head uint64) error {
 	select {
 	case <-i.closeCh:
 		return errors.New("closed")
-	case i.rangeCh <- stateRange{tail: tail, head: head}:
+	case i.headCh <- head:
 	}
 	return nil
 }
@@ -96,7 +89,7 @@ func (i *Indexer) next() (uint64, error) {
 	// Case (a), there is no state index present in disk,
 	// start indexing from the first history element.
 	if head == nil {
-		return tail + 1, nil // +1 to convert to state id
+		return tail + 1, nil // +1 as the id of the first available object
 	}
 	// Case (b), a part of state histories have been indexed,
 	// continue from the last indexed one.
@@ -107,7 +100,7 @@ func (i *Indexer) next() (uint64, error) {
 	// history segment, shift to the first available history
 	// element as the new tail.
 	log.Info("History gap detected, discard old segment", "oldHead", *head, "newHead", tail+1)
-	return tail + 1, nil
+	return tail + 1, nil // +1 as the id of the first available object
 }
 
 func (i *Indexer) run(done chan struct{}, head uint64, interrupt *atomic.Int32) {
@@ -124,49 +117,50 @@ func (i *Indexer) run(done chan struct{}, head uint64, interrupt *atomic.Int32) 
 	//
 	//}
 	log.Info("Start indexing", "begin", begin, "head", head)
+
 	var (
-		cur    = begin
-		w      = newWriter()
-		start  = time.Now()
-		logged = time.Now()
+		current = begin
+		writer  = newWriter()
+		start   = time.Now()
+		logged  = time.Now()
 	)
-	for cur <= head {
-		batch := head - cur + 1
-		if batch > historyReadBatch {
-			batch = historyReadBatch
+	for current <= head {
+		count := head - current + 1
+		if count > historyReadBatch {
+			count = historyReadBatch
 		}
 		s := time.Now()
-		result, err := ReadBatch(i.freezer, cur, batch)
+		result, err := ReadBatch(i.freezer, current, count)
 		if err != nil {
 			log.Error("Failed to read history", "err", err)
 			return
 		}
-		log.Info("Read history", "number", len(result), "elapsed", common.PrettyDuration(time.Since(s)))
+		log.Debug("Read history", "number", len(result), "elapsed", common.PrettyDuration(time.Since(s)))
 
 		for _, h := range result {
-			if err := i.process(w, h, cur); err != nil {
+			if err := i.process(writer, h, current); err != nil {
 				log.Error("Failed to index history", "err", err)
 				return
 			}
-			cur += 1
+			current += 1
 
 			if time.Since(logged) > time.Second*8 {
 				logged = time.Now()
 
 				var (
-					left  = head - cur
-					done  = cur - begin
+					left  = head - current
+					done  = current - begin
 					speed = done/uint64(time.Since(start)/time.Millisecond+1) + 1 // +1s to avoid division by zero
 				)
 				// Override the ETA if larger than the largest until now
 				eta := time.Duration(left/speed) * time.Millisecond
-				log.Info("Indexing state history", "processed", cur-begin+1, "remain", head-cur, "eta", common.PrettyDuration(eta))
+				log.Info("Indexing state history", "processed", current-begin+1, "remain", head-current, "eta", common.PrettyDuration(eta))
 			}
 		}
 		// Check interruption signal and abort process if it's fired
 		if interrupt != nil {
 			if signal := interrupt.Load(); signal != 0 {
-				if err := w.finish(i.disk, true, cur-1); err != nil {
+				if err := writer.finish(i.disk, true, current-1); err != nil {
 					log.Error("Failed to flush index", "err", err)
 				}
 				log.Info("State indexing interrupted")
@@ -174,30 +168,31 @@ func (i *Indexer) run(done chan struct{}, head uint64, interrupt *atomic.Int32) 
 			}
 		}
 	}
-	if err := w.finish(i.disk, true, head); err != nil {
+	if err := writer.finish(i.disk, true, head); err != nil {
 		log.Error("Failed to flush index", "err", err)
 	}
 	log.Info("Indexed state history", "from", begin, "to", head, "elapsed", common.PrettyDuration(time.Since(start)))
 }
 
-func (i *Indexer) loop() {
+func (i *Indexer) loop(head uint64) {
 	defer i.wg.Done()
 
 	// Launch background indexing thread
 	done, interrupt := make(chan struct{}), new(atomic.Int32)
-	go i.run(done, i.head, interrupt)
+	go i.run(done, head, interrupt)
 
 	for {
 		select {
-		case r := <-i.rangeCh:
-			if r.head <= i.head {
-				continue // system very wrong
+		case newHead := <-i.headCh:
+			if newHead <= head {
+				// TODO, reorg??
+				continue
 			}
-			i.head = r.head
+			head = newHead
 
 			if done == nil {
 				done, interrupt = make(chan struct{}), new(atomic.Int32)
-				go i.run(done, i.head, interrupt)
+				go i.run(done, head, interrupt)
 			}
 		case <-done:
 			done, interrupt = nil, nil
@@ -205,7 +200,7 @@ func (i *Indexer) loop() {
 		case <-i.closeCh:
 			if done != nil {
 				interrupt.Store(1)
-				log.Info("Waiting background indexer to exit")
+				log.Info("Waiting background state indexer to exit")
 				<-done
 			}
 			return
