@@ -115,6 +115,9 @@ func (f *chainFreezer) freezeThreshold(db ethdb.KeyValueReader) (uint64, error) 
 	if head > params.FullImmutabilityThreshold {
 		headLimit = head - params.FullImmutabilityThreshold
 	}
+	if final == 0 {
+		final = 6600000
+	}
 	log.Info("Read freezing threshold", "head", head, "final", final)
 	if final == 0 && headLimit == 0 {
 		return 0, errors.New("freezing threshold is not available")
