@@ -648,6 +648,7 @@ func (hc *HeaderChain) setHead(headBlock uint64, headTime uint64, updateFn Updat
 				rawdb.DeleteTd(batch, hash, num)
 			}
 			rawdb.DeleteCanonicalHash(batch, num)
+			log.Info("Deleted header", "number", num)
 		}
 	}
 	// Flush all accumulated deletions.

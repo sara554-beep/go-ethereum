@@ -756,6 +756,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 			// removed in the hc.SetHead function.
 			rawdb.DeleteBody(db, hash, num)
 			rawdb.DeleteReceipts(db, hash, num)
+			log.Info("Deleted block body", "number", num)
 		}
 		// Todo(rjl493456442) txlookup, bloombits, etc
 	}
@@ -763,6 +764,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 	// touching the header chain altogether, unless the freezer is broken
 	if repair {
 		if target, force := updateFn(bc.db, bc.CurrentBlock()); force {
+			log.Info("Force to reset head", "target", target)
 			bc.hc.SetHead(target.Number.Uint64(), updateFn, delFn)
 		}
 	} else {
