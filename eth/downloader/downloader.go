@@ -1565,8 +1565,9 @@ func (d *Downloader) processSnapSyncContent() error {
 	// Note, there's no issue with memory piling up since after 64 blocks the
 	// pivot will forcefully move so these accumulators will be dropped.
 	var (
-		oldPivot *fetchResult   // Locked in pivot block, might change eventually
-		oldTail  []*fetchResult // Downloaded content after the pivot
+		oldPivot  *fetchResult   // Locked in pivot block, might change eventually
+		oldTail   []*fetchResult // Downloaded content after the pivot
+		lastCycle = time.Now()   // Timestamp the last cycle is initialized
 	)
 	for {
 		// Wait for the next batch of downloaded data to be available. If we have
@@ -1640,14 +1641,20 @@ func (d *Downloader) processSnapSyncContent() error {
 		if err := d.commitSnapSyncData(beforeP, sync); err != nil {
 			return err
 		}
-		if P != nil {
+		if P != nil || (time.Since(lastCycle) > time.Second*10 && len(results) > 0) {
+			lastCycle = time.Now()
+
+			newPivot := P
+			if newPivot == nil {
+				newPivot = results[len(results)-1]
+			}
 			// If new pivot block found, cancel old state retrieval and restart
-			if oldPivot != P {
+			if oldPivot != newPivot {
 				sync.Cancel()
-				sync = d.syncState(P.Header.Root)
+				sync = d.syncState(newPivot.Header.Root)
 
 				go closeOnErr(sync)
-				oldPivot = P
+				oldPivot = newPivot
 			}
 			// Wait for completion, occasionally checking for pivot staleness
 			select {
@@ -1655,7 +1662,7 @@ func (d *Downloader) processSnapSyncContent() error {
 				if sync.err != nil {
 					return sync.err
 				}
-				if err := d.commitPivotBlock(P); err != nil {
+				if err := d.commitPivotBlock(newPivot); err != nil {
 					return err
 				}
 				oldPivot = nil
