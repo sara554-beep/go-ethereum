@@ -54,4 +54,7 @@ var (
 	// skipStorageHealingGauge is the metric to track how many storages are retrieved
 	// in multiple requests but healing is not necessary.
 	skipStorageHealingGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/storage/noheal", nil)
+
+	storageDiscardMissGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/storage/discard/miss", nil)
+	storageDiscardGapGauge  = metrics.NewRegisteredGauge("eth/protocols/snap/sync/storage/discard/gap", nil)
 )

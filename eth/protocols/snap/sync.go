@@ -311,6 +311,7 @@ type accountTask struct {
 
 	codeTasks  map[common.Hash]struct{}    // Code hashes that need retrieval
 	stateTasks map[common.Hash]common.Hash // Account hashes->roots that need full state retrieval
+	completed  map[common.Hash]struct{}    // Account hashes whose storage tasks are completed
 
 	genBatch ethdb.Batch     // Batch used by the node generator
 	genTrie  *trie.StackTrie // Node generator from storage slots
@@ -876,6 +877,7 @@ func (s *Syncer) loadSyncStatus() {
 func (s *Syncer) saveSyncStatus() {
 	// Serialize any partial progress to disk before spinning down
 	for _, task := range s.tasks {
+		// TODO-1 What if a panic happens in the middle??
 		if err := task.genBatch.Write(); err != nil {
 			log.Error("Failed to persist account slots", "err", err)
 		}
@@ -969,6 +971,7 @@ func (s *Syncer) cleanStorageTasks() {
 			}
 			delete(task.SubTasks, account)
 			task.pend--
+			task.completed[account] = struct{}{}
 
 			// If this was the last pending task, forward the account task
 			if task.pend == 0 {
@@ -1875,6 +1878,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 
 	res.task.codeTasks = make(map[common.Hash]struct{})
 	res.task.stateTasks = make(map[common.Hash]common.Hash)
+	res.task.completed = make(map[common.Hash]struct{})
 
 	resumed := make(map[common.Hash]struct{})
 
@@ -1915,8 +1919,9 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 	// now we have to live with that.
 	for hash := range res.task.SubTasks {
 		if _, ok := resumed[hash]; !ok {
-			log.Debug("Aborting suspended storage retrieval", "account", hash)
+			log.Warn("Aborting suspended storage retrieval", "account", hash)
 			delete(res.task.SubTasks, hash)
+			storageDiscardMissGauge.Inc(1)
 		}
 	}
 	// If the account range contained no contracts, or all have been fully filled
@@ -2408,8 +2413,14 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 		if task.needCode[i] || task.needState[i] {
 			return
 		}
+		delete(task.completed, hash)
 		task.Next = incHash(hash)
 	}
+	for hash := range task.completed {
+		log.Warn("Completed storage is detected", "hash", hash.Hex())
+	}
+	storageDiscardGapGauge.Inc(int64(len(task.completed)))
+
 	// All accounts marked as complete, track if the entire task is done
 	task.done = !res.cont
 
