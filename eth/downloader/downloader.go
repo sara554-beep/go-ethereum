@@ -1565,9 +1565,8 @@ func (d *Downloader) processSnapSyncContent() error {
 	// Note, there's no issue with memory piling up since after 64 blocks the
 	// pivot will forcefully move so these accumulators will be dropped.
 	var (
-		oldPivot  *fetchResult   // Locked in pivot block, might change eventually
-		oldTail   []*fetchResult // Downloaded content after the pivot
-		lastCycle = time.Now()   // Timestamp the last cycle is initialized
+		oldPivot *fetchResult   // Locked in pivot block, might change eventually
+		oldTail  []*fetchResult // Downloaded content after the pivot
 	)
 	for {
 		// Wait for the next batch of downloaded data to be available. If we have
@@ -1624,9 +1623,9 @@ func (d *Downloader) processSnapSyncContent() error {
 			// Note, we have `reorgProtHeaderDelay` number of blocks withheld, Those
 			// need to be taken into account, otherwise we're detecting the pivot move
 			// late and will drop peers due to unavailable state!!!
-			if height := latest.Number.Uint64(); height >= pivot.Number.Uint64()+2*uint64(fsMinFullBlocks)-uint64(reorgProtHeaderDelay) {
-				log.Warn("Pivot became stale, moving", "old", pivot.Number.Uint64(), "new", height-uint64(fsMinFullBlocks)+uint64(reorgProtHeaderDelay))
-				pivot = results[len(results)-1-fsMinFullBlocks+reorgProtHeaderDelay].Header // must exist as lower old pivot is uncommitted
+			if height := latest.Number.Uint64(); height > pivot.Number.Uint64()+12 {
+				log.Warn("Pivot became stale, moving", "old", pivot.Number.Uint64(), "new", height-12)
+				pivot = results[len(results)-12].Header // must exist as lower old pivot is uncommitted
 
 				d.pivotLock.Lock()
 				d.pivotHeader = pivot
@@ -1641,20 +1640,14 @@ func (d *Downloader) processSnapSyncContent() error {
 		if err := d.commitSnapSyncData(beforeP, sync); err != nil {
 			return err
 		}
-		if P != nil || (time.Since(lastCycle) > time.Second*10 && len(results) > 0) {
-			lastCycle = time.Now()
-
-			newPivot := P
-			if newPivot == nil {
-				newPivot = results[len(results)-1]
-			}
+		if P != nil {
 			// If new pivot block found, cancel old state retrieval and restart
-			if oldPivot != newPivot {
+			if oldPivot != P {
 				sync.Cancel()
-				sync = d.syncState(newPivot.Header.Root)
+				sync = d.syncState(P.Header.Root)
 
 				go closeOnErr(sync)
-				oldPivot = newPivot
+				oldPivot = P
 			}
 			// Wait for completion, occasionally checking for pivot staleness
 			select {
@@ -1662,7 +1655,7 @@ func (d *Downloader) processSnapSyncContent() error {
 				if sync.err != nil {
 					return sync.err
 				}
-				if err := d.commitPivotBlock(newPivot); err != nil {
+				if err := d.commitPivotBlock(P); err != nil {
 					return err
 				}
 				oldPivot = nil
