@@ -1933,7 +1933,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 				res.task.needState[i] = true
 				res.task.pend++
 			} else {
-				log.Info("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
+				log.Debug("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
 			}
 		}
 	}
@@ -2227,7 +2227,6 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 			tr.Commit()
 			res.mainTask.completed[account] = struct{}{}
 		}
-		log.Info("Completed B", "number", len(res.mainTask.completed))
 		// Persist the received storage segments. These flat state maybe
 		// outdated during the sync, but it can be fixed later during the
 		// snapshot generation.
@@ -2450,7 +2449,7 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 		}
 		delete(task.completed, hash)
 	}
-	log.Info("Completed A, forwarded account", "before", beforeDel, "now", len(task.completed))
+	log.Info("Completed, forwarded account", "before", beforeDel, "now", len(task.completed))
 
 	// Flush anything written just now and update the stats
 	if err := batch.Write(); err != nil {
@@ -2462,15 +2461,14 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 	// account still missing data.
 	for i, hash := range res.hashes {
 		if task.needCode[i] || task.needState[i] {
+			for hash := range task.completed {
+				log.Warn("Completed storage is detected", "hash", hash.Hex(), "task.Next", task.Next.Hex())
+			}
+			storageDiscardGapGauge.Inc(int64(len(task.completed)))
 			return
 		}
 		task.Next = incHash(hash)
 	}
-	for hash := range task.completed {
-		log.Warn("Completed storage is detected", "hash", hash.Hex(), "task.Next", task.Next.Hex())
-	}
-	storageDiscardGapGauge.Inc(int64(len(task.completed)))
-
 	// All accounts marked as complete, track if the entire task is done
 	task.done = !res.cont
 
