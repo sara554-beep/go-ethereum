@@ -409,7 +409,7 @@ func buildPartialTree(entries []*kv, t *testing.T) map[string]common.Hash {
 			noRight = true
 		}
 	}
-	options = options.WithSkipBoundary(noLeft, noRight, func(path []byte) (bool, common.Hash) {
+	options = options.WithSkipBoundary(noLeft, noRight, common.Hash{}, func(path []byte) (bool, common.Hash) {
 		return false, common.Hash{}
 	}, nil)
 	options = options.WithWriter(func(path []byte, hash common.Hash, blob []byte) {
