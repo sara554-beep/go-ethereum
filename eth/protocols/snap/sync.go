@@ -321,6 +321,7 @@ type accountTask struct {
 
 // storageTask represents the sync task for a chunk of the storage snapshot.
 type storageTask struct {
+	// TODO-2 what if panic happens after flushing nodes but without updating flag
 	Next common.Hash // Next account to sync in this interval
 	Last common.Hash // Last account to sync in this interval
 
@@ -1925,7 +1926,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 				res.task.needState[i] = true
 				res.task.pend++
 			} else {
-				log.Info("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
+				log.Debug("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
 			}
 		}
 	}
@@ -2046,6 +2047,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 				res.mainTask.needState[j] = false
 				res.mainTask.pend--
 				smallStorageGauge.Inc(1)
+				res.mainTask.completed[hash] = struct{}{}
 			}
 			// If the last contract was chunked, mark it as needing healing
 			// to avoid writing it out to disk prematurely.
