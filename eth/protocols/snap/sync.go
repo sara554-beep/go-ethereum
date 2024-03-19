@@ -1922,11 +1922,18 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 					resumed[res.hashes[i]] = struct{}{}
 				} else {
 					res.task.stateTasks[res.hashes[i]] = account.Root
+
+					if s.scheme == rawdb.PathScheme {
+						if rawdb.ExistsStorageTrieNode(s.db, res.hashes[i], nil) {
+							_, oldHash := rawdb.ReadStorageTrieNode(s.db, res.hashes[i], nil)
+							log.Info("Re-create storage task", "account", res.hashes[i].Hex(), "root", account.Root.Hex(), "oldRoot", oldHash.Hex())
+						}
+					}
 				}
 				res.task.needState[i] = true
 				res.task.pend++
 			} else {
-				log.Debug("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
+				log.Info("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
 			}
 		}
 	}
@@ -2047,7 +2054,6 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 				res.mainTask.needState[j] = false
 				res.mainTask.pend--
 				smallStorageGauge.Inc(1)
-				res.mainTask.completed[hash] = struct{}{}
 			}
 			// If the last contract was chunked, mark it as needing healing
 			// to avoid writing it out to disk prematurely.
@@ -2219,7 +2225,9 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 				tr.Update(res.hashes[i][j][:], res.slots[i][j])
 			}
 			tr.Commit()
+			res.mainTask.completed[account] = struct{}{}
 		}
+		log.Info("Completed B", "number", len(res.mainTask.completed))
 		// Persist the received storage segments. These flat state maybe
 		// outdated during the sync, but it can be fixed later during the
 		// snapshot generation.
@@ -2423,6 +2431,7 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 			s.accountBytes += common.StorageSize(len(key) + len(value))
 		},
 	}
+	beforeDel := len(task.completed)
 	for i, hash := range res.hashes {
 		if task.needCode[i] || task.needState[i] {
 			break
@@ -2439,7 +2448,10 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 			}
 			task.genTrie.Update(hash[:], full)
 		}
+		delete(task.completed, hash)
 	}
+	log.Info("Completed A, forwarded account", "before", beforeDel, "now", len(task.completed))
+
 	// Flush anything written just now and update the stats
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to persist accounts", "err", err)
@@ -2452,11 +2464,10 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 		if task.needCode[i] || task.needState[i] {
 			return
 		}
-		delete(task.completed, hash)
 		task.Next = incHash(hash)
 	}
 	for hash := range task.completed {
-		log.Warn("Completed storage is detected", "hash", hash.Hex())
+		log.Warn("Completed storage is detected", "hash", hash.Hex(), "task.Next", task.Next.Hex())
 	}
 	storageDiscardGapGauge.Inc(int64(len(task.completed)))
 
