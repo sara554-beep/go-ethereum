@@ -890,12 +890,13 @@ func (s *Syncer) saveSyncStatus() {
 		if err := task.genBatch.Write(); err != nil {
 			log.Error("Failed to persist account slots", "err", err)
 		}
-		for _, subtasks := range task.SubTasks {
+		for account, subtasks := range task.SubTasks {
 			for _, subtask := range subtasks {
 				if err := subtask.genBatch.Write(); err != nil {
 					log.Error("Failed to persist storage slots", "err", err)
 				}
 			}
+			log.Info("Aborted large contract retrieval", "account", account.Hex())
 		}
 	}
 	// Store the actual progress markers
@@ -1923,6 +1924,8 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 				}
 				res.task.needState[i] = true
 				res.task.pend++
+			} else {
+				log.Info("Skipped complete storage", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
 			}
 		}
 	}
@@ -2151,7 +2154,7 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 					}
 					res.mainTask.SubTasks[account] = tasks
 					if len(res.mainTask.SubTasks) > 1 {
-						log.Info("Multiple subtasks created", "next", res.mainTask.Next.Hex(), "last", res.mainTask.Last.Hex(), "number", len(res.mainTask.SubTasks))
+						log.Info("Multiple subtasks created", "account", account.Hex(), "next", res.mainTask.Next.Hex(), "last", res.mainTask.Last.Hex(), "number", len(res.mainTask.SubTasks))
 						for hash := range res.mainTask.SubTasks {
 							log.Info("Multiple subtasks", "account", hash.Hex())
 						}
