@@ -765,7 +765,10 @@ func (s *Syncer) loadSyncStatus() {
 					})
 					// Skip the left boundary if it's not the first range.
 					// Skip the right boundary if it's not the last range.
-					options = options.WithSkipBoundary(task.Next != (common.Hash{}), task.Last != common.MaxHash, boundaryAccountNodesGauge)
+					options = options.WithSkipBoundary(task.Next != (common.Hash{}), task.Last != common.MaxHash, func(path []byte) (bool, common.Hash) {
+						_, hash := rawdb.ReadAccountTrieNode(s.db, path)
+						return hash != (common.Hash{}), hash
+					}, boundaryAccountNodesGauge)
 				}
 				task.genTrie = trie.NewStackTrie(options)
 				for accountHash, subtasks := range task.SubTasks {
@@ -792,7 +795,10 @@ func (s *Syncer) loadSyncStatus() {
 							})
 							// Skip the left boundary if it's not the first range.
 							// Skip the right boundary if it's not the last range.
-							options = options.WithSkipBoundary(subtask.Next != common.Hash{}, subtask.Last != common.MaxHash, boundaryStorageNodesGauge)
+							options = options.WithSkipBoundary(subtask.Next != common.Hash{}, subtask.Last != common.MaxHash, func(path []byte) (bool, common.Hash) {
+								_, hash := rawdb.ReadStorageTrieNode(s.db, owner, path)
+								return hash != (common.Hash{}), hash
+							}, boundaryStorageNodesGauge)
 						}
 						subtask.genTrie = trie.NewStackTrie(options)
 					}
@@ -859,7 +865,10 @@ func (s *Syncer) loadSyncStatus() {
 			})
 			// Skip the left boundary if it's not the first range.
 			// Skip the right boundary if it's not the last range.
-			options = options.WithSkipBoundary(next != common.Hash{}, last != common.MaxHash, boundaryAccountNodesGauge)
+			options = options.WithSkipBoundary(next != common.Hash{}, last != common.MaxHash, func(path []byte) (bool, common.Hash) {
+				_, hash := rawdb.ReadAccountTrieNode(s.db, path)
+				return hash != (common.Hash{}), hash
+			}, boundaryAccountNodesGauge)
 		}
 		s.tasks = append(s.tasks, &accountTask{
 			Next:     next,
@@ -1256,6 +1265,9 @@ func (s *Syncer) assignStorageTasks(success chan *storageResponse, fail chan *st
 			roots    = make([]common.Hash, 0, storageSets)
 			subtask  *storageTask
 		)
+		if len(task.SubTasks) > 1 {
+			log.Info("Select sub tasks", "next", task.Next.Hex(), "last", task.Last.Hex(), "number", len(task.SubTasks))
+		}
 		for account, subtasks := range task.SubTasks {
 			for _, st := range subtasks {
 				// Skip any subtasks already filling
@@ -1900,7 +1912,7 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 				// is interrupted and resumed later. However, *do* update the
 				// previous root hash.
 				if subtasks, ok := res.task.SubTasks[res.hashes[i]]; ok {
-					log.Debug("Resuming large storage retrieval", "account", res.hashes[i], "root", account.Root)
+					log.Info("Resuming large storage retrieval", "account", res.hashes[i].Hex(), "root", account.Root.Hex())
 					for _, subtask := range subtasks {
 						subtask.root = account.Root
 					}
@@ -1919,7 +1931,18 @@ func (s *Syncer) processAccountResponse(res *accountResponse) {
 	// now we have to live with that.
 	for hash := range res.task.SubTasks {
 		if _, ok := resumed[hash]; !ok {
-			log.Warn("Aborting suspended storage retrieval", "account", hash)
+			var (
+				gotFirst common.Hash
+				gotLast  common.Hash
+			)
+			if len(res.accounts) > 0 {
+				gotFirst = res.hashes[0]
+				gotLast = res.hashes[len(res.accounts)-1]
+			}
+			log.Warn("Aborting suspended storage retrieval",
+				"account", hash.Hex(), "resumed", len(resumed),
+				"next", res.task.Next.Hex(), "last", res.task.Last.Hex(),
+				"gotFirst", gotFirst.Hex(), "gotLast", gotLast.Hex())
 			delete(res.task.SubTasks, hash)
 			storageDiscardMissGauge.Inc(1)
 		}
@@ -2078,7 +2101,10 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 						})
 						// Keep the left boundary as it's the first range.
 						// Skip the right boundary if it's not the last range.
-						options = options.WithSkipBoundary(false, r.End() != common.MaxHash, boundaryStorageNodesGauge)
+						options = options.WithSkipBoundary(false, r.End() != common.MaxHash, func(path []byte) (bool, common.Hash) {
+							_, hash := rawdb.ReadStorageTrieNode(s.db, owner, path)
+							return hash != (common.Hash{}), hash
+						}, boundaryStorageNodesGauge)
 					}
 					tasks = append(tasks, &storageTask{
 						Next:     common.Hash{},
@@ -2107,7 +2133,10 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 							})
 							// Skip the left boundary as it's not the first range
 							// Skip the right boundary if it's not the last range.
-							options = options.WithSkipBoundary(true, r.End() != common.MaxHash, boundaryStorageNodesGauge)
+							options = options.WithSkipBoundary(true, r.End() != common.MaxHash, func(path []byte) (bool, common.Hash) {
+								_, hash := rawdb.ReadStorageTrieNode(s.db, owner, path)
+								return hash != (common.Hash{}), hash
+							}, boundaryStorageNodesGauge)
 						}
 						tasks = append(tasks, &storageTask{
 							Next:     r.Start(),
@@ -2121,7 +2150,9 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 						log.Debug("Created storage sync task", "account", account, "root", acc.Root, "from", task.Next, "last", task.Last)
 					}
 					res.mainTask.SubTasks[account] = tasks
-
+					if len(res.mainTask.SubTasks) > 1 {
+						log.Info("Multiple subtasks executed", "account", account.Hex(), "next", res.mainTask.Next.Hex(), "last", res.mainTask.Last.Hex(), "number", len(res.mainTask.SubTasks))
+					}
 					// Since we've just created the sub-tasks, this response
 					// is surely for the first one (zero origin)
 					res.subTask = tasks[0]

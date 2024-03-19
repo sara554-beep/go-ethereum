@@ -37,8 +37,9 @@ type StackTrieOptions struct {
 	Writer  func(path []byte, hash common.Hash, blob []byte) // The function to commit the dirty nodes
 	Cleaner func(path []byte)                                // The function to clean up dangling nodes
 
-	SkipLeftBoundary  bool          // Flag whether the nodes on the left boundary are skipped for committing
-	SkipRightBoundary bool          // Flag whether the nodes on the right boundary are skipped for committing
+	SkipLeftBoundary  bool // Flag whether the nodes on the left boundary are skipped for committing
+	SkipRightBoundary bool // Flag whether the nodes on the right boundary are skipped for committing
+	NodePresence      func(path []byte) (bool, common.Hash)
 	boundaryGauge     metrics.Gauge // Gauge to track how many boundary nodes are met
 }
 
@@ -60,9 +61,10 @@ func (o *StackTrieOptions) WithCleaner(cleaner func(path []byte)) *StackTrieOpti
 // WithSkipBoundary configures whether the left and right boundary nodes are
 // filtered for committing, along with a gauge metrics to track how many
 // boundary nodes are met.
-func (o *StackTrieOptions) WithSkipBoundary(skipLeft, skipRight bool, gauge metrics.Gauge) *StackTrieOptions {
+func (o *StackTrieOptions) WithSkipBoundary(skipLeft, skipRight bool, checkNode func(path []byte) (bool, common.Hash), gauge metrics.Gauge) *StackTrieOptions {
 	o.SkipLeftBoundary = skipLeft
 	o.SkipRightBoundary = skipRight
+	o.NodePresence = checkNode
 	o.boundaryGauge = gauge
 	return o
 }
@@ -439,6 +441,22 @@ func (t *StackTrie) hash(st *stNode, path []byte) {
 		if t.options.boundaryGauge != nil {
 			t.options.boundaryGauge.Inc(1)
 		}
+		exist, hash := t.options.NodePresence(path)
+		if exist {
+			if hash == common.BytesToHash(st.val) {
+				log.Info("Consistent left boundary node", "path", path, "hash", hash.Hex())
+			} else {
+				log.Info("Inconsistent left boundary node", "path", path, "disk", hash.Hex(), "got", common.BytesToHash(st.val).Hex())
+			}
+		}
+		if len(internal) > 0 {
+			for _, p := range internal {
+				exist, hash := t.options.NodePresence(p)
+				if exist {
+					log.Info("Leftover nodes on left boundary", "path", path, "hash", hash.Hex())
+				}
+			}
+		}
 		return
 	}
 	// Skip committing if the node is on the right boundary and stackTrie is
@@ -446,6 +464,22 @@ func (t *StackTrie) hash(st *stNode, path []byte) {
 	if t.options.SkipRightBoundary && bytes.HasPrefix(t.last, path) {
 		if t.options.boundaryGauge != nil {
 			t.options.boundaryGauge.Inc(1)
+		}
+		exist, hash := t.options.NodePresence(path)
+		if exist {
+			if hash == common.BytesToHash(st.val) {
+				log.Info("Consistent right boundary node", "path", path, "hash", hash.Hex())
+			} else {
+				log.Info("Inconsistent right boundary node", "path", path, "disk", hash.Hex(), "got", common.BytesToHash(st.val).Hex())
+			}
+		}
+		if len(internal) > 0 {
+			for _, p := range internal {
+				exist, hash := t.options.NodePresence(p)
+				if exist {
+					log.Info("Leftover nodes on right boundary", "path", path, "hash", hash.Hex())
+				}
+			}
 		}
 		return
 	}
