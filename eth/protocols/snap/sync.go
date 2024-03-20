@@ -2465,13 +2465,13 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 				log.Debug("Completed storage is detected", "hash", hash.Hex(), "task.Next", task.Next.Hex())
 			}
 			storageDiscardGapGauge.Inc(int64(len(task.completed)))
+			log.Info("Account range updated", "next", task.Next.Hex())
 			return
 		}
 		task.Next = incHash(hash)
 	}
 	// All accounts marked as complete, track if the entire task is done
 	task.done = !res.cont
-
 	log.Info("Account range updated", "next", task.Next.Hex(), "done", task.done)
 
 	// Stack trie could have generated trie nodes, push them to disk (we need to
