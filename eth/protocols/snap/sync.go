@@ -2431,7 +2431,6 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 			s.accountBytes += common.StorageSize(len(key) + len(value))
 		},
 	}
-	beforeDel := len(task.completed)
 	for i, hash := range res.hashes {
 		if task.needCode[i] || task.needState[i] {
 			break
