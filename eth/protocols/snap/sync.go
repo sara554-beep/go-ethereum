@@ -770,6 +770,7 @@ func (s *Syncer) loadSyncStatus() {
 						_, hash := rawdb.ReadAccountTrieNode(s.db, path)
 						return hash != (common.Hash{}), hash
 					}, boundaryAccountNodesGauge)
+					log.Info("Initialized account range", "next", task.Next.Hex())
 				}
 				task.genTrie = trie.NewStackTrie(options)
 				for accountHash, subtasks := range task.SubTasks {
@@ -2445,12 +2446,13 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 			if err != nil {
 				panic(err) // Really shouldn't ever happen
 			}
+			if hash.Cmp(task.Next) < 0 {
+				log.Info("Invalid account is inserted", "next", task.Next.Hex(), "hash", hash.Hex())
+			}
 			task.genTrie.Update(hash[:], full)
 		}
 		delete(task.completed, hash)
 	}
-	log.Info("Completed, forwarded account", "before", beforeDel, "now", len(task.completed))
-
 	// Flush anything written just now and update the stats
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to persist accounts", "err", err)
@@ -2559,6 +2561,11 @@ func (s *Syncer) OnAccounts(peer SyncPeer, id uint64, hashes []common.Hash, acco
 	nodes := make(trienode.ProofList, len(proof))
 	for i, node := range proof {
 		nodes[i] = node
+	}
+	for _, hash := range hashes {
+		if hash.Cmp(req.origin) < 0 {
+			log.Info("Invalid response detected", "origin", req.origin, "got", hash.Hex())
+		}
 	}
 	cont, err := trie.VerifyRangeProof(root, req.origin[:], keys, accounts, nodes.Set())
 	if err != nil {
