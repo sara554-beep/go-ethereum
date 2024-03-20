@@ -1284,7 +1284,7 @@ func (s *Syncer) assignStorageTasks(success chan *storageResponse, fail chan *st
 			}
 		}
 		if len(task.SubTasks) > 1 && subtask != nil {
-			log.Info("Pick sub task from multiple", "account", accounts[len(accounts)-1].Hex(), "next", task.Next.Hex(), "last", task.Last.Hex(), "number", len(task.SubTasks))
+			log.Debug("Pick sub task from multiple", "account", accounts[len(accounts)-1].Hex(), "next", task.Next.Hex(), "last", task.Last.Hex(), "number", len(task.SubTasks))
 		}
 		if subtask == nil {
 			// No large contract required retrieval, but small ones available
@@ -2162,9 +2162,9 @@ func (s *Syncer) processStorageResponse(res *storageResponse) {
 					}
 					res.mainTask.SubTasks[account] = tasks
 					if len(res.mainTask.SubTasks) > 1 {
-						log.Info("Multiple subtasks created", "account", account.Hex(), "next", res.mainTask.Next.Hex(), "last", res.mainTask.Last.Hex(), "number", len(res.mainTask.SubTasks))
+						log.Debug("Multiple subtasks created", "account", account.Hex(), "next", res.mainTask.Next.Hex(), "last", res.mainTask.Last.Hex(), "number", len(res.mainTask.SubTasks))
 						for hash := range res.mainTask.SubTasks {
-							log.Info("Multiple subtasks", "account", hash.Hex())
+							log.Debug("Multiple subtasks", "account", hash.Hex())
 						}
 					}
 					// Since we've just created the sub-tasks, this response
@@ -2462,7 +2462,7 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 	for i, hash := range res.hashes {
 		if task.needCode[i] || task.needState[i] {
 			for hash := range task.completed {
-				log.Warn("Completed storage is detected", "hash", hash.Hex(), "task.Next", task.Next.Hex())
+				log.Debug("Completed storage is detected", "hash", hash.Hex(), "task.Next", task.Next.Hex())
 			}
 			storageDiscardGapGauge.Inc(int64(len(task.completed)))
 			return
@@ -2471,6 +2471,8 @@ func (s *Syncer) forwardAccountTask(task *accountTask) {
 	}
 	// All accounts marked as complete, track if the entire task is done
 	task.done = !res.cont
+
+	log.Info("Account range updated", "next", task.Next.Hex(), "done", task.done)
 
 	// Stack trie could have generated trie nodes, push them to disk (we need to
 	// flush after finalizing task.done. It's fine even if we crash and lose this

@@ -445,17 +445,22 @@ func (t *StackTrie) hash(st *stNode, path []byte) {
 		}
 		exist, hash := t.options.NodePresence(path)
 		if exist {
+			logger := log.Debug
+			if t.options.Owner == (common.Hash{}) {
+				logger = log.Info
+			}
 			if hash == common.BytesToHash(st.val) {
-				log.Info("Consistent left boundary node", "owner", t.options.Owner.Hex(), "path", path, "hash", hash.Hex())
+				logger("Consistent left boundary node", "owner", t.options.Owner.Hex(), "path", path, "hash", hash.Hex())
 			} else {
-				log.Info("Inconsistent left boundary node", "owner", t.options.Owner.Hex(), "path", path, "disk", hash.Hex(), "got", common.BytesToHash(st.val).Hex())
+				first := common.BytesToHash(hexToKeybytes(t.first))
+				logger("Inconsistent left boundary node", "owner", t.options.Owner.Hex(), "first", first.Hex(), "path", path, "disk", hash.Hex(), "got", common.BytesToHash(st.val).Hex())
 			}
 		}
 		if len(internal) > 0 {
 			for _, p := range internal {
 				exist, hash := t.options.NodePresence(p)
 				if exist {
-					log.Info("Leftover nodes on left boundary", "owner", t.options.Owner.Hex(), "path", path, "hash", hash.Hex())
+					log.Info("Leftover nodes on left boundary", "owner", t.options.Owner.Hex(), "path", p, "hash", hash.Hex())
 				}
 			}
 		}
@@ -469,17 +474,22 @@ func (t *StackTrie) hash(st *stNode, path []byte) {
 		}
 		exist, hash := t.options.NodePresence(path)
 		if exist {
+			logger := log.Debug
+			if t.options.Owner == (common.Hash{}) {
+				logger = log.Info
+			}
 			if hash == common.BytesToHash(st.val) {
-				log.Info("Consistent right boundary node", "owner", t.options.Owner.Hex(), "path", path, "hash", hash.Hex())
+				logger("Consistent right boundary node", "owner", t.options.Owner.Hex(), "path", path, "hash", hash.Hex())
 			} else {
-				log.Info("Inconsistent right boundary node", "owner", t.options.Owner.Hex(), "path", path, "disk", hash.Hex(), "got", common.BytesToHash(st.val).Hex())
+				last := common.BytesToHash(hexToKeybytes(t.last))
+				logger("Inconsistent right boundary node", "owner", t.options.Owner.Hex(), "last", last.Hex(), "path", path, "disk", hash.Hex(), "got", common.BytesToHash(st.val).Hex())
 			}
 		}
 		if len(internal) > 0 {
 			for _, p := range internal {
 				exist, hash := t.options.NodePresence(p)
 				if exist {
-					log.Info("Leftover nodes on right boundary", "path", path, "hash", hash.Hex())
+					log.Info("Leftover nodes on right boundary", "path", p, "hash", hash.Hex())
 				}
 			}
 		}
