@@ -17,6 +17,7 @@
 package pathdb
 
 import (
+	"bytes"
 	"fmt"
 	"time"
 
@@ -27,10 +28,14 @@ import (
 
 // HistoryStats wraps the history inspection statistics.
 type HistoryStats struct {
-	Start   uint64   // Block number of the first queried history
-	End     uint64   // Block number of the last queried history
-	Blocks  []uint64 // Blocks refers to the list of block numbers in which the state is mutated
-	Origins [][]byte // Origins refers to the original value of the state before its mutation
+	Start uint64 // Block number of the first queried history
+	End   uint64 // Block number of the last queried history
+
+	Blocks []uint64 // Blocks refers to the list of block numbers in which the state is mutated
+
+	Origins   [][]byte // Origins refers to the original value of the state before its mutation
+	Hashes    [][]common.Hash
+	BlobArray [][][]byte
 }
 
 // sanitizeRange limits the given range to fit within the local history store.
@@ -108,18 +113,34 @@ func accountHistory(freezer *rawdb.ResettableFreezer, address common.Address, st
 }
 
 // storageHistory inspects the storage history within the range.
-func storageHistory(freezer *rawdb.ResettableFreezer, address common.Address, slot common.Hash, start uint64, end uint64) (*HistoryStats, error) {
+func storageHistory(freezer *rawdb.ResettableFreezer, address common.Address, slot []byte, start uint64, end uint64) (*HistoryStats, error) {
 	return inspectHistory(freezer, start, end, func(h *history, stats *HistoryStats) {
 		slots, exists := h.storages[address]
 		if !exists {
 			return
 		}
-		blob, exists := slots[slot]
-		if !exists {
-			return
+		if len(slot) == common.HashLength {
+			blob, exists := slots[common.BytesToHash(slot)]
+			if !exists {
+				return
+			}
+			stats.Blocks = append(stats.Blocks, h.meta.block)
+			stats.Origins = append(stats.Origins, blob)
+		} else {
+			var (
+				hashes []common.Hash
+				blobs  [][]byte
+			)
+			for hash, blob := range slots {
+				if bytes.HasPrefix(hash.Bytes(), slot) {
+					hashes = append(hashes, hash)
+					blobs = append(blobs, blob)
+				}
+			}
+			stats.Blocks = append(stats.Blocks, h.meta.block)
+			stats.Hashes = append(stats.Hashes, hashes)
+			stats.BlobArray = append(stats.BlobArray, blobs)
 		}
-		stats.Blocks = append(stats.Blocks, h.meta.block)
-		stats.Origins = append(stats.Origins, blob)
 	})
 }
 

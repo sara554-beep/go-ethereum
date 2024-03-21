@@ -506,7 +506,7 @@ func (db *Database) AccountHistory(address common.Address, start, end uint64) (*
 // object is selected as the ending point. Note end is included in the query.
 //
 // Note, slot refers to the hash of the raw slot key.
-func (db *Database) StorageHistory(address common.Address, slot common.Hash, start uint64, end uint64) (*HistoryStats, error) {
+func (db *Database) StorageHistory(address common.Address, slot []byte, start uint64, end uint64) (*HistoryStats, error) {
 	return storageHistory(db.freezer, address, slot, start, end)
 }
 

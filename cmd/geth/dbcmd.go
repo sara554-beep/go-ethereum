@@ -226,6 +226,9 @@ WARNING: This is a low-level operation which may cause database corruption!`,
 				Name:  "raw",
 				Usage: "display the decoded raw state value (otherwise shows rlp-encoded value)",
 			},
+			&cli.StringFlag{
+				Name: "prefix",
+			},
 		}, utils.NetworkFlags, utils.DatabaseFlags),
 		Description: "This command queries the history of the account or storage slot within the specified block range",
 	}
@@ -823,7 +826,7 @@ func inspectAccount(db *triedb.Database, start uint64, end uint64, address commo
 	return nil
 }
 
-func inspectStorage(db *triedb.Database, start uint64, end uint64, address common.Address, slot common.Hash, raw bool) error {
+func inspectStorage(db *triedb.Database, start uint64, end uint64, address common.Address, slot []byte, raw bool) error {
 	// The hash of storage slot key is utilized in the history
 	// rather than the raw slot key, make the conversion.
 	//slotHash := crypto.Keccak256Hash(slot.Bytes())
@@ -831,27 +834,34 @@ func inspectStorage(db *triedb.Database, start uint64, end uint64, address commo
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Storage history:\n\taddress: %s\n\tslot: %s\n\tblockrange: [#%d-#%d]\n", address.Hex(), slot.Hex(), stats.Start, stats.End)
+	fmt.Printf("Storage history:\n\taddress: %s\n\tblockrange: [#%d-#%d]\n", address.Hex(), stats.Start, stats.End)
 
 	from := stats.Start
 	for i := 0; i < len(stats.Blocks); i++ {
-		var content string
-		if len(stats.Origins[i]) == 0 {
-			content = "<empty>"
-		} else {
-			if !raw {
-				content = fmt.Sprintf("%#x", stats.Origins[i])
+		if i < len(stats.Origins) {
+			var content string
+			if len(stats.Origins[i]) == 0 {
+				content = "<empty>"
 			} else {
-				_, data, _, err := rlp.Split(stats.Origins[i])
-				if err != nil {
-					fmt.Printf("Failed to decode storage slot, %v", err)
-					return err
+				if !raw {
+					content = fmt.Sprintf("%#x", stats.Origins[i])
+				} else {
+					_, data, _, err := rlp.Split(stats.Origins[i])
+					if err != nil {
+						fmt.Printf("Failed to decode storage slot, %v", err)
+						return err
+					}
+					content = fmt.Sprintf("%#x", data)
 				}
-				content = fmt.Sprintf("%#x", data)
+			}
+			fmt.Printf("#%d - #%d: %s\n", from, stats.Blocks[i], content)
+			from = stats.Blocks[i]
+		} else if i < len(stats.Hashes) {
+			fmt.Printf("#%d\n", stats.Blocks[i])
+			for j := 0; j < len(stats.Hashes[i]); j++ {
+				fmt.Printf("\t\t%x: %#x\n", stats.Hashes[i][j], stats.BlobArray[i][j])
 			}
 		}
-		fmt.Printf("#%d - #%d: %s\n", from, stats.Blocks[i], content)
-		from = stats.Blocks[i]
 	}
 	return nil
 }
@@ -925,5 +935,10 @@ func inspectHistory(ctx *cli.Context) error {
 	if slot == (common.Hash{}) {
 		return inspectAccount(triedb, start, end, address, ctx.Bool("raw"))
 	}
-	return inspectStorage(triedb, start, end, address, slot, ctx.Bool("raw"))
+	slotBytes := slot.Bytes()
+	if len(ctx.String("prefix")) > 0 {
+		fmt.Println("[]byte(prefix)", []byte(ctx.String("prefix")))
+		slotBytes = []byte(ctx.String("prefix"))
+	}
+	return inspectStorage(triedb, start, end, address, slotBytes, ctx.Bool("raw"))
 }
