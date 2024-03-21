@@ -137,9 +137,11 @@ func storageHistory(freezer *rawdb.ResettableFreezer, address common.Address, sl
 					blobs = append(blobs, blob)
 				}
 			}
-			stats.Blocks = append(stats.Blocks, h.meta.block)
-			stats.Hashes = append(stats.Hashes, hashes)
-			stats.BlobArray = append(stats.BlobArray, blobs)
+			if len(hashes) != 0 {
+				stats.Blocks = append(stats.Blocks, h.meta.block)
+				stats.Hashes = append(stats.Hashes, hashes)
+				stats.BlobArray = append(stats.BlobArray, blobs)
+			}
 		}
 	})
 }
