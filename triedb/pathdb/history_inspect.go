@@ -132,7 +132,7 @@ func storageHistory(freezer *rawdb.ResettableFreezer, address common.Address, sl
 				blobs  [][]byte
 			)
 			for hash, blob := range slots {
-				if bytes.HasPrefix(hash.Bytes(), slot) {
+				if bytes.HasPrefix([]byte(common.Bytes2Hex(hash.Bytes())), slot) {
 					hashes = append(hashes, hash)
 					blobs = append(blobs, blob)
 				}

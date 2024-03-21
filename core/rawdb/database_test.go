@@ -17,6 +17,7 @@
 package rawdb
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -59,4 +60,12 @@ func TestBar(t *testing.T) {
 
 	parent := common.FromHex("0xf90211a0b5282895f3e73c1c503109e845e8e390c1272e6b4d2e56ef869c09625bb0d6d7a0f23c9c637b0ce233cff0fb2cf523c908388ad3dcced217503880cd02ab1b7cb9a05cfc0d55f2e2a8234dfb9815646d0fc1ac2c24793ef85a2412163fe013761affa073a578bf8013e4895806ecde46967b1233747f9a87ec6f23257a3a0d034d3250a015ca411f8df6bc9f028d0c8f8aab95a8cc06c6f2dea3514dad7a5955c9da8a47a0b2485c81c31db51cc56f1b1d2923258598570d814e6fdd2417d5da7a02b5dce8a0576f7e39eb8fc666ec778eaaeb7bd1e9dbc8b99e53166c8489a098ff701522f1a0bda7012521b345566775b8b72ed8202055d96ee8710a5091128faee9e0b9b6c1a053907c6dd8a260b27135b4baf6520c30a57215df803c5279c0ee2eed0dc9278ca0858a11512fba11d5945121c71775ac1c1191781330aef98bb88cedc3663fcac4a08601339fbc1450b6ee3ef47f5c2ced8c66f06f49c4c1aab86418f0107fd0db51a050e11f44e8e34f693d9ed6be619dcd2c4b312a111138ffc7d6a1cd26dcb371dba0f547b62d2f72cca93cd59201e4b25d37d5311e75e71569d684b3d5b04ce4d1daa0596ca73a457f4f56efa6813c0c7dfc8d7709e57627b314deef57672d4db58344a05a963e92d34d98ceeddd3b2f40af1c5f8090090f52d3fce6d598c9fcec25b400a0417fb3a0d4fb4661bd6903876b93d8285b095f4dd93c742e8b97faf401a97ec780")
 	fmt.Println(crypto.Keccak256Hash(parent).Hex())
+
+	a := "de3e4"
+	prefix := []byte(a)
+
+	key := common.FromHex("de3e441e798822302eb47f5cd72bd88d5bf9f774079cb6841ff0a70c7f0d3fc1")
+	fmt.Println(prefix)
+	fmt.Println([]byte(common.Bytes2Hex(key)))
+	fmt.Println(bytes.HasPrefix([]byte(common.Bytes2Hex(key)), prefix))
 }
