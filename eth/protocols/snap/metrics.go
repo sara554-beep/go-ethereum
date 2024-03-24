@@ -34,15 +34,8 @@ var (
 
 	// lookupGauge is the metric to track how many trie node lookups are
 	// performed to determine if node needs to be deleted.
-	lookupGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/lookup", nil)
-
-	// boundaryAccountNodesGauge is the metric to track how many boundary trie
-	// nodes in account trie are met.
-	boundaryAccountNodesGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/boundary/account", nil)
-
-	// boundaryAccountNodesGauge is the metric to track how many boundary trie
-	// nodes in storage tries are met.
-	boundaryStorageNodesGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/boundary/storage", nil)
+	accountInnerLookupGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/account/lookup/inner", nil)
+	storageInnerLookupGauge = metrics.NewRegisteredGauge("eth/protocols/snap/sync/storage/lookup/inner", nil)
 
 	// smallStorageGauge is the metric to track how many storages are small enough
 	// to retrieved in one or two request.

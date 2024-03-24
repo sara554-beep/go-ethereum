@@ -726,7 +726,11 @@ func (s *Syncer) cleanPath(batch ethdb.Batch, owner common.Hash, path []byte) {
 		rawdb.DeleteStorageTrieNode(batch, owner, path)
 		storageDeletionGauge.Inc(1)
 	}
-	lookupGauge.Inc(1)
+	if owner == (common.Hash{}) {
+		accountInnerLookupGauge.Inc(1)
+	} else {
+		storageInnerLookupGauge.Inc(1)
+	}
 }
 
 // loadSyncStatus retrieves a previously aborted sync status from the database,
