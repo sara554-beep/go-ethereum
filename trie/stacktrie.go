@@ -389,7 +389,7 @@ func (t *StackTrie) hash(st *stNode, path []byte) {
 		// danging nodes within the range of this internal path on disk, which would
 		// break the guarantee for state healing.
 		if len(st.children[0].val) >= 32 && t.options.Cleaner != nil {
-			for i := 1; i < len(st.key); i++ {
+			for i := 0; i < len(st.key); i++ {
 				internal = append(internal, append(path, st.key[:i]...))
 			}
 		}
