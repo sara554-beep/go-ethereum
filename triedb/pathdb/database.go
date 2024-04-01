@@ -26,7 +26,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -139,6 +138,7 @@ type Database struct {
 	config     *Config                  // Configuration for database
 	diskdb     ethdb.Database           // Persistent storage for matured trie nodes
 	tree       *layerTree               // The group for all known layers
+	nHasher    nodeHasher               // hasher of tree node
 	freezer    *rawdb.ResettableFreezer // Freezer for storing trie histories, nil possible in tests
 	lock       sync.RWMutex             // Lock to prevent mutations from happening at the same time
 }
@@ -152,12 +152,19 @@ func New(diskdb ethdb.Database, config *Config, isVerkle bool) *Database {
 	}
 	config = config.sanitize()
 
+	var nHasher nodeHasher
+	if isVerkle {
+		nHasher = newVerkleHasher()
+	} else {
+		nHasher = newMerkleHasher()
+	}
 	db := &Database{
 		readOnly:   config.ReadOnly,
 		isVerkle:   isVerkle,
 		bufferSize: config.DirtyCacheSize,
 		config:     config,
 		diskdb:     diskdb,
+		nHasher:    nHasher,
 	}
 	// Construct the layer tree by resolving the in-disk singleton state
 	// and in-memory layer journal.
@@ -292,10 +299,9 @@ func (db *Database) Enable(root common.Hash) error {
 		return errDatabaseReadOnly
 	}
 	// Ensure the provided state root matches the stored one.
-	root = types.TrieRootHash(root)
-	stored := types.EmptyRootHash
+	stored := db.emptyRoot()
 	if blob := rawdb.ReadAccountTrieNode(db.diskdb, nil); len(blob) > 0 {
-		stored = crypto.Keccak256Hash()
+		stored = db.nHasher.hash(blob)
 	}
 	if stored != root {
 		return fmt.Errorf("state root mismatch: stored %x, synced %x", stored, root)
@@ -343,7 +349,6 @@ func (db *Database) Recover(root common.Hash, loader triestate.TrieLoader) error
 		return errors.New("state rollback is non-supported")
 	}
 	// Short circuit if the target state is not recoverable.
-	root = types.TrieRootHash(root)
 	if !db.Recoverable(root) {
 		return errStateUnrecoverable
 	}
@@ -378,7 +383,6 @@ func (db *Database) Recover(root common.Hash, loader triestate.TrieLoader) error
 // Recoverable returns the indicator if the specified state is recoverable.
 func (db *Database) Recoverable(root common.Hash) bool {
 	// Ensure the requested state is a known state.
-	root = types.TrieRootHash(root)
 	id := rawdb.ReadStateID(db.diskdb, root)
 	if id == nil {
 		return false
@@ -444,9 +448,12 @@ func (db *Database) Size() (diffs common.StorageSize, nodes common.StorageSize) 
 // Initialized returns an indicator if the state data is already
 // initialized in path-based scheme.
 func (db *Database) Initialized(genesisRoot common.Hash) bool {
-	var inited bool
+	var (
+		inited bool
+		empty  = db.emptyRoot()
+	)
 	db.tree.forEach(func(layer layer) {
-		if layer.rootHash() != types.EmptyRootHash {
+		if layer.rootHash() != empty {
 			inited = true
 		}
 	})
@@ -479,6 +486,14 @@ func (db *Database) modifyAllowed() error {
 		return errDatabaseWaitSync
 	}
 	return nil
+}
+
+// emptyRoot returns the root of empty state.
+func (db *Database) emptyRoot() common.Hash {
+	if db.isVerkle {
+		return types.EmptyVerkleHash
+	}
+	return types.EmptyRootHash
 }
 
 // AccountHistory inspects the account history within the specified range.
