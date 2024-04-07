@@ -19,6 +19,7 @@ package pathdb
 import (
 	"bytes"
 	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -35,6 +36,7 @@ type HistoryStats struct {
 
 	Origins   [][]byte // Origins refers to the original value of the state before its mutation
 	Hashes    [][]common.Hash
+	Addresses [][]common.Address
 	BlobArray [][][]byte
 }
 
@@ -101,14 +103,36 @@ func inspectHistory(freezer *rawdb.ResettableFreezer, start, end uint64, onHisto
 }
 
 // accountHistory inspects the account history within the range.
-func accountHistory(freezer *rawdb.ResettableFreezer, address common.Address, start, end uint64) (*HistoryStats, error) {
+func accountHistory(freezer *rawdb.ResettableFreezer, address []byte, start, end uint64) (*HistoryStats, error) {
 	return inspectHistory(freezer, start, end, func(h *history, stats *HistoryStats) {
-		blob, exists := h.accounts[address]
-		if !exists {
-			return
+		if len(address) == common.AddressLength {
+			blob, exists := h.accounts[common.BytesToAddress(address)]
+			if !exists {
+				return
+			}
+			stats.Blocks = append(stats.Blocks, h.meta.block)
+			stats.Origins = append(stats.Origins, blob)
+		} else {
+			var (
+				hashes    []common.Hash
+				addresses []common.Address
+				blobs     [][]byte
+			)
+			for addr, blob := range h.accounts {
+				hash := crypto.Keccak256Hash(addr.Bytes())
+				if bytes.HasPrefix([]byte(common.Bytes2Hex(hash.Bytes())), address) {
+					hashes = append(hashes, hash)
+					addresses = append(addresses, addr)
+					blobs = append(blobs, blob)
+				}
+			}
+			if len(hashes) != 0 {
+				stats.Blocks = append(stats.Blocks, h.meta.block)
+				stats.Hashes = append(stats.Hashes, hashes)
+				stats.Addresses = append(stats.Addresses, addresses)
+				stats.BlobArray = append(stats.BlobArray, blobs)
+			}
 		}
-		stats.Blocks = append(stats.Blocks, h.meta.block)
-		stats.Origins = append(stats.Origins, blob)
 	})
 }
 

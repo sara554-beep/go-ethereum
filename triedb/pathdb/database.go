@@ -493,7 +493,7 @@ func (db *Database) modifyAllowed() error {
 //
 // End: State ID of the last history for the query. 0 implies the last available
 // object is selected as the ending point. Note end is included in the query.
-func (db *Database) AccountHistory(address common.Address, start, end uint64) (*HistoryStats, error) {
+func (db *Database) AccountHistory(address []byte, start, end uint64) (*HistoryStats, error) {
 	return accountHistory(db.freezer, address, start, end)
 }
 

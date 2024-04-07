@@ -32,7 +32,7 @@ import (
 // object is selected as the starting point. Note end is included for query.
 //
 // This function is only supported by path mode database.
-func (db *Database) AccountHistory(address common.Address, start, end uint64) (*pathdb.HistoryStats, error) {
+func (db *Database) AccountHistory(address []byte, start, end uint64) (*pathdb.HistoryStats, error) {
 	pdb, ok := db.backend.(*pathdb.Database)
 	if !ok {
 		return nil, errors.New("not supported")
