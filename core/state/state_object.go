@@ -55,9 +55,10 @@ type stateObject struct {
 	trie Trie   // storage trie, which becomes non-nil on first access
 	code []byte // contract bytecode, which gets set when code is loaded
 
-	originStorage  Storage // Storage cache of original entries to dedup rewrites
-	pendingStorage Storage // Storage entries that need to be flushed to disk, at the end of an entire block
-	dirtyStorage   Storage // Storage entries that have been modified in the current transaction execution, reset for every transaction
+	originStorage  Storage                  // Storage entries that have been accessed in the current block
+	dirtyStorage   Storage                  // Storage entries that have been modified in the current transaction
+	pendingStorage Storage                  // Storage entries that have been modified in the current block
+	waitCommit     map[common.Hash]struct{} // Storage entries that have been modified but not yet committed into trie
 
 	// Cache flags.
 	dirtyCode bool // true if the code was updated
@@ -88,8 +89,9 @@ func newObject(db *StateDB, address common.Address, acct *types.StateAccount) *s
 		origin:         origin,
 		data:           *acct,
 		originStorage:  make(Storage),
-		pendingStorage: make(Storage),
 		dirtyStorage:   make(Storage),
+		pendingStorage: make(Storage),
+		waitCommit:     make(map[common.Hash]struct{}),
 	}
 }
 
@@ -134,9 +136,10 @@ func (s *stateObject) getTrie() (Trie, error) {
 	return s.trie, nil
 }
 
-// GetState retrieves a value from the account storage trie.
+// GetState retrieves a value associated with the specific key.
 func (s *stateObject) GetState(key common.Hash) common.Hash {
-	// If we have a dirty value for this state entry, return it
+	// If we have a dirty value(modified within the current transaction)
+	// for this state entry, return it.
 	value, dirty := s.dirtyStorage[key]
 	if dirty {
 		return value
@@ -145,7 +148,8 @@ func (s *stateObject) GetState(key common.Hash) common.Hash {
 	return s.GetCommittedState(key)
 }
 
-// GetCommittedState retrieves a value from the committed account storage trie.
+// GetCommittedState retrieves the value associated with the specific key. The
+// returned value represents the original value before the transaction execution.
 func (s *stateObject) GetCommittedState(key common.Hash) common.Hash {
 	// If we have a pending write or clean cached, return that
 	if value, pending := s.pendingStorage[key]; pending {
@@ -232,6 +236,8 @@ func (s *stateObject) finalise(prefetch bool) {
 	slotsToPrefetch := make([][]byte, 0, len(s.dirtyStorage))
 	for key, value := range s.dirtyStorage {
 		s.pendingStorage[key] = value
+		s.waitCommit[key] = struct{}{}
+
 		if value != s.originStorage[key] {
 			slotsToPrefetch = append(slotsToPrefetch, common.CopyBytes(key[:])) // Copy needed for closure
 		}
@@ -255,26 +261,19 @@ func (s *stateObject) updateTrie() (Trie, error) {
 	s.finalise(false)
 
 	// Short circuit if nothing changed, don't bother with hashing anything
-	if len(s.pendingStorage) == 0 {
+	if len(s.waitCommit) == 0 {
 		return s.trie, nil
 	}
 	// Track the amount of time wasted on updating the storage trie
 	defer func(start time.Time) { s.db.StorageUpdates += time.Since(start) }(time.Now())
 
 	// The snapshot storage map for the object
-	var (
-		storage map[common.Hash][]byte
-		origin  map[common.Hash][]byte
-	)
 	tr, err := s.getTrie()
 	if err != nil {
 		s.db.setError(err)
 		return nil, err
 	}
-	// Insert all the pending storage updates into the trie
-	usedStorage := make([][]byte, 0, len(s.pendingStorage))
-
-	// Perform trie updates before deletions.  This prevents resolution of unnecessary trie nodes
+	// Perform trie updates before deletions. This prevents resolution of unnecessary trie nodes
 	//  in circumstances similar to the following:
 	//
 	// Consider nodes `A` and `B` who share the same full node parent `P` and have no other siblings.
@@ -284,21 +283,14 @@ func (s *stateObject) updateTrie() (Trie, error) {
 	// If the deletion is handled first, then `P` would be left with only one child, thus collapsed
 	// into a shortnode. This requires `B` to be resolved from disk.
 	// Whereas if the created node is handled first, then the collapse is avoided, and `B` is not resolved.
-	var deletions []common.Hash
-	for key, value := range s.pendingStorage {
-		// Skip noop changes, persist actual changes
-		if value == s.originStorage[key] {
-			continue
-		}
-		prev := s.originStorage[key]
-		s.originStorage[key] = value
-
-		var encoded []byte // rlp-encoded value to be used by the snapshot
+	var (
+		deletions []common.Hash
+		used      = make([][]byte, 0, len(s.waitCommit))
+	)
+	for key := range s.waitCommit {
+		value := s.pendingStorage[key]
 		if (value != common.Hash{}) {
-			// Encoding []byte cannot fail, ok to ignore the error.
-			trimmed := common.TrimLeftZeroes(value[:])
-			encoded, _ = rlp.EncodeToBytes(trimmed)
-			if err := tr.UpdateStorage(s.address, key[:], trimmed); err != nil {
+			if err := tr.UpdateStorage(s.address, key[:], common.TrimLeftZeroes(value[:])); err != nil {
 				s.db.setError(err)
 				return nil, err
 			}
@@ -306,35 +298,8 @@ func (s *stateObject) updateTrie() (Trie, error) {
 		} else {
 			deletions = append(deletions, key)
 		}
-		// Cache the mutated storage slots until commit
-		if storage == nil {
-			if storage = s.db.storages[s.addrHash]; storage == nil {
-				storage = make(map[common.Hash][]byte)
-				s.db.storages[s.addrHash] = storage
-			}
-		}
-		khash := crypto.HashData(s.db.hasher, key[:])
-		storage[khash] = encoded // encoded will be nil if it's deleted
-
-		// Cache the original value of mutated storage slots
-		if origin == nil {
-			if origin = s.db.storagesOrigin[s.address]; origin == nil {
-				origin = make(map[common.Hash][]byte)
-				s.db.storagesOrigin[s.address] = origin
-			}
-		}
-		// Track the original value of slot only if it's mutated first time
-		if _, ok := origin[khash]; !ok {
-			if prev == (common.Hash{}) {
-				origin[khash] = nil // nil if it was not present previously
-			} else {
-				// Encoding []byte cannot fail, ok to ignore the error.
-				b, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(prev[:]))
-				origin[khash] = b
-			}
-		}
 		// Cache the items for preloading
-		usedStorage = append(usedStorage, common.CopyBytes(key[:])) // Copy needed for closure
+		used = append(used, common.CopyBytes(key[:])) // Copy needed for closure
 	}
 	for _, key := range deletions {
 		if err := tr.DeleteStorage(s.address, key[:]); err != nil {
@@ -344,9 +309,9 @@ func (s *stateObject) updateTrie() (Trie, error) {
 		s.db.StorageDeleted += 1
 	}
 	if s.db.prefetcher != nil {
-		s.db.prefetcher.used(s.addrHash, s.data.Root, usedStorage)
+		s.db.prefetcher.used(s.addrHash, s.data.Root, used)
 	}
-	s.pendingStorage = make(Storage) // reset pending map
+	s.waitCommit = make(map[common.Hash]struct{})
 	return tr, nil
 }
 
@@ -365,15 +330,66 @@ func (s *stateObject) updateRoot() {
 	s.data.Root = tr.Hash()
 }
 
+// commitStorage stores the original and current value of mutated storage slots.
+func (s *stateObject) commitStorage(op *accountUpdate) {
+	buf := crypto.NewKeccakState()
+	for key, slot := range s.pendingStorage {
+		if slot == s.originStorage[key] {
+			continue
+		}
+		hash := crypto.HashData(buf, key[:])
+
+		if op.storages == nil {
+			op.storages = make(map[common.Hash][]byte)
+		}
+		if op.storagesOrigin == nil {
+			op.storagesOrigin = make(map[common.Hash][]byte)
+		}
+		encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(slot[:]))
+		op.storages[hash] = encoded
+
+		old := s.originStorage[key]
+		if old == (common.Hash{}) {
+			op.storagesOrigin[hash] = nil // nil if it was not present previously
+		} else {
+			encoded, _ := rlp.EncodeToBytes(common.TrimLeftZeroes(old[:]))
+			op.storagesOrigin[hash] = encoded
+		}
+		s.originStorage[key] = slot
+	}
+	s.pendingStorage = make(Storage)
+}
+
 // commit obtains a set of dirty storage trie nodes and updates the account data.
 // The returned set can be nil if nothing to commit. This function assumes all
 // storage mutations have already been flushed into trie by updateRoot.
-func (s *stateObject) commit() (*trienode.NodeSet, error) {
-	// Short circuit if trie is not even loaded, don't bother with committing anything
-	if s.trie == nil {
-		s.origin = s.data.Copy()
-		return nil, nil
+func (s *stateObject) commit() (*accountUpdate, *trienode.NodeSet, error) {
+	// commit the account meta change
+	op := &accountUpdate{
+		address: s.address,
+		data:    types.SlimAccountRLP(s.data),
 	}
+	if s.origin == nil {
+		op.origin = nil // the account was not present
+	} else {
+		op.origin = types.SlimAccountRLP(*s.origin)
+	}
+	// commit the dirty code if necessary
+	if s.dirtyCode {
+		op.code = &contractCode{
+			address: s.address,
+			hash:    common.BytesToHash(s.CodeHash()),
+			blob:    s.code,
+		}
+		s.dirtyCode = false // revoke the dirty flag
+	}
+	// Short circuit if storage is not mutated
+	if len(s.pendingStorage) == 0 {
+		s.origin = s.data.Copy() // update origin after commit
+		return op, nil, nil
+	}
+	s.commitStorage(op) // commit storage changes
+
 	// Track the amount of time wasted on committing the storage trie
 	defer func(start time.Time) { s.db.StorageCommits += time.Since(start) }(time.Now())
 
@@ -382,13 +398,13 @@ func (s *stateObject) commit() (*trienode.NodeSet, error) {
 	// modified, the set can be nil if nothing to commit.
 	root, nodes, err := s.trie.Commit(false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s.data.Root = root
 
 	// Update original account data after commit
 	s.origin = s.data.Copy()
-	return nodes, nil
+	return op, nodes, nil
 }
 
 // AddBalance adds amount to s's balance.
