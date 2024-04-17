@@ -34,12 +34,6 @@ import (
 )
 
 const (
-	// Number of codehash->size associations to keep.
-	codeSizeCacheSize = 100000
-
-	// Cache size granted for caching clean code.
-	codeCacheSize = 64 * 1024 * 1024
-
 	// commitmentSize is the size of commitment stored in cache.
 	commitmentSize = banderwagon.UncompressedSize
 
@@ -47,8 +41,44 @@ const (
 	commitmentCacheItems = 64 * 1024 * 1024 / (commitmentSize + common.AddressLength)
 )
 
+// AccountReader wraps the Account method of a backing state database
+// providing an interface for accessing account data.
+type AccountReader interface {
+	// Account retrieves the account associated with a particular address.
+	//
+	// (a) A nil account is returned if it's not existent
+	// (b) An error is returned if any unexpected error occurs
+	// (c) The returned account is safe to modify
+	Account(addr common.Address) (*types.StateAccount, error)
+}
+
+// StorageReader wraps the Storage method of a backing state database
+// providing an interface for accessing storage slot.
+type StorageReader interface {
+	// Storage retrieves the storage slot associated with a particular account
+	// address and slot key.
+	//
+	// (a) An empty slot is returned if it's not existent
+	// (b) An error is returned if any unexpected error occurs
+	// (c) The returned storage slot is safe to modify
+	Storage(addr common.Address, storageRoot common.Hash, slot common.Hash) (common.Hash, error)
+}
+
+// Reader defines the interface for accessing accounts or storage slots
+// associated with a specific state.
+type Reader interface {
+	AccountReader
+	StorageReader
+
+	// Copy returns a deep-copied state reader.
+	Copy() Reader
+}
+
 // Database wraps access to tries and contract code.
 type Database interface {
+	// Reader returns a state reader interface with the specified state root.
+	Reader(stateRoot common.Hash) (Reader, error)
+
 	// OpenTrie opens the main account trie.
 	OpenTrie(root common.Hash) (Trie, error)
 
@@ -175,6 +205,23 @@ type cachingDB struct {
 	codeSizeCache *lru.Cache[common.Hash, int]
 	codeCache     *lru.SizeConstrainedCache[common.Hash, []byte]
 	triedb        *triedb.Database
+}
+
+// Reader implements Database interface, returning a reader of the specific state.
+func (db *cachingDB) Reader(stateRoot common.Hash) (Reader, error) {
+	var readers []Reader
+	if db.snaps != nil {
+		sr, err := newSnapReader(stateRoot, db.snaps)
+		if err == nil {
+			readers = append(readers, sr) // snap reader is optional
+		}
+	}
+	tr, err := newTrieReader(stateRoot, db.triedb)
+	if err != nil {
+		return nil, err // trie reader is mandatory
+	}
+	readers = append(readers, tr)
+	return newMultiReader(readers...)
 }
 
 // OpenTrie opens the main account trie at a specific root hash.
