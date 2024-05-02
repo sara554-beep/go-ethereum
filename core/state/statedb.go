@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
 	"github.com/ethereum/go-ethereum/trie/triestate"
-	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
 )
 
@@ -141,8 +140,7 @@ type StateDB struct {
 	transientStorage transientStorage
 
 	// State access events, used for EIP4762
-	pointCache   *utils.PointCache // shared in different transaction frame
-	accessEvents *AccessEvents     // reset for each transaction
+	accessEvents *AccessEvents // reset for each transaction
 
 	// Journal of state modifications. This is the backbone of
 	// Snapshot and RevertToSnapshot.
@@ -196,7 +194,6 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 		journal:              newJournal(),
 		accessList:           newAccessList(),
 		transientStorage:     newTransientStorage(),
-		pointCache:           utils.NewPointCache(1024),
 		hasher:               crypto.NewKeccakState(),
 	}
 	if sdb.snaps != nil {
@@ -715,7 +712,6 @@ func (s *StateDB) Copy() *StateDB {
 		journal:              s.journal.copy(),
 		validRevisions:       slices.Clone(s.validRevisions),
 		nextRevisionId:       s.nextRevisionId,
-		pointCache:           utils.NewPointCache(1024),
 
 		// In order for the block producer to be able to use and make additions
 		// to the snapshot tree, we need to copy that as well. Otherwise, any
@@ -1316,7 +1312,7 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 		}
 	}
 	if rules.IsEIP4762 {
-		s.accessEvents = NewAccessEvents(s.pointCache)
+		s.accessEvents = NewAccessEvents(s.db.PointCache())
 	}
 	// Reset transient storage at the beginning of transaction execution
 	s.transientStorage = newTransientStorage()
