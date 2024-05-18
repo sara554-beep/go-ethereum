@@ -736,10 +736,19 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 			s.revertBytecodeHealRequest(req)
 
 		case res := <-accountResps:
+			if s.healer.scheduler.Pending() > 1 {
+				log.Crit("Unexpected account response")
+			}
 			s.processAccountResponse(res)
 		case res := <-bytecodeResps:
+			if s.healer.scheduler.Pending() > 1 {
+				log.Crit("Unexpected bytecode response")
+			}
 			s.processBytecodeResponse(res)
 		case res := <-storageResps:
+			if s.healer.scheduler.Pending() > 1 {
+				log.Crit("Unexpected storage response")
+			}
 			s.processStorageResponse(res)
 		case res := <-trienodeHealResps:
 			s.processTrienodeHealResponse(res)
