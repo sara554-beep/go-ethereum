@@ -405,7 +405,7 @@ func (t *freezerTable) repairIndex(size int64) error {
 			}
 			if offset >= readOffset {
 				n, err := t.index.ReadAt(buffer, readOffset)
-				if err != nil {
+				if err != nil && !errors.Is(err, io.EOF) {
 					return indexEntry{}, err
 				}
 				expect := buffSize
