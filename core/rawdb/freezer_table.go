@@ -392,12 +392,17 @@ func (t *freezerTable) repair() error {
 // loss or misinterpretation.
 func (t *freezerTable) repairIndex(size int64) error {
 	var (
-		start      = time.Now()
-		buffSize   = int64(indexEntrySize * 1024 * 1024)
-		buffer     = make([]byte, buffSize) // pre-allocate for batch reading
+		start    = time.Now()
+		buffSize = int64(indexEntrySize * 1024 * 1024)
+		buffer   = make([]byte, buffSize) // pre-allocate for batch reading
+
 		readOffset int64
+		consumed   int64
 
 		read = func(offset int64) (indexEntry, error) {
+			if offset+indexEntrySize > size {
+				return indexEntry{}, fmt.Errorf("slice bounds out of range, offset: %d, size: %d", offset, size)
+			}
 			if offset >= readOffset {
 				n, err := t.index.ReadAt(buffer, readOffset)
 				if err != nil {
@@ -410,10 +415,11 @@ func (t *freezerTable) repairIndex(size int64) error {
 				if expect != int64(n) {
 					return indexEntry{}, fmt.Errorf("failed to read from index, want: %d, got: %d", expect, n)
 				}
+				consumed = readOffset
 				readOffset += int64(n)
 			}
 			var entry indexEntry
-			entry.unmarshalBinary(buffer[offset-readOffset : offset-readOffset+indexEntrySize])
+			entry.unmarshalBinary(buffer[offset-consumed : offset-consumed+indexEntrySize])
 			return entry, nil
 		}
 		truncate = func(offset int64) error {
