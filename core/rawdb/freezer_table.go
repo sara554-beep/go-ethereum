@@ -392,10 +392,11 @@ func (t *freezerTable) repair() error {
 // loss or misinterpretation.
 func (t *freezerTable) repairIndex(size int64) error {
 	var (
-		start    = time.Now()
-		buffSize = int64(indexEntrySize * 1024 * 1024)
-		buffer   = make([]byte, buffSize) // pre-allocate for batch reading
-
+		start      = time.Now()
+		batchSize  = int64(indexEntrySize * 1024 * 1024)
+		buffer     = make([]byte, batchSize) // pre-allocate for batch reading
+		prev       indexEntry
+		head       indexEntry
 		readOffset int64
 		consumed   int64
 
@@ -408,8 +409,8 @@ func (t *freezerTable) repairIndex(size int64) error {
 				if err != nil && !errors.Is(err, io.EOF) {
 					return indexEntry{}, err
 				}
-				expect := buffSize
-				if size-readOffset < buffSize {
+				expect := batchSize
+				if size-readOffset < batchSize {
 					expect = size - readOffset
 				}
 				if expect != int64(n) {
@@ -432,8 +433,6 @@ func (t *freezerTable) repairIndex(size int64) error {
 			log.Warn("Truncated index file", "offset", offset, "truncated", size-offset)
 			return nil
 		}
-		prev indexEntry
-		head indexEntry
 	)
 	for offset := int64(0); offset < size; offset += indexEntrySize {
 		entry, err := read(offset)
@@ -444,6 +443,7 @@ func (t *freezerTable) repairIndex(size int64) error {
 			head = entry
 			continue
 		}
+		// ensure the first non-head index denotes to the earliest file
 		if offset == indexEntrySize {
 			if entry.filenum != head.filenum {
 				return truncate(offset)
@@ -451,12 +451,13 @@ func (t *freezerTable) repairIndex(size int64) error {
 			prev = entry
 			continue
 		}
+		// ensure two consecutive index items are in order
 		if err := t.checkIndexItems(prev, entry); err != nil {
 			return truncate(offset)
 		}
 		prev = entry
 	}
-	log.Info("Validated index file", "items", size/indexEntrySize, "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Debug("Verified index file", "items", size/indexEntrySize, "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil
 }
 
