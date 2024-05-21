@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -151,6 +152,9 @@ func (t *pathTrie) onTrieNode(path []byte, hash common.Hash, blob []byte) {
 
 // write commits the node write to provided database batch in path mode.
 func (t *pathTrie) write(path []byte, blob []byte) {
+	if len(blob) == 0 {
+		log.Crit("Invalid node write", "owner", t.owner, "path", path)
+	}
 	if t.owner == (common.Hash{}) {
 		rawdb.WriteAccountTrieNode(t.batch, path, blob)
 	} else {
