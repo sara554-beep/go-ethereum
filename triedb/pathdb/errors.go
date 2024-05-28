@@ -39,4 +39,9 @@ var (
 	// errStateUnrecoverable is returned if state is required to be reverted to
 	// a destination without associated state history available.
 	errStateUnrecoverable = errors.New("state is unrecoverable")
+
+	// errNotCoveredYet is returned from data accessors if the underlying snapshot
+	// is being generated currently and the requested data item is not yet in the
+	// range of accounts covered.
+	errNotCoveredYet = errors.New("not covered yet")
 )

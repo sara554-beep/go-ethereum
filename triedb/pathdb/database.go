@@ -17,6 +17,7 @@
 package pathdb
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -31,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/trienode"
-	"github.com/ethereum/go-ethereum/trie/triestate"
 )
 
 const (
@@ -44,12 +44,12 @@ const (
 	// support is 4GB, node will panic if batch size exceeds this limit.
 	maxBufferSize = 256 * 1024 * 1024
 
-	// DefaultBufferSize is the default memory allowance of node buffer
+	// defaultBufferSize is the default memory allowance of node buffer
 	// that aggregates the writes from above until it's flushed into the
 	// disk. It's meant to be used once the initial sync is finished.
 	// Do not increase the buffer size arbitrarily, otherwise the system
 	// pause time will increase when the database writes happen.
-	DefaultBufferSize = 64 * 1024 * 1024
+	defaultBufferSize = 64 * 1024 * 1024
 )
 
 var (
@@ -64,8 +64,28 @@ type layer interface {
 	// if the read operation exits abnormally. Specifically, if the layer is
 	// already stale.
 	//
-	// Note, no error will be returned if the requested node is not found in database.
+	// Note:
+	// - the returned node is not a copy, please don't modify it.
+	// - no error will be returned if the requested node is not found in database.
 	node(owner common.Hash, path []byte, depth int) ([]byte, common.Hash, *nodeLoc, error)
+
+	// account directly retrieves the account RLP associated with a particular
+	// hash in the slim data format. An error will be returned if the read
+	// operation exits abnormally. Specifically, if the layer is already stale.
+	//
+	// Note:
+	// - the returned account is not a copy, please don't modify it.
+	// - no error will be returned if the requested account is not found in database.
+	account(hash common.Hash, depth int) ([]byte, error)
+
+	// storage directly retrieves the storage data associated with a particular hash,
+	// within a particular account. An error will be returned if the read operation
+	// exits abnormally. Specifically, if the layer is already stale.
+	//
+	// Note:
+	// - the returned storage data is not a copy, please don't modify it.
+	// - no error will be returned if the requested slot is not found in database.
+	storage(accountHash, storageHash common.Hash, depth int) ([]byte, error)
 
 	// rootHash returns the root hash for which this layer was made.
 	rootHash() common.Hash
@@ -80,7 +100,7 @@ type layer interface {
 	// the provided dirty trie nodes along with the state change set.
 	//
 	// Note, the maps are retained by the method to avoid copying everything.
-	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *triestate.Set) *diffLayer
+	update(root common.Hash, id uint64, block uint64, nodes map[common.Hash]map[string]*trienode.Node, states *StateSetWithOrigin) *diffLayer
 
 	// journal commits an entire diff hierarchy to disk into a single journal entry.
 	// This is meant to be used during shutdown to persist the layer without
@@ -90,10 +110,11 @@ type layer interface {
 
 // Config contains the settings for database.
 type Config struct {
-	StateHistory   uint64 // Number of recent blocks to maintain state history for
-	CleanCacheSize int    // Maximum memory allowance (in bytes) for caching clean nodes
-	DirtyCacheSize int    // Maximum memory allowance (in bytes) for caching dirty nodes
-	ReadOnly       bool   // Flag whether the database is opened in read only mode.
+	StateHistory    uint64 // Number of recent blocks to maintain state history for
+	CleanCacheSize  int    // Maximum memory allowance (in bytes) for caching clean nodes
+	DirtyCacheSize  int    // Maximum memory allowance (in bytes) for caching dirty nodes
+	ReadOnly        bool   // Flag whether the database is opened in read only mode
+	SnapshotNoBuild bool   // Whether the background generation is allowed
 }
 
 // sanitize checks the provided user configurations and changes anything that's
@@ -111,7 +132,7 @@ func (c *Config) sanitize() *Config {
 var Defaults = &Config{
 	StateHistory:   params.FullImmutabilityThreshold,
 	CleanCacheSize: defaultCleanSize,
-	DirtyCacheSize: DefaultBufferSize,
+	DirtyCacheSize: defaultBufferSize,
 }
 
 // ReadOnly is the config in order to open database in read only mode.
@@ -174,6 +195,8 @@ func New(diskdb ethdb.Database, config *Config, isVerkle bool) *Database {
 			log.Crit("Failed to disable database", "err", err) // impossible to happen
 		}
 	}
+	// Setup the state generator if the initial state is fully completed
+	db.setGenerator()
 	return db
 }
 
@@ -226,6 +249,49 @@ func (db *Database) repairHistory() error {
 	return nil
 }
 
+// setGenerator loads the state generation progress marker and potentially
+// resume the state generation if it's permitted.
+func (db *Database) setGenerator() {
+	// Set the state snapshot generation progress marker to prevent access
+	// to uncovered states.
+	valid, generator, root := loadGenerator(db.diskdb)
+	if !valid {
+		generator = &journalGenerator{
+			Marker: []byte{},
+		} // rebuild the state snapshot from scratch
+	}
+	// Short circuit if the whole state snapshot has already been fully generated
+	if generator.Done {
+		return
+	}
+	var origin uint64
+	if len(generator.Marker) >= 8 {
+		origin = binary.BigEndian.Uint64(generator.Marker)
+	}
+	stats := &generatorStats{
+		origin:   origin,
+		start:    time.Now(),
+		accounts: generator.Accounts,
+		slots:    generator.Slots,
+		dangling: generator.DanglingSlots,
+		storage:  common.StorageSize(generator.Storage),
+	}
+	dl := db.tree.bottom()
+
+	// Snapshot generation won't be permitted either if the database is opened
+	// in read-only mode, or the snapshot generation itself is not permitted.
+	noBuild := db.readOnly || db.config.SnapshotNoBuild
+	dl.generator = newGenerator(db, noBuild, generator.Marker, stats)
+
+	// Short-circuit if state generation is not permitted
+	if noBuild || db.isVerkle || db.waitSync {
+		return
+	}
+	// Start the generator in the background
+	stats.log("Starting snapshot generation", root, generator.Marker)
+	dl.generator.run(root)
+}
+
 // Update adds a new layer into the tree, if that can be linked to an existing
 // old parent. It is disallowed to insert a disk layer (the origin of all). Apart
 // from that this function will flatten the extra diff layers at bottom into disk
@@ -233,7 +299,7 @@ func (db *Database) repairHistory() error {
 //
 // The passed in maps(nodes, states) will be retained to avoid copying everything.
 // Therefore, these maps must not be changed afterwards.
-func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *triestate.Set) error {
+func (db *Database) Update(root common.Hash, parentRoot common.Hash, block uint64, nodes *trienode.MergedNodeSet, states *StateSetWithOrigin) error {
 	// Hold the lock to prevent concurrent mutations.
 	db.lock.Lock()
 	defer db.lock.Unlock()
@@ -287,7 +353,11 @@ func (db *Database) Disable() error {
 	db.waitSync = true
 
 	// Mark the disk layer as stale to prevent access to persistent state.
-	db.tree.bottom().markStale()
+	disk := db.tree.bottom()
+	if disk.generator != nil {
+		disk.generator.stop()
+	}
+	disk.markStale()
 
 	// Write the initial sync flag to persist it across restarts.
 	rawdb.WriteSnapSyncStatusFlag(db.diskdb, rawdb.StateSyncRunning)
@@ -331,13 +401,13 @@ func (db *Database) Enable(root common.Hash) error {
 			return err
 		}
 	}
-	// Re-construct a new disk layer backed by persistent state
-	// with **empty clean cache and node buffer**.
-	db.tree.reset(newDiskLayer(root, 0, db, nil, newNodeBuffer(db.bufferSize, nil, 0)))
-
 	// Re-enable the database as the final step.
 	db.waitSync = false
 	rawdb.WriteSnapSyncStatusFlag(db.diskdb, rawdb.StateSyncFinished)
+
+	// Re-construct a new disk layer backed by persistent state
+	// with **empty clean cache and node buffer**.
+	db.tree.reset(generateSnapshot(db, root))
 	log.Info("Rebuilt trie database", "root", root)
 	return nil
 }
@@ -468,19 +538,6 @@ func (db *Database) Initialized(genesisRoot common.Hash) bool {
 		inited = rawdb.ReadSnapSyncStatusFlag(db.diskdb) != rawdb.StateSyncUnknown
 	}
 	return inited
-}
-
-// SetBufferSize sets the node buffer size to the provided value(in bytes).
-func (db *Database) SetBufferSize(size int) error {
-	db.lock.Lock()
-	defer db.lock.Unlock()
-
-	if size > maxBufferSize {
-		log.Info("Capped node buffer size", "provided", common.StorageSize(size), "adjusted", common.StorageSize(maxBufferSize))
-		size = maxBufferSize
-	}
-	db.bufferSize = size
-	return db.tree.bottom().setBufferSize(db.bufferSize)
 }
 
 // modifyAllowed returns the indicator if mutation is allowed. This function
