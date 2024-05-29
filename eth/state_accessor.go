@@ -69,7 +69,8 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 			// TODO(rjl493456442), clean cache is disabled to prevent memory leak,
 			// please re-enable it for better performance.
 			database = state.NewDatabaseWithConfig(eth.chainDb, triedb.HashDefaults)
-			if statedb, err = state.New(block.Root(), database, nil); err == nil {
+			rules := eth.blockchain.Config().Rules(block.Number(), block.Difficulty().Sign() == 0, block.Time())
+			if statedb, err = state.New(rules, block.Root(), database, nil); err == nil {
 				log.Info("Found disk backend for state trie", "root", block.Root(), "number", block.Number())
 				return statedb, noopReleaser, nil
 			}
@@ -92,7 +93,8 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		// otherwise we would rewind past a persisted block (specific corner case is
 		// chain tracing from the genesis).
 		if !readOnly {
-			statedb, err = state.New(current.Root(), database, nil)
+			rules := eth.blockchain.Config().Rules(current.Number(), current.Difficulty().Sign() == 0, current.Time())
+			statedb, err = state.New(rules, current.Root(), database, nil)
 			if err == nil {
 				return statedb, noopReleaser, nil
 			}
@@ -151,12 +153,17 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 			return nil, nil, fmt.Errorf("processing block %d failed: %v", current.NumberU64(), err)
 		}
 		// Finalize the state so any modifications are written to the trie
-		root, err := statedb.Commit(current.NumberU64(), eth.blockchain.Config().IsEIP158(current.Number()))
+		root, err := statedb.Commit(current.NumberU64())
 		if err != nil {
 			return nil, nil, fmt.Errorf("stateAtBlock commit failed, number %d root %v: %w",
 				current.NumberU64(), current.Root().Hex(), err)
 		}
-		statedb, err = state.New(root, database, nil)
+		nextBlock := eth.blockchain.GetBlockByNumber(current.NumberU64() + 1)
+		if nextBlock == nil {
+			return nil, nil, fmt.Errorf("block #%d not found", current.NumberU64()+1)
+		}
+		rules := eth.blockchain.Config().Rules(nextBlock.Number(), nextBlock.Difficulty().Sign() == 0, nextBlock.Time())
+		statedb, err = state.New(rules, root, database, nil)
 		if err != nil {
 			return nil, nil, fmt.Errorf("state reset after block %d failed: %v", current.NumberU64(), err)
 		}
@@ -260,7 +267,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		}
 		// Ensure any modifications are committed to the state
 		// Only delete empty objects if EIP158/161 (a.k.a Spurious Dragon) is in effect
-		statedb.Finalise(vmenv.ChainConfig().IsEIP158(block.Number()))
+		statedb.Finalise()
 	}
 	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
 }

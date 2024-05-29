@@ -131,9 +131,9 @@ func ApplyTransactionWithEVM(msg *Message, config *params.ChainConfig, gp *GasPo
 	// Update the state with pending changes.
 	var root []byte
 	if config.IsByzantium(blockNumber) {
-		statedb.Finalise(true)
+		statedb.Finalise()
 	} else {
-		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
+		root = statedb.IntermediateRoot().Bytes()
 	}
 	*usedGas += result.UsedGas
 
@@ -192,7 +192,6 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 	if vmenv.Config.Tracer != nil && vmenv.Config.Tracer.OnSystemCallEnd != nil {
 		defer vmenv.Config.Tracer.OnSystemCallEnd()
 	}
-
 	// If EIP-4788 is enabled, we need to invoke the beaconroot storage contract with
 	// the new root
 	msg := &Message{
@@ -207,5 +206,5 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 	vmenv.Reset(NewEVMTxContext(msg), statedb)
 	statedb.AddAddressToAccessList(params.BeaconRootsAddress)
 	_, _, _ = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
-	statedb.Finalise(true)
+	statedb.Finalise()
 }

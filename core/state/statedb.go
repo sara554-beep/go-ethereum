@@ -84,6 +84,7 @@ func (m *mutation) isDelete() bool {
 // must be created with new root and updated database for accessing post-
 // commit states.
 type StateDB struct {
+	rules      params.Rules
 	db         Database
 	prefetcher *triePrefetcher
 	trie       Trie
@@ -166,12 +167,13 @@ type StateDB struct {
 }
 
 // New creates a new state from a given trie.
-func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) {
+func New(rules params.Rules, root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) {
 	tr, err := db.OpenTrie(root)
 	if err != nil {
 		return nil, err
 	}
 	sdb := &StateDB{
+		rules:                rules,
 		db:                   db,
 		trie:                 tr,
 		originalRoot:         root,
@@ -742,7 +744,7 @@ func (s *StateDB) GetRefund() uint64 {
 // Finalise finalises the state by removing the destructed objects and clears
 // the journal as well as the refunds. Finalise, however, will not push any updates
 // into the tries just yet. Only IntermediateRoot or Commit will do that.
-func (s *StateDB) Finalise(deleteEmptyObjects bool) {
+func (s *StateDB) Finalise() {
 	addressesToPrefetch := make([][]byte, 0, len(s.journal.dirties))
 	for addr := range s.journal.dirties {
 		obj, exist := s.stateObjects[addr]
@@ -755,7 +757,7 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			// Thus, we can safely ignore it here
 			continue
 		}
-		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
+		if obj.selfDestructed || (s.rules.IsEIP158 && obj.empty()) {
 			delete(s.stateObjects, obj.address)
 			s.markDelete(addr)
 
@@ -790,9 +792,9 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // IntermediateRoot computes the current root hash of the state trie.
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
-func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
+func (s *StateDB) IntermediateRoot() common.Hash {
 	// Finalise all the dirty storage states and write them into the tries
-	s.Finalise(deleteEmptyObjects)
+	s.Finalise()
 
 	// If there was a trie prefetcher operating, terminate it async so that the
 	// individual storage tries can be updated as soon as the disk load finishes.
@@ -1081,13 +1083,13 @@ func (s *StateDB) GetTrie() Trie {
 
 // commit gathers the state mutations accumulated along with the associated
 // trie changes, resetting all internal flags with the new state as the base.
-func (s *StateDB) commit(deleteEmptyObjects bool) (*stateUpdate, error) {
+func (s *StateDB) commit() (*stateUpdate, error) {
 	// Short circuit in case any database failure occurred earlier.
 	if s.dbErr != nil {
 		return nil, fmt.Errorf("commit aborted due to earlier error: %v", s.dbErr)
 	}
 	// Finalize any pending changes and merge everything into the tries
-	s.IntermediateRoot(deleteEmptyObjects)
+	s.IntermediateRoot()
 
 	// Commit objects to the trie, measuring the elapsed time
 	var (
@@ -1135,6 +1137,11 @@ func (s *StateDB) commit(deleteEmptyObjects bool) (*stateUpdate, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Make sure no account deletion occurs if cancun fork has been activated
+	if s.rules.IsCancun && len(deletes) > 0 {
+		return nil, errors.New("unexpected account deletion after cancun fork")
+	}
+	// Aggregate the trie node deletion
 	for _, set := range delNodes {
 		if err := merge(set); err != nil {
 			return nil, err
@@ -1231,8 +1238,8 @@ func (s *StateDB) commit(deleteEmptyObjects bool) (*stateUpdate, error) {
 
 // commitAndFlush is a wrapper of commit which also commits the state mutations
 // to the configured data stores.
-func (s *StateDB) commitAndFlush(block uint64, deleteEmptyObjects bool) (*stateUpdate, error) {
-	ret, err := s.commit(deleteEmptyObjects)
+func (s *StateDB) commitAndFlush(block uint64) (*stateUpdate, error) {
+	ret, err := s.commit()
 	if err != nil {
 		return nil, err
 	}
@@ -1286,8 +1293,8 @@ func (s *StateDB) commitAndFlush(block uint64, deleteEmptyObjects bool) (*stateU
 //
 // The associated block number of the state transition is also provided
 // for more chain context.
-func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, error) {
-	ret, err := s.commitAndFlush(block, deleteEmptyObjects)
+func (s *StateDB) Commit(block uint64) (common.Hash, error) {
+	ret, err := s.commitAndFlush(block)
 	if err != nil {
 		return common.Hash{}, err
 	}
@@ -1307,11 +1314,8 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 // - Reset access list (Berlin)
 // - Add coinbase to access list (EIP-3651)
 // - Reset transient storage (EIP-1153)
-func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, dst *common.Address, precompiles []common.Address, list types.AccessList) {
-	if rules.IsEIP2929 && rules.IsEIP4762 {
-		panic("eip2929 and eip4762 are both activated")
-	}
-	if rules.IsEIP2929 {
+func (s *StateDB) Prepare(sender, coinbase common.Address, dst *common.Address, precompiles []common.Address, list types.AccessList) {
+	if s.rules.IsEIP2929 {
 		// Clear out any leftover from previous executions
 		al := newAccessList()
 		s.accessList = al
@@ -1330,7 +1334,7 @@ func (s *StateDB) Prepare(rules params.Rules, sender, coinbase common.Address, d
 				al.AddSlot(el.Address, key)
 			}
 		}
-		if rules.IsShanghai { // EIP-3651: warm coinbase
+		if s.rules.IsShanghai { // EIP-3651: warm coinbase
 			al.AddAddress(coinbase)
 		}
 	}
@@ -1394,4 +1398,8 @@ func (s *StateDB) markUpdate(addr common.Address) {
 
 func (s *StateDB) PointCache() *utils.PointCache {
 	return s.db.PointCache()
+}
+
+func (s *StateDB) Rules() params.Rules {
+	return s.rules
 }

@@ -17,12 +17,12 @@
 package vm
 
 import (
+	"github.com/ethereum/go-ethereum/params"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie/utils"
 	"github.com/holiman/uint256"
 )
@@ -79,8 +79,9 @@ type StateDB interface {
 
 	// PointCache returns the point cache used in computations
 	PointCache() *utils.PointCache
+	Rules() params.Rules
 
-	Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList)
+	Prepare(sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList)
 
 	RevertToSnapshot(int)
 	Snapshot() int

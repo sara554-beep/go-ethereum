@@ -1473,7 +1473,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 		log.Crit("Failed to write block into disk", "err", err)
 	}
 	// Commit all cached state changes into underlying memory database.
-	root, err := statedb.Commit(block.NumberU64(), bc.chainConfig.IsEIP158(block.Number()))
+	root, err := statedb.Commit(block.NumberU64())
 	if err != nil {
 		return err
 	}
@@ -1727,18 +1727,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 		bc.reportBlock(block, nil, err)
 		return it.index, err
 	}
-	// No validation errors for the first block (or chain prefix skipped)
-	var activeState *state.StateDB
-	defer func() {
-		// The chain importer is starting and stopping trie prefetchers. If a bad
-		// block or other error is hit however, an early return may not properly
-		// terminate the background threads. This defer ensures that we clean up
-		// and dangling prefetcher, without deferring each and holding on live refs.
-		if activeState != nil {
-			activeState.StopPrefetcher()
-		}
-	}()
-
 	for ; block != nil && err == nil || errors.Is(err, ErrKnownBlock); block, err = it.next() {
 		// If the chain is terminating, stop processing blocks
 		if bc.insertStopped() {
@@ -1792,50 +1780,33 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 			lastCanon = block
 			continue
 		}
-
 		// Retrieve the parent block and it's state to execute on top
 		start := time.Now()
 		parent := it.previous()
 		if parent == nil {
 			parent = bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
 		}
-		statedb, err := state.New(parent.Root, bc.stateCache, bc.snaps)
-		if err != nil {
-			return it.index, err
-		}
-		statedb.SetLogger(bc.logger)
-
-		// If we are past Byzantium, enable prefetching to pull in trie node paths
-		// while processing transactions. Before Byzantium the prefetcher is mostly
-		// useless due to the intermediate root hashing after each transaction.
-		if bc.chainConfig.IsByzantium(block.Number()) {
-			statedb.StartPrefetcher("chain")
-		}
-		activeState = statedb
-
 		// If we have a followup block, run that against the current state to pre-cache
 		// transactions and probabilistically some of the account/storage trie nodes.
 		var followupInterrupt atomic.Bool
 		if !bc.cacheConfig.TrieCleanNoPrefetch {
 			if followup, err := it.peek(); followup != nil && err == nil {
-				throwaway, _ := state.New(parent.Root, bc.stateCache, bc.snaps)
-
-				go func(start time.Time, followup *types.Block, throwaway *state.StateDB) {
-					// Disable tracing for prefetcher executions.
+				go func(start time.Time, parent *types.Header, followup *types.Block) {
+					// Disable tracing for prefetcher execution.
 					vmCfg := bc.vmConfig
 					vmCfg.Tracer = nil
-					bc.prefetcher.Prefetch(followup, throwaway, vmCfg, &followupInterrupt)
+					bc.prefetcher.Prefetch(parent, followup, vmCfg, &followupInterrupt)
 
 					blockPrefetchExecuteTimer.Update(time.Since(start))
 					if followupInterrupt.Load() {
 						blockPrefetchInterruptMeter.Mark(1)
 					}
-				}(time.Now(), followup, throwaway)
+				}(time.Now(), parent, followup)
 			}
 		}
 
 		// The traced section of block import.
-		res, err := bc.processBlock(block, statedb, start, setHead)
+		res, err := bc.processBlock(parent, block, start, setHead)
 		followupInterrupt.Store(true)
 		if err != nil {
 			return it.index, err
@@ -1898,7 +1869,7 @@ type blockProcessingResult struct {
 
 // processBlock executes and validates the given block. If there was no error
 // it writes the block and associated state to database.
-func (bc *BlockChain) processBlock(block *types.Block, statedb *state.StateDB, start time.Time, setHead bool) (_ *blockProcessingResult, blockEndErr error) {
+func (bc *BlockChain) processBlock(parent *types.Header, block *types.Block, start time.Time, setHead bool) (_ *blockProcessingResult, blockEndErr error) {
 	if bc.logger != nil && bc.logger.OnBlockStart != nil {
 		td := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 		bc.logger.OnBlockStart(tracing.BlockEvent{
@@ -1913,6 +1884,21 @@ func (bc *BlockChain) processBlock(block *types.Block, statedb *state.StateDB, s
 			bc.logger.OnBlockEnd(blockEndErr)
 		}()
 	}
+
+	rules := bc.chainConfig.Rules(block.Number(), block.Difficulty().Sign() == 0, block.Time())
+	statedb, err := state.New(rules, parent.Root, bc.stateCache, bc.snaps)
+	if err != nil {
+		return nil, err
+	}
+	statedb.SetLogger(bc.logger)
+
+	// If we are past Byzantium, enable prefetching to pull in trie node paths
+	// while processing transactions. Before Byzantium the prefetcher is mostly
+	// useless due to the intermediate root hashing after each transaction.
+	if rules.IsByzantium {
+		statedb.StartPrefetcher("chain")
+	}
+	defer statedb.StopPrefetcher()
 
 	// Process block using the parent state as reference point
 	pstart := time.Now()

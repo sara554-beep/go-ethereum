@@ -47,11 +47,13 @@ func newStatePrefetcher(config *params.ChainConfig, bc *BlockChain, engine conse
 // Prefetch processes the state changes according to the Ethereum rules by running
 // the transaction messages using the statedb, but any changes are discarded. The
 // only goal is to pre-cache transaction signatures and state trie nodes.
-func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, cfg vm.Config, interrupt *atomic.Bool) {
+func (p *statePrefetcher) Prefetch(parent *types.Header, block *types.Block, cfg vm.Config, interrupt *atomic.Bool) {
 	var (
 		header       = block.Header()
 		gaspool      = new(GasPool).AddGas(block.GasLimit())
 		blockContext = NewEVMBlockContext(header, p.bc, nil)
+		rules        = p.config.Rules(header.Number, header.Difficulty.Sign() == 0, header.Time)
+		statedb, _   = state.New(rules, parent.Root, p.bc.stateCache, p.bc.snaps)
 		evm          = vm.NewEVM(blockContext, vm.TxContext{}, statedb, p.config, cfg)
 		signer       = types.MakeSigner(p.config, header.Number, header.Time)
 	)
@@ -73,12 +75,12 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 		}
 		// If we're pre-byzantium, pre-load trie nodes for the intermediate root
 		if !byzantium {
-			statedb.IntermediateRoot(true)
+			statedb.IntermediateRoot()
 		}
 	}
 	// If were post-byzantium, pre-load trie nodes for the final root hash
 	if byzantium {
-		statedb.IntermediateRoot(true)
+		statedb.IntermediateRoot()
 	}
 }
 
