@@ -29,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
-	bloomfilter "github.com/holiman/bloomfilter/v2"
 )
 
 var (
@@ -40,7 +39,7 @@ var (
 	// Note, bumping this up might drastically increase the size of the bloom
 	// filters that's stored in every diff layer. Don't do that without fully
 	// understanding all the implications.
-	aggregatorMemoryLimit = uint64(4 * 1024 * 1024)
+	aggregatorMemoryLimit = uint64(4 * 1024 * 1024 * 1024)
 
 	// aggregatorItemLimit is an approximate number of items that will end up
 	// in the aggregator layer before it's flushed out to disk. A plain account
@@ -119,7 +118,7 @@ type diffLayer struct {
 	storageList map[common.Hash][]common.Hash          // List of storage slots for iterated retrievals, one per account. Any existing lists are sorted if non-nil
 	storageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
 
-	diffed *bloomfilter.Filter // Bloom filter tracking all the diffed items up to the disk layer
+	//diffed *bloomfilter.Filter // Bloom filter tracking all the diffed items up to the disk layer
 
 	lock sync.RWMutex
 }
@@ -197,32 +196,32 @@ func (dl *diffLayer) rebloom(origin *diskLayer) {
 	dl.origin = origin
 
 	// Retrieve the parent bloom or create a fresh empty one
-	if parent, ok := dl.parent.(*diffLayer); ok {
-		parent.lock.RLock()
-		dl.diffed, _ = parent.diffed.Copy()
-		parent.lock.RUnlock()
-	} else {
-		dl.diffed, _ = bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
-	}
-	// Iterate over all the accounts and storage slots and index them
-	for hash := range dl.destructSet {
-		dl.diffed.AddHash(destructBloomHash(hash))
-	}
-	for hash := range dl.accountData {
-		dl.diffed.AddHash(accountBloomHash(hash))
-	}
-	for accountHash, slots := range dl.storageData {
-		for storageHash := range slots {
-			dl.diffed.AddHash(storageBloomHash(accountHash, storageHash))
-		}
-	}
-	// Calculate the current false positive rate and update the error rate meter.
-	// This is a bit cheating because subsequent layers will overwrite it, but it
-	// should be fine, we're only interested in ballpark figures.
-	k := float64(dl.diffed.K())
-	n := float64(dl.diffed.N())
-	m := float64(dl.diffed.M())
-	snapshotBloomErrorGauge.Update(math.Pow(1.0-math.Exp((-k)*(n+0.5)/(m-1)), k))
+	//if parent, ok := dl.parent.(*diffLayer); ok {
+	//	parent.lock.RLock()
+	//	dl.diffed, _ = parent.diffed.Copy()
+	//	parent.lock.RUnlock()
+	//} else {
+	//	dl.diffed, _ = bloomfilter.New(uint64(bloomSize), uint64(bloomFuncs))
+	//}
+	//// Iterate over all the accounts and storage slots and index them
+	//for hash := range dl.destructSet {
+	//	dl.diffed.AddHash(destructBloomHash(hash))
+	//}
+	//for hash := range dl.accountData {
+	//	dl.diffed.AddHash(accountBloomHash(hash))
+	//}
+	//for accountHash, slots := range dl.storageData {
+	//	for storageHash := range slots {
+	//		dl.diffed.AddHash(storageBloomHash(accountHash, storageHash))
+	//	}
+	//}
+	//// Calculate the current false positive rate and update the error rate meter.
+	//// This is a bit cheating because subsequent layers will overwrite it, but it
+	//// should be fine, we're only interested in ballpark figures.
+	//k := float64(dl.diffed.K())
+	//n := float64(dl.diffed.N())
+	//m := float64(dl.diffed.M())
+	//snapshotBloomErrorGauge.Update(math.Pow(1.0-math.Exp((-k)*(n+0.5)/(m-1)), k))
 }
 
 // Root returns the root hash for which this snapshot was made.
@@ -274,22 +273,22 @@ func (dl *diffLayer) AccountRLP(hash common.Hash) ([]byte, error) {
 	}
 	// Check the bloom filter first whether there's even a point in reaching into
 	// all the maps in all the layers below
-	hit := dl.diffed.ContainsHash(accountBloomHash(hash))
-	if !hit {
-		hit = dl.diffed.ContainsHash(destructBloomHash(hash))
-	}
-	var origin *diskLayer
-	if !hit {
-		origin = dl.origin // extract origin while holding the lock
-	}
+	//hit := dl.diffed.ContainsHash(accountBloomHash(hash))
+	//if !hit {
+	//	hit = dl.diffed.ContainsHash(destructBloomHash(hash))
+	//}
+	//var origin *diskLayer
+	//if !hit {
+	//	origin = dl.origin // extract origin while holding the lock
+	//}
 	dl.lock.RUnlock()
 
 	// If the bloom filter misses, don't even bother with traversing the memory
 	// diff layers, reach straight into the bottom persistent disk layer
-	if origin != nil {
-		snapshotBloomAccountMissMeter.Mark(1)
-		return origin.AccountRLP(hash)
-	}
+	//if origin != nil {
+	//	snapshotBloomAccountMissMeter.Mark(1)
+	//	return origin.AccountRLP(hash)
+	//}
 	// The bloom filter hit, start poking in the internal maps
 	return dl.accountRLP(hash, 0)
 }
@@ -345,22 +344,22 @@ func (dl *diffLayer) Storage(accountHash, storageHash common.Hash) ([]byte, erro
 		dl.lock.RUnlock()
 		return nil, ErrSnapshotStale
 	}
-	hit := dl.diffed.ContainsHash(storageBloomHash(accountHash, storageHash))
-	if !hit {
-		hit = dl.diffed.ContainsHash(destructBloomHash(accountHash))
-	}
-	var origin *diskLayer
-	if !hit {
-		origin = dl.origin // extract origin while holding the lock
-	}
+	//hit := dl.diffed.ContainsHash(storageBloomHash(accountHash, storageHash))
+	//if !hit {
+	//	hit = dl.diffed.ContainsHash(destructBloomHash(accountHash))
+	//}
+	//var origin *diskLayer
+	//if !hit {
+	//	origin = dl.origin // extract origin while holding the lock
+	//}
 	dl.lock.RUnlock()
 
-	// If the bloom filter misses, don't even bother with traversing the memory
-	// diff layers, reach straight into the bottom persistent disk layer
-	if origin != nil {
-		snapshotBloomStorageMissMeter.Mark(1)
-		return origin.Storage(accountHash, storageHash)
-	}
+	//// If the bloom filter misses, don't even bother with traversing the memory
+	//// diff layers, reach straight into the bottom persistent disk layer
+	//if origin != nil {
+	//	snapshotBloomStorageMissMeter.Mark(1)
+	//	return origin.Storage(accountHash, storageHash)
+	//}
 	// The bloom filter hit, start poking in the internal maps
 	return dl.storage(accountHash, storageHash, 0)
 }
@@ -467,8 +466,8 @@ func (dl *diffLayer) flatten() snapshot {
 		accountData: parent.accountData,
 		storageData: parent.storageData,
 		storageList: make(map[common.Hash][]common.Hash),
-		diffed:      dl.diffed,
-		memory:      parent.memory + dl.memory,
+		//diffed:      dl.diffed,
+		memory: parent.memory + dl.memory,
 	}
 }
 
