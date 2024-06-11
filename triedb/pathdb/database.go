@@ -42,7 +42,7 @@ const (
 	// Too large nodebuffer will cause the system to pause for a long
 	// time when write happens. Also, the largest batch that pebble can
 	// support is 4GB, node will panic if batch size exceeds this limit.
-	maxBufferSize = 256 * 1024 * 1024
+	maxBufferSize = 2 * 1024 * 1024 * 1024
 
 	// DefaultBufferSize is the default memory allowance of node buffer
 	// that aggregates the writes from above until it's flushed into the
@@ -54,7 +54,7 @@ const (
 
 var (
 	// maxDiffLayers is the maximum diff layers allowed in the layer tree.
-	maxDiffLayers = 128
+	maxDiffLayers = 16
 )
 
 // layer is the interface implemented by all state layers which includes some
