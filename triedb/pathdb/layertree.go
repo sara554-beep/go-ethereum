@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -136,6 +137,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		return nil
 	}
 	// Dive until we run out of layers or reach the persistent database
+	start := time.Now()
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
 		if parent, ok := diff.parentLayer().(*diffLayer); ok {
@@ -145,6 +147,8 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 			return nil
 		}
 	}
+	iterateLayerTimer.UpdateSince(start)
+
 	// We're out of layers, flatten anything below, stopping if it's the disk or if
 	// the memory limit is not yet exceeded.
 	switch parent := diff.parentLayer().(type) {
@@ -170,6 +174,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 		panic(fmt.Sprintf("unknown data layer in triedb: %T", parent))
 	}
 	// Remove any layer that is stale or links into a stale layer
+	start = time.Now()
 	children := make(map[common.Hash][]common.Hash)
 	for root, layer := range tree.layers {
 		if dl, ok := layer.(*diffLayer); ok {
@@ -190,6 +195,7 @@ func (tree *layerTree) cap(root common.Hash, layers int) error {
 			remove(root)
 		}
 	}
+	cleanLayerTimer.UpdateSince(start)
 	return nil
 }
 

@@ -81,6 +81,7 @@ func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) *no
 		delta         int64
 		overwrite     int64
 		overwriteSize int64
+		start         = time.Now()
 	)
 	for owner, subset := range nodes {
 		current, exist := b.nodes[owner]
@@ -114,6 +115,7 @@ func (b *nodebuffer) commit(nodes map[common.Hash]map[string]*trienode.Node) *no
 	b.layers++
 	gcNodesMeter.Mark(overwrite)
 	gcBytesMeter.Mark(overwriteSize)
+	nodeBufferTimer.Update(time.Since(start))
 	return b
 }
 

@@ -591,6 +591,10 @@ func truncateFromHead(db ethdb.Batcher, store ethdb.AncientStore, nhead uint64) 
 // truncateFromTail removes the extra state histories from the tail with the given
 // parameters. It returns the number of items removed from the tail.
 func truncateFromTail(db ethdb.Batcher, store ethdb.AncientStore, ntail uint64) (int, error) {
+	start := time.Now()
+	defer func() {
+		historyTruncateTime.Update(time.Since(start))
+	}()
 	ohead, err := store.Ancients()
 	if err != nil {
 		return 0, err

@@ -42,10 +42,15 @@ var (
 	gcNodesMeter = metrics.NewRegisteredMeter("pathdb/gc/nodes", nil)
 	gcBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/bytes", nil)
 
+	nodeBufferTimer   = metrics.NewRegisteredTimer("pathdb/buffer/time", nil)
+	iterateLayerTimer = metrics.NewRegisteredTimer("pathdb/iterate/time", nil)
+	cleanLayerTimer   = metrics.NewRegisteredTimer("pathdb/clean/time", nil)
+
 	diffLayerBytesMeter = metrics.NewRegisteredMeter("pathdb/diff/bytes", nil)
 	diffLayerNodesMeter = metrics.NewRegisteredMeter("pathdb/diff/nodes", nil)
 
 	historyBuildTimeMeter  = metrics.NewRegisteredTimer("pathdb/history/time", nil)
 	historyDataBytesMeter  = metrics.NewRegisteredMeter("pathdb/history/bytes/data", nil)
 	historyIndexBytesMeter = metrics.NewRegisteredMeter("pathdb/history/bytes/index", nil)
+	historyTruncateTime    = metrics.NewRegisteredTimer("pathdb/history/truncate/time", nil)
 )
