@@ -28,7 +28,6 @@ import (
 // The types of locations where the node is found.
 const (
 	locDirtyCache = "dirty" // dirty cache
-	locCleanCache = "clean" // clean cache
 	locDiskLayer  = "disk"  // persistent state
 	locDiffLayer  = "diff"  // diff layers
 )
@@ -65,8 +64,6 @@ func (r *reader) Node(owner common.Hash, path []byte, hash common.Hash) ([]byte,
 		// Location is always available even if the node
 		// is not found.
 		switch loc.loc {
-		case locCleanCache:
-			cleanFalseMeter.Mark(1)
 		case locDirtyCache:
 			dirtyFalseMeter.Mark(1)
 		case locDiffLayer:

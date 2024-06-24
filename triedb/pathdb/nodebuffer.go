@@ -22,7 +22,6 @@ import (
 	"maps"
 	"time"
 
-	"github.com/VictoriaMetrics/fastcache"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -194,9 +193,9 @@ func (b *nodebuffer) empty() bool {
 
 // setSize sets the buffer size to the provided number, and invokes a flush
 // operation if the current memory usage exceeds the new limit.
-func (b *nodebuffer) setSize(size int, db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64) error {
+func (b *nodebuffer) setSize(size int, db ethdb.KeyValueStore, id uint64) error {
 	b.limit = uint64(size)
-	return b.flush(db, clean, id, false)
+	return b.flush(db, id, false)
 }
 
 // allocBatch returns a database batch with pre-allocated buffer.
@@ -214,7 +213,7 @@ func (b *nodebuffer) allocBatch(db ethdb.KeyValueStore) ethdb.Batch {
 
 // flush persists the in-memory dirty trie node into the disk if the configured
 // memory threshold is reached. Note, all data must be written atomically.
-func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id uint64, force bool) error {
+func (b *nodebuffer) flush(db ethdb.KeyValueStore, id uint64, force bool) error {
 	if b.size <= b.limit && !force {
 		return nil
 	}
@@ -227,7 +226,7 @@ func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id ui
 		start = time.Now()
 		batch = b.allocBatch(db)
 	)
-	nodes := writeNodes(batch, b.nodes, clean)
+	nodes := writeNodes(batch, b.nodes)
 	rawdb.WritePersistentStateID(batch, id)
 
 	// Flush all mutations in a single batch
@@ -238,7 +237,7 @@ func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id ui
 	commitBytesMeter.Mark(int64(size))
 	commitNodesMeter.Mark(int64(nodes))
 	commitTimeTimer.UpdateSince(start)
-	log.Debug("Persisted pathdb nodes", "nodes", len(b.nodes), "bytes", common.StorageSize(size), "elapsed", common.PrettyDuration(time.Since(start)))
+	log.Debug("Persisted pathdb nodes", "nodes", nodes, "bytes", common.StorageSize(size), "elapsed", common.PrettyDuration(time.Since(start)))
 	b.reset()
 	return nil
 }
@@ -246,7 +245,7 @@ func (b *nodebuffer) flush(db ethdb.KeyValueStore, clean *fastcache.Cache, id ui
 // writeNodes writes the trie nodes into the provided database batch.
 // Note this function will also inject all the newly written nodes
 // into clean cache.
-func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.Node, clean *fastcache.Cache) (total int) {
+func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.Node) (total int) {
 	for owner, subset := range nodes {
 		for path, n := range subset {
 			if n.IsDeleted() {
@@ -255,29 +254,15 @@ func writeNodes(batch ethdb.Batch, nodes map[common.Hash]map[string]*trienode.No
 				} else {
 					rawdb.DeleteStorageTrieNode(batch, owner, []byte(path))
 				}
-				if clean != nil {
-					clean.Del(cacheKey(owner, []byte(path)))
-				}
 			} else {
 				if owner == (common.Hash{}) {
 					rawdb.WriteAccountTrieNode(batch, []byte(path), n.Blob)
 				} else {
 					rawdb.WriteStorageTrieNode(batch, owner, []byte(path), n.Blob)
 				}
-				if clean != nil {
-					clean.Set(cacheKey(owner, []byte(path)), n.Blob)
-				}
 			}
 		}
 		total += len(subset)
 	}
 	return total
-}
-
-// cacheKey constructs the unique key of clean cache.
-func cacheKey(owner common.Hash, path []byte) []byte {
-	if owner == (common.Hash{}) {
-		return path
-	}
-	return append(owner.Bytes(), path...)
 }

@@ -332,8 +332,8 @@ func (db *Database) Enable(root common.Hash) error {
 		}
 	}
 	// Re-construct a new disk layer backed by persistent state
-	// with **empty clean cache and node buffer**.
-	db.tree.reset(newDiskLayer(root, 0, db, nil, newNodeBuffer(db.bufferSize, nil, 0)))
+	// with empty node buffer.
+	db.tree.reset(newDiskLayer(root, 0, db, newNodeBuffer(db.bufferSize, nil, 0)))
 
 	// Re-enable the database as the final step.
 	db.waitSync = false
@@ -430,9 +430,6 @@ func (db *Database) Close() error {
 	// Set the database to read-only mode to prevent all
 	// following mutations.
 	db.readOnly = true
-
-	// Release the memory held by clean cache.
-	db.tree.bottom().resetCache()
 
 	// Close the attached state history freezer.
 	if db.freezer == nil {
