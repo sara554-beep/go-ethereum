@@ -37,11 +37,12 @@ type diffLayer struct {
 	block  uint64      // Associated block number
 	memory uint64      // Approximate guess as to how much memory we use
 
-	nodes  map[common.Hash]map[string]*trienode.Node // Cached trie nodes indexed by owner and path
-	states *StateSetWithOrigin                       // Associated state changes along with origin value
+	nodes       map[common.Hash]map[string]*trienode.Node // Cached trie nodes indexed by owner and path
+	states      *StateSetWithOrigin                       // Associated state changes along with origin value
+	accountList []common.Hash                             // List of account for iteration. If it exists, it's sorted, otherwise it's nil
 
 	parent layer        // Parent layer modified by this one, never nil, **can be changed**
-	lock   sync.RWMutex // Lock used to protect parent
+	lock   sync.RWMutex // Lock used to protect parent and accountList
 }
 
 // newDiffLayer creates a new diff layer on top of an existing layer.
@@ -133,6 +134,27 @@ func (dl *diffLayer) storage(accountHash, storageHash common.Hash, depth int) ([
 	}
 	// storage slot is unknown to this layer, resolve from parent
 	return dl.parent.storage(accountHash, storageHash, depth+1)
+}
+
+// AccountList returns a sorted list of all accounts in this diffLayer, including
+// the deleted ones.
+//
+// Note, the returned slice is not a copy, so do not modify it.
+func (dl *diffLayer) AccountList() []common.Hash {
+	return dl.states.AccountList()
+}
+
+// StorageList returns a sorted list of all storage slot hashes in this diffLayer
+// for the given account. If the whole storage is destructed in this layer, then
+// an additional flag *destructed = true* will be returned, otherwise the flag is
+// false. Besides, the returned list will include the hash of deleted storage slot.
+// Note a special case is an account is deleted in a prior tx but is recreated in
+// the following tx with some storage slots set. In this case the returned list is
+// not empty but the flag is true.
+//
+// Note, the returned slice is not a copy, so do not modify it.
+func (dl *diffLayer) StorageList(accountHash common.Hash) ([]common.Hash, bool) {
+	return dl.states.StorageList(accountHash)
 }
 
 // update implements the layer interface, creating a new layer on top of the

@@ -20,12 +20,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
+	"golang.org/x/exp/maps"
 )
 
 // counter helps in tracking items and their corresponding sizes.
@@ -101,8 +104,12 @@ type stateSet struct {
 	destructSet map[common.Hash]struct{}               // Keyed markers for deleted (and potentially) recreated accounts
 	accountData map[common.Hash][]byte                 // Keyed accounts for direct retrieval (nil is not expected)
 	storageData map[common.Hash]map[common.Hash][]byte // Keyed storage slots for direct retrieval. one per account (nil means deleted)
-	journal     *journal                               // Track the modifications to destructSet, used for reversal
-	size        int                                    // Memory size of the state set (journal is not included)
+	size        int                                    // Memory size of the state data (destructSet, accountData and storageData)
+
+	journal     *journal                      // Track the modifications to destructSet, used for reversal
+	accountList []common.Hash                 // List of account for iteration. If it exists, it's sorted, otherwise it's nil
+	storageList map[common.Hash][]common.Hash // List of storage slots for iterated retrievals, one per account. Any existing lists are sorted if non-nil
+	lock        sync.RWMutex                  // Lock for guarding the two lists above
 }
 
 // newStates constructs the state set with the provided data.
@@ -122,6 +129,7 @@ func newStates(destructs map[common.Hash]struct{}, accounts map[common.Hash][]by
 		accountData: accounts,
 		storageData: storages,
 		journal:     &journal{},
+		storageList: make(map[common.Hash][]common.Hash),
 	}
 	s.size = s.check()
 	return s
@@ -176,6 +184,79 @@ func (s *stateSet) check() int {
 		total += common.HashLength
 	}
 	return total
+}
+
+// AccountList returns a sorted list of all accounts in this state set, including
+// the deleted ones.
+//
+// Note, the returned slice is not a copy, so do not modify it.
+func (s *stateSet) AccountList() []common.Hash {
+	// If an old list already exists, return it
+	s.lock.RLock()
+	list := s.accountList
+	s.lock.RUnlock()
+
+	if list != nil {
+		return list
+	}
+	// No old sorted account list exists, generate a new one
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.accountList = make([]common.Hash, 0, len(s.destructSet)+len(s.accountData))
+	for hash := range s.accountData {
+		s.accountList = append(s.accountList, hash)
+	}
+	for hash := range s.destructSet {
+		if _, ok := s.accountData[hash]; !ok {
+			s.accountList = append(s.accountList, hash)
+		}
+	}
+	slices.SortFunc(s.accountList, common.Hash.Cmp)
+	return s.accountList
+}
+
+// StorageList returns a sorted list of all storage slot hashes in this state set
+// for the given account. If the whole storage is destructed in this layer, then
+// an additional flag *destructed = true* will be returned, otherwise the flag is
+// false. Besides, the returned list will include the hash of deleted storage slot.
+// Note a special case is an account is deleted in a prior tx but is recreated in
+// the following tx with some storage slots set. In this case the returned list is
+// not empty but the flag is true.
+//
+// Note, the returned slice is not a copy, so do not modify it.
+func (s *stateSet) StorageList(accountHash common.Hash) ([]common.Hash, bool) {
+	s.lock.RLock()
+	_, destructed := s.destructSet[accountHash]
+	if _, ok := s.storageData[accountHash]; !ok {
+		// Account not tracked by this layer
+		s.lock.RUnlock()
+		return nil, destructed
+	}
+	// If an old list already exists, return it
+	if list, exist := s.storageList[accountHash]; exist {
+		s.lock.RUnlock()
+		return list, destructed // the cached list can't be nil
+	}
+	s.lock.RUnlock()
+
+	// No old sorted account list exists, generate a new one
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	storageList := maps.Keys(s.storageData[accountHash])
+	slices.SortFunc(storageList, common.Hash.Cmp)
+	s.storageList[accountHash] = storageList
+	return storageList, destructed
+}
+
+// clearCache invalidates the cached account list and storage lists.
+func (s *stateSet) clearCache() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	s.accountList = nil
+	maps.Clear(s.storageList)
 }
 
 // merge takes the accounts and storages from the given external set and put
@@ -267,6 +348,7 @@ func (s *stateSet) merge(set *stateSet) int64 {
 	storageOverwrites.report(gcStorageMeter, gcStorageBytesMeter)
 	delta := updates - deletes
 	s.updateSize(delta)
+	s.clearCache()
 	return int64(delta)
 }
 
@@ -338,6 +420,7 @@ func (s *stateSet) revert(accountOrigin map[common.Hash][]byte, storageOrigin ma
 			s.storageData[addrHash] = slots
 		}
 	}
+	s.clearCache()
 	s.updateSize(delta)
 	return int64(delta), nil
 }
