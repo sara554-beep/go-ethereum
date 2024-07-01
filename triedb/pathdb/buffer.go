@@ -31,10 +31,10 @@ import (
 	"github.com/ethereum/go-ethereum/trie/trienode"
 )
 
-// buffer is a collection of modified flat states along with the dirty
-// trie nodes. They are cached here to aggregate the disk write. The
-// content of the buffer must be checked before diving into disk (since
-// it basically is not-yet-written data).
+// buffer is a collection of modified flat states along with the modified trie
+// nodes. They are cached here to aggregate the disk write. The content of the
+// buffer must be checked before diving into disk (since it basically is not
+// yet written data).
 type buffer struct {
 	layers uint64                                    // The number of diff layers aggregated inside
 	size   uint64                                    // The size of aggregated writes
@@ -134,8 +134,7 @@ func (b *buffer) commitNodes(nodes map[common.Hash]map[string]*trienode.Node) in
 // the bottom-most diff layer. Instead, it holds references to the given maps,
 // which are safe to copy.
 func (b *buffer) commit(nodes map[common.Hash]map[string]*trienode.Node, states *stateSet) *buffer {
-	size := b.states.merge(states) + b.commitNodes(nodes)
-	b.updateSize(size)
+	b.updateSize(b.states.merge(states) + b.commitNodes(nodes))
 	b.layers++
 	return b
 }

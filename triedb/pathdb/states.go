@@ -259,10 +259,10 @@ func (s *stateSet) clearCache() {
 	maps.Clear(s.storageList)
 }
 
-// merge takes the accounts and storages from the given external set and put
-// them into the local set. This function combines the data sets, ensuring
-// that the merged local set reflects the combined state of both the original
-// local set and the provided external set.
+// merge takes the accounts and storages from the given external set and
+// integrates them into the local set. This function combines the data sets,
+// ensuring that the merged local set accurately reflects the combined state
+// of both the original local set and the provided external set.
 func (s *stateSet) merge(set *stateSet) int64 {
 	var (
 		updates           int

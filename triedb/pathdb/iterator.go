@@ -68,8 +68,8 @@ type StorageIterator interface {
 }
 
 // diffAccountIterator is an account iterator that steps over the accounts (both
-// live and deleted) contained within a single diff layer. Higher order iterators
-// will use the deleted accounts to skip deeper iterators.
+// live and deleted) contained within a state set. Higher order iterators will
+// use the deleted accounts to skip deeper iterators.
 type diffAccountIterator struct {
 	// curHash is the current hash the iterator is positioned on. The field is
 	// explicitly tracked since the referenced diff layer might go stale after
@@ -77,22 +77,30 @@ type diffAccountIterator struct {
 	// hash as long as the iterator is not touched any more.
 	curHash common.Hash
 
-	layer *diffLayer    // Live layer to retrieve values from
-	keys  []common.Hash // Keys left in the layer to iterate
-	fail  error         // Any failures encountered (stale)
+	// curBlob is the current value the iterator is positioned on. The field is
+	// explicitly tracked since the referenced diff layer might go stale after
+	// the iterator was positioned and we don't want to fail accessing the old
+	// blob as long as the iterator is not touched any more.
+	curBlob []byte
+
+	states  *stateSet     // Live state set to retrieve values from
+	isStale func() bool   // Signal if the referenced state set is stale
+	keys    []common.Hash // Keys left in the layer to iterate
+	fail    error         // Any failures encountered (stale)
 }
 
-// AccountIterator creates an account iterator over a single diff layer.
-func (dl *diffLayer) AccountIterator(seek common.Hash) AccountIterator {
+// AccountIterator creates an account iterator over the given state set.
+func newDiffAccountIterator(seek common.Hash, set *stateSet, isStale func() bool) AccountIterator {
 	// Seek out the requested starting account
-	hashes := dl.AccountList()
+	hashes := set.AccountList()
 	index := sort.Search(len(hashes), func(i int) bool {
 		return bytes.Compare(seek[:], hashes[i][:]) <= 0
 	})
 	// Assemble and returned the already seeked iterator
 	return &diffAccountIterator{
-		layer: dl,
-		keys:  hashes[index:],
+		states:  set,
+		isStale: isStale,
+		keys:    hashes[index:],
 	}
 }
 
@@ -107,6 +115,10 @@ func (it *diffAccountIterator) Next() bool {
 	}
 	// Stop iterating if all keys were exhausted
 	if len(it.keys) == 0 {
+		return false
+	}
+	if it.isStale != nil && it.isStale() {
+		it.fail, it.keys = errSnapshotStale, nil
 		return false
 	}
 	// Iterator seems to be still alive, retrieve and cache the live hash
@@ -137,9 +149,12 @@ func (it *diffAccountIterator) Hash() common.Hash {
 //
 // Note the returned account is not a copy, please don't modify it.
 func (it *diffAccountIterator) Account() []byte {
-	blob, ok := it.layer.states.account(it.curHash)
+	blob, ok := it.states.account(it.curHash)
 	if !ok {
 		panic(fmt.Sprintf("iterator referenced non-existent account: %x", it.curHash))
+	}
+	if it.isStale != nil && it.isStale() {
+		it.fail, it.keys = errSnapshotStale, nil
 	}
 	return blob
 }
@@ -213,8 +228,8 @@ func (it *diskAccountIterator) Release() {
 }
 
 // diffStorageIterator is a storage iterator that steps over the specific storage
-// (both live and deleted) contained within a single diff layer. Higher order
-// iterators will use the deleted slot to skip deeper iterators.
+// (both live and deleted) contained within a state set. Higher order iterators
+// will use the deleted slot to skip deeper iterators.
 type diffStorageIterator struct {
 	// curHash is the current hash the iterator is positioned on. The field is
 	// explicitly tracked since the referenced diff layer might go stale after
@@ -223,27 +238,29 @@ type diffStorageIterator struct {
 	curHash common.Hash
 	account common.Hash
 
-	layer *diffLayer    // Live layer to retrieve values from
-	keys  []common.Hash // Keys left in the layer to iterate
-	fail  error         // Any failures encountered (stale)
+	states  *stateSet     // Live state set to retrieve values from
+	isStale func() bool   // Signal if the referenced state set is stale
+	keys    []common.Hash // Keys left in the layer to iterate
+	fail    error         // Any failures encountered (stale)
 }
 
-// StorageIterator creates a storage iterator over a single diff layer.
+// newDiffStorageIterator creates a storage iterator over a single diff layer.
 // Except the storage iterator is returned, there is an additional flag
 // "destructed" returned. If it's true then it means the whole storage is
 // destructed in this layer(maybe recreated too), don't bother deeper layer
 // for storage retrieval.
-func (dl *diffLayer) StorageIterator(account common.Hash, seek common.Hash) (StorageIterator, bool) {
+func newDiffStorageIterator(account common.Hash, seek common.Hash, set *stateSet, isStale func() bool) (StorageIterator, bool) {
 	// Create the storage for this account even it's marked
 	// as destructed. The iterator is for the new one which
 	// just has the same address as the deleted one.
-	hashes, destructed := dl.StorageList(account)
+	hashes, destructed := set.StorageList(account)
 	index := sort.Search(len(hashes), func(i int) bool {
 		return bytes.Compare(seek[:], hashes[i][:]) <= 0
 	})
 	// Assemble and returned the already seeked iterator
 	return &diffStorageIterator{
-		layer:   dl,
+		states:  set,
+		isStale: isStale,
 		account: account,
 		keys:    hashes[index:],
 	}, destructed
@@ -260,6 +277,10 @@ func (it *diffStorageIterator) Next() bool {
 	}
 	// Stop iterating if all keys were exhausted
 	if len(it.keys) == 0 {
+		return false
+	}
+	if it.isStale != nil && it.isStale() {
+		it.fail, it.keys = errSnapshotStale, nil
 		return false
 	}
 	// Iterator seems to be still alive, retrieve and cache the live hash
@@ -290,9 +311,12 @@ func (it *diffStorageIterator) Hash() common.Hash {
 //
 // Note the returned slot is not a copy, please don't modify it.
 func (it *diffStorageIterator) Slot() []byte {
-	storage, ok := it.layer.states.storage(it.account, it.curHash)
+	storage, ok := it.states.storage(it.account, it.curHash)
 	if !ok {
 		panic(fmt.Sprintf("iterator referenced non-existent storage: %x %x", it.account, it.curHash))
+	}
+	if it.isStale != nil && it.isStale() {
+		it.fail, it.keys = errSnapshotStale, nil
 	}
 	return storage
 }
