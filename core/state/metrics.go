@@ -33,9 +33,4 @@ var (
 	slotDeletionTimer    = metrics.NewRegisteredResettingTimer("state/delete/storage/timer", nil)
 	slotDeletionCount    = metrics.NewRegisteredMeter("state/delete/storage/slot", nil)
 	slotDeletionSize     = metrics.NewRegisteredMeter("state/delete/storage/size", nil)
-
-	trieAccountReadTimer     = metrics.NewRegisteredResettingTimer("state/trie/account/reads", nil)
-	trieStorageReadTimer     = metrics.NewRegisteredResettingTimer("state/trie/storage/reads", nil)
-	snapshotAccountReadTimer = metrics.NewRegisteredResettingTimer("state/snapshot/account/reads", nil)
-	snapshotStorageReadTimer = metrics.NewRegisteredResettingTimer("state/snapshot/storage/reads", nil)
 )
